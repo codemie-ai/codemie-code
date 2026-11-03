@@ -21,6 +21,7 @@ import {
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
+import { logger } from './logger.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
@@ -132,10 +133,15 @@ export class ConfigLoader {
   /**
    * Load configuration with proper priority:
    * CLI args > Env vars > Project config > Global config > Defaults
+   *
+   * @param opts.preferLinkedProject - Let a linked folder's `.codemie` project beat a global profile's
+   *   project. Off by default (launchers and other consumers keep the profile project); only the native
+   *   hook path, which has no launcher-exported CODEMIE_PROJECT, opts in.
    */
   static async load(
     workingDir: string = process.cwd(),
-    cliOverrides?: Partial<CodeMieConfigOptions>
+    cliOverrides?: Partial<CodeMieConfigOptions>,
+    opts: { preferLinkedProject?: boolean } = {}
   ): Promise<CodeMieConfigOptions> {
     // 5. Built-in defaults (lowest priority)
     const config: CodeMieConfigOptions = {
@@ -177,7 +183,7 @@ export class ConfigLoader {
     // whole-object override (local scope, else global), CodeMie identity from the
     // scope of the profile in use.
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
-    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
+    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile, opts.preferLinkedProject);
     Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
@@ -228,7 +234,7 @@ export class ConfigLoader {
       }
 
       if (filtered.length > 0 && config.debug) {
-        console.log(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
+        logger.status(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
       }
 
       Object.assign(config, this.removeUndefined(filteredEnvConfig));
@@ -275,10 +281,49 @@ export class ConfigLoader {
    * @param workingDir - Directory whose local config is considered
    * @param isLocalProfile - Whether the profile in use is defined in the local config
    */
-  static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
+  static async resolveProfileWorkspace(
+    workingDir: string,
+    isLocalProfile: boolean,
+    preferLinkedProject = false
+  ): Promise<WorkspaceConfig> {
+    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile, preferLinkedProject)).workspace;
+  }
+
+  /** Whether the profile in use (explicit `profileName`, else the active one) is defined in the local config. */
+  static async isLocalProfile(workingDir: string, profileName?: string): Promise<boolean> {
+    const selected = await this.resolveProfileName(workingDir, profileName);
+    const localName = await this.resolveLocalProfileName(workingDir, selected);
+    if (selected && localName && selected !== localName) return false;
+    return Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
+  }
+
+  /**
+   * Where the resolved codeMieProject came from: `linked_folder` (local `.codemie`
+   * workspace), `profile` (global profile scope) or `none`. Consumed by the
+   * evidence record's `project_source`.
+   */
+  static async resolveProjectOrigin(
+    workingDir: string,
+    isLocalProfile: boolean,
+    preferLinkedProject = false
+  ): Promise<'linked_folder' | 'profile' | 'none'> {
+    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile, preferLinkedProject)).projectOrigin;
+  }
+
+  private static async resolveProfileWorkspaceWithOrigin(
+    workingDir: string,
+    isLocalProfile: boolean,
+    preferLinkedProject = false
+  ): Promise<{ workspace: WorkspaceConfig; projectOrigin: 'linked_folder' | 'profile' | 'none' }> {
     const workspace = await this.resolveWorkspace(workingDir);
+    const localProject = (await this.loadLocalMultiProviderConfig(workingDir)).workspace?.codeMieProject;
+    // `preferLinkedProject` is the native hook: with no genuine local link, a project that comes only from
+    // the global scope (global profile, or the global workspace a local profile falls back to) is not
+    // an authoritative source, so the backend falls through to repository/default routing.
+    const globalOnly: 'profile' | 'none' = preferLinkedProject ? 'none' : 'profile';
     if (isLocalProfile) {
-      return workspace;
+      if (!workspace.codeMieProject) return { workspace, projectOrigin: 'none' };
+      return { workspace, projectOrigin: localProject ? 'linked_folder' : globalOnly };
     }
 
     const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
@@ -289,7 +334,15 @@ export class ConfigLoader {
         result[key] = globalWorkspace[key];
       }
     }
-    return result as WorkspaceConfig;
+    // Opt-in (native hook): a linked `.codemie` project beats the global profile's project (D2: managed keeps it).
+    if (preferLinkedProject && localProject) {
+      result.codeMieProject = localProject;
+      return { workspace: result as WorkspaceConfig, projectOrigin: 'linked_folder' };
+    }
+    return {
+      workspace: result as WorkspaceConfig,
+      projectOrigin: result.codeMieProject ? globalOnly : 'none'
+    };
   }
 
   /**

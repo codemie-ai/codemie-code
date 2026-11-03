@@ -339,8 +339,10 @@ export interface AgentMetadata {
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
   /**
-   * True for agents CodeMie only reads analytics for and never installs, launches,
-   * or manages (e.g. GitHub Copilot CLI).
+   * True for agents CodeMie only reads analytics for and never installs, launches, or manages.
+   * The managed `copilot-cli` plugin does not qualify (it launches the `copilot` binary); the
+   * hooks-only `copilot-chat-otlp`/`copilot-cli-otlp` collectors are a separate `OtlpAgentAdapter`
+   * registration (see `AgentRegistry`'s `otlpAdapters` map) and are not read through this flag.
    *
    * Such an agent can never carry a CodeMie ownership marker, so the analytics
    * ownership gate must not apply to it — see `isAnalyticsOnlyAgent` in
@@ -577,9 +579,6 @@ export interface AgentMetricsConfig {
  * Controls how agents collect and process metrics
  */
 export interface MetricsConfig {
-  // Provider filter
-  enabled: (provider: string) => boolean;
-
   // Retry configuration
   retry: {
     attempts: number;
@@ -696,6 +695,8 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  endTimeFromActivity?: boolean;   // SessionEnd only: end the session at its last recorded activity, not now
+  endTime?: number;                // SessionEnd only: the session's end (epoch ms), already resolved by the caller
 }
 
 // Forward declaration for extension installer
@@ -743,23 +744,15 @@ export enum AgentAdapterType {
   OTLP,
 }
 
-export interface OtlpAgentAdapter  {
-  readonly name: string;
-  readonly type: AgentAdapterType.OTLP;
-
-  /**
-   * Handles one hook event. The adapter owns the decision of whether the OTLP
-   * daemon is needed: it MUST call `deps.ensureProxy()` before forwarding
-   * anything to the daemon and MAY skip it for events it will not forward.
-   *
-   * INVARIANT: events from untracked projects must never reach the daemon
-   * spool.
-   */
-  processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void>;
-}
-
 export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string) => Promise<void>;
+  /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  ) => Promise<boolean>;
 }
 
 /**

@@ -1,0 +1,518 @@
+diff --git a/src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts
+index ab278e1e..373bd029 100644
+--- a/src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts
++++ b/src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts
+@@ -70,7 +70,7 @@ describe('disconnectTargets', () => {
+     const settingsPath = '/home/u/.claude/settings.json';
+ 
+     it('reports the removal', async () => {
+-      const remove = vi.fn().mockResolvedValue({ removed: true, usedBackup: false, path: settingsPath });
++      const remove = vi.fn().mockResolvedValue({ removed: true, path: settingsPath });
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({ removeClaudeCodeOtlpConfig: remove }));
+       const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+ 
+@@ -80,20 +80,21 @@ describe('disconnectTargets', () => {
+       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Claude Code OTLP disconnected'));
+     });
+ 
+-    it('warns when the backup was restored', async () => {
++    it('does not print a restored-backup warning (claude-code-otlp never restores backup content)', async () => {
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({
+-        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({ removed: true, usedBackup: true, path: settingsPath }),
++        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({ removed: true, path: settingsPath, mode: 'full' }),
+       }));
+       const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+ 
+       await disconnectTargets({ targets: { claudeCodeOtlp: true } });
+ 
+-      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Restored the pre-connect backup'));
++      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Claude Code OTLP disconnected'));
++      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Restored the pre-connect backup'));
+     });
+ 
+     it('reports a clean no-op when nothing codemie-owned was found', async () => {
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({
+-        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({ removed: false, usedBackup: false, path: settingsPath }),
++        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({ removed: false, path: settingsPath }),
+       }));
+       const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+ 
+@@ -106,7 +107,7 @@ describe('disconnectTargets', () => {
+     it('lists the remaining tracked projects when only an allowlist entry was removed', async () => {
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({
+         removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+-          removed: true, usedBackup: false, path: settingsPath, mode: 'entry-removed',
++          removed: true, path: settingsPath, mode: 'entry-removed',
+           allowlist: ['/work/a', '/work/b'],
+         }),
+       }));
+@@ -123,7 +124,7 @@ describe('disconnectTargets', () => {
+     it('reports a full disconnect for mode "full"', async () => {
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({
+         removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+-          removed: true, usedBackup: false, path: settingsPath, mode: 'full',
++          removed: true, path: settingsPath, mode: 'full',
+         }),
+       }));
+       const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+@@ -137,7 +138,7 @@ describe('disconnectTargets', () => {
+     it('includes the reason in the no-op message for mode "noop"', async () => {
+       vi.doMock('../connectors/claude-code-otlp.js', () => ({
+         removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+-          removed: false, usedBackup: false, path: settingsPath, mode: 'noop',
++          removed: false, path: settingsPath, mode: 'noop',
+           reason: 'CODEMIE_ANALYTICS_PROJECT_FILTER is not set',
+         }),
+       }));
+diff --git a/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts b/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
+index cdc8d46d..8f819cbc 100644
+--- a/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
++++ b/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
+@@ -254,6 +254,48 @@ describe('claude-code-otlp connector', () => {
+         }
+       });
+ 
++      it('rebuilds a missing backup from stripped content (not a raw copy) when settings are already managed', async () => {
++        const settingsPath = join(homeDir, '.claude', 'settings.json');
++        await mkdir(join(homeDir, '.claude'), { recursive: true });
++
++        // Already managed (has our hook group + our env keys) AND has foreign content,
++        // but no backup file exists yet.
++        await writeFile(
++          settingsPath,
++          JSON.stringify(
++            {
++              theme: 'dark',
++              env: { FOO: 'bar', OTEL_LOGS_EXPORTER: 'otlp' },
++              hooks: { PreToolUse: [codemieHookGroup(), { matcher: '', hooks: [{ type: 'command', command: 'echo mine' }] }] },
++            },
++            null, 2
++          )
++        );
++
++        const result = await writeClaudeCodeOtlpConfig();
++
++        expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
++        const backup = await readJson(result.backupPath!);
++        expect(backup.theme).toBe('dark');
++        expect(backup.env).toEqual({ FOO: 'bar' }); // codemie env keys stripped, not copied
++        expect(backup.hooks.PreToolUse).toEqual([{ matcher: '', hooks: [{ type: 'command', command: 'echo mine' }] }]);
++      });
++
++      it('refreshes the backup to reflect the latest pre-connect state on reconnect after a disconnect and manual edit', async () => {
++        const settingsPath = join(homeDir, '.claude', 'settings.json');
++        await mkdir(join(homeDir, '.claude'), { recursive: true });
++        await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'A' } }, null, 2));
++
++        await writeClaudeCodeOtlpConfig();     // connect #1: backup snapshots STEP: A
++        await removeClaudeCodeOtlpConfig();    // disconnect: leaves { env: { STEP: 'A' } }, backup removed
++        await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'B' } }, null, 2)); // manual edit
++
++        const result = await writeClaudeCodeOtlpConfig(); // connect #2
++
++        expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
++        expect(await readJson(result.backupPath!)).toEqual({ env: { STEP: 'B' } });
++      });
++
+       it('overwrites a single conflicting env value when force is true', async () => {
+         const settingsPath = join(homeDir, '.claude', 'settings.json');
+         await mkdir(join(homeDir, '.claude'), { recursive: true });
+@@ -579,14 +621,14 @@ describe('claude-code-otlp connector', () => {
+       it('returns removed:false and touches nothing when no settings file exists', async () => {
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, usedBackup: false, path: null });
++        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, path: null });
+         expect(existsSync(join(homeDir, '.claude'))).toBe(false);
+       });
+ 
+       it('resolves the project root when scope is "project"', async () => {
+         const result = await removeClaudeCodeOtlpConfig({ scope: 'project' });
+ 
+-        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, usedBackup: false, path: null });
++        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, path: null });
+       });
+ 
+       it('does not require a live proxy daemon', async () => {
+@@ -615,7 +657,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+         const final = await readJson(settingsPath);
+         expect(final.theme).toBe('dark');
+         expect(final.env).toEqual({ FOO: 'bar' });
+@@ -636,13 +678,14 @@ describe('claude-code-otlp connector', () => {
+         expect(final.hooks.PreToolUse).toBe('not-an-array');
+       });
+ 
+-      it('restores the backup and deletes it when stripping leaves the settings fully empty', async () => {
++      it('deletes the settings file without restoring backup content, and removes the backup, when stripping leaves settings fully empty', async () => {
+         const settingsPath = join(homeDir, '.claude', 'settings.json');
+         const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+         await mkdir(join(homeDir, '.claude'), { recursive: true });
+ 
+-        const originalBackup = { theme: 'original-backup-value' };
+-        await writeFile(backupPath, JSON.stringify(originalBackup, null, 2));
++        // A backup exists holding an OLD value the user has since removed — it
++        // must never come back, even though it's the only backup available.
++        await writeFile(backupPath, JSON.stringify({ env: { STEP: 'B' } }, null, 2));
+ 
+         const codemieOnlyEnv = CODEMIE_ENV_KEYS.reduce<Record<string, string>>((acc, key) => {
+           acc[key] = 'whatever';
+@@ -662,8 +705,8 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "full", removed: true, usedBackup: true, path: settingsPath });
+-        expect(await readJson(settingsPath)).toEqual(originalBackup);
++        expect(result).toEqual({ mode: 'full', removed: true, path: settingsPath });
++        expect(existsSync(settingsPath)).toBe(false);
+         expect(existsSync(backupPath)).toBe(false);
+       });
+ 
+@@ -689,7 +732,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+         expect(existsSync(settingsPath)).toBe(false);
+       });
+ 
+@@ -759,7 +802,7 @@ describe('claude-code-otlp connector', () => {
+         ]);
+       });
+ 
+-      it('does NOT touch the backup when a mixed group leaves foreign content behind (settings not fully empty)', async () => {
++      it('removes the backup once disconnect succeeds, even when foreign content remains', async () => {
+         const settingsPath = join(homeDir, '.claude', 'settings.json');
+         const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+         await mkdir(join(homeDir, '.claude'), { recursive: true });
+@@ -777,10 +820,32 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        // Settings still has foreign content (the user's command), so this is
+-        // NOT treated as "fully empty" — the backup-restore branch must not fire.
+-        expect(result.usedBackup).toBe(false);
+-        expect(existsSync(backupPath)).toBe(true);
++        expect(result.removed).toBe(true);
++        expect(existsSync(backupPath)).toBe(false);
++      });
++    });
++
++    describe('regression: EPMCDME-15375 — never restore values the user changed/removed after connect', () => {
++      it('never restores a value the user removed after the latest connect', async () => {
++        const settingsPath = join(homeDir, '.claude', 'settings.json');
++        const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
++        await mkdir(join(homeDir, '.claude'), { recursive: true });
++
++        await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'A' } }, null, 2));
++        await writeClaudeCodeOtlpConfig();                                               // connect #1
++        await removeClaudeCodeOtlpConfig();                                              // disconnect: leaves STEP:A, backup gone
++        await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'B' } }, null, 2));   // manual edit
++        await writeClaudeCodeOtlpConfig();                                               // connect #2: backup now snapshots STEP:B
++
++        // User deletes STEP themselves, leaving only codemie's own keys.
++        const beforeFinalDisconnect = await readJson(settingsPath);
++        delete beforeFinalDisconnect.env.STEP;
++        await writeFile(settingsPath, JSON.stringify(beforeFinalDisconnect, null, 2));
++
++        await removeClaudeCodeOtlpConfig();                                              // final disconnect
++
++        expect(existsSync(settingsPath)).toBe(false); // nothing foreign remained -> deleted, not restored
++        expect(existsSync(backupPath)).toBe(false);
+       });
+     });
+ 
+@@ -804,7 +869,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, path: settingsPath });
+         expect(await readRaw(settingsPath)).toBe(raw);
+         expect(logger.info).not.toHaveBeenCalled();
+       });
+@@ -816,7 +881,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, path: settingsPath });
+         expect(await readRaw(settingsPath)).toBe('{}');
+         expect(existsSync(backupPath)).toBe(true);
+       });
+@@ -832,7 +897,6 @@ describe('claude-code-otlp connector', () => {
+           mode: 'noop',
+           reason: `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`,
+           removed: false,
+-          usedBackup: false,
+           path: settingsPath,
+         });
+         expect(result.reason).toBe('CODEMIE_ANALYTICS_PROJECT_FILTER is not set');
+@@ -845,7 +909,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+         const final = await readJson(settingsPath);
+         expect(final.env).toEqual({ FOO: 'bar' });
+         expect(final.theme).toBe('dark');
+@@ -858,7 +922,7 @@ describe('claude-code-otlp connector', () => {
+ 
+         const result = await removeClaudeCodeOtlpConfig();
+ 
+-        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
++        expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+         const final = await readJson(settingsPath);
+         expect(final.hooks).toBeUndefined();
+         expect(final.theme).toBe('dark');
+diff --git a/src/cli/commands/proxy/connectors/claude-code-otlp.ts b/src/cli/commands/proxy/connectors/claude-code-otlp.ts
+index 5129e4a5..a20f1c08 100644
+--- a/src/cli/commands/proxy/connectors/claude-code-otlp.ts
++++ b/src/cli/commands/proxy/connectors/claude-code-otlp.ts
+@@ -45,7 +45,6 @@ interface RemoveClaudeCodeOtlpOptions {
+ 
+ interface RemoveClaudeCodeOtlpResult {
+   removed: boolean;
+-  usedBackup: boolean;
+   path: string | null;
+   /** 'entry-removed': only this project's allowlist entry was dropped; 'full': all codemie wiring removed. */
+   mode: 'entry-removed' | 'full' | 'noop';
+@@ -199,6 +198,59 @@ function stripCodemieCommandsFromGroups(existingGroups: unknown[]): unknown[] {
+   return result;
+ }
+ 
++interface StripCodemieManagedContentResult {
++  stripped: ClaudeSettings;
++  removedHookCommands: boolean;
++  removedEnvKeys: boolean;
++}
++
++/**
++ * Returns `existing` with every codemie-owned hook command and env key
++ * removed, leaving only what the user owns. Used both to rebuild a missing
++ * backup without re-copying our own writes (including the OTLP bearer
++ * token), and to compute what disconnect should write back.
++ */
++function stripCodemieManagedContent(existing: ClaudeSettings): StripCodemieManagedContentResult {
++  let removedHookCommands = false;
++  const hooks: Record<string, unknown> = {};
++  for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
++    if (!Array.isArray(entries)) {
++      hooks[eventName] = entries;
++      continue;
++    }
++    if (entries.some(groupContainsCodemieCommand)) {
++      removedHookCommands = true;
++    }
++    const remainingGroups = stripCodemieCommandsFromGroups(entries);
++    if (remainingGroups.length > 0) {
++      hooks[eventName] = remainingGroups;
++    }
++  }
++
++  const env: Record<string, string> = { ...(existing.env ?? {}) };
++  let removedEnvKeys = false;
++  for (const key of [...CODEMIE_ENV_KEYS, CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]) {
++    if (key in env) {
++      removedEnvKeys = true;
++      delete env[key];
++    }
++  }
++
++  const stripped: ClaudeSettings = { ...existing };
++  if (Object.keys(hooks).length > 0) {
++    stripped.hooks = hooks;
++  } else {
++    delete stripped.hooks;
++  }
++  if (Object.keys(env).length > 0) {
++    stripped.env = env;
++  } else {
++    delete stripped.env;
++  }
++
++  return { stripped, removedHookCommands, removedEnvKeys };
++}
++
+ export async function writeClaudeCodeOtlpConfig(
+   opts: WriteClaudeCodeOtlpOptions = {}
+ ): Promise<WriteClaudeCodeOtlpResult> {
+@@ -275,19 +327,35 @@ export async function writeClaudeCodeOtlpConfig(
+     allowlist = await addProjectPath(current, resolveProjectRoot());
+   }
+ 
+-  // --- Backup on first modification (no existing codemie entry, no existing backup) ---
++  // --- Backup, keyed on whether CodeMie already owns part of the file (not on
++  // whether a backup file happens to exist) ---
+   let backupPath: string | null = null;
+   if (existsSync(settingsPath)) {
+     const backupPathCandidate = settingsPath + SETTINGS_BACKUP_SUFFIX;
+-    const backupCandidateExists = existsSync(backupPathCandidate);
+     const alreadyManaged = Object.values(existingHooksBlock).some(
+       (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+     );
+-    if (!alreadyManaged && !backupCandidateExists) {
++    if (alreadyManaged) {
++      if (existsSync(backupPathCandidate)) {
++        // Trustworthy pre-connect snapshot already captured; leave it alone.
++        backupPath = backupPathCandidate;
++      } else {
++        // Managed but the backup is gone. Copying the file as-is would
++        // enshrine our own writes (including the OTLP bearer token) as the
++        // "pre-connect original" — rebuild it by stripping our own content
++        // instead. Nothing to protect (and no backup needed) if that leaves
++        // zero foreign keys — e.g. a fresh install that only ever held our
++        // own entries.
++        const { stripped } = stripCodemieManagedContent(existing);
++        if (Object.keys(stripped).length > 0) {
++          await writeAtomically(backupPathCandidate, JSON.stringify(stripped, null, 2) + '\n');
++          backupPath = backupPathCandidate;
++        }
++      }
++    } else {
++      // Not yet managed: always (re)snapshot, overwriting any stale previous backup.
+       await copyFile(settingsPath, backupPathCandidate);
+       backupPath = backupPathCandidate;
+-    } else if (backupCandidateExists) {
+-      backupPath = backupPathCandidate;
+     }
+   }
+ 
+@@ -366,7 +434,7 @@ export async function removeClaudeCodeOtlpConfig(
+   const settingsPath = getClaudeSettingsPath();
+ 
+   if (!existsSync(settingsPath)) {
+-    return { removed: false, usedBackup: false, path: null, mode: 'noop', reason: 'no Claude Code settings file found' };
++    return { removed: false, path: null, mode: 'noop', reason: 'no Claude Code settings file found' };
+   }
+ 
+   const existing = await readSettingsFile(settingsPath);
+@@ -382,7 +450,7 @@ export async function removeClaudeCodeOtlpConfig(
+       } else {
+         reason = 'all projects are tracked (no per-project entries)';
+       }
+-      return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason };
++      return { removed: false, path: settingsPath, mode: 'noop', reason };
+     }
+ 
+     const projectRoot = resolveProjectRoot();
+@@ -390,7 +458,6 @@ export async function removeClaudeCodeOtlpConfig(
+     if (remaining.length === allowlist.paths.length) {
+       return {
+         removed: false,
+-        usedBackup: false,
+         path: settingsPath,
+         mode: 'noop',
+         reason: `project ${await canonicalizePath(projectRoot)} is not in the allowlist`,
+@@ -401,70 +468,36 @@ export async function removeClaudeCodeOtlpConfig(
+       const env = { ...(existing.env ?? {}), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(remaining) };
+       await writeAtomically(settingsPath, JSON.stringify({ ...existing, env }, null, 2) + '\n');
+       logger.info('[proxy] Removed project from Claude Code analytics allowlist', ...sanitizeLogArgs({ settingsPath, remaining }));
+-      return { removed: true, usedBackup: false, path: settingsPath, mode: 'entry-removed', allowlist: remaining };
++      return { removed: true, path: settingsPath, mode: 'entry-removed', allowlist: remaining };
+     }
+     // Last entry removed: fall through to the full removal below
+   }
+ 
+-  let removedHookCommands = false;
+-  const hooks: Record<string, unknown> = {};
+-  for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
+-    if (!Array.isArray(entries)) {
+-      hooks[eventName] = entries;
+-      continue;
+-    }
+-    if (entries.some(groupContainsCodemieCommand)) {
+-      removedHookCommands = true;
+-    }
+-    const remainingGroups = stripCodemieCommandsFromGroups(entries);
+-    if (remainingGroups.length > 0) {
+-      hooks[eventName] = remainingGroups;
+-    }
+-  }
+-
+-  const env: Record<string, string> = { ...(existing.env ?? {}) };
+-  let removedEnvKeys = false;
+-  for (const key of [...CODEMIE_ENV_KEYS, CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]) {
+-    if (key in env) {
+-      removedEnvKeys = true;
+-      delete env[key];
+-    }
+-  }
++  const { stripped, removedHookCommands, removedEnvKeys } = stripCodemieManagedContent(existing);
+ 
+   if (!removedHookCommands && !removedEnvKeys) {
+-    return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason: 'no CodeMie entries found' };
+-  }
+-
+-  const stripped: ClaudeSettings = { ...existing };
+-  if (Object.keys(hooks).length > 0) {
+-    stripped.hooks = hooks;
+-  } else {
+-    delete stripped.hooks;
+-  }
+-  if (Object.keys(env).length > 0) {
+-    stripped.env = env;
+-  } else {
+-    delete stripped.env;
++    return { removed: false, path: settingsPath, mode: 'noop', reason: 'no CodeMie entries found' };
+   }
+ 
+-  const isEmpty = Object.keys(stripped).length === 0;
+   const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
++  const isEmpty = Object.keys(stripped).length === 0;
+ 
++  // Always derive the result from the CURRENT live content (never restore raw
++  // backup bytes, however fresh): a backup can still hold a value the user
++  // changed or removed between the connect that captured it and this
++  // disconnect, and restoring it would resurrect exactly that value.
+   if (isEmpty) {
+-    if (existsSync(backupPath)) {
+-      const backupContent = await readFile(backupPath, 'utf-8');
+-      await writeAtomically(settingsPath, backupContent);
+-      await unlink(backupPath);
+-      logger.info('[proxy] Removed Claude Code analytics config (restored backup)', ...sanitizeLogArgs({ settingsPath }));
+-      return { removed: true, usedBackup: true, path: settingsPath, mode: 'full' };
+-    } else {
+-      await unlink(settingsPath);
+-      logger.info('[proxy] Removed Claude Code analytics config (deleted settings)', ...sanitizeLogArgs({ settingsPath }));
+-      return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
+-    }
++    await unlink(settingsPath);
++  } else {
++    await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
++  }
++  if (existsSync(backupPath)) {
++    await unlink(backupPath);
+   }
+ 
+-  await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
+-  logger.info('[proxy] Removed Claude Code analytics entries from settings', ...sanitizeLogArgs({ settingsPath }));
+-  return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
++  logger.info(
++    '[proxy] Removed Claude Code analytics entries from settings',
++    ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
++  );
++  return { removed: true, path: settingsPath, mode: 'full' };
+ }
+diff --git a/src/cli/commands/proxy/disconnect-orchestrator.ts b/src/cli/commands/proxy/disconnect-orchestrator.ts
+index ac90d982..5dabf040 100644
+--- a/src/cli/commands/proxy/disconnect-orchestrator.ts
++++ b/src/cli/commands/proxy/disconnect-orchestrator.ts
+@@ -77,11 +77,6 @@ async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<voi
+     }
+ 
+     console.log(chalk.green(`✓ Claude Code OTLP disconnected (${result.path})`));
+-    if (result.usedBackup) {
+-      console.log(chalk.yellow(
+-        "⚠ Restored the pre-connect backup because CodeMie's entries were the file's only content."
+-      ));
+-    }
+   } catch (error) {
+     const message = error instanceof Error ? error.message : String(error);
+     console.error(chalk.red(`✗ Claude Code OTLP - ${message}`));

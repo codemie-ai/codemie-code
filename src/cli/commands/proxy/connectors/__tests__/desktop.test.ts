@@ -259,14 +259,17 @@ describe('fetchClaudeModels', () => {
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
     expect(models).toEqual([
+      'claude-opus-5-5',
       'claude-opus-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
       'claude-sonnet-4-6',
+      'claude-haiku-5-5',
       'claude-haiku-4-5',
-        ]);
+    ]);
   });
 
   it('throws when response is not ok', async () => {
@@ -424,6 +427,30 @@ describe('selectPreferredClaudeModels', () => {
 });
 
 describe('selectDesktopClaudeModels', () => {
+  it('exposes Opus 5.5, Sonnet 5.5, and Haiku 5.5 when available', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-sonnet-5',
+      'claude-sonnet-5-5',
+      'claude-opus-5',
+      'claude-opus-5-5',
+      'claude-haiku-4-5-20251001',
+      'claude-haiku-5-5',
+    ]);
+    expect(result).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+    ]);
+  });
+
+  it('collapses Haiku to a single highest-priority model', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-haiku-4-5-20251001',
+      'claude-haiku-5-5',
+    ]);
+    expect(result).toEqual(['claude-haiku-5-5']);
+  });
+
   it('exposes only Opus 4.8 when the gateway serves it', () => {
     const result = selectDesktopClaudeModels([
       'claude-sonnet-4-6',

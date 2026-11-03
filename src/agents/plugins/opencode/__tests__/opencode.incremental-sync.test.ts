@@ -10,7 +10,7 @@
  * Mirrors codex.incremental-sync.test.ts for the discover -> match cwd -> process ->
  * upload contract; pins the current behaviour as a regression baseline.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -96,6 +96,12 @@ function matchingDescriptor(overrides: Record<string, unknown> = {}): Record<str
 }
 
 describe('opencode.incremental-sync', () => {
+  beforeAll(async () => {
+    // The upload path lazily imports the credential helper; load it once up front so
+    // the fake-timer ticks below don't have to wait for real module I/O.
+    await import('../../../../providers/core/codemie-auth-helpers.js');
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     discoverSessions.mockReset();

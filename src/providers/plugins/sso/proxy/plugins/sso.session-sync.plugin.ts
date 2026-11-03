@@ -4,7 +4,7 @@
  *
  * Purpose: Unified orchestrator that syncs session data via multiple processors
  * - Runs only in SSO mode (ai-run-sso provider)
- * - Background timer (every 5 minutes)
+ * - Background timer (every 2 minutes by default, CODEMIE_SESSION_SYNC_INTERVAL)
  * - Discovers session files once via adapter
  * - Passes parsed sessions to all processors (metrics, conversations)
  * - Tracks processed sessions in unified store
@@ -27,6 +27,14 @@ import { SessionSyncer } from '../../session/SessionSyncer.js';
 import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
+import { CredentialRefresher } from './credential-refresh.js';
+
+/** `key=value; key=value` cookie header from a cookie map — same shape every caller here needs. */
+function buildCookieHeader(cookies: Record<string, string>): string {
+  return Object.entries(cookies)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ');
+}
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -61,19 +69,23 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new ConfigurationError('Session sync disabled by configuration');
     }
 
+    // Built in sso.proxy.ts from whichever of syncCredentials/credentials has cookies — the
+    // guard above already confirmed one of them does, so this is always set.
+    if (!context.syncCredentialRefresher) {
+      logger.debug('[SSOSessionSyncPlugin] Skipping: sync credential refresher not available');
+      throw new ConfigurationError('SSO credential refresher not available (session sync disabled)');
+    }
+
     logger.debug('[SSOSessionSyncPlugin] Initializing unified session sync');
 
     // Check if dry-run mode is enabled
     const dryRun = this.isDryRunEnabled(context);
 
-    // Cast credentials to SSOCredentials (already validated above)
-    const ssoCredentials = syncCredentials as SSOCredentials;
-
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
       context.config.syncApiUrl,
       context.config,
-      ssoCredentials.cookies,
+      context.syncCredentialRefresher,
       context.config.clientType,
       context.config.version,
       dryRun
@@ -137,7 +149,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     private sessionId: string,
     private explicitSyncApiUrl: string | undefined,
     private proxyConfig: ProxyConfig,
-    cookies: Record<string, string>,
+    private readonly credentials: CredentialRefresher<SSOCredentials>,
     clientType: string,
     version: string = '0.0.0',
     dryRun: boolean = false
@@ -157,10 +169,10 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
     }
 
-    // Build cookie header (only if not in local dev mode)
-    const cookieHeader = this.isLocalDev ? '' : Object.entries(cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
+    // Build cookie header from the daemon-startup snapshot (only if not in local dev mode) —
+    // refreshed before every sync tick in syncSessions(), so a successful browser re-login
+    // reaches this periodic sync too, not just the LLM-request path (PR #655 review, blocking).
+    const cookieHeader = this.isLocalDev ? '' : buildCookieHeader(credentials.get().cookies);
 
     // Create processing context (shared by SessionSyncer)
     this.context = {
@@ -206,9 +218,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Called when proxy stops - cleanup and final sync
+   * Called when proxy stops - cleanup and final sync (stopped at `bounds.deadlineMs` when given)
    */
-  async onProxyStop(): Promise<void> {
+  async onProxyStop(bounds?: { deadlineMs?: number }): Promise<void> {
     logger.debug(`[${this.name}] Stopping session sync`);
 
     // Stop timer
@@ -221,7 +233,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // This syncs BOTH metrics and conversations
     try {
       logger.info(`[${this.name}] sync: phase=final session_id=${this.sessionId}`);
-      await this.syncSessions();
+      await this.syncSessions(bounds?.deadlineMs);
       logger.info(`[${this.name}] sync: phase=final status=success session_id=${this.sessionId}`);
     } catch (error) {
       logger.error(`[${this.name}] sync: phase=final status=error session_id=${this.sessionId}`, error);
@@ -231,7 +243,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   /**
    * Sync sessions to API using SessionSyncer
    */
-  private async syncSessions(): Promise<void> {
+  private async syncSessions(deadlineMs?: number): Promise<void> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
       logger.debug(`[${this.name}] Sync already in progress, skipping`);
@@ -243,8 +255,18 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     try {
       logger.debug(`[${this.name}] Starting sync for session ${this.sessionId}`);
 
+      // Re-read stored credentials (throttled) before each tick, so a browser re-login that
+      // completed between ticks is picked up here too, instead of this periodic sync forever
+      // posting the stale startup-time cookie header (PR #655 review, blocking).
+      if (!this.isLocalDev) {
+        this.context.cookies = buildCookieHeader((await this.credentials.refresh()).cookies);
+      }
+
       // Use SessionSyncer service
-      const result = await this.syncer.sync(this.sessionId, this.context);
+      const result = await this.syncer.sync(
+        this.sessionId,
+        deadlineMs === undefined ? this.context : { ...this.context, syncDeadlineMs: deadlineMs }
+      );
 
       if (result.success) {
         logger.info(`[${this.name}] ${result.message}`);

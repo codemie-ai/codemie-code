@@ -47,6 +47,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isProcessAlive } from '../../src/utils/processes.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DAEMON_BIN = join(REPO_ROOT, 'bin', 'proxy-daemon.js');
@@ -105,7 +106,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Proxy daemon lifecycle (real spawn)',
     for (let i = 0; i < 80; i++) {
       await new Promise((r) => setTimeout(r, 100));
       const state = await dm.readState(stateFile);
-      if (state && dm.isProcessAlive(state.pid)) {
+      if (state && isProcessAlive(state.pid)) {
         daemonPid = state.pid;
         break;
       }
@@ -138,7 +139,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Proxy daemon lifecycle (real spawn)',
 
   it('spawns a live detached process and persists its state', async () => {
     expect(daemonPid, 'daemon did not become ready within 8s').toBeGreaterThan(0);
-    expect(dm.isProcessAlive(daemonPid)).toBe(true);
+    expect(isProcessAlive(daemonPid)).toBe(true);
 
     const state = await dm.readState(stateFile);
     expect(state, 'proxy-daemon.json should exist in the temp CODEMIE_HOME').not.toBeNull();
@@ -171,7 +172,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Proxy daemon lifecycle (real spawn)',
   it('stops the daemon and clears state (real SIGTERM path)', async () => {
     await dm.stopDaemon();
 
-    expect(dm.isProcessAlive(daemonPid)).toBe(false);
+    expect(isProcessAlive(daemonPid)).toBe(false);
     expect(await dm.readState(stateFile)).toBeNull();
 
     const { running } = await dm.checkStatus(stateFile);

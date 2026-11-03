@@ -35,12 +35,15 @@ const EXPECTED_MODEL_IDS = [
   'claude-4-5-sonnet',
   'claude-sonnet-4-6',
   'claude-sonnet-5',
+  'claude-sonnet-5-5',
   'claude-opus-4-5-20251101',
   'claude-opus-4-6-20260205',
   'claude-opus-4-7',
   'claude-opus-4-8',
   'claude-opus-5',
+  'claude-opus-5-5',
   'claude-haiku-4-5-20251001',
+  'claude-haiku-5-5',
   'qwen.qwen3-coder-30b-a3b-v1',
   'qwen.qwen3-coder-480b-a35b-v1',
   'moonshotai.kimi-k2.5',
@@ -332,6 +335,22 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     )).rejects.toThrow();
 
     expect(await readFile(configPath, 'utf-8')).toBe(original);
+  });
+
+  it('applies catalog token limits to both table and default entries', async () => {
+    mockCatalog([
+      { base_name: 'claude-4-5-sonnet', max_input_tokens: 200000 },
+      { base_name: 'mistral-large-3', max_input_tokens: 922000 },
+    ]);
+
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+    expect(models.find(m => m.id === 'claude-4-5-sonnet'))
+      .toMatchObject({ maxInputTokens: 136000, maxOutputTokens: 64000 });
+    expect(models.find(m => m.id === 'mistral-large-3'))
+      .toMatchObject({ maxInputTokens: 913808, maxOutputTokens: 8192 });
   });
 
   describe('tenant-aware resolution against a non-EPAM-shaped catalog', () => {

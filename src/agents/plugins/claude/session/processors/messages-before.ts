@@ -1,14 +1,24 @@
 /**
- * Leading run of transcript messages written before `cutoffMs`.
+ * Transcript messages written before `cutoffMs`, in file order.
  *
- * Transcripts are append-only, so the prefix up to the first message stamped at or after
- * the cutoff is exactly what existed at that moment. Messages without a timestamp stay with
- * their neighbours instead of being judged on their own.
+ * Judged by each line's timestamp, not by its position: on resume Claude Code appends a
+ * synthetic line stamped before the cutoff after later-stamped ones. A message without a
+ * timestamp goes with the nearest stamped message before it; the lines of one message group
+ * (same `message.id`) go with the group's first line.
  */
-export function takeMessagesBefore<T extends { timestamp?: string }>(messages: T[], cutoffMs: number): T[] {
-  const firstAfter = messages.findIndex(message => {
+export function takeMessagesBefore<T extends { timestamp?: string; message?: { id?: string } }>(
+  messages: T[],
+  cutoffMs: number
+): T[] {
+  const groupEarlier = new Map<string, boolean>();
+  let previousEarlier = true;
+  return messages.filter(message => {
     const time = message.timestamp ? Date.parse(message.timestamp) : Number.NaN;
-    return !Number.isNaN(time) && time >= cutoffMs;
+    const ownEarlier = Number.isNaN(time) ? previousEarlier : time < cutoffMs;
+    previousEarlier = ownEarlier;
+    const groupId = message.message?.id;
+    if (!groupId) return ownEarlier;
+    if (!groupEarlier.has(groupId)) groupEarlier.set(groupId, ownEarlier);
+    return groupEarlier.get(groupId)!;
   });
-  return firstAfter < 0 ? messages : messages.slice(0, firstAfter);
 }

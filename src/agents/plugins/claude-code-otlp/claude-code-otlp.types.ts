@@ -1,77 +1,36 @@
-interface RawBaseClaudeCodeHookEvent {
-  /** Current session identifier */
-  session_id: string;
+import type { ForwardDecision } from '@/agents/core/OtlpAgentAdapter.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
+import type { HookInput, UserPromptSubmitHookSpecificOutput } from '@anthropic-ai/claude-agent-sdk';
 
-  /**
-   * UUID identifying the user prompt currently being processed.
-   * Matches the prompt.id attribute on OpenTelemetry events.
-   * Absent until the first user input. Requires Claude Code v2.1.196 or later.
-   */
-  prompt_id?: string;
-
-  /**
-   * Path to conversation JSON. Written asynchronously and may lag
-   * the in-memory conversation.
-   */
-  transcript_path: string;
-
-  /** Current working directory when the hook is invoked */
-  cwd: string;
-
-  /**
-   * Path to the session’s scratchpad directory for temporary working files.
-   * Absent when no scratchpad exists or the temp directory is unavailable.
-   * Requires Claude Code v2.1.257 or later.
-   */
-  scratchpad_dir?: string;
-
-  /**
-   * Current permission mode: "default", "plan", "acceptEdits", "auto",
-   * "dontAsk", or "bypassPermissions". Not all events receive this field.
-   */
-  permission_mode?: "default" | "plan" | "acceptEdits" | "auto" | "dontAsk" | "bypassPermissions";
-
-  /**
-   * Object with a level field holding the effort level in effect when the hook runs.
-   * Present for events that fire within a tool-use context when supported by the model.
-   */
-  effort?: {
-    level: "low" | "medium" | "high" | "xhigh" | "max";
-  };
-
-  /** Name of the event that fired */
-  hook_event_name: string;
-}
+export type ClaudeForwardDecision = ForwardDecision<UserPromptSubmitHookSpecificOutput>;
 
 /**
- * camelCase-keyed mirror of {@link RawBaseClaudeCodeHookEvent}.
+ * Narrows parsed hook JSON to the SDK's `HookInput` union.
+ *
+ * Only the fields shared by every event (`BaseHookInput` plus the
+ * discriminant) are verified at runtime. Event-specific fields are trusted
+ * to match once `hook_event_name` is narrowed, and unknown event names are
+ * accepted so a newer Claude Code does not break ingestion.
+ *
+ * A top-level `timestamp` key is rejected outright: Claude's `BaseHookInput` never carries
+ * one, but VS Code Copilot Chat's Local hook schema does (a string ISO timestamp), and with
+ * `chat.useClaudeHooks` on, VS Code runs this exact hook file. Without this check, a Chat
+ * payload that happens to carry string `session_id`/`cwd`/`hook_event_name` fields (its
+ * `SessionStart`/`UserPromptSubmit`/etc. event names collide with Claude's) would be wrongly
+ * accepted and forwarded as a Claude Code session.
  */
-interface BaseClaudeCodeHookEvent {
-  sessionId: string;
-  promptId?: string;
-  transcriptPath: string;
-  cwd: string;
-  scratchpadDir?: string;
-  permissionMode?: "default" | "plan" | "acceptEdits" | "auto" | "dontAsk" | "bypassPermissions";
-  effort?: {
-    level: "low" | "medium" | "high" | "xhigh" | "max";
-  };
-  hookEventName: string;
+export function isClaudeCodeHookInput(value: unknown): value is HookInput {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if ('timestamp' in candidate) {
+    return false;
+  }
+  return (
+    typeof candidate.session_id === 'string' &&
+    isSafeSessionId(candidate.session_id) &&
+    typeof candidate.cwd === 'string' &&
+    typeof candidate.hook_event_name === 'string'
+  );
 }
-
-export function toBaseClaudeCodeHookEvent(raw: RawBaseClaudeCodeHookEvent): BaseClaudeCodeHookEvent {
-  return {
-    sessionId: raw.session_id,
-    promptId: raw.prompt_id,
-    transcriptPath: raw.transcript_path,
-    cwd: raw.cwd,
-    scratchpadDir: raw.scratchpad_dir,
-    permissionMode: raw.permission_mode,
-    effort: raw.effort ? { level: raw.effort.level } : undefined,
-    hookEventName: raw.hook_event_name,
-  };
-}
-
-export type ForwardDecision =
-  | { decision: 'forward'; payload: string }
-  | { decision: 'block'; reason: string, hookSpecificOutput: Record<string, string | boolean> };

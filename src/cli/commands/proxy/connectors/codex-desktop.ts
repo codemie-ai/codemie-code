@@ -15,6 +15,7 @@ import TOML from '@iarna/toml';
 import { rankCodexModelIdsByRecency } from '@/agents/plugins/codex/codex-models.js';
 import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
+import { exec } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
@@ -70,11 +71,46 @@ export function getCodexDesktopAppCandidates(): string[] {
   return [];
 }
 
-/** First candidate path that exists, or null. */
-export function findCodexDesktopApp(
+/** First existing candidate or registered Windows MSIX install location, or null. */
+export async function findCodexDesktopApp(
   candidates: string[] = getCodexDesktopAppCandidates()
-): string | null {
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+): Promise<string | null> {
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  if (existing) return existing;
+  if (process.platform !== 'win32') return null;
+
+  // Query current-user registration rather than scanning protected WindowsApps
+  // folders, which can be on another volume or contain other users' packages.
+  const powershell = join(
+    process.env.SystemRoot ?? 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'
+  );
+  try {
+    const result = await exec(powershell, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+      '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); ' +
+      'Get-AppxPackage -Name OpenAI.Codex -PackageTypeFilter Main -ErrorAction Stop | ' +
+      'Select-Object -ExpandProperty InstallLocation | ConvertTo-Json -Compress',
+    ], { shell: false, timeout: 10000 });
+    if (result.code !== 0) {
+      logger.debug('[proxy] Codex desktop MSIX lookup failed', { code: result.code });
+      return null;
+    }
+    if (!result.stdout.trim()) return null;
+
+    const parsed: unknown = JSON.parse(result.stdout);
+    const locations: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    // Registration is the installation evidence; probing the protected package
+    // path again is unnecessary because this connector never launches the app.
+    return locations.find((location): location is string =>
+      typeof location === 'string' && location.trim().length > 0
+    ) ?? null;
+  } catch (error) {
+    logger.debug('[proxy] Codex desktop MSIX lookup failed', ...sanitizeLogArgs({
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return null;
+  }
 }
 
 /** Bound on the connect-time model listing. */

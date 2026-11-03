@@ -11,6 +11,7 @@ import { ProxyContext } from '../proxy-types.js';
 import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
+import { CredentialRefresher } from './credential-refresh.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -19,12 +20,14 @@ export class SSOAuthPlugin implements ProxyPlugin {
   priority = 10;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    // Guard: skip if credentials are JWT (not SSO)
-    if (!context.credentials || !('cookies' in context.credentials)) {
+    // Guard: skip if credentials are JWT (not SSO). `credentialRefresher` may also wrap JWT
+    // credentials (the model-catalogue fetch needs it either way), so check the underlying
+    // credential type rather than just whether a refresher exists (PR #661 review).
+    if (!context.credentials || !('cookies' in context.credentials) || !context.credentialRefresher) {
       return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(context.credentials as SSOCredentials);
+    return new SSOAuthInterceptor(context.credentialRefresher as CredentialRefresher<SSOCredentials>);
   }
 }
 
@@ -39,7 +42,7 @@ class NoOpInterceptor implements ProxyInterceptor {
 class SSOAuthInterceptor implements ProxyInterceptor {
   name = 'sso-auth';
 
-  constructor(private credentials: SSOCredentials) {}
+  constructor(private readonly credentials: CredentialRefresher<SSOCredentials>) {}
 
   private hasInvalidHeaderChars(value: string): boolean {
     // RFC 7230 field-vchar / obs-text; disallow control chars except HTAB.
@@ -53,10 +56,12 @@ class SSOAuthInterceptor implements ProxyInterceptor {
   }
 
   async onRequest(context: ProxyContext): Promise<void> {
+    const current = await this.credentials.refresh();
+
     const invalidCookieKeys: string[] = [];
     const cookiePairs: string[] = [];
 
-    for (const [key, value] of Object.entries(this.credentials.cookies)) {
+    for (const [key, value] of Object.entries(current.cookies)) {
       const safeKey = String(key).trim();
       const safeValue = String(value);
       if (!safeKey || this.hasInvalidHeaderChars(safeKey) || this.hasInvalidHeaderChars(safeValue)) {
@@ -85,8 +90,8 @@ class SSOAuthInterceptor implements ProxyInterceptor {
     context.headers['cookie'] = cookieHeader;
 
     logger.debug(`[${this.name}] Injected SSO cookies:`, {
-      cookieCount: Object.keys(this.credentials.cookies).length,
-      cookieNames: Object.keys(this.credentials.cookies),
+      cookieCount: Object.keys(current.cookies).length,
+      cookieNames: Object.keys(current.cookies),
       headerLength: cookieHeader.length
     });
   }

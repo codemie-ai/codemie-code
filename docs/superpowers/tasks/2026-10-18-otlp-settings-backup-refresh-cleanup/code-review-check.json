@@ -1,0 +1,53 @@
+{
+  "decision": "approve",
+  "decision_history": [
+    {
+      "round": "code-review.final",
+      "decision": "request-changes",
+      "findings_at_time": ["CR-001", "CR-002"],
+      "file": "code-review-final.json"
+    },
+    {
+      "round": "code-review.check (1st pass)",
+      "decision": "request-changes",
+      "rationale": "CR-001 and CR-002 resolved, but a narrow two-lens confirmation pass on the CR-001 fix-up diff surfaced and confirmed a new issue, CR-003 (presence-only env-key check could drop a genuinely foreign value under --force).",
+      "findings_at_time": ["CR-003"]
+    },
+    {
+      "round": "human decision (sdlc-light rule: no 3rd automated round)",
+      "decision": "approve",
+      "rationale": "CR-003 was fixed (value-aware check instead of presence-only) and verified: TDD red->green, regression test added, tsc clean, full project suite green (unit 353 files/5258 tests, integration 37 files/278 tests). The user then explicitly approved proceeding to QA gates rather than requesting a 3rd automated review round, which is this flow's designated human checkpoint after a check-round request-changes. QA gates (Stage 6) subsequently passed in full, and ~25 manual end-to-end scenarios were verified against a real local build in an isolated $HOME, including an exact replay of the ticket's original 9-step repro and both CR-001/CR-003's specific edge cases."
+    }
+  ],
+  "rationale": "All three findings from the final and first check round are now resolved. CR-001: alreadyManaged also considers CODEMIE_ENV_KEYS presence, with a regression test (verified GREEN) proving the live bearer token is stripped out of a rebuilt backup for an env-only-managed file. CR-002: resolved via explicit human decision — the user confirmed it is intentional (mirrors the already-accepted codex-desktop precedent; AC3's no-restore redesign makes it functionally safe), so no code change was made or required. CR-003: the presence-only env-key check (`key in existingEnv`) was replaced with a value-aware check (`existingEnv[key] === codemieEnv[key]`), so a genuinely foreign value under a managed key name is preserved via the raw-copy backup path instead of being silently dropped under --force; a regression test proves it, and this was independently re-verified manually (--force + foreign value under a managed key name -> preserved in backup). A stray TypeError concern from the blind lens on `key in existingEnv` was checked directly against the source (`existingEnv = existing.env ?? {}`, line 281) and ruled out as a false positive — existingEnv is always an object. This verdict object was updated after the fact to reflect the CR-003 fix-up and the human's approval decision, since sdlc-light does not run a 3rd automated review round and the prior committed verdict file otherwise would have been left showing a stale 'request-changes' from before CR-003 was fixed.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "AC1: Backup is refreshed (or recreated) on each connect that modifies the file", "status": "partial (accepted)", "notes": "Refreshed on the not-yet-managed -> managed transition and when an already-managed file's backup is missing (rebuilt from stripped content). Once a backup exists for an already-managed file, later connects that further modify the file (e.g. allowlist/env changes) do not refresh it. This literal partial against AC1's wording (CR-002) was explicitly accepted by the user as intentional — it mirrors the already-accepted codex-desktop precedent, and AC3's no-restore redesign means a backup's freshness no longer affects correctness, only the usefulness of its advisory manual-recovery snapshot."},
+    {"kind": "spec", "item": "AC2: After a successful disconnect the backup file is removed", "status": "pass", "notes": "removeClaudeCodeOtlpConfig now unconditionally unlinks an existing backup after any successful full removal, not just the previously-empty-only case."},
+    {"kind": "spec", "item": "AC3: Disconnect never restores values changed/removed by the user after connect", "status": "pass", "notes": "The isEmpty branch's raw backup-restore-and-write was removed entirely; disconnect only ever writes the live-derived `stripped` result or deletes the file."},
+    {"kind": "spec", "item": "AC4 (plan's clarification assumption): disconnect must derive the result from the current live settings file via surgical strip, deleting the file when nothing foreign remains, instead of restoring the backup", "status": "pass", "notes": "Implemented via the shared stripCodemieManagedContent helper; usedBackup field and its CLI warning were removed, confirming no restore path remains."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md commit format", "status": "pass", "notes": "Fix-up commit uses Conventional Commits with allowed type (fix) and allowed 'proxy' scope."},
+    {"standard": "code-quality.md (ES modules, explicit types, no any)", "status": "pass", "notes": "One-line boolean-OR change; no new type surface, no `any` introduced."}
+  ],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Fixed in src/cli/commands/proxy/connectors/claude-code-otlp.ts:335-337 (alreadyManaged now also true when any CODEMIE_ENV_KEYS key is present in existingEnv). New regression test 'CR-001: treats env-only management as already-managed, never raw-copying a live bearer token into the backup' added and verified passing (52/52 tests green, tsc clean)."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "User explicitly decided to accept this as intentional design (matches the already-accepted codex-desktop precedent; functionally safe because AC3 means backup content is never read back on disconnect). No code change made or required."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Fixed in src/cli/commands/proxy/connectors/claude-code-otlp.ts:337 — the presence-only check `CODEMIE_ENV_KEYS.some((key) => key in existingEnv)` was replaced with a value-aware check `CODEMIE_ENV_KEYS.some((key) => existingEnv[key] === codemieEnv[key])`. New regression test 'CR-003: a foreign value under a managed env key name (via --force) is preserved verbatim in the backup, not stripped' added; confirmed RED without the fix (reverted the line, re-ran, test failed as expected) and GREEN with it. Full project suite green (unit 353 files/5258 tests, integration 37 files/278 tests), tsc clean. Independently re-verified via manual isolated-environment testing: `--force` + a foreign value under a managed env-key name is preserved in the raw-copy backup, and the CR-001 bearer-token scenario (value now matching, not just present) still correctly avoids a raw copy."
+    }
+  ],
+  "findings": []
+}

@@ -1,0 +1,50 @@
+{
+  "decision": "request-changes",
+  "rationale": "Edge-case lens finding verified against source: withinWindow()'s strict `<` comparison drops a native session's own final usage record whenever its ts equals observedEnd, which is the common case since observedEnd is computed as the max of the session's own message timestamps (native-loader.ts) — a correctness regression introduced by this diff's own fix, kept as CR-002/major. Standards audit (coverage_gap: false) flagged one blocking code-quality violation (CR-001/major): new grouping logic added inline into the already-oversized enrichCosts()/cost-enricher.ts instead of being extracted. Acceptance lens did not run (genuine no-spec — no story/spec artifact existed), which forces confidence to low per the no-spec rule; blind and verification-gap are n/a for the balanced profile, not a coverage gap. 1 finding deferred (startTime defaults to 0 for a fully unbounded session, pre-existing earliest-wins dedupe design the new windowEnd filter was never meant to cover) and 3 dismissed as noise after verifying against source: a theoretical bad-endTime guard with no reachable producer, an observedStart/observedEnd asymmetry whose fallback computation already yields equivalent timeline bounds, and a cosmetic file-path-identity concern on a display-only value explicitly commented as such in the source.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All 5 commit subjects match <type>(<scope>): <subject>; types/scopes are in the commitlint enums; subjects are imperative-mood and under 100 chars."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "cost-enricher.ts was already over the 500-line/50-line-function limit; diff adds a ~20-line grouping block inline into enrichCosts() instead of extracting a helper, growing the file to 568 lines."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "No documented security guide path exists for this repo; manual inspection found no credential/secret logging, unsanitized paths, or new injection surface in the changed files."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/cost-enricher.ts",
+      "line": 419,
+      "title": "New grouping block inlined into oversized function",
+      "problem": "enrichCosts() was already ~160 lines inside a 546-line file; the diff adds a new ~20-line reportedObservedEnd/byFilePath grouping block (lines ~419-434) directly into that function instead of extracting a helper, growing the file to 568 lines.",
+      "impact": "Violates the project's documented 'functions under 50 lines / one responsibility' and 'files under 500 lines' standards, compounding an existing violation instead of containing it, which blocks the code-quality gate.",
+      "recommendation": "Extract the byFilePath grouping and reportedObservedEnd computation into a small named helper (e.g. computeReportedObservedEnd(ordered: ParsedEntry[]): Map<string, number>) with its own JSDoc, called from enrichCosts."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/usage-readers.ts",
+      "line": 162,
+      "title": "Window filter drops session's own final turn",
+      "problem": "withinWindow() filters records with `r.ts === null || r.ts < windowEnd` (strict less-than). windowEnd is entry.observedEnd, which for native/untracked sessions (native-loader.ts's claudeFamilyBounds / synthesizeCodexRawSession) is computed as the max timestamp across the session's own messages — the same field extractClaudeUsageRecords reads as a usage record's own `ts`. So the final usage-bearing message's ts commonly equals windowEnd exactly and fails the strict comparison.",
+      "impact": "The final turn's token usage is silently excluded from that session's own cost total for most native sessions, not only the shared-log scenario the fix targets — a new, systematic undercount introduced by the very change meant to correct cost attribution for EPMCDME-15316 Root Cause A. The added cost-enricher.test.ts case for this commit uses a synthetic endEvent decoupled from message content, so it never exercises the ts === windowEnd boundary and would not catch this.",
+      "recommendation": "Change the filter to an inclusive bound (`r.ts === null || r.ts <= windowEnd`), or otherwise make the boundary convention consistent with how observedEnd is derived; add a cost-enricher.test.ts case where a session's own last usage record's ts equals its own observedEnd."
+    }
+  ]
+}

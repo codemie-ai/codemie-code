@@ -5,7 +5,7 @@
  * Built on top of the foundational exec utility.
  */
 
-import { exec as childProcessExec, spawn } from 'node:child_process';
+import { exec as childProcessExec, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import os from 'node:os';
 import { logger } from './logger.js';
@@ -31,7 +31,8 @@ export async function commandExists(command: string): Promise<boolean> {
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    const result = await exec(whichCommand, [command]);
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
     return result.code === 0;
   } catch {
     return false;
@@ -50,7 +51,8 @@ export async function getCommandPath(command: string): Promise<string | null> {
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    const result = await exec(whichCommand, [command]);
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one
@@ -107,6 +109,150 @@ export interface DetachedSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdio?: 'ignore' | 'inherit';
+  windowsHide?: boolean;
+}
+
+/** Only ESRCH means the pid is gone; EPERM (another user's process) and any other error mean it exists. */
+export function isProcessAlive(pid: number): boolean {
+  // A pid read from a corrupt file; 0 and negatives signal a process group, not a process
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+/** For daemon state, whose pid must be our own process: `EPERM` (another user's process) reads as dead. */
+export function isProcessAliveStrict(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Env vars a CLI wrapper exports to its agent so a session record can name the process that owns it. */
+export const WRAPPER_PID_ENV = 'CODEMIE_WRAPPER_PID';
+export const WRAPPER_STARTED_AT_ENV = 'CODEMIE_WRAPPER_STARTED_AT';
+
+/** The identity of a process: its pid and its start time (epoch ms). */
+export interface ProcessIdentity {
+  pid: number;
+  startedAt?: number;
+}
+
+// Taken once: `process.uptime()` stops during a system sleep, so a later evaluation would drift past the start.
+const STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
+
+/** This process's start time (epoch ms). */
+export function processStartedAt(): number {
+  return STARTED_AT;
+}
+
+/** The wrapper identity from `env`: both vars as numbers, or none. */
+export function wrapperOwnerFromEnv(env: NodeJS.ProcessEnv): { ownerPid: number; ownerStartedAt: number } | undefined {
+  const rawPid = env[WRAPPER_PID_ENV];
+  const rawStartedAt = env[WRAPPER_STARTED_AT_ENV];
+  if (!rawPid || !rawStartedAt) return undefined;
+  const ownerPid = Number(rawPid);
+  const ownerStartedAt = Number(rawStartedAt);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !Number.isFinite(ownerStartedAt)) return undefined;
+  return { ownerPid, ownerStartedAt };
+}
+
+/**
+ * How far a pid's start time (now − `ps etime`) may sit from the stored start and still be the same process.
+ * `ps etime` has 1 s resolution; on Linux it is boot-clock elapsed, so a wall-clock step moves `now − etime`
+ * while the stored start stays — 60 s absorbs such steps and the start-up gap. A false "alive" then needs an
+ * owner that lived under a minute and a pid reused within it — it only delays the finalization.
+ */
+export const OWNER_START_TOLERANCE_MS = 60_000;
+
+/** A hung `ps` must not stall the caller; past this, the answer is the pid-only check. */
+const PS_TIMEOUT_MS = 1000;
+
+/** `ps -o etime=` output (`[[dd-]hh:]mm:ss`) → milliseconds; undefined when unparsable. */
+export function parseEtime(etime: string): number | undefined {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (!match) return undefined;
+  const [, days, hours, minutes, seconds] = match;
+  return ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60_000 + Number(seconds) * 1000;
+}
+
+/**
+ * Whether the process that owns a record is still the one running under its pid: the pid is alive AND its
+ * start time matches `startedAt` within {@link OWNER_START_TOLERANCE_MS}. Without `startedAt`, on Windows,
+ * or when `ps` fails or prints nothing parsable, the answer is the pid-only check.
+ *
+ * ponytail: Linux procps `etime` assumed to print the same format as macOS; Windows is pid-only.
+ */
+export async function isOwnerAlive(owner: ProcessIdentity): Promise<boolean> {
+  if (!isProcessAlive(owner.pid)) return false;
+  if (owner.startedAt === undefined || process.platform === 'win32') return true;
+
+  const elapsed = await exec('ps', ['-o', 'etime=', '-p', String(owner.pid)], { timeout: PS_TIMEOUT_MS })
+    .then((result) => parseEtime(result.stdout), () => undefined);
+  if (elapsed === undefined) {
+    // The pid may have gone between the two checks (ps prints nothing for it).
+    return isProcessAlive(owner.pid);
+  }
+  return Math.abs(owner.startedAt - (Date.now() - elapsed)) <= OWNER_START_TOLERANCE_MS;
+}
+
+/**
+ * Send `signal` to the descendants of `pid` (deepest first, found by `pgrep -P`),
+ * then to `pid` itself. POSIX only. A process already gone is skipped; any other
+ * failure is logged at debug and never thrown.
+ */
+export function signalTree(pid: number, signal: NodeJS.Signals): void {
+  for (const childPid of listChildPids(pid)) {
+    signalTree(childPid, signal);
+  }
+  signalProcess(pid, signal);
+}
+
+/** Send `signal` to one process. A process already gone is skipped; any other failure is logged at debug and never thrown. */
+export function signalProcess(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+      logger.debug(`[signalTree] kill ${signal} ${pid} failed:`, error);
+    }
+  }
+}
+
+/** A process and the parent it had when it was listed. */
+export interface ListedProcess {
+  pid: number;
+  parentPid: number;
+}
+
+/** All descendants of `pid` (not `pid` itself) with their parents, deepest first, found by `pgrep -P`. POSIX only. */
+export function listDescendants(pid: number): ListedProcess[] {
+  return listChildPids(pid).flatMap(childPid => [...listDescendants(childPid), { pid: childPid, parentPid: pid }]);
+}
+
+/** A hung `pgrep` must not stall shutdown; past this, the node is treated as childless. */
+const PGREP_TIMEOUT_MS = 1000;
+
+function listChildPids(pid: number): number[] {
+  try {
+    return execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: PGREP_TIMEOUT_MS })
+      .split('\n')
+      .map(Number)
+      .filter(childPid => childPid > 0);
+  } catch (error) {
+    // pgrep exits 1 when the process has no children.
+    if ((error as { status?: number }).status !== 1) {
+      logger.debug(`[signalTree] pgrep -P ${pid} failed:`, error);
+    }
+    return [];
+  }
 }
 
 export function spawnDetached(
@@ -119,6 +265,12 @@ export function spawnDetached(
     env: options.env,
     detached: true,
     stdio: options.stdio ?? 'ignore',
+    windowsHide: options.windowsHide,
+  });
+  // A failed spawn emits 'error' on the next tick; unhandled, it crashes the process.
+  // The caller learns of the failure from the missing pid (-1).
+  child.on('error', (error) => {
+    logger.debug(`[spawnDetached] Failed to spawn ${command}:`, error);
   });
   child.unref();
   return child.pid ?? -1;
@@ -391,20 +543,198 @@ export async function npxRun(
 // ============================================================================
 
 /**
- * Detect canonical repository identifier from git remote origin URL.
+ * Parse a git remote origin URL into a canonical, lower-cased repository identifier.
+ * Supports HTTPS/SSH `scheme://` URLs, SCP-style and SSH-alias remotes (`user@host:path`,
+ * `host:path`), and bare filesystem paths; strips Azure DevOps's `_git`/`v3` markers and a
+ * Bitbucket Server `scm/` context-path prefix; preserves arbitrary-depth GitLab subgroups.
+ *
+ * @param remoteUrl - The raw remote URL, as returned by `git remote get-url origin`
+ * @returns The repository identifier, or undefined if the URL carries no usable repository path
+ */
+function parseGitRemoteUrl(remoteUrl: string): string | undefined {
+  const withoutGitSuffix = remoteUrl.replace(/[?#].*$/, '').replace(/\.git$/i, '');
+  // The userinfo group `[^@/]+@` stops at the first unencoded '@' or '/'. Git requires those to
+  // be percent-encoded in a URL, but if a caller's password contains one anyway, part of the
+  // password (everything after that character) ends up read as host/path instead of being
+  // dropped, e.g. "https://user:p@ss@host/org/repo" -> "ss@host/org/repo" rather than "org/repo".
+  const urlMatch = withoutGitSuffix.match(/^(\w+):\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
+  // SSH scp-style remotes come in two shapes: "user@host:path" and, for an `ssh_config` Host
+  // alias with no explicit user (e.g. "github-work:org/repo.git"), bare "host:path". The alias
+  // form requires a 2+ character host (so a single-letter Windows drive like "C:\..." is still
+  // treated as a filesystem path) and forbids both "scheme://" and any '@' in the remainder, so
+  // it never swallows a credential-bearing or scheme-qualified remote.
+  const scpMatch =
+    withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/) ??
+    withoutGitSuffix.match(/^([^/@\\:]{2,}):(?!\/\/)([^@]+)$/);
+  const match = urlMatch ?? scpMatch;
+
+  // A scheme:// or user@host[:...] remote that did not match above (e.g. no repository path, or
+  // no colon before the host) is not a filesystem path. Falling through to the bare-filesystem
+  // handling below would split its userinfo/host into the result and leak credentials; bail out
+  // instead. A real filesystem path essentially never contains '@', so that alone is sufficient
+  // to catch every credential-bearing shape, including a bare "user:token@host" with no scheme
+  // and no trailing ":path". `file://` is exempt since it carries no credentials.
+  if (!match && (/^(?!file:)\w+:\/\//i.test(withoutGitSuffix) || withoutGitSuffix.includes('@'))) {
+    return undefined;
+  }
+
+  // Bare filesystem remote (e.g. "/home/user/repo.git", "../repo.git"): neither the
+  // scheme:// form nor the scp-style user@host: form applies, so there is no host and the
+  // whole (suffix-stripped) string is the path to split on.
+  const [scheme, host, path]: Array<string | undefined> = urlMatch
+    ? [urlMatch[1], urlMatch[2], urlMatch[3]]
+    : scpMatch
+      ? [undefined, scpMatch[1], scpMatch[2]]
+      : [undefined, undefined, withoutGitSuffix];
+  const hostname = host?.replace(/:\d+$/, '').toLowerCase();
+
+  // A matched URL/SCP remote uses POSIX-style '/' exclusively. An unmatched, bare-filesystem
+  // remote may be a Windows absolute or UNC path, so split on either separator there, or it
+  // would come out as one giant segment instead of being reduced to the last two.
+  const segments = (path as string)
+    .split(match ? '/' : /[/\\]/)
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        const decoded = decodeURIComponent(segment);
+        // A decoded control character (e.g. %0D%0A, %00), any character outside Latin-1
+        // (code > 0xFF — including the Unicode line/paragraph separators U+2028/U+2029), would
+        // break a downstream HTTP header (Node's http.request only accepts Latin-1 header
+        // values), a log line, or argv; keep the raw, still-encoded segment instead. Likewise, a
+        // decoded '/' (from an encoded %2F) would silently introduce an extra path level once
+        // segments are rejoined, letting two distinct remotes collide on the same derived name.
+        const hasUnsafeChar =
+          decoded.includes('/') ||
+          Array.from(decoded).some((char) => {
+            const code = char.codePointAt(0) ?? 0;
+            return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code > 0xff;
+          });
+        return hasUnsafeChar ? segment : decoded;
+      } catch {
+        // Malformed %-escape: degrade to the raw segment rather than discarding the parse.
+        return segment;
+      }
+    });
+
+  const isAzureDevOps = hostname === 'dev.azure.com' || hostname === 'ssh.dev.azure.com';
+  const isLegacyVsSsh = hostname === 'vs-ssh.visualstudio.com';
+  const isLegacyVsHttps =
+    !!hostname && hostname.endsWith('.visualstudio.com') && !isLegacyVsSsh;
+
+  let result: string[];
+  if (isAzureDevOps || isLegacyVsSsh) {
+    result = segments.filter((segment, index) => segment !== '_git' && !(index === 0 && segment === 'v3'));
+  } else if (isLegacyVsHttps) {
+    // Organization lives in the hostname (org.visualstudio.com); casing is normalised by the final lower-casing.
+    const org = (host as string).replace(/:\d+$/, '').split('.')[0];
+    const rest = segments.filter(
+      (segment, index) =>
+        segment !== '_git' && !(index === 0 && segment.toLowerCase() === 'defaultcollection')
+    );
+    if (rest.length === 0) return undefined;
+    result = [org, ...rest];
+  } else {
+    // Bitbucket Server/DC HTTPS clone URLs prefix the repository path with "scm/", which may
+    // itself sit under a context path (e.g. "bitbucket/scm/PROJ/repo" for an install mounted at
+    // "/bitbucket"). Strip up to the first "scm" segment that still has at least a project and a
+    // repo segment after it, so both the context-path and root-mounted forms converge on
+    // "PROJ/repo" the way the matching SSH remote already does. A GitLab group literally named
+    // "scm" on an http(s) remote is a known, accepted false positive.
+    const isHttpScheme = scheme?.toLowerCase() === 'http' || scheme?.toLowerCase() === 'https';
+    const scmIndex = isHttpScheme
+      ? segments.findIndex((segment, index) => segment === 'scm' && segments.length - index - 1 >= 2)
+      : -1;
+    result = scmIndex === -1 ? segments : segments.slice(scmIndex + 1);
+  }
+
+  // Bitbucket personal repositories use "~user" as the project key.
+  if (result.length > 0 && result[0].length > 1 && result[0].startsWith('~')) {
+    result = [result[0].slice(1), ...result.slice(1)];
+  }
+
+  // A lone "~" with nothing else is not a useful repository name.
+  if (result.length === 1 && result[0] === '~') return undefined;
+
+  if (result.length === 0) return undefined;
+
+  // Best-effort fallback for the bare-filesystem shape: restore the prior behavior of
+  // using only the last two path segments (owner/repo), rather than the full path.
+  const joined = match ? result.join('/') : result.slice(-2).join('/');
+  return joined ? joined.toLowerCase() : undefined;
+}
+
+const DEFAULT_REMOTE_PORTS: Record<string, string> = { ssh: '22', https: '443', http: '80' };
+
+/**
+ * Credential-free `host[:port]/path` repository key, mirroring the backend's `normalize_remote`
+ * (codemie-backend-ingest-routing: src/codemie/service/project/repository_registration_service.py).
+ * Host lower-cased, path case kept; credentials, scheme, query/fragment, `.git`, trailing `/` and the
+ * scheme's default port (ssh 22, https 443, http 80) dropped; IPv6 hosts bracketed. An scp-style
+ * `user@host:path` has no port, so `git@h:8443/a/b` is `h/8443/a/b`.
+ *
+ * @returns the key, or undefined when there is no host or path. Never throws or echoes the input.
+ */
+export function repoKeyFromRemote(remote: string): string | undefined {
+  const text = (remote ?? '').trim();
+  let host: string;
+  let port = '';
+  let path: string;
+
+  // Local filesystem remotes are never a repository key and must not leak their path: a Windows
+  // drive path (`C:\u\r`, `C:/u/r`, drive-relative `c:r`) would otherwise parse as scp host `c`.
+  if (/^[a-z]:/i.test(text)) return undefined;
+
+  const url = text.match(/^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i);
+  if (url && url[1].toLowerCase() === 'file') return undefined;
+  if (url) {
+    const authority = url[2].slice(url[2].lastIndexOf('@') + 1);
+    const hp = authority.match(/^\[([^\]]*)\](?::(\d*))?$/) ?? authority.match(/^([^:]*)(?::(\d*))?$/);
+    if (!hp) return undefined;
+    host = hp[1].toLowerCase();
+    port = hp[2] ?? '';
+    if (port && (Number(port) > 65535 || port === DEFAULT_REMOTE_PORTS[url[1].toLowerCase()])) port = '';
+    if (hp[2] === '') port = '';
+    path = url[3];
+  } else {
+    const scp = text.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/\\].*)$/);
+    if (!scp) return undefined;
+    host = scp[1].toLowerCase();
+    path = scp[2];
+  }
+
+  path = path.replace(/^\/+|\/+$/g, '');
+  if (path.endsWith('.git')) path = path.slice(0, -4).replace(/\/+$/, '');
+  if (!host || !path) return undefined;
+  const h = host.includes(':') ? `[${host}]` : host;
+  return port ? `${h}:${port}/${path}` : `${h}/${path}`;
+}
+
+/**
+ * Raw `origin` remote of a working directory. MAY CARRY CREDENTIALS: never log it; pass it only to
+ * `repoKeyFromRemote` or an evidence channel that expects a raw remote. Fails soft to undefined.
+ */
+export async function getRawGitOrigin(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Detect the canonical repository identifier from a working directory's git `origin` remote.
  * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
- * Works with GitHub, GitLab, Bitbucket, and self-hosted instances.
+ * Works with GitHub, GitLab, Bitbucket, Azure DevOps and self-hosted instances.
  *
  * @param cwd - Working directory path
- * @returns Repository in "owner/repo" format, or undefined if no remote is configured
+ * @returns Repository in lower-cased "owner/repo" format (or a longer path for subgroups/Azure
+ *   DevOps projects), or undefined if no remote is configured
  */
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
   try {
     const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
-    const remoteUrl = stdout.trim();
-    const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
-    if (match) return `${match[1]}/${match[2]}`;
-    return undefined;
+    return parseGitRemoteUrl(stdout.trim());
   } catch {
     return undefined;
   }
@@ -425,34 +755,154 @@ export async function resolveRepositoryName(workingDirectory: string): Promise<s
   return (await detectGitRemoteRepo(workingDirectory)) ?? extractRepository(workingDirectory);
 }
 
+const LOCAL_BRANCH_REF_PREFIX = 'refs/heads/';
+
 /**
  * Detect current git branch from working directory
  *
+ * Uses `git symbolic-ref -q HEAD` rather than `git rev-parse --abbrev-ref HEAD`: it also resolves
+ * an unborn HEAD (repository without commits), where rev-parse fails, and it exits 1 on a
+ * detached HEAD, which is reported as no branch. The full ref is read and `refs/heads/` stripped
+ * here because `--short` returns `heads/<name>` when a tag shares the branch name.
+ *
  * @param cwd - Working directory path
- * @returns Git branch name or undefined if not in a git repo
+ * @returns Git branch name, or undefined when not in a git repo or HEAD is detached
  */
 export async function detectGitBranch(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', {
+    const { stdout } = await execAsync('git symbolic-ref -q HEAD', {
       cwd,
       timeout: 5000,
       windowsHide: true,
     });
 
-    const branch = stdout.trim();
-
-    // Handle detached HEAD state
-    if (branch === 'HEAD') {
-      logger.debug('[GitUtils] Detached HEAD state detected');
+    const ref = stdout.trim();
+    const branch = ref.startsWith(LOCAL_BRANCH_REF_PREFIX)
+      ? ref.slice(LOCAL_BRANCH_REF_PREFIX.length)
+      : '';
+    if (!branch) {
+      logger.debug(
+        `[GitUtils] HEAD does not point at a local branch in ${cwd} (symbolic-ref output: "${ref}"); reporting no branch`
+      );
       return undefined;
     }
 
-    logger.debug(`[GitUtils] Detected git branch: ${branch}`);
+    logger.debug(`[GitUtils] Detected git branch in ${cwd}: ${branch} (ref: ${ref})`);
     return branch;
   } catch (error) {
-    // Not a git repo or git command failed
-    logger.debug('[GitUtils] Failed to detect git branch:', error);
+    const exitCode = (error as { code?: unknown }).code;
+    if (exitCode === 1) {
+      logger.debug(
+        `[GitUtils] Detached HEAD in ${cwd} (git symbolic-ref -q HEAD exited 1); reporting no branch`
+      );
+    } else {
+      logger.debug(
+        `[GitUtils] Failed to detect git branch in ${cwd} (git symbolic-ref -q HEAD, exit code: ${String(exitCode)}):`,
+        error
+      );
+    }
     return undefined;
+  }
+}
+
+/**
+ * Full SHA of the current HEAD commit.
+ * Returns undefined when not in a git repo or when HEAD is unborn (no commits yet).
+ */
+export async function detectGitHeadSha(cwd: string): Promise<string | undefined> {
+  try {
+    const result = await exec('git', ['rev-parse', 'HEAD'], { cwd, timeout: 5000 });
+    const sha = result.stdout.trim();
+    if (result.code !== 0 || !sha) {
+      logger.debug('[GitUtils] No HEAD commit detected');
+      return undefined;
+    }
+    return sha;
+  } catch (error) {
+    logger.debug('[GitUtils] Failed to detect git HEAD sha:', error);
+    return undefined;
+  }
+}
+
+/** One commit's metadata — sha/time/counts only, never diff content. */
+export interface GitCommitSummary {
+  sha: string;
+  time: string;
+  files: number;
+  added: number;
+  removed: number;
+}
+
+const GIT_LOG_RECORD_SEP = '\x1e';
+const GIT_LOG_FIELD_SEP = '\x1f';
+
+/** Parses `git log --numstat --format=<RS>%H<FS>%at` output into per-commit metadata. */
+function parseGitLogNumstat(stdout: string): GitCommitSummary[] {
+  const commits: GitCommitSummary[] = [];
+  for (const block of stdout.split(GIT_LOG_RECORD_SEP)) {
+    if (!block.trim()) continue;
+    const lines = block.split('\n').filter((line) => line.length > 0);
+    const [header, ...numstatLines] = lines;
+    const [sha, authorTime] = (header ?? '').split(GIT_LOG_FIELD_SEP);
+    if (!sha) continue;
+
+    const authorTimeSeconds = Number(authorTime);
+    const authorDate = new Date(authorTimeSeconds * 1000);
+    const time =
+      authorTime && Number.isFinite(authorTimeSeconds) && Number.isFinite(authorDate.getTime())
+        ? authorDate.toISOString()
+        : '';
+
+    let added = 0;
+    let removed = 0;
+    let files = 0;
+    for (const line of numstatLines) {
+      const [addedRaw, removedRaw] = line.split('\t');
+      if (addedRaw === undefined) continue;
+      files += 1;
+      const addedCount = Number.parseInt(addedRaw, 10);
+      const removedCount = Number.parseInt(removedRaw, 10);
+      if (Number.isFinite(addedCount)) added += addedCount;
+      if (Number.isFinite(removedCount)) removed += removedCount;
+    }
+    commits.push({ sha, time, files, added, removed });
+  }
+  return commits;
+}
+
+/**
+ * Commits whose author email exactly matches `authorEmail` since `sinceIso` on the current branch,
+ * metadata only (sha, timestamp, file count, lines +/-) — never file paths or diff content.
+ * Returns `[]` when not in a git repo, on any git failure, or when either input is empty.
+ */
+export async function detectGitCommitsByAuthor(
+  cwd: string,
+  sinceIso: string,
+  authorEmail: string
+): Promise<GitCommitSummary[]> {
+  if (!cwd || !sinceIso || !authorEmail) {
+    return [];
+  }
+  try {
+    const result = await exec(
+      'git',
+      [
+        'log',
+        `--since=${sinceIso}`,
+        '--fixed-strings',
+        `--author=<${authorEmail}>`,
+        '--numstat',
+        `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%at`,
+      ],
+      { cwd, timeout: 10000 }
+    );
+    if (result.code !== 0) {
+      return [];
+    }
+    return parseGitLogNumstat(result.stdout);
+  } catch (error) {
+    logger.debug('[GitUtils] Failed to detect git commits by author:', error);
+    return [];
   }
 }
 

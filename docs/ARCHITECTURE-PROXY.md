@@ -629,9 +629,10 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 - `X-CodeMie-Integration`: Integration ID (only when provider requires integration via `requiresIntegration` flag)
 - `X-CodeMie-CLI-Model`: Model name from config (if configured) — this fires for `vscode-byok` too whenever the active profile has a `model` set, since the daemon receives `--model` for every target (see §6.13)
 - `X-CodeMie-CLI-Timeout`: Timeout value from config (if configured)
-- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`
-- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`
-- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13)
+- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13); sent raw, omitted if not valid Latin-1 (see Encoding)
+- Encoding: `X-CodeMie-Repository` and `X-CodeMie-Branch` values are percent-encoded per `/`-separated segment with `encodeURIComponent` (`encodeAttributionHeader` in `src/utils/header-value.ts`), but only for a segment containing a character outside printable ASCII (`0x20–0x7E`). Other segments are sent unchanged, so `org/repo`, `my repo` and `fix/100%` stay byte-identical, `/` stays readable, and non-Latin-1 characters cannot make Node reject the header. Lone surrogates become U+FFFD, and an already-encoded non-ASCII value is encoded again (not idempotent). `X-CodeMie-Project` is sent raw via `rawProjectHeader` and omitted if the value is not valid Latin-1 (`0x20–0x7E`, `0xA0–0xFF`), so the backend falls back to the user's default project. Consumers decode Repository and Branch only; Project is used as sent. Invalid-header errors naming an `X-CodeMie-*` header map to `INVALID_HEADER_VALUE` (500) rather than an authentication error.
 - `x-litellm-session-id`: session ID, injected only for `codemie-codex`/`codemie-copilot` client types (`header-injection.plugin.ts:41-43`) — not a `X-CodeMie-*` header, easy to miss when scanning for the CodeMie prefix
 
 **Architecture**:
@@ -650,7 +651,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 **Log Destinations**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
 
-**Log Level**: DEBUG (file only, console when CODEMIE_DEBUG=1)
+**Log Level**: DEBUG (file only, stderr when CODEMIE_DEBUG=1)
 
 **Lifecycle Hooks**:
 
@@ -679,7 +680,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 - ✅ **Unified Orchestration**: Sessions are discovered and read once, then handed to multiple pluggable processors (metrics, conversations) — zero duplicated I/O
 - ✅ **Agent-Agnostic**: Adapters support Claude, Gemini, and others behind a common interface
-- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session)
+- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session); other sessions' stranded / undelivered records are delivered by the wrapper's start pass through this launch's own send path, same CodeMie host only
 - ✅ **SSO-Only Operation**: Only runs when credentials are SSO cookies (guards against JWT-only sessions)
 - ✅ **Opt-Out via createInterceptor()**: Throws `ConfigurationError` (not a separate flag) when session ID, SSO credentials, client type, or sync-enabled config is missing — the plugin simply isn't registered for that session
 
@@ -839,8 +840,8 @@ This path is intentionally separate from the hook-based `codemie-claude` flow. C
 
 **Scalability**:
 
-- Session-scoped: Only syncs current session
-- No cross-session interference
+- Session-scoped: the timer syncs only the current session
+- Other sessions' stranded / undelivered records go through the same send path from the wrapper's start pass (≤ 5 per start, same host only), never through the timer
 - Timer-based: Predictable resource usage
 
 #### 6.12.9 Monitoring
@@ -924,6 +925,8 @@ The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook event
 **Filtering is hook-side only.** The daemon has no allowlist logic because OTLP carries no `cwd`. The Claude Code OTLP plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`) reads the allowlist on every hook event. For an untracked project it returns early: no daemon start (`ensureOtlpProxy` is not called), no SSO check, no forward to the spool.
 
 **OTEL-only invariant.** The OTel environment is global, so untracked sessions still export OTEL data to the daemon, but they never receive hooks data. The completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data; an OTEL-only session gets `wait` and, once `waitTicks >= OTLP_SEND_MAX_ATTEMPTS` (limit resolved by `hooksOnlyWaitTicks()` in `otlp-spool/spool-config.ts`), `skip`. On `skip` the tick processor advances the OTEL cursors to EOF without sending. No code path may send OTEL-only data without first adding daemon-side project filtering.
+
+**Who stamps what.** The hook process (`OtlpAgentAdapter`) stamps every event field: type, truncation, common, agent and context fields (identity, project, CLI version), `schema_version`, `event_id`, `timestamp`. The daemon spool (`otlp.plugin.ts`) only stores the line. The forwarder (`otlp-spool/forwarder.ts`) only forwards it: it owns `baseUrl` and the credentials, and reads nothing from an event except `type` to detect a session end. See [ARCHITECTURE-OTLP-PLUGIN.md](ARCHITECTURE-OTLP-PLUGIN.md). Restart the daemon after upgrading.
 
 **Deletion timeline for untracked data**
 
@@ -1164,6 +1167,30 @@ src/providers/plugins/sso/session/
 
 ```
 1. User exits agent (Ctrl+C or normal exit), or sends SIGTERM/SIGINT to the daemon
+
+   CLI wrapper (POSIX): SIGINT / SIGTERM / SIGHUP
+   ├─ Forwarded to the agent process alone first (not its helpers: the agent's
+   │  SessionEnd hook is one of them); the proxy keeps running. The agent's
+   │  descendants are remembered; if the agent ends by the signal (a launcher such
+   │  as copilot's npm loader), the tops of the subtrees still alive get the signal
+   │  (not what runs under them), are waited for up to 10 s, then their trees are
+   │  killed as they are then
+   ├─ Agent exits (no exit within 10 s of the first SIGTERM / SIGHUP / SIGINT
+   │  within 2 s of the previous one → the agent's process tree is killed and the
+   │  exit path below finalizes, then the wrapper exits 128 + signal; any other
+   │  SIGINT is forwarded and arms nothing, since the agent may only interrupt its
+   │  turn)
+   ├─ 2 s grace period for the agent's final API calls
+   ├─ onSessionEnd
+   └─ Cleanup below (proxy.stop())
+   EIO / EPIPE on the wrapper's stdout / stderr (closed terminal or pipe) are
+   ignored from run() until the wrapper process ends.
+   Windows: SIGINT / SIGTERM / SIGHUP (console close) terminate the agent
+   (any signal is TerminateProcess there; no proxy stop first); the exit path
+   above then finalizes (grace period, onSessionEnd, proxy.stop()); the handlers
+   are one-shot, a second signal takes Node's default action; after a console
+   close Windows ends the wrapper a few seconds later, so that finalization is
+   best-effort.
 
 2. Cleanup
    ├─ Stop the ProxyWatcher (daemon mode only)

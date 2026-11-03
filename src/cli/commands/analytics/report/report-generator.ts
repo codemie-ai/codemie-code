@@ -74,8 +74,8 @@ export function getDefaultReportPath(cwd: string, userEmail?: string): string {
 export function getDefaultReportJsonPath(cwd: string, userEmail?: string): string {
   const date = new Date().toISOString().split('T')[0];
   const slug = userEmail ? `${emailSlug(userEmail)}-` : '';
-  // `.report.json` (not `.json`) so the default never collides with `--export json`,
-  // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
+  // Where `--export json` (and `both`) writes the priced report payload — the same data the
+  // HTML report renders, costs included.
   return join(cwd, `codemie-analytics-${slug}${date}.report.json`);
 }
 

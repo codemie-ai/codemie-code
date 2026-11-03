@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
+import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 import type { ModelPrice } from '../../../utils/pricing.js';
 import { lookupPrice } from '../../../utils/pricing.js';
@@ -228,7 +228,8 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id.startsWith('claude-sonnet-4-6') ||
     id.startsWith('claude-sonnet-5') ||
     /^claude-opus-4-[6-8]/.test(id) ||
-    id.startsWith('claude-opus-5')
+    id.startsWith('claude-opus-5') ||
+    id.startsWith('claude-haiku-5')
   ) {
     entry.compat = { forceAdaptiveThinking: true };
   }
@@ -261,15 +262,14 @@ async function fetchCodeMieModels(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
     return fetchCodeMieLlmModels(baseUrl, jwtToken);
   }
 
-  const codeMieUrl = env.CODEMIE_URL;
-  if (codeMieUrl) {
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(codeMieUrl);
-    if (!credentials) {
-      throw new Error(`SSO credentials not found for ${codeMieUrl}. Run: codemie profile login --url ${codeMieUrl}`);
+  const platformUrl = getPlatformUrlFromEnv(env);
+  if (platformUrl) {
+    const found = await getStoredPlatformCredentialsFromEnv(env);
+    if (!found) {
+      throw new Error(`SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`);
     }
     logger.debug('[pi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(credentials.apiUrl, credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
   }
 
   throw new Error('No CodeMie authentication available. Run codemie setup or set CODEMIE_JWT_TOKEN.');

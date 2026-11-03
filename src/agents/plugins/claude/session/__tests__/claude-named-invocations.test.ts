@@ -4,7 +4,7 @@
  * session adapter's parse path (native/untracked sessions).
  */
 import { describe, it, expect } from 'vitest';
-import { extractNamedInvocations } from '../claude-named-invocations.js';
+import { extractNamedInvocations, extractOrderedNamedInvocations } from '../claude-named-invocations.js';
 
 function toolUse(name: string, input: Record<string, unknown>) {
   return { message: { role: 'assistant', content: [{ type: 'tool_use', name, input }] } };
@@ -111,5 +111,41 @@ describe('extractNamedInvocations', () => {
     expect(out.skillInvocations).toEqual({});
     expect(out.agentInvocations).toEqual({});
     expect(out.commandInvocations).toEqual({});
+  });
+});
+
+describe('extractOrderedNamedInvocations', () => {
+  it('keeps slash commands in call order with repeats, and strips the slash', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      userText('a prompt in between'),
+      userText(commandWrapper('commit')),
+      userStringContent(commandWrapper('plan')),
+    ]);
+    expect(out.commandsInOrder).toEqual(['plan', 'commit', 'plan']);
+    expect(out.commandInvocations).toEqual({ plan: 2, commit: 1 });
+  });
+
+  it('returns an empty list when there are no genuine commands', () => {
+    const out = extractOrderedNamedInvocations([
+      userText('docs mention <command-name>/plan</command-name> only'),
+      userText('just a plain prompt'),
+    ]);
+    expect(out.commandsInOrder).toEqual([]);
+  });
+
+  it('returns the same counts as extractNamedInvocations', () => {
+    const messages = [
+      toolUse('Skill', { skill: 'codemie:msgraph' }),
+      toolUse('Agent', { subagent_type: 'Explore' }),
+      userStringContent(commandWrapper('init')),
+    ];
+    const { commandsInOrder: _ignored, ...ordered } = extractOrderedNamedInvocations(messages);
+    expect(ordered).toEqual(extractNamedInvocations(messages));
+  });
+
+  it('keeps extractNamedInvocations free of the ordered list', () => {
+    const out = extractNamedInvocations([userStringContent(commandWrapper('plan'))]);
+    expect(Object.keys(out).sort()).toEqual(['agentInvocations', 'commandInvocations', 'skillInvocations']);
   });
 });

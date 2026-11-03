@@ -11,6 +11,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../../../env/types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
+import type { CredentialRefresher } from './credential-refresh.js';
 
 /**
  * Plugin metadata and lifecycle
@@ -49,6 +50,21 @@ export interface PluginContext {
   logger: typeof logger;
   credentials?: SSOCredentials | JWTCredentials;
   syncCredentials?: SSOCredentials | JWTCredentials;
+  /**
+   * Shared throttled re-reader for `credentials` (the main auth method's snapshot — SSO or
+   * JWT; JWT `refresh()` is a no-op), built once in `sso.proxy.ts`. Used by the auth-injection
+   * interceptor (SSO only) and the Claude/Codex model-catalogue fetch (either type). Undefined
+   * when there are no credentials at all.
+   */
+  credentialRefresher?: CredentialRefresher<SSOCredentials | JWTCredentials>;
+  /**
+   * Shared throttled re-reader for whichever of `syncCredentials`/`credentials` actually has SSO
+   * cookies, built once in `sso.proxy.ts` and used by session sync. Kept separate from
+   * `credentialRefresher` because the two can wrap different identities (e.g. JWT main auth +
+   * an independently-authenticated SSO sync endpoint) — see `credential-refresh.ts`. Undefined
+   * when neither source has cookies.
+   */
+  syncCredentialRefresher?: CredentialRefresher<SSOCredentials>;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }
@@ -72,8 +88,8 @@ export interface ProxyInterceptor {
   /** Called when proxy starts (for initialization) */
   onProxyStart?(): Promise<void>;
 
-  /** Called when proxy stops (for cleanup) */
-  onProxyStop?(): Promise<void>;
+  /** Called when proxy stops (for cleanup); network work stops at `bounds.deadlineMs` when given */
+  onProxyStop?(bounds?: { deadlineMs?: number }): Promise<void>;
 
   /** Called before forwarding request */
   onRequest?(context: ProxyContext): Promise<void>;

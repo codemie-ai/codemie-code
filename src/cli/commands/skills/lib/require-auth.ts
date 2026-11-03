@@ -11,6 +11,7 @@
 import chalk from 'chalk';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
+import { getPlatformUrl, getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
 
 const NOT_AUTHENTICATED_MESSAGE =
   'CodeMie SSO authentication required. Run "codemie setup" or "codemie profile login" first.';
@@ -24,14 +25,11 @@ const NOT_AUTHENTICATED_MESSAGE =
 export async function requireAuthenticatedSession(): Promise<boolean> {
   try {
     const config = await ConfigLoader.load();
-    const lookupUrl = config.codeMieUrl || config.baseUrl;
-    if (!lookupUrl) {
+    if (!getPlatformUrl(config)) {
       failAuth('No CodeMie URL configured. Run "codemie setup" first.');
     }
 
-    const { CodeMieSSO } = await import('@/providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(lookupUrl);
+    const credentials = (await getStoredPlatformCredentials(config))?.credentials;
 
     if (!credentials?.cookies || Object.keys(credentials.cookies).length === 0) {
       failAuth(NOT_AUTHENTICATED_MESSAGE);

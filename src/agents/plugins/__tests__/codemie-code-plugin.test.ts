@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'path';
 
 // Mock BaseAgentAdapter to avoid dependency tree
 vi.mock('../../core/BaseAgentAdapter.js', () => ({
@@ -37,9 +38,10 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 // Mock installGlobal / uninstallGlobal
-vi.mock('../../../utils/processes.js', () => ({
+vi.mock('../../../utils/processes.js', async (importOriginal) => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+  wrapperOwnerFromEnv: (await importOriginal<typeof import('../../../utils/processes.js')>()).wrapperOwnerFromEnv,
 }));
 
 // Mock processEvent from hook.js
@@ -124,6 +126,7 @@ const { installGlobal, uninstallGlobal } = await import('../../../utils/processe
 const { logger } = await import('../../../utils/logger.js');
 const { OpenCodeSessionAdapter } = await import('../opencode/opencode.session.js');
 const { CodeMieCodePlugin, CodeMieCodePluginMetadata, BUILTIN_AGENT_NAME } = await import('../codemie-code.plugin.js');
+const { fetchDynamicModelConfigs } = await import('../opencode/opencode-dynamic-models.js');
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockResolve = vi.mocked(resolveCodemieOpenCodeBinary);
@@ -150,6 +153,22 @@ describe('CodeMieCodePluginMetadata', () => {
   it('has onSessionEnd defined', () => {
     expect(CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBeDefined();
     expect(typeof CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBe('function');
+  });
+});
+
+describe('CodeMieCodePluginMetadata beforeRun model catalogue', () => {
+  it('passes the agent env through to fetchDynamicModelConfigs', async () => {
+    vi.mocked(fetchDynamicModelConfigs).mockClear();
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_BASE_URL: 'http://localhost:3000',
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' }),
+    };
+
+    // Later steps of beforeRun need a fuller environment than this unit test builds;
+    // only the catalogue call matters here.
+    await CodeMieCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never).catch(() => undefined);
+
+    expect(fetchDynamicModelConfigs).toHaveBeenCalledWith('http://localhost:3000', env, expect.any(String));
   });
 });
 
@@ -260,6 +279,31 @@ describe('CodeMieCodePlugin', () => {
   });
 });
 
+describe('CodeMieCodePlugin onSessionStart', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hands processEvent the wrapper owner and the sync URL from the env, so the record stores it and the hook can send', async () => {
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-owner', {
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com/code-assistant-api',
+    } as NodeJS.ProcessEnv);
+
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'SessionStart' }),
+      expect.objectContaining({
+        ownerPid: 4242,
+        ownerStartedAt: 1_790_000_000_000,
+        syncApiUrl: 'https://sync.example.com/code-assistant-api',
+      }),
+    );
+  });
+});
+
 describe('CodeMieCodePlugin onSessionEnd', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -285,6 +329,18 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
         transcript_path: '/path/to/session',
       }),
       expect.objectContaining({ clientType: 'codemie-code' })
+    );
+  });
+
+  it('discovers the session in codemie-code private OpenCode storage, not the user own', async () => {
+    mockDiscoverSessionsCC.mockResolvedValue([]);
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, { CODEMIE_SESSION_ID: 'test-456' } as NodeJS.ProcessEnv);
+
+    expect(mockDiscoverSessionsCC).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAgeDays: 1 }),
+      join('/mock/.codemie', 'opencode-storage', 'opencode', 'storage')
     );
   });
 

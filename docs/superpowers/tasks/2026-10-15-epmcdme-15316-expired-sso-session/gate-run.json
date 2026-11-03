@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "branch": "epmcdme-15316-expired-sso-session",
+  "head": "61e04c9ddaf709c8f954f6b0ea96dafaaa974414",
+  "runner": "npm",
+  "started_at": "2026-10-15T18:34:24Z",
+  "completed_at": "2026-10-15T18:39:02Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3241,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17495,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Also enforced by .husky/pre-commit via lint-staged (eslint --max-warnings=0 on staged *.ts); covered here with the full source tree."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7508,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also chained in .husky/pre-commit (npm run typecheck) and npm run check:pre-commit; same command, not re-run separately."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13770,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 56579,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Run with every ambient CODEMIE_* env var unset first (per dispatch instructions), since this agent's own shell runs through codemie-claude and leaks CODEMIE_PROFILE_CONFIG/CODEMIE_URL/CODEMIE_MODEL/etc. into mocks that assume a clean env. With a clean env: 354/354 files passed, 5254/5254 tests passed (2 skipped)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 43997,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Run with every ambient CODEMIE_* env var unset first, same reason as the unit gate. With a clean env: 37/38 files passed (1 skipped), 278/288 tests passed (10 skipped)."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1591,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script printed 'No staged changes to scan' (it scans the staged git diff only, per scripts/validate-secrets.js). Docker daemon is running (verified via `docker info`, exit 0) so the gate is capable of executing; nothing was staged in this working tree at run time. To enable: stage the intended changes (git add), then re-run. CI's gitleaks-action scans the full PR diff unconditionally regardless of local staging, so this check is still owed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1265,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Mirrors CI's validate-commits job (commitlint --from <base> --to HEAD) and .husky/commit-msg (commitlint --edit); same config, no mismatch. CI also validates the PR title via commitlint - not run here (N/A, requires a live PR number)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1529,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: 'lint-staged could not find any staged files.' This hook step also runs vitest related --run on staged *.ts files (the changed-file-aware 'affected tests' gate) - not exercised because nothing is staged. To enable: stage the intended changes (git add), then re-run."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run check:pre-commit",
+      "exit_code": null,
+      "notes": "Composite of the typecheck and lint gates above (npm run typecheck && npm run lint); not re-run separately to avoid duplicating identical work already executed and recorded under the typecheck/lint gate entries."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Composite of license-check, lint, build, unit, and integration gates above (same exact commands in the same order); not re-run separately to avoid duplicating already-executed work, all of which PASS in this run."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view <PR_NUMBER> --json title -q .title | npx commitlint",
+      "exit_code": null,
+      "notes": "CI-only check (.github/workflows/ci.yml validate-commits job); requires a live open PR to query via gh pr view. No PR exists yet for this branch - cannot be run locally."
+    }
+  ],
+  "failures": {}
+}

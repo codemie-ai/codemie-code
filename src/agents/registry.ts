@@ -1,6 +1,8 @@
 import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
 import { ClaudeAcpPlugin } from './plugins/claude/claude-acp.plugin.js';
 import { ClaudeCodeOtlpPlugin } from './plugins/claude-code-otlp/claude-code-otlp.plugin.js';
+import { CopilotChatOtlpPlugin } from './plugins/copilot-chat-otlp/copilot-chat-otlp.plugin.js';
+import { CopilotCliOtlpPlugin } from './plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { GeminiAcpPlugin } from './plugins/gemini/gemini-acp.plugin.js';
@@ -13,7 +15,8 @@ import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
-import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter, OtlpAgentAdapter } from './core/types.js';
+import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter } from './core/types.js';
+import type { OtlpAgentAdapter } from './core/OtlpAgentAdapter.js';
 
 // Re-export for backwards compatibility
 export { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
@@ -52,6 +55,8 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new OpenWikiPlugin());
     AgentRegistry.registerPlugin(new CopilotCliPlugin());
     AgentRegistry.registerPlugin(new ClaudeCodeOtlpPlugin());
+    AgentRegistry.registerPlugin(new CopilotChatOtlpPlugin());
+    AgentRegistry.registerPlugin(new CopilotCliOtlpPlugin());
 
     AgentRegistry.initialized = true;
   }
@@ -79,7 +84,7 @@ export class AgentRegistry {
     return AgentRegistry.adapters.get(name);
   }
 
-  static getAnalyticsAgent(name: string): OtlpAgentAdapter |  undefined {
+  static getAnalyticsAgent(name: string): OtlpAgentAdapter | undefined {
     AgentRegistry.initialize();
     return AgentRegistry.otlpAdapters.get(name);
   }

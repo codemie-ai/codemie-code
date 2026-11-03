@@ -1,0 +1,2 @@
+{"task_id":"1","status":"done","commit":"dc88e6f7","test_command":"npx vitest run src/agents/core/__tests__/OtlpAgentAdapter.test.ts src/agents/plugins/claude-code-otlp"}
+{"task_id":"2","status":"done","commit":"dc88e6f7","test_command":"npx vitest run src/agents/plugins/claude-code-otlp"}

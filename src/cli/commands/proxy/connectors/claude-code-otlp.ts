@@ -6,6 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import type { HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -15,6 +16,7 @@ import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
+  type AllowlistScope,
   CODEMIE_ANALYTICS_PROJECT_FILTER_ENV,
   addProjectPath,
   canonicalizePath,
@@ -25,7 +27,7 @@ import {
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -39,12 +41,11 @@ interface WriteClaudeCodeOtlpResult {
 }
 
 interface RemoveClaudeCodeOtlpOptions {
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface RemoveClaudeCodeOtlpResult {
   removed: boolean;
-  usedBackup: boolean;
   path: string | null;
   /** 'entry-removed': only this project's allowlist entry was dropped; 'full': all codemie wiring removed. */
   mode: 'entry-removed' | 'full' | 'noop';
@@ -57,6 +58,8 @@ interface RemoveClaudeCodeOtlpResult {
 interface HookEntry {
   type: string;
   command: string;
+  async?: boolean;
+  timeout?: number;
   [key: string]: unknown;
 }
 
@@ -86,23 +89,185 @@ export const CODEMIE_ENV_KEYS = [
   'OTEL_LOG_TOOL_DETAILS',
 ] as const;
 
+// Every CODEMIE_ENV_KEYS member except the two daemon-derived ones (their
+// value embeds the live proxy URL/gateway key, so it can't be a fixed literal).
+type FixedCodemieEnvKey = Exclude<
+  (typeof CODEMIE_ENV_KEYS)[number],
+  'OTEL_EXPORTER_OTLP_ENDPOINT' | 'OTEL_EXPORTER_OTLP_HEADERS'
+>;
+
+// Fixed values for every non-daemon-derived key — lets disconnect recognize
+// "codemie's own value" without a live daemon.
+//
+// A full Record, not Partial + `as` cast: a future key missing its value
+// here is now a compile error, not a silent runtime gap.
+const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
+  CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+  CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+  OTEL_LOGS_EXPORTER: 'otlp',
+  OTEL_METRICS_EXPORTER: 'otlp',
+  OTEL_TRACES_EXPORTER: 'otlp',
+  OTEL_LOG_TOOL_DETAILS: '1',
+};
+
+/**
+ * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
+ * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
+ * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
+ * to today's default with no `--force`, and a disconnect still clean it up.
+ */
+const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
+  OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
+};
+
+function isHistoricalCodemieValue(key: string, value: string): boolean {
+  return (
+    (CODEMIE_ENV_HISTORICAL_VALUES as Partial<Record<string, readonly string[]>>)[key]?.includes(value) ?? false
+  );
+}
+
+/**
+ * True if `value` is (still) codemie's own value for `key`, without a live
+ * daemon — matched by fixed suffix/prefix for the two daemon-derived keys,
+ * by fixed literal for the rest. `value` is `unknown` since settings are
+ * user-edited JSON.
+ *
+ * ENDPOINT and HEADERS each require the OTHER to also look like codemie's
+ * own (via `env`) — neither half alone is distinctive enough. `env` must
+ * be a pre-mutation snapshot or the pairing check breaks mid-pass.
+ */
+function isCodemieOwnedEnvValue(
+  key: (typeof CODEMIE_ENV_KEYS)[number],
+  value: unknown,
+  env: Record<string, unknown>
+): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  if (key === 'OTEL_EXPORTER_OTLP_ENDPOINT') {
+    if (!value.endsWith('/v1/analytics/otlp')) {
+      return false;
+    }
+    const headers = env.OTEL_EXPORTER_OTLP_HEADERS;
+    return typeof headers === 'string' && headers.startsWith('Authorization=Bearer ');
+  }
+  if (key === 'OTEL_EXPORTER_OTLP_HEADERS') {
+    if (!value.startsWith('Authorization=Bearer ')) {
+      return false;
+    }
+    const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    return typeof endpoint === 'string' && endpoint.endsWith('/v1/analytics/otlp');
+  }
+  return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
+}
+
+/**
+ * Puts a value a `--force` connect once displaced into `backupEnv` back
+ * into `baseEnv`, for any key `baseEnv` doesn't hold — only while `liveEnv`
+ * still carries codemie's OWN value right now (AC3: a user edit since then
+ * leaves `baseEnv` untouched).
+ *
+ * Shared by connect-side refresh and disconnect-side restore. Returns
+ * `undefined` (never `{}`) when empty, so callers can `delete` the key.
+ */
+function withDisplacedEnvValues(
+  baseEnv: Record<string, string> | undefined,
+  backupEnv: Record<string, string> | undefined,
+  liveEnv: Record<string, string>
+): Record<string, string> | undefined {
+  if (!backupEnv) {
+    return baseEnv;
+  }
+  const merged: Record<string, string> = { ...(baseEnv ?? {}) };
+  for (const key of CODEMIE_ENV_KEYS) {
+    if (merged[key] !== undefined) {
+      continue;
+    }
+    const backupValue = backupEnv[key];
+    const liveValue = liveEnv[key];
+    if (backupValue !== undefined && liveValue !== undefined && isCodemieOwnedEnvValue(key, liveValue, liveEnv)) {
+      merged[key] = backupValue;
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/**
+ * Hook-events counterpart to `withDisplacedEnvValues` — same contract, but
+ * a hook event can only be displaced by DROPPING a malformed (non-array)
+ * value outright (a well-formed array is always merged into, never
+ * replaced). Restores it only while `liveHooks` still holds codemie's own
+ * command right now (same AC3 guarantee).
+ */
+function withDisplacedHooks(
+  baseHooks: Record<string, unknown> | undefined,
+  backupHooks: Record<string, unknown> | undefined,
+  liveHooks: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (!backupHooks) {
+    return baseHooks;
+  }
+  const merged: Record<string, unknown> = { ...(baseHooks ?? {}) };
+  for (const [eventName, backupValue] of Object.entries(backupHooks)) {
+    if (merged[eventName] !== undefined || Array.isArray(backupValue)) {
+      continue;
+    }
+    const liveValue = liveHooks[eventName];
+    if (Array.isArray(liveValue) && liveValue.some(groupContainsCodemieCommand)) {
+      merged[eventName] = backupValue;
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 export const HOOK_EVENTS = [
   'SessionStart',
   'Stop',
   'StopFailure',
   'SessionEnd',
   'UserPromptSubmit',
+  'UserPromptExpansion',
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
   'SubagentStart',
   'SubagentStop',
   'PreCompact',
+  'PostCompact',
   'Notification',
-] as const;
+  'PostModelSwitch',
+  'ConfigChange',
+] as const satisfies readonly HookEvent[];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
+export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
+
+/**
+ * `PostCompact` alone gets `async: true` plus a longer `timeout`: `openPostCompactPass`
+ * (`transcript/orchestrator.ts`) waits up to a minute, lock-free, for a still-landing
+ * `compact_boundary` line (`POST_COMPACT_WAIT_BUDGET_MS`). `async` keeps Claude Code — and the
+ * user's own turn — from ever waiting on that; the larger `timeout` here is what keeps Claude
+ * Code itself from killing the subprocess before that wait, plus the lock-held merge/send/commit
+ * afterward, can finish. Every other event is synchronous and keeps the default
+ * `CODEMIE_HOOK_TIMEOUT_SECONDS`, except `UserPromptSubmit` (see below).
+ */
+export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
+
+/**
+ * `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for its decision, so it is
+ * never async, and it may hold the prompt for up to `SSO_LOGIN_WAIT_MS` (150s) while a browser
+ * sign-in completes. This timeout must stay above that wait: the hook must never reach it.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
+
+/**
+ * Claude Code shows exit-0 hook stderr only in verbose mode, so the "continue automatically" notice
+ * goes in the spinner text it displays while the hook runs.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
+  'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -140,13 +305,9 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
 }
 
 /**
- * True if a single hook entry (`{ type: 'command', command: '...' }`) is one
- * that codemie itself would write, identified by the command marker.
- *
- * This is intentionally the finest granularity we ever check at for
- * destructive operations (add/replace/remove) — never classify a whole hook
- * GROUP as "ours" for that purpose, since a group's `hooks[]` array may mix
- * our command with a user's own command(s).
+ * True if a single hook entry is one codemie itself would write (matched
+ * by the command marker). Deliberately the finest granularity checked for
+ * destructive ops — a hook GROUP may mix our command with the user's own.
  */
 function isHookEntry(h: unknown): h is HookEntry {
   return typeof h === 'object' && h !== null && typeof (h as HookEntry).command === 'string';
@@ -171,14 +332,10 @@ function groupContainsCodemieCommand(group: unknown): boolean {
 }
 
 /**
- * Given an existing array of hook groups for one event, returns a new array
- * with our own command(s) stripped out at the COMMAND level:
- *  - a group that still has foreign command(s) left is kept, with our
- *    command(s) removed and everything else (matcher, extra fields) intact;
- *  - a group that contained ONLY our command(s) is dropped entirely;
- *  - malformed/unrecognized entries are preserved as-is.
- *
- * Shared by both the connect (write) and disconnect (remove) paths.
+ * Strips our own command(s) out of each hook group for one event: a group
+ * left with foreign commands keeps them (plus matcher/extra fields); a
+ * group that was ours only is dropped; malformed entries pass through.
+ * Shared by the connect and disconnect paths.
  */
 function stripCodemieCommandsFromGroups(existingGroups: unknown[]): unknown[] {
   const result: unknown[] = [];
@@ -193,6 +350,119 @@ function stripCodemieCommandsFromGroups(existingGroups: unknown[]): unknown[] {
     }
   }
   return result;
+}
+
+interface StripCodemieManagedContentResult {
+  stripped: ClaudeSettings;
+  removedHookCommands: boolean;
+  removedEnvKeys: boolean;
+}
+
+/**
+ * Returns `existing` with every codemie-owned hook command and env key
+ * removed, leaving only what the user owns. Rebuilds a missing backup
+ * without re-copying our own writes, and computes what disconnect writes back.
+ *
+ * No live-daemon exact-match fallback for env values: the daemon's default
+ * gateway key is a fixed, non-secret string, so an exact match alone could
+ * misclassify a collector reusing it. The structural pairing check in
+ * isCodemieOwnedEnvValue is rotation-invariant and already covers every
+ * case codemie itself can produce.
+ */
+function stripCodemieManagedContent(existing: ClaudeSettings): StripCodemieManagedContentResult {
+  let removedHookCommands = false;
+  const hooks: Record<string, unknown> = {};
+  for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
+    if (!Array.isArray(entries)) {
+      hooks[eventName] = entries;
+      continue;
+    }
+    if (entries.some(groupContainsCodemieCommand)) {
+      removedHookCommands = true;
+    }
+    const remainingGroups = stripCodemieCommandsFromGroups(entries);
+    if (remainingGroups.length > 0) {
+      hooks[eventName] = remainingGroups;
+    }
+  }
+
+  const env: Record<string, string> = { ...(existing.env ?? {}) };
+  // A snapshot taken BEFORE the loop below starts deleting keys from `env`.
+  // isCodemieOwnedEnvValue's HEADERS check reads its sibling ENDPOINT key —
+  // if we instead read the mutating `env`, ENDPOINT (checked earlier in
+  // CODEMIE_ENV_KEYS order) could already be deleted by the time HEADERS is
+  // checked, breaking the pairing check depending on iteration order.
+  const originalEnv = existing.env ?? {};
+  let removedEnvKeys = false;
+  // Only strip a CODEMIE_ENV_KEYS entry whose VALUE is actually ours — a
+  // foreign value that merely reuses one of our keys (e.g. the user's own
+  // OTEL_EXPORTER_OTLP_ENDPOINT, or a coincidentally-matching
+  // CLAUDE_CODE_ENABLE_TELEMETRY='1') must survive both the backup snapshot
+  // and the disconnect result. Key-presence alone is not ownership.
+  for (const key of CODEMIE_ENV_KEYS) {
+    if (key in env && isCodemieOwnedEnvValue(key, env[key], originalEnv)) {
+      removedEnvKeys = true;
+      delete env[key];
+    }
+  }
+  // No fixed literal to compare (value is a per-scope list), so gate on it
+  // being a well-formed allowlist instead of presence alone — same
+  // ownership-by-value principle as CODEMIE_ENV_KEYS above.
+  if (CODEMIE_ANALYTICS_PROJECT_FILTER_ENV in env && parseAllowlist(env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).kind !== 'invalid') {
+    removedEnvKeys = true;
+    delete env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV];
+  }
+
+  const stripped: ClaudeSettings = { ...existing };
+  if (Object.keys(hooks).length > 0) {
+    stripped.hooks = hooks;
+  } else {
+    delete stripped.hooks;
+  }
+  if (Object.keys(env).length > 0) {
+    stripped.env = env;
+  } else {
+    delete stripped.env;
+  }
+
+  return { stripped, removedHookCommands, removedEnvKeys };
+}
+
+/**
+ * Best-effort read of the backup file; never throws — missing, unreadable
+ * or corrupt just means nothing to restore from.
+ *
+ * No age/cycle check: a long-displaced value is as recoverable as a recent
+ * one; withDisplacedEnvValues/withDisplacedHooks already gate on the LIVE
+ * file, which is the real staleness guard.
+ *
+ * Sanitizes `env`: drops non-string values a hand-edited backup could hold.
+ */
+async function readBackupSettings(backupPath: string): Promise<ClaudeSettings | null> {
+  if (!existsSync(backupPath)) {
+    return null;
+  }
+  try {
+    const raw = await readFile(backupPath, 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    const settings = parsed as ClaudeSettings;
+    if (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) {
+      const sanitizedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(settings.env)) {
+        if (typeof value === 'string') {
+          sanitizedEnv[key] = value;
+        }
+      }
+      settings.env = sanitizedEnv;
+    }
+    return settings;
+  } catch {
+    // Corrupt/unreadable backup — nothing to restore, but the caller must still proceed.
+  }
+  return null;
 }
 
 export async function writeClaudeCodeOtlpConfig(
@@ -210,15 +480,9 @@ export async function writeClaudeCodeOtlpConfig(
   const existingHooksBlock = existing.hooks ?? {};
 
   const codemieEnv: Record<(typeof CODEMIE_ENV_KEYS)[number], string> = {
-    CLAUDE_CODE_ENABLE_TELEMETRY: '1',
-    CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
+    ...CODEMIE_ENV_FIXED_VALUES,
     OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/otlp`,
     OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${state.gatewayKey}`,
-    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
-    OTEL_LOGS_EXPORTER: 'otlp',
-    OTEL_METRICS_EXPORTER: 'otlp',
-    OTEL_TRACES_EXPORTER: 'otlp',
-    OTEL_LOG_TOOL_DETAILS: '1',
   };
 
   // --- Conflict detection: env values AND malformed (non-array) hooks entries ---
@@ -227,9 +491,15 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    if (currentVal !== undefined && currentVal !== desiredVal) {
-      envConflicts.push(key);
+    if (currentVal === undefined || currentVal === desiredVal) {
+      continue;
     }
+    // A prior CodeMie version's own value for this key — migrated to today's default by
+    // this same write below, not a conflict requiring --force.
+    if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    envConflicts.push(key);
   }
 
   // A non-array value under ANY existing hooks event key (not just the ones we
@@ -265,32 +535,98 @@ export async function writeClaudeCodeOtlpConfig(
     );
   }
 
+  const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (opts.scope === 'project') {
+  if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
 
-  // --- Backup on first modification (no existing codemie entry, no existing backup) ---
+  // --- Backup, keyed on whether CodeMie already owns part of the file (not on
+  // whether a backup file happens to exist) ---
   let backupPath: string | null = null;
   if (existsSync(settingsPath)) {
     const backupPathCandidate = settingsPath + SETTINGS_BACKUP_SUFFIX;
-    const backupCandidateExists = existsSync(backupPathCandidate);
     const alreadyManaged = Object.values(existingHooksBlock).some(
       (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+    ) || CODEMIE_ENV_KEYS.some((key) =>
+      // Structural ownership check (same as stripCodemieManagedContent), not an
+      // exact match against the live daemon state: the daemon's gateway key
+      // defaults to a fixed, non-secret string, so exact match alone could be
+      // fooled by an unrelated collector reusing it. Rotation-invariant too, so
+      // it loses nothing exact match would have caught.
+      isCodemieOwnedEnvValue(key, existingEnv[key], existingEnv)
     );
-    if (!alreadyManaged && !backupCandidateExists) {
+    if (alreadyManaged) {
+      // Already managed: always refresh (AC1 — a later connect still modifies
+      // the live file, so the backup must reflect THAT pre-connect state).
+      // Rebuilt by stripping, not copying as-is, so our own writes (including
+      // the bearer token) are never enshrined as the "original".
+      const { stripped } = stripCodemieManagedContent(existing);
+
+      // Carry forward a value a PRIOR --force connect displaced into the
+      // existing backup: it is no longer present in `existing` itself
+      // (codemie's own write replaced it), so stripping `existing` alone
+      // would silently drop it from the refreshed backup.
+      const oldBackup = await readBackupSettings(backupPathCandidate);
+      const mergedEnv = withDisplacedEnvValues(stripped.env, oldBackup?.env, existingEnv);
+      if (mergedEnv) {
+        stripped.env = mergedEnv;
+      } else {
+        delete stripped.env;
+      }
+
+      // Same carry-forward for a hook event a PRIOR --force connect displaced
+      // (dropped a malformed value) — otherwise it would be silently lost
+      // from the refreshed backup before an eventual disconnect ever restores it.
+      const mergedHooks = withDisplacedHooks(stripped.hooks, oldBackup?.hooks, existingHooksBlock);
+      if (mergedHooks) {
+        stripped.hooks = mergedHooks;
+      } else {
+        delete stripped.hooks;
+      }
+
+      // Zero foreign keys left (e.g. a fresh install) means nothing to
+      // protect — drop any stale backup from an earlier cycle instead.
+      if (Object.keys(stripped).length > 0) {
+        await writeAtomically(backupPathCandidate, JSON.stringify(stripped, null, 2) + '\n');
+        backupPath = backupPathCandidate;
+      } else if (existsSync(backupPathCandidate)) {
+        // Best-effort (see disconnect's backup unlink below): a failure here
+        // (e.g. EPERM) must not fail the whole connect — just leaves a stale
+        // backup for the next cycle to clean up.
+        try {
+          await unlink(backupPathCandidate);
+        } catch (error) {
+          logger.warn(
+            '[proxy] Could not remove the now-unneeded stale backup file',
+            ...sanitizeLogArgs({ backupPath: backupPathCandidate, error: error instanceof Error ? error.message : String(error) })
+          );
+        }
+      }
+    } else {
+      // Not yet managed: always (re)snapshot, overwriting any stale previous backup.
       await copyFile(settingsPath, backupPathCandidate);
-      backupPath = backupPathCandidate;
-    } else if (backupCandidateExists) {
       backupPath = backupPathCandidate;
     }
   }
 
   // --- Merge hooks block ---
-  const codemieEntry: HookGroup = {
-    matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+  // `PostCompact` alone is async with a longer timeout; `UserPromptSubmit` gets the SSO-wait timeout.
+  const buildCodemieEntry = (eventName: string): HookGroup => {
+    const isPostCompact = eventName === 'PostCompact';
+    const hook: HookEntry = {
+      type: 'command',
+      command: `codemie ${CODEMIE_COMMAND_MARKER}`,
+      timeout: isPostCompact
+        ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+        : eventName === 'UserPromptSubmit'
+          ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+          : CODEMIE_HOOK_TIMEOUT_SECONDS,
+      ...(isPostCompact ? { async: true } : {}),
+      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
+    };
+    return { matcher: '', hooks: [hook] };
   };
 
   // Phase 1: strip our own command from EVERY existing event key, not just the
@@ -315,7 +651,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), codemieEntry];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
 
   // --- Merge env block ---
@@ -358,7 +694,7 @@ export async function removeClaudeCodeOtlpConfig(
   const settingsPath = getClaudeSettingsPath();
 
   if (!existsSync(settingsPath)) {
-    return { removed: false, usedBackup: false, path: null, mode: 'noop', reason: 'no Claude Code settings file found' };
+    return { removed: false, path: null, mode: 'noop', reason: 'no Claude Code settings file found' };
   }
 
   const existing = await readSettingsFile(settingsPath);
@@ -372,9 +708,9 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries)';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
       }
-      return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason };
+      return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
 
     const projectRoot = resolveProjectRoot();
@@ -382,7 +718,6 @@ export async function removeClaudeCodeOtlpConfig(
     if (remaining.length === allowlist.paths.length) {
       return {
         removed: false,
-        usedBackup: false,
         path: settingsPath,
         mode: 'noop',
         reason: `project ${await canonicalizePath(projectRoot)} is not in the allowlist`,
@@ -393,70 +728,79 @@ export async function removeClaudeCodeOtlpConfig(
       const env = { ...(existing.env ?? {}), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(remaining) };
       await writeAtomically(settingsPath, JSON.stringify({ ...existing, env }, null, 2) + '\n');
       logger.info('[proxy] Removed project from Claude Code analytics allowlist', ...sanitizeLogArgs({ settingsPath, remaining }));
-      return { removed: true, usedBackup: false, path: settingsPath, mode: 'entry-removed', allowlist: remaining };
+      return { removed: true, path: settingsPath, mode: 'entry-removed', allowlist: remaining };
     }
     // Last entry removed: fall through to the full removal below
   }
 
-  let removedHookCommands = false;
-  const hooks: Record<string, unknown> = {};
-  for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
-    if (!Array.isArray(entries)) {
-      hooks[eventName] = entries;
-      continue;
-    }
-    if (entries.some(groupContainsCodemieCommand)) {
-      removedHookCommands = true;
-    }
-    const remainingGroups = stripCodemieCommandsFromGroups(entries);
-    if (remainingGroups.length > 0) {
-      hooks[eventName] = remainingGroups;
-    }
-  }
-
-  const env: Record<string, string> = { ...(existing.env ?? {}) };
-  let removedEnvKeys = false;
-  for (const key of [...CODEMIE_ENV_KEYS, CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]) {
-    if (key in env) {
-      removedEnvKeys = true;
-      delete env[key];
-    }
-  }
+  const { stripped, removedHookCommands, removedEnvKeys } = stripCodemieManagedContent(existing);
 
   if (!removedHookCommands && !removedEnvKeys) {
-    return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason: 'no CodeMie entries found' };
+    return { removed: false, path: settingsPath, mode: 'noop', reason: 'no CodeMie entries found' };
   }
 
-  const stripped: ClaudeSettings = { ...existing };
-  if (Object.keys(hooks).length > 0) {
-    stripped.hooks = hooks;
-  } else {
-    delete stripped.hooks;
-  }
-  if (Object.keys(env).length > 0) {
-    stripped.env = env;
+  const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+  const backupSettings = await readBackupSettings(backupPath);
+
+  // Put back a value a `--force` connect displaced into the backup (preserves
+  // AC3 — never resurrects a value the user changed after connect; see
+  // `withDisplacedEnvValues`).
+  const restoredEnv = withDisplacedEnvValues(stripped.env, backupSettings?.env, existing.env ?? {});
+  if (restoredEnv) {
+    stripped.env = restoredEnv;
   } else {
     delete stripped.env;
   }
 
-  const isEmpty = Object.keys(stripped).length === 0;
-  const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+  // Same restore for a hook event a `--force` connect displaced (dropped a
+  // malformed value) — see `withDisplacedHooks` for the AC3 guard.
+  const restoredHooks = withDisplacedHooks(stripped.hooks, backupSettings?.hooks, existing.hooks ?? {});
+  if (restoredHooks) {
+    stripped.hooks = restoredHooks;
+  } else {
+    delete stripped.hooks;
+  }
 
+  const isEmpty = Object.keys(stripped).length === 0;
+
+  // Always derive the result from the CURRENT live content, never raw backup
+  // bytes — a backup can hold a value the user changed/removed since connect.
+  // The one exception: a value `--force` displaced, restored above only
+  // while codemie still owns it right now.
   if (isEmpty) {
-    if (existsSync(backupPath)) {
-      const backupContent = await readFile(backupPath, 'utf-8');
-      await writeAtomically(settingsPath, backupContent);
+    await unlink(settingsPath);
+  } else {
+    await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
+  }
+  if (existsSync(backupPath)) {
+    // Best-effort: settings.json is already correctly updated by this point,
+    // so a failure here (e.g. EPERM) must not surface as "disconnect failed".
+    try {
       await unlink(backupPath);
-      logger.info('[proxy] Removed Claude Code analytics config (restored backup)', ...sanitizeLogArgs({ settingsPath }));
-      return { removed: true, usedBackup: true, path: settingsPath, mode: 'full' };
-    } else {
-      await unlink(settingsPath);
-      logger.info('[proxy] Removed Claude Code analytics config (deleted settings)', ...sanitizeLogArgs({ settingsPath }));
-      return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
+    } catch (error) {
+      logger.warn(
+        '[proxy] Disconnected successfully but could not remove the stale backup file',
+        ...sanitizeLogArgs({ backupPath, error: error instanceof Error ? error.message : String(error) })
+      );
     }
   }
 
-  await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
-  logger.info('[proxy] Removed Claude Code analytics entries from settings', ...sanitizeLogArgs({ settingsPath }));
-  return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
+  logger.info(
+    '[proxy] Removed Claude Code analytics entries from settings',
+    ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
+  );
+  return { removed: true, path: settingsPath, mode: 'full' };
+}
+
+/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return false;
+  }
+  return Object.values(existing.hooks ?? {}).some(
+    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+  );
 }

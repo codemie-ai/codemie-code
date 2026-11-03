@@ -43,9 +43,11 @@ let modulePath: string;
 async function loadHooks(hookNames: string[]): Promise<Record<string, HookHandler>> {
   const hooks: Record<string, unknown[]> = {};
   for (const name of hookNames) {
-    // A shell command that appends whatever arrives on stdin, standing in for
-    // the real `codemie hook` binary.
-    hooks[name] = [{ hooks: [{ type: 'command', command: `cat >> ${capturePath}` }] }];
+    // A portable command (no `cat` on Windows) that appends whatever arrives on stdin,
+    // standing in for the real `codemie hook` binary.
+    const appendStdin = `process.stdout.write('');require('fs').appendFileSync(process.argv[1],require('fs').readFileSync(0))`;
+    const command = `${JSON.stringify(process.execPath)} -e "${appendStdin}" "${capturePath}"`;
+    hooks[name] = [{ hooks: [{ type: 'command', command }] }];
   }
 
   process.env.OPENCODE_HOOKS = JSON.stringify({ hooks });

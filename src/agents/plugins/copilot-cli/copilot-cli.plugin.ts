@@ -3,13 +3,17 @@ import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
+import { recordRolloutCorrelation } from '../codex/codex.correlation.js';
+import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   assertExplicitCopilotModelAllowed,
   isCopilotCompatibleModelName,
@@ -31,6 +35,10 @@ const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 
+// Flags that make Copilot pick (or resume) a session itself; CodeMie must not add --session-id.
+const COPILOT_SESSION_SELECTION_FLAGS = ['--session-id', '--resume', '-r', '--continue', '--connect'];
+const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
+
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
   return {
     agentName: env.CODEMIE_AGENT || COPILOT_CLI_AGENT_NAME,
@@ -38,12 +46,14 @@ function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    env,
     syncApiUrl: env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: COPILOT_CLI_CLIENT_TYPE,
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -226,6 +236,20 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         enriched.push('--model', process.env.CODEMIE_MODEL);
       }
 
+      // Pin the native Copilot session UUID to the CodeMie session ID so the native
+      // transcript is known exactly instead of being guessed afterwards. Never override a
+      // session the user selected (resume/continue/connect/explicit id).
+      const selectsSession = enriched.some((arg) =>
+        COPILOT_SESSION_SELECTION_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))
+      );
+      const codemieSessionId = process.env.CODEMIE_SESSION_ID;
+      if (codemieSessionId && !selectsSession) {
+        enriched.push('--session-id', codemieSessionId);
+        process.env[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
+      } else {
+        delete process.env[PINNED_NATIVE_SESSION_ENV];
+      }
+
       return enriched;
     },
     async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
@@ -236,15 +260,23 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       }
 
       try {
-        const adapter = new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
-        const sessions = await adapter.discoverSessions({
-          maxAgeDays: 1,
-          limit: 1,
-          cwd: process.cwd(),
-        });
+        // Native Copilot session events live under COPILOT_HOME, which may be a custom path.
+        if (env.COPILOT_HOME) process.env.COPILOT_HOME = env.COPILOT_HOME;
 
-        const transcriptPath = sessions[0]?.filePath ?? '';
-        const agentSessionId = sessions[0]?.sessionId ?? sessionId;
+        // Only a session CodeMie pinned via --session-id is correlated. No heuristic
+        // matching: a missing transcript means "no native session", never "newest one".
+        const pinnedId = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId ? sessionId : undefined;
+        const eventsFile = pinnedId ? join(getCopilotSessionStateRoot(), pinnedId, 'events.jsonl') : undefined;
+        const native = eventsFile && existsSync(eventsFile) ? eventsFile : undefined;
+
+        const transcriptPath = native ?? '';
+        const agentSessionId = native ? (pinnedId as string) : sessionId;
+        if (native) {
+          // Must land before SessionEnd renames the record to completed_{id}.json.
+          await recordRolloutCorrelation(sessionId, native);
+        } else {
+          logger.warn('[copilot-cli] No pinned native Copilot transcript for this run; skipping correlation');
+        }
 
         const { processEvent } = await import('../../../cli/commands/hook.js');
         await processEvent(

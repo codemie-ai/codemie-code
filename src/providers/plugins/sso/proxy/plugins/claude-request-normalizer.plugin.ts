@@ -9,6 +9,7 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
 import { isClaudeServableDeployment, resolveClaudeDeployment } from './claude-model-resolver.js';
+import { CredentialRefresher } from './credential-refresh.js';
 
 // standard = leave thinking untouched; none = strip it; adaptive = requires the
 // adaptive thinking API + output_config.effort.
@@ -39,9 +40,33 @@ const MODEL_CAPABILITY_TABLE: ReadonlyArray<{ pattern: RegExp; capabilities: Mod
     capabilities: { thinking: 'none', effort: false, sampling: true, preserveDisabledThinking: false },
   },
   {
+    // claude-haiku-5 / 5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; keeps thinking.type="disabled".
+    pattern: /claude-haiku-5(?:-5)?(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
+  },
+  {
     // claude-opus-4-7/8/9 (+ date-tagged; excludes 4-70+): adaptive thinking + effort.
     pattern: /claude-opus-4-[7-9](?:[^0-9]|$)/i,
     capabilities: { thinking: 'adaptive', effort: true, sampling: true, preserveDisabledThinking: false },
+  },
+  {
+    // claude-opus-5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; removes thinking.type="disabled" (upstream 400s if sent).
+    pattern: /claude-opus-5-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: false },
+  },
+  {
+    // claude-opus-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; keeps thinking.type="disabled".
+    pattern: /claude-opus-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
+  },
+  {
+    // claude-sonnet-5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; removes thinking.type="disabled" (upstream 400s if sent).
+    pattern: /claude-sonnet-5-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: false },
   },
   {
     // claude-sonnet-5 (+ date-tagged): adaptive thinking + effort; rejects manual
@@ -192,8 +217,14 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
   private loadedAt = 0;
   private lastAttemptAt = 0;
   private inFlight: Promise<void> | null = null;
+  // Re-reads stored credentials (throttled) rather than the daemon-startup snapshot, so a
+  // successful browser re-login reaches the model catalogue fetch too (PR #655 review,
+  // blocking) — this TTL-gated refetch (every MODEL_CACHE_TTL_MS) is exactly where it matters.
+  private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
 
-  constructor(private readonly context: PluginContext) {}
+  constructor(private readonly context: PluginContext) {
+    this.credentials = context.credentialRefresher;
+  }
 
   /** Test seam — lets the suite supply a deployment list without a network call. */
   setAvailableModelsForTest(models: string[]): void {
@@ -298,11 +329,11 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
   private async loadModels(): Promise<void> {
     this.lastAttemptAt = Date.now();
 
-    const credentials = this.context.credentials;
-    if (!credentials) {
+    if (!this.credentials) {
       logger.debug(`[${this.name}] No credentials available; model names pass through unchanged`);
       return;
     }
+    const credentials = await this.credentials.refresh();
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;

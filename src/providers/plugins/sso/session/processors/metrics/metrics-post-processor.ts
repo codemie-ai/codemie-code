@@ -120,6 +120,16 @@ export function truncateProjectPath(fullPath: string): string {
       return segment;
     }
 
+    // Only a raw absolute filesystem path needs truncating to parent/current: an already-short,
+    // canonical identifier (e.g. a multi-segment GitLab subgroup or Azure DevOps org/project/repo
+    // name from detectGitRemoteRepo, or extractRepository's own parent/repo form) must pass
+    // through unchanged, or two different repositories sharing a suffix collide on one analytics
+    // row. A relative path essentially never reaches here, so this is a reliable discriminator.
+    const isAbsolutePath = /^(?:[A-Za-z]:[\\/]|[\\/])/.test(fullPath.trim());
+    if (!isAbsolutePath) {
+      return segments.join('/');
+    }
+
     // Take last 2 segments (parent/current)
     const last2 = segments.slice(-2);
 

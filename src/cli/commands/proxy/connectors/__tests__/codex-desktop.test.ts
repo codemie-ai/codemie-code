@@ -37,14 +37,14 @@ describe('findCodexDesktopApp', () => {
 
   it('returns null when no candidate path exists', async () => {
     const { findCodexDesktopApp } = await import('../codex-desktop.js');
-    expect(findCodexDesktopApp([join(workspace.path, 'missing.app')])).toBeNull();
+    expect(await findCodexDesktopApp([join(workspace.path, 'missing.app')])).toBeNull();
   });
 
   it('returns the first candidate that exists', async () => {
     workspace.writeFile('ChatGPT.app/Contents/Info.plist', '<plist/>');
     const appDir = join(workspace.path, 'ChatGPT.app');
     const { findCodexDesktopApp } = await import('../codex-desktop.js');
-    expect(findCodexDesktopApp([join(workspace.path, 'missing.app'), appDir])).toBe(appDir);
+    expect(await findCodexDesktopApp([join(workspace.path, 'missing.app'), appDir])).toBe(appDir);
   });
 });
 

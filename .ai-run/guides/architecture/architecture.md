@@ -47,7 +47,7 @@ src/
 │   └── plugins/          LLM provider implementations
 ├── frameworks/
 │   ├── core/             Framework interfaces
-│   └── plugins/          Framework implementations (LangGraph)
+│   └── plugins/          Framework implementations and documentation-tool integrations
 ├── mcp/
 │   ├── auth/             OAuth provider & callback server
 │   ├── stdio-http-bridge.ts
@@ -217,9 +217,10 @@ Unit tests are co-located with source; integration tests live in `tests/`.
 **Registry pattern**: All plugin systems follow the same lazy-init registry approach.
 
 ```typescript
-AgentRegistry.getAgent('claude')       // src/agents/registry.ts
-ProviderRegistry.getProvider('openai') // src/providers/registry.ts
-FrameworkRegistry.get('langgraph')     // src/frameworks/registry.ts
+AgentRegistry.getAgent('claude')             // src/agents/registry.ts
+ProviderRegistry.getProvider('openai')       // src/providers/core/registry.ts
+FrameworkRegistry.getFramework('bmad')       // src/frameworks/core/registry.ts
+FrameworkRegistry.getFramework('codegraph')  // documentation tool in the same registry
 ```
 
 **Plugin discovery**:
@@ -267,3 +268,4 @@ FrameworkRegistry.get('langgraph')     // src/frameworks/registry.ts
 | Core | `src/*/core/` |
 | Utils | `src/utils/` |
 | Tests | `tests/integration/`, `src/**/__tests__/` |
+| OTLP ingestion adapters | `OtlpAgentAdapter` (abstract base class, `src/agents/core/OtlpAgentAdapter.ts`) is a second, non-chat plugin type registered the same way as `AgentAdapter` — one plugin per coding tool, ingesting that tool's native hook/telemetry events into the analytics pipeline. See `docs/ARCHITECTURE-OTLP-PLUGIN.md` for the dispatch pattern and how to add a new adapter (e.g. a future Cursor/other-tool adapter). |

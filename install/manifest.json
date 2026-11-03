@@ -1,0 +1,6 @@
+{
+  "version": "2.1.1",
+  "platforms": {
+    "darwin-aarch64": { "url": "https://github.com/codemie-ai/codemie-connect/releases/download/v2.1.1/CodeMie-Connect-2.1.1-aarch64.dmg" }
+  }
+}

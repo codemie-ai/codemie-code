@@ -142,6 +142,28 @@ describe('fetchTenantModelDescriptors', () => {
     ]);
   });
 
+  it('maps valid max_input_tokens and max_output_tokens to token limits', async () => {
+    mockJson([{ base_name: 'm', max_input_tokens: 200000, max_output_tokens: 16000 }]);
+
+    const descriptors = await fetchTenantModelDescriptors('http://127.0.0.1:4001', 'gw-key');
+    expect(descriptors).toEqual([{ id: 'm', maxInputTokens: 200000, maxOutputTokens: 16000 }]);
+  });
+
+  it('omits zero, negative, string, null and missing token limits', async () => {
+    mockJson([
+      { base_name: 'zero', max_input_tokens: 0, max_output_tokens: 0 },
+      { base_name: 'negative', max_input_tokens: -5, max_output_tokens: -1 },
+      { base_name: 'string', max_input_tokens: '200000', max_output_tokens: '16000' },
+      { base_name: 'null', max_input_tokens: null, max_output_tokens: null },
+      { base_name: 'missing' },
+    ]);
+
+    const descriptors = await fetchTenantModelDescriptors('http://127.0.0.1:4001', 'gw-key');
+    expect(descriptors).toEqual([
+      { id: 'zero' }, { id: 'negative' }, { id: 'string' }, { id: 'null' }, { id: 'missing' },
+    ]);
+  });
+
   it('drops enabled: false entries and treats a missing enabled as enabled', async () => {
     mockJson({ data: [
       { base_name: 'on', enabled: true },

@@ -107,6 +107,40 @@ describe('getMCPConfigSummary', () => {
     expect(summary.serverNames).toEqual(['recovered']);
   });
 
+  it('normalizes a backslash cwd to forward slashes before a {cwd}-keyed lookup (Windows project-key format)', async () => {
+    // Claude Code's own `~/.claude.json` stores `projects` keys with forward slashes even on
+    // Windows, while the hook/CLI's own `cwd` arrives with native backslashes — confirmed
+    // against a real `~/.claude.json` on a Windows dev machine.
+    writeJson('local/claude-home.json', {
+      projects: { 'C:/some/project': { mcpServers: { msgraph: {} } } },
+    });
+    const config: AgentMCPConfig = {
+      local: { path: join(root, 'local', 'claude-home.json'), jsonPath: 'projects.{cwd}.mcpServers' },
+    };
+
+    const summary = await getMCPConfigSummary(config, 'C:\\some\\project');
+
+    expect(summary.localServerNames).toEqual(['msgraph']);
+    expect(summary.localServers).toBe(1);
+  });
+
+  it('preserves dots in a cwd during a {cwd}-keyed lookup', async () => {
+    writeJson('local/claude-home-dotted-cwd.json', {
+      projects: { '/Users/john.doe/app': { mcpServers: { msgraph: {} } } },
+    });
+    const config: AgentMCPConfig = {
+      local: {
+        path: join(root, 'local', 'claude-home-dotted-cwd.json'),
+        jsonPath: 'projects.{cwd}.mcpServers',
+      },
+    };
+
+    const summary = await getMCPConfigSummary(config, '/Users/john.doe/app');
+
+    expect(summary.localServerNames).toEqual(['msgraph']);
+    expect(summary.localServers).toBe(1);
+  });
+
   it('counts scopes independently and de-duplicates the combined name list', async () => {
     const config: AgentMCPConfig = {
       project: { path: 'opencode.json', jsonPath: 'mcp' },

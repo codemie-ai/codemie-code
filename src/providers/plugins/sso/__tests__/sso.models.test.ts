@@ -130,4 +130,34 @@ describe('SSOModelProxy.fetchModels', () => {
       proxy.fetchModels(cfg({ codeMieUrl: 'https://codemie.example.com' }))
     ).rejects.toThrow(/HTTP 500/);
   });
+
+  describe('profile URL precedence', () => {
+    const P = 'https://profile.example.com';
+    const W = 'https://workspace.example.com';
+
+    it('finds credentials via baseUrl for a baseUrl-only SSO profile and uses the credentials apiUrl', async () => {
+      getStoredCredentialsMock.mockResolvedValue({ cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
+      fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-x', label: 'GPT X' }]);
+
+      const models = await new SSOModelProxy().fetchModels({ provider: 'ai-run-sso', baseUrl: P } as CodeMieConfigOptions);
+
+      expect(getStoredCredentialsMock).toHaveBeenCalledWith(P);
+      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' });
+      expect(models.map(m => m.id)).toEqual(['gpt-x']);
+    });
+
+    it('falls back to codeMieUrl when baseUrl misses', async () => {
+      getStoredCredentialsMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
+      fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-x', label: 'GPT X' }]);
+
+      const models = await new SSOModelProxy().fetchModels({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W } as CodeMieConfigOptions);
+
+      expect(getStoredCredentialsMock.mock.calls.map(c => c[0])).toEqual([P, W]);
+      // split host: the login stored under W was issued for the profile's API host
+      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' });
+      expect(models).toHaveLength(1);
+    });
+  });
 });

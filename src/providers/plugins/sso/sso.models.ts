@@ -13,6 +13,7 @@ import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
 import { fetchCodeMieLlmModels, fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
+import { getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
 
 /**
  * SSO Model Proxy
@@ -91,17 +92,18 @@ export class SSOModelProxy extends BaseModelProxy {
       return await this.fetchModelsFromAPI(config.baseUrl, suppliedCookies);
     }
 
-    const lookupUrl = config.codeMieUrl || config.baseUrl;
-    const credentials = await this.sso.getStoredCredentials(lookupUrl);
+    // Profile baseUrl first, workspace codeMieUrl as fallback
+    const found = await getStoredPlatformCredentials({ ...config, provider: 'ai-run-sso' });
 
-    if (!credentials) {
+    if (!found) {
       // Genuinely no credentials yet - setup wizard will handle auth.
       logger.debug('No SSO credentials found, returning empty model list');
       return [];
     }
 
-    // Use API URL from credentials or config
-    const apiUrl = credentials.apiUrl || config.codeMieUrl;
+    // Use API URL from credentials or the URL the credentials were found under
+    const { credentials, url } = found;
+    const apiUrl = credentials.apiUrl || url;
     if (!apiUrl) {
       throw new Error('No CodeMie URL configured');
     }

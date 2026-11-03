@@ -30,6 +30,8 @@ export type { ExtensionInstallationResult as PluginInstallationResult } from '..
  * Reduces from 260 lines to ~40 lines by extending BaseExtensionInstaller.
  */
 export class ClaudePluginInstaller extends BaseExtensionInstaller {
+  protected override readonly hookHost = 'claude' as const;
+
   /**
    * Constructor
    * @param metadata - Agent metadata containing name, displayName, etc.

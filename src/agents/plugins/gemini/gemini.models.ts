@@ -17,7 +17,7 @@
 
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
+import { getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -93,13 +93,10 @@ async function fetchCodeMieModelsForGemini(env: NodeJS.ProcessEnv): Promise<LlmM
     return await fetchCodeMieLlmModels(baseUrl, jwtToken);
   }
 
-  const codeMieUrl = env.CODEMIE_URL;
-  if (codeMieUrl) {
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(codeMieUrl);
-    if (!credentials) return [];
+  const found = await getStoredPlatformCredentialsFromEnv(env);
+  if (found) {
     logger.debug('[gemini-models] Fetching CodeMie model list via SSO auth');
-    return await fetchCodeMieLlmModels(credentials.apiUrl, credentials.cookies);
+    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
   }
 
   return [];

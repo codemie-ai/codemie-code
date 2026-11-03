@@ -1,0 +1,75 @@
+{
+  "task": "Fix stale .claude/settings.json.codemie-backup handling for codemie proxy connect/disconnect --claude-code-otlp: refresh the backup on connect whenever CodeMie already manages the file, and on disconnect always derive the result from live settings content (never restore raw backup bytes) and always clean up the backup after success.",
+  "generated": "2026-10-18T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "claude-code-otlp connector (writeClaudeCodeOtlpConfig / removeClaudeCodeOtlpConfig backup-refresh and restore logic), disconnect-orchestrator (CLI reporting/dispatch for the claude-code-otlp disconnect target)",
+      "layers": "Service (connector business logic), Workflow (CLI disconnect orchestration)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Core fix (refresh backup keyed on management state; disconnect derives from live content; always clean up backup) was well-specified from the ticket. Two code-review fix-up rounds (CR-001: detect env-only management, not just hook-based; CR-003: value-aware, not presence-only, env-key matching under --force) surfaced edge cases not covered by the initial pass."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Mutates the user's persisted .claude/settings.json; the bug being fixed was a real data-loss class (disconnect could silently resurrect stale/removed values from an outdated backup); no single exact precedent for the management-state-keyed backup decision; two follow-up review rounds (CR-001 env-only detection, CR-003 value-aware env matching) were needed to close edge cases missed in the first pass",
+      "mitigation": "Backup refresh on connect is now keyed on whether CodeMie already manages part of the file (hooks OR matching env values) rather than on backup-file existence; disconnect never restores raw backup bytes — it always strips CodeMie's own hooks/env from the current live content and writes that back, then deletes the backup on success; behavior is covered by expanded unit tests in claude-code-otlp.test.ts and disconnect-orchestrator.test.ts"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 4,
+      "modified_file_list": [
+        "src/cli/commands/proxy/connectors/claude-code-otlp.ts",
+        "src/cli/commands/proxy/disconnect-orchestrator.ts",
+        "src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts",
+        "src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/cli/commands/proxy",
+        "src/cli/commands/proxy/connectors"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Workflow", "Service", "DB-Persistence"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 4,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "The bug fixed was a genuine data-loss class (disconnect restoring stale backup bytes could resurrect values the user had changed or removed since connect). No exact precedent existed for keying the backup refresh on management state rather than file existence, and it took two follow-up code-review rounds (CR-001, CR-003) to close edge cases in the first pass — matching the L criteria of 'new approach, no exact precedent, moderate risk, rollback/review needed.'"
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Two components across two layers: the claude-code-otlp connector's backup/restore logic (Service layer) and disconnect-orchestrator's reporting path (Workflow/CLI layer) both changed in the same fix, with the connector change driving the orchestrator's observable behavior."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Three layers touched: Workflow (CLI disconnect command), Service (connector's write/remove logic), and DB-Persistence (the settings.json file itself, read/written/backed-up/deleted) — no schema migration and no cross-system/external call involved."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

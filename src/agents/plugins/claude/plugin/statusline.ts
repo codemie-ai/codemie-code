@@ -144,14 +144,20 @@ const ROUTED_MODEL_TAIL_MAX_BYTES = 8 * 1024 * 1024; // 8MB
  * Strips Bedrock region/provider qualifiers (`converse/global.anthropic.` / `eu.anthropic.` /
  * Switchyard's `bedrock/us.anthropic.` alias, which carries no version suffix — including both
  * stacked together as `bedrock/converse/`, observed on real usage data) and any `-v1:0`
- * inference-profile version suffix.
+ * inference-profile version suffix. The region segment is optional so a bare Bedrock on-demand
+ * id with no region prefix at all (e.g. `anthropic.claude-haiku-4-5-20251001-v1:0`, observed via
+ * ai-run-sso) is stripped the same way — kept in parity with the identical fix in
+ * model-normalizer.ts's own Bedrock regex (EPMCDME-15316), which this file does not import
+ * directly: this module is deliberately bundled standalone (see file header) and already has
+ * different lowercasing/suffix-stripping semantics than normalizeModelName for a non-Bedrock id,
+ * so a parity regex fix is lower-risk here than delegating to it.
  */
 export function normalizeModelId(modelId) {
   if (!modelId) return '';
   return modelId
     .toLowerCase()
     .replace(/^(?:bedrock\/)?(?:converse\/)?/, '')
-    .replace(/^[a-z0-9-]+\.anthropic\./, '')
+    .replace(/^(?:[a-z0-9-]+\.)?anthropic\./, '')
     .replace(/-v\d+:\d+$/, '');
 }
 

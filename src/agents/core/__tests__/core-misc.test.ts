@@ -5,14 +5,13 @@
  *  - plugin-injector.ts        (temp-file-backed embedded plugin writer, idempotency, cleanup)
  *  - temp-config.ts            (env-overflow fallback temp config writer, MAX_ENV_SIZE contract)
  *  - session/sync-state-utils.ts        (pure processor-sync merge — round-trips, additive deltas, idempotency)
- *  - session/stale-session-reconciliation.ts (stranded-session discovery + reconciliation, FS isolated via CODEMIE_HOME)
  *
  * All filesystem access is isolated to a unique mkdtemp dir. No network / SSO / hook
- * module is touched — reconcileStaleSessions runs with an injected processEvent.
+ * module is touched.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, basename, dirname } from 'path';
 
@@ -27,11 +26,6 @@ import { writeConfigToTempFile, MAX_ENV_SIZE } from '../temp-config.js';
 import { applyProcessingSyncUpdates } from '../session/sync-state-utils.js';
 import type { ProcessingResult } from '../session/BaseProcessor.js';
 import type { Session } from '../session/types.js';
-import {
-  findStaleSessions,
-  reconcileStaleSessions,
-  type SessionEndEventLike,
-} from '../session/stale-session-reconciliation.js';
 
 // ---------------------------------------------------------------------------
 // plugin-injector.ts
@@ -334,229 +328,5 @@ describe('sync-state-utils: applyProcessingSyncUpdates', () => {
     expect(changed).toBe(true);
     expect(session.sync?.metrics?.totalDeltas).toBe(1);
     expect(session.sync?.conversations?.totalMessagesSynced).toBe(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// session/stale-session-reconciliation.ts
-// ---------------------------------------------------------------------------
-describe('stale-session-reconciliation', () => {
-  const NOW = 1_700_000_000_000; // fixed clock
-  const HOUR = 60 * 60 * 1000;
-
-  let tmpHome: string;
-  let sessionsDir: string;
-  const prevHome = process.env.CODEMIE_HOME;
-
-  beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'codemie-recon-'));
-    process.env.CODEMIE_HOME = tmpHome;
-    sessionsDir = join(tmpHome, 'sessions');
-    mkdirSync(sessionsDir, { recursive: true });
-  });
-
-  afterEach(() => {
-    if (prevHome === undefined) delete process.env.CODEMIE_HOME;
-    else process.env.CODEMIE_HOME = prevHome;
-    try {
-      rmSync(tmpHome, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  });
-
-  function writeSession(fileName: string, session: Partial<Session>): void {
-    const full: Session = makeSession(session);
-    writeFileSync(join(sessionsDir, fileName), JSON.stringify(full), 'utf-8');
-  }
-
-  it('returns [] when the sessions directory does not exist', async () => {
-    rmSync(sessionsDir, { recursive: true, force: true });
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale).toEqual([]);
-  });
-
-  it('returns [] when the sessions directory is empty', async () => {
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale).toEqual([]);
-  });
-
-  it('finds an active session that is old enough to be considered stale', async () => {
-    writeSession('s1.json', {
-      sessionId: 's1',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - HOUR, // within 24h lookback, older than 30m inactivity
-    });
-
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale).toHaveLength(1);
-    expect(stale[0].sessionId).toBe('s1');
-    expect(stale[0].startTime).toBe(NOW - HOUR);
-    expect(stale[0].lastActivityMs).toBe(NOW - HOUR);
-  });
-
-  it('excludes sessions that are still recently active (within the inactivity threshold)', async () => {
-    writeSession('recent.json', {
-      sessionId: 'recent',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - 5 * 60 * 1000, // 5 min ago → not stale
-    });
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale).toEqual([]);
-  });
-
-  it('uses the most recent sync activity, not just startTime, to judge staleness', async () => {
-    // Started long ago, but a metrics sync happened 1 minute ago → NOT stale.
-    writeSession('busy.json', {
-      sessionId: 'busy',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - HOUR,
-      sync: {
-        metrics: {
-          lastProcessedTimestamp: NOW - 60 * 1000,
-          processedRecordIds: [],
-          totalDeltas: 0,
-          totalSynced: 0,
-          totalFailed: 0,
-        },
-      },
-    });
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale).toEqual([]);
-  });
-
-  it('filters by agentName, status, and the max lookback window', async () => {
-    writeSession('wrong-agent.json', {
-      sessionId: 'wrong-agent',
-      agentName: 'gemini',
-      status: 'active',
-      startTime: NOW - HOUR,
-    });
-    writeSession('completed.json', {
-      sessionId: 'done',
-      agentName: 'claude',
-      status: 'completed',
-      startTime: NOW - HOUR,
-    });
-    writeSession('ancient.json', {
-      sessionId: 'ancient',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - 48 * HOUR, // older than 24h lookback → skipped
-    });
-    writeSession('good.json', {
-      sessionId: 'good',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - 2 * HOUR,
-    });
-
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale.map(s => s.sessionId)).toEqual(['good']);
-  });
-
-  it('skips non-session files and unreadable/corrupt JSON without throwing', async () => {
-    writeSession('valid.json', {
-      sessionId: 'valid',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - HOUR,
-    });
-    // Ignored by name filters:
-    writeFileSync(join(sessionsDir, 'completed_old.json'), '{}', 'utf-8');
-    writeFileSync(join(sessionsDir, 'x_metrics.json'), '{}', 'utf-8');
-    writeFileSync(join(sessionsDir, 'x_conversation.json'), '{}', 'utf-8');
-    writeFileSync(join(sessionsDir, 'notes.txt'), 'not json', 'utf-8');
-    // Corrupt JSON with a .json extension → parse error → skipped.
-    writeFileSync(join(sessionsDir, 'corrupt.json'), '{ this is : not json', 'utf-8');
-
-    const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale.map(s => s.sessionId)).toEqual(['valid']);
-  });
-
-  it('respects custom inactivityThresholdMs / maxLookbackMs options', async () => {
-    writeSession('s.json', {
-      sessionId: 's',
-      agentName: 'claude',
-      status: 'active',
-      startTime: NOW - 10 * 60 * 1000, // 10 min ago
-    });
-
-    // Default 30m threshold → not stale.
-    expect(await findStaleSessions('claude', { now: NOW })).toEqual([]);
-    // 5m threshold → 10-min-old session is now stale.
-    const stale = await findStaleSessions('claude', {
-      now: NOW,
-      inactivityThresholdMs: 5 * 60 * 1000,
-    });
-    expect(stale.map(s => s.sessionId)).toEqual(['s']);
-  });
-
-  it('reconcileStaleSessions returns zero counts when nothing is stale', async () => {
-    const calls: SessionEndEventLike[] = [];
-    const result = await reconcileStaleSessions(
-      'claude',
-      { FOO: 'bar' },
-      () => ({}) as never,
-      {
-        now: NOW,
-        processEvent: async event => {
-          calls.push(event);
-        },
-      },
-    );
-    expect(result).toEqual({ reconciled: 0, failed: 0 });
-    expect(calls).toHaveLength(0);
-  });
-
-  it('reconcileStaleSessions synthesises a SessionEnd(interrupted) per stale session', async () => {
-    writeSession('a.json', { sessionId: 'a', agentName: 'claude', status: 'active', startTime: NOW - HOUR });
-    writeSession('b.json', { sessionId: 'b', agentName: 'claude', status: 'active', startTime: NOW - 2 * HOUR });
-
-    const events: SessionEndEventLike[] = [];
-    const configs: unknown[] = [];
-    const buildHookConfig = (env: NodeJS.ProcessEnv, sessionId: string): never => {
-      configs.push({ env, sessionId });
-      return { sessionId } as never;
-    };
-
-    const result = await reconcileStaleSessions('claude', { TOKEN: 'x' }, buildHookConfig, {
-      now: NOW,
-      processEvent: async event => {
-        events.push(event);
-      },
-    });
-
-    expect(result).toEqual({ reconciled: 2, failed: 0 });
-    expect(events).toHaveLength(2);
-    expect(new Set(events.map(e => e.session_id))).toEqual(new Set(['a', 'b']));
-    for (const e of events) {
-      expect(e.hook_event_name).toBe('SessionEnd');
-      expect(e.reason).toBe('interrupted');
-      expect(e.permission_mode).toBe('default');
-      expect(typeof e.cwd).toBe('string');
-    }
-    // buildHookConfig is invoked per session with the passed env.
-    expect(configs).toHaveLength(2);
-  });
-
-  it('reconcileStaleSessions counts per-session processEvent failures without aborting', async () => {
-    writeSession('ok.json', { sessionId: 'ok', agentName: 'claude', status: 'active', startTime: NOW - HOUR });
-    writeSession('boom.json', { sessionId: 'boom', agentName: 'claude', status: 'active', startTime: NOW - HOUR });
-
-    const result = await reconcileStaleSessions('claude', {}, () => ({}) as never, {
-      now: NOW,
-      processEvent: async event => {
-        if (event.session_id === 'boom') {
-          throw new Error('upstream rejected');
-        }
-      },
-    });
-
-    expect(result.reconciled).toBe(1);
-    expect(result.failed).toBe(1);
   });
 });

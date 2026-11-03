@@ -40,6 +40,16 @@ describe('enrichCosts', () => {
     expect(JSON.stringify(index.get('captured'))).not.toContain('PRIVATE_CAPTURE_BODY');
   });
 
+  it('populates observedEnd from a real endEvent even without an internal capture', async () => {
+    const start = 1_700_000_000_000;
+    const { index } = await enrichCosts([{
+      sessionId: 's1', deltas: [],
+      startEvent: { agentName: 'claude', data: { startTime: start } },
+      endEvent: { data: { endTime: start + 9_000 } },
+    }] as never[], baseDeps);
+    expect(index.get('s1')!.observedEnd).toBe(start + 9_000);
+  });
+
   it('labels repriced SDK usage as an estimate without manufacturing a capture time', async () => {
     const { index } = await enrichCosts(raw, { ...baseDeps, parseNative: async () => ({
       sessionId: 's1', agentName: 'claude-desktop', metadata: {}, messages: [{ type: 'result', modelUsage: { 'claude-sonnet-5': { inputTokens: 1_000_000 } } }],
@@ -413,6 +423,316 @@ describe('enrichCosts', () => {
     expect(index.get('A')!.costUSD).toBeCloseTo(3, 6); // earliest session owns it — via its sub-agent
     expect(index.get('B')!.costUSD).toBe(0); // replay deduped
     expect(summary.totalCostUSD).toBeCloseTo(3, 6);
+  });
+
+  it('CR-001: an earlier session that crashed (no endEvent) does not swallow a later, cleanly-closed session sharing its file', async () => {
+    const base = 1_780_000_000_000;
+    // Session A crashed/was killed — it never emits an endEvent. Session B resumed later
+    // (e.g. after the crash) and completed normally, so it DOES have a real endEvent.
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      endEvent: { data: { endTime: base + 180_000 } },
+      deltas: [],
+    };
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    // These two turns are chronologically B's own (after B's startTime) and physically live
+    // in the one shared (resumed) log file, same as A's turn above.
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/crashed-then-resumed.jsonl', // same path for both
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // Without the fix, A (processed first, unbounded since it has no observedEnd) greedily
+    // takes all 3 unseen records, leaving B with $0 — this PR's own headline bug, shifted to
+    // the open/crashed-earlier-sibling case.
+    expect(index.get('A')!.tokens.total).toBe(1_000_000);
+    expect(index.get('A')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('B')!.tokens.total).toBe(1_000_000);
+    expect(index.get('B')!.costUSD).toBeCloseTo(3, 6);
+    expect(summary.totalCostUSD).toBeCloseTo(6, 6);
+  });
+
+  it('KNOWN GAP (review, EPMCDME-15316): two consecutive OPEN sessions sharing a file still let the earlier one swallow the later one\'s turns', async () => {
+    // Pins current behavior rather than asserting it's correct: computeDedupWindowEnd only
+    // bounds an open/crashed session when its immediate next sibling HAS its own observedEnd
+    // (a confirmed end) — by design, two sessions that are BOTH still open (e.g. a resume while
+    // the earlier process is still alive, or crashed without ever emitting an endEvent) is left
+    // genuinely ambiguous and the window stays unbounded, preserving the pre-existing
+    // earliest-wins dedup semantics for that case. If this is ever tightened, this test's
+    // expectations change along with it.
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [], // no endEvent — still open/crashed
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [], // no endEvent either — also still open/crashed
+    };
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    // Chronologically B's own turns (after B's startTime), physically in the same shared file.
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/both-open-shared.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // A (processed first, ascending startTime, no bound since B is also open) claims all 3
+    // unseen records; B — also unbounded, but dedup already consumed every record — gets $0.
+    expect(index.get('A')!.tokens.total).toBe(2_000_000);
+    expect(index.get('B')!.tokens.total).toBe(0);
+    expect(summary.totalCostUSD).toBeCloseTo(index.get('A')!.costUSD, 6);
+  });
+
+  it('CR-002: an SDK modelUsage rollup is not trusted for a session sharing its native log file (would double-count)', async () => {
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      endEvent: { data: { endTime: base + 90_000 } },
+      deltas: [],
+    };
+    // Each headless/SDK run appended its own authoritative `result` rollup to the ONE shared
+    // transcript file — `parsed.messages` is identical (the whole file) for both sessions.
+    const resultA = { type: 'result', modelUsage: { 'claude-sonnet-4-5': { inputTokens: 1_000_000, outputTokens: 0 } } };
+    const resultB = { type: 'result', modelUsage: { 'claude-sonnet-4-5': { inputTokens: 2_000_000, outputTokens: 0 } } };
+    const fullSharedFile = [resultA, resultB];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/shared-sdk-rollups.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // Without the fix, both A and B would call readClaudeSdkResult() on the SAME whole-file
+    // `parsed` and each report the COMBINED total (3M tokens each) instead of their own slice.
+    // With no per-message records to dedup/window in this fixture, the safe behavior is to
+    // treat an unprotectable shared-file rollup as "no usage" (0) rather than double-count it.
+    expect(index.get('A')!.tokens.total).toBe(0);
+    expect(index.get('B')!.tokens.total).toBe(0);
+  });
+
+  it('bounds each session to its own observedEnd so a later session keeps its own turns in a shared log (EPMCDME-15316 Root Cause A)', async () => {
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 60_000 } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [],
+    };
+    // One turn made during session A's own window, two turns made during session B's own
+    // window — all three physically live in the one shared (resumed/continued) log file.
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/shared-resumed.jsonl', // same path for both sessions
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // B genuinely has 2 turns (1M tokens) inside its own time window, independent of A.
+    expect(index.get('B')!.tokens.total).toBe(1_000_000);
+    expect(index.get('B')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('A')!.tokens.total).toBe(1_000_000);
+    expect(summary.totalCostUSD).toBeCloseTo(6, 6); // total is preserved either way
+  });
+
+  it('bounds a middle session in a three-session shared-file chain, not just a two-session open tail', async () => {
+    const base = 1_780_000_000_000;
+    // Session 1 ends before session 2 starts; session 2 ends before session 3 starts;
+    // session 3 is open (no endEvent) — all three share one appended log file.
+    const session1 = {
+      sessionId: '1',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const session2 = {
+      sessionId: '2',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      endEvent: { data: { endTime: base + 90_000 } },
+      deltas: [],
+    };
+    const session3 = {
+      sessionId: '3',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [],
+    };
+    // One uniquely-keyed real turn inside each session's own window.
+    const turn1 = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-1',
+      message: { id: 'msg-1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const turn2 = {
+      timestamp: new Date(base + 70_000).toISOString(),
+      requestId: 'req-2',
+      message: { id: 'msg-2', model: 'claude-sonnet-4-5', usage: { input_tokens: 2_000_000, output_tokens: 0 } },
+    };
+    const turn3 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-3',
+      message: { id: 'msg-3', model: 'claude-sonnet-4-5', usage: { input_tokens: 4_000_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turn1, turn2, turn3];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/three-way-shared.jsonl', // same path for all three
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([session1, session2, session3] as never[], deps);
+    expect(index.get('1')!.tokens.total).toBe(1_000_000);
+    expect(index.get('1')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('2')!.tokens.total).toBe(2_000_000);
+    expect(index.get('2')!.costUSD).toBeCloseTo(6, 6);
+    expect(index.get('3')!.tokens.total).toBe(4_000_000);
+    expect(index.get('3')!.costUSD).toBeCloseTo(12, 6);
+    expect(summary.totalCostUSD).toBeCloseTo(21, 6);
+  });
+
+  it('keeps a session\'s own final turn when its ts exactly equals its own observedEnd (CR-002)', async () => {
+    const base = 1_780_000_000_000;
+    // observedEnd is this session's own endEvent.endTime, which — for a real native-loader
+    // capture — equals the max ts across the session's own messages. The session's final
+    // turn below is built to land exactly on that boundary.
+    const session = {
+      sessionId: 'solo',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 20_000 } },
+      deltas: [],
+    };
+    const firstTurn = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-first',
+      message: { id: 'msg-first', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const finalTurn = {
+      timestamp: new Date(base + 20_000).toISOString(), // ts === observedEnd exactly
+      requestId: 'req-final',
+      message: { id: 'msg-final', model: 'claude-sonnet-4-5', usage: { input_tokens: 2_000_000, output_tokens: 0 } },
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/solo.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [firstTurn, finalTurn] }) as never,
+    };
+    const { index } = await enrichCosts([session] as never[], deps);
+    expect(index.get('solo')!.tokens.total).toBe(3_000_000); // both turns counted, including the boundary one
+    expect(index.get('solo')!.costUSD).toBeCloseTo(9, 6);
+  });
+
+  it('reports an upper-bound observedEnd (display only) for an open session sharing a file', async () => {
+    const base = 1_780_000_000_000;
+    const sessionEarlier = {
+      sessionId: 'earlier',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [],
+    };
+    const sessionLater = {
+      sessionId: 'later',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      deltas: [],
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/open-shared.jsonl', // same path for both — neither has endEvent
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [] }) as never,
+    };
+    const { index } = await enrichCosts([sessionEarlier, sessionLater] as never[], deps);
+    expect(index.get('earlier')!.observedEnd).toBe(base + 60_000); // next sibling's startTime
+    expect(index.get('earlier')!.observedEndEstimated).toBe(true);
+    expect(index.get('later')!.observedEnd).toBeTypeOf('number');
+    expect(index.get('later')!.observedEnd!).toBeGreaterThanOrEqual(base + 60_000); // >= own startTime
+    expect(index.get('later')!.observedEndEstimated).toBe(true);
+  });
+
+  it('does not mark a session\'s own confirmed observedEnd as estimated (PR #655 review)', async () => {
+    const base = 1_780_000_000_000;
+    const session = {
+      sessionId: 'closed',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/solo-closed.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [] }) as never,
+    };
+    const { index } = await enrichCosts([session] as never[], deps);
+    expect(index.get('closed')!.observedEnd).toBe(base + 30_000);
+    expect(index.get('closed')!.observedEndEstimated).toBeUndefined();
   });
 });
 
@@ -877,5 +1197,30 @@ describe('enrichCosts — routing classifier cost', () => {
     expect(c.routingCostKnown).toBeUndefined();
     expect(c.classifierCostUSD).toBeUndefined();
     expect(c.costUSD).toBeCloseTo(3, 6);
+  });
+});
+
+describe('realDeps.loadAgentSessionFile', () => {
+  it('resolves the transcript of a completed /clear generation completed_<uuid>-<gen>.json', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'cost-enricher-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const id = 'eddd66b2-0e73-4167-841c-9263207870ae-gen-alpha';
+      writeFileSync(
+        join(home, 'sessions', `completed_${id}.json`),
+        JSON.stringify({ correlation: { agentSessionFile: '/transcripts/gen-alpha.jsonl' } })
+      );
+
+      expect(await realDeps.loadAgentSessionFile({ sessionId: id } as never)).toBe('/transcripts/gen-alpha.jsonl');
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

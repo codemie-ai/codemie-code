@@ -20,6 +20,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
+import { CredentialRefresher } from './credential-refresh.js';
 import {
   isCodexServableDeployment,
   rankDeploymentsByRecency,
@@ -134,8 +135,14 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
   private loadedAt = 0;
   private lastAttemptAt = 0;
   private inFlight: Promise<void> | null = null;
+  // Re-reads stored credentials (throttled) rather than the daemon-startup snapshot, so a
+  // successful browser re-login reaches the model catalogue fetch too (PR #655 review,
+  // blocking) — this TTL-gated refetch (every MODEL_CACHE_TTL_MS) is exactly where it matters.
+  private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
 
-  constructor(private readonly context: PluginContext) {}
+  constructor(private readonly context: PluginContext) {
+    this.credentials = context.credentialRefresher;
+  }
 
   /** Test seam — lets the suite supply a deployment list without a network call. */
   setAvailableModelsForTest(models: string[]): void {
@@ -251,11 +258,11 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
   private async loadModels(): Promise<void> {
     this.lastAttemptAt = Date.now();
 
-    const credentials = this.context.credentials;
-    if (!credentials) {
+    if (!this.credentials) {
       logger.debug(`[${this.name}] No credentials available; model names pass through unchanged`);
       return;
     }
+    const credentials = await this.credentials.refresh();
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;

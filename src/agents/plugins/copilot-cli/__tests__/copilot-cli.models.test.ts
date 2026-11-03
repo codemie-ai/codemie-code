@@ -11,6 +11,13 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   };
 });
 
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 function model(overrides: Partial<LlmModel>): LlmModel {
   return {
     base_name: overrides.base_name ?? overrides.deployment_name ?? overrides.label ?? 'unknown',
@@ -71,5 +78,45 @@ describe('copilot-cli model resolution', () => {
 
     expect(() => assertExplicitCopilotModelAllowed('o4-mini', ['gpt-5.5', 'claude-sonnet-4.6']))
       .toThrow(/GPT-family or Claude-family model/);
+  });
+});
+
+describe('copilot-cli SSO lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const profile = JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' });
+
+  beforeEach(() => {
+    fetchCodeMieLlmModelsMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+  });
+
+  it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'gpt-5.5-2026-04-24' })]);
+    const { resolveCopilotModel } = await import('../copilot-cli.models.js');
+
+    const result = await resolveCopilotModel({ CODEMIE_PROFILE_CONFIG: profile });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(result.availableModels).toContain('gpt-5.5-2026-04-24');
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'gpt-5.5-2026-04-24' })]);
+    const { resolveCopilotModel } = await import('../copilot-cli.models.js');
+
+    await resolveCopilotModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_BASE_URL: 'http://localhost:4321' });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+  });
+
+  it('reports the resolved URL when SSO credentials are missing', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(null);
+    const { resolveCopilotModel } = await import('../copilot-cli.models.js');
+
+    await expect(resolveCopilotModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
+      'codemie profile login --url https://profile.example.com'
+    );
   });
 });

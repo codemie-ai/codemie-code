@@ -46,6 +46,12 @@ const MESSAGE_AUTH_HEADERS = {
   Authorization: 'Bearer ${apiKey}',
 } as const;
 
+/**
+ * Token limits here are fallbacks: they apply only when the tenant catalog
+ * does not report a limit for the model (see {@link resolveVsCodeTokenLimits}).
+ * The table's `maxInputTokens` is a prompt budget (window minus output), while
+ * the catalog value is not, hence the catalog input has the output subtracted.
+ */
 export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
   {
     family: 'claude-sonnet-4-5',
@@ -276,6 +282,17 @@ export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
     maxOutputTokens: 128000,
   },
   {
+    family: 'claude-sonnet-5-5',
+    apiType: 'messages',
+    vision: true,
+    thinking: true,
+    adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
+    supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
+    maxInputTokens: 872000,
+    maxOutputTokens: 128000,
+  },
+  {
     family: 'claude-opus-4-5',
     apiType: 'messages',
     vision: true,
@@ -330,6 +347,17 @@ export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
     maxOutputTokens: 128000,
   },
   {
+    family: 'claude-opus-5-5',
+    apiType: 'messages',
+    vision: true,
+    thinking: true,
+    adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
+    supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
+    maxInputTokens: 872000,
+    maxOutputTokens: 128000,
+  },
+  {
     family: 'claude-haiku-4-5',
     apiType: 'chat-completions',
     vision: true,
@@ -337,6 +365,17 @@ export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
     modelOptions: { top_p: null },
     maxInputTokens: 136000,
     maxOutputTokens: 64000,
+  },
+  {
+    family: 'claude-haiku-5-5',
+    apiType: 'messages',
+    vision: true,
+    thinking: true,
+    adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
+    supportsReasoningEffort: CLAUDE_EFFORTS,
+    maxInputTokens: 872000,
+    maxOutputTokens: 128000,
   },
   {
     family: 'qwen.qwen3-coder-30b-a3b-v1',
@@ -420,5 +459,32 @@ export function buildDefaultVsCodeCapability(descriptor: TenantModelDescriptor):
     ...(responses ? { zeroDataRetentionEnabled: true } : {}),
     maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+  };
+}
+
+function pickTokenLimit(catalogValue: number | undefined, fallback: number): number {
+  return typeof catalogValue === 'number' && Number.isFinite(catalogValue) && catalogValue > 0
+    ? catalogValue
+    : fallback;
+}
+
+/**
+ * Resolve the token limits for a model entry. The output limit is the tenant
+ * catalog value when it is a finite number > 0, else the capability entry
+ * (table entry or default). The API input value is treated as the whole
+ * context window, so the resolved output limit is subtracted from it to make
+ * input plus output fit. When the catalog input is missing, or the
+ * subtraction is not positive, the entry's `maxInputTokens` is used.
+ */
+export function resolveVsCodeTokenLimits(
+  entry: VsCodeCapabilityEntry,
+  descriptor: TenantModelDescriptor
+): { maxInputTokens: number; maxOutputTokens: number } {
+  const maxOutputTokens = pickTokenLimit(descriptor.maxOutputTokens, entry.maxOutputTokens);
+  const catalogInput = pickTokenLimit(descriptor.maxInputTokens, 0);
+  const promptBudget = catalogInput - maxOutputTokens;
+  return {
+    maxInputTokens: promptBudget > 0 ? promptBudget : entry.maxInputTokens,
+    maxOutputTokens,
   };
 }

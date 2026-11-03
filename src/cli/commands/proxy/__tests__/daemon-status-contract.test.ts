@@ -21,9 +21,9 @@ import {
   writeState,
   clearState,
   checkStatus,
-  isProcessAlive,
   type DaemonState,
 } from '../daemon-manager.js';
+import { isProcessAlive } from '../../../../utils/processes.js';
 import {
   daemonMatchesRequest,
   getEffectiveClientType,

@@ -1,0 +1,34 @@
+diff --git a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+index 6cd6cb27..55752ef4 100644
+--- a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++++ b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+@@ -519,6 +519,16 @@ describe('ensureOtlpProxy', () => {
+     expect(spawnDaemon).not.toHaveBeenCalled();
+   });
+ 
++  it('returns silently and does not spawn a daemon when baseUrl is whitespace-only', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: '   ' });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
+   it('still cold-starts normally when baseUrl is present', async () => {
+     const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+     vi.mocked(readState).mockResolvedValue(null);
+diff --git a/src/cli/commands/proxy/connect-orchestrator.ts b/src/cli/commands/proxy/connect-orchestrator.ts
+index 3c710b85..d7532b10 100644
+--- a/src/cli/commands/proxy/connect-orchestrator.ts
++++ b/src/cli/commands/proxy/connect-orchestrator.ts
+@@ -411,7 +411,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
+   // Hook invocations run as a background side effect on every tracked project;
+   // an unconfigured baseUrl must skip cold start silently (not throw, unlike
+   // connectTargets' interactive ConfigurationError) so it never fails the hook.
+-  if (!config.baseUrl) {
++  if (!config.baseUrl?.trim()) {
+     return;
+   }
+ 

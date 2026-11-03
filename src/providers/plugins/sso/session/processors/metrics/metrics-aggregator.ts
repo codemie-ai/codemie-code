@@ -41,6 +41,11 @@ function sanitizeErrorMessage(message: string): string {
   return s.substring(0, ERROR_MESSAGE_MAX_LEN);
 }
 
+/** The branch a delta is counted under: its own, else the session's (Desktop deltas carry none). */
+export function branchKeyOf(delta: MetricDelta, session: Session): string {
+  return delta.gitBranch || session.gitBranch || '';
+}
+
 /**
  * Aggregate pending deltas into session metrics grouped by branch
  * Returns one metric per branch to prevent mixing metrics between branches
@@ -48,15 +53,20 @@ function sanitizeErrorMessage(message: string): string {
  * @param deltas - Metric deltas to aggregate
  * @param session - Metrics session information
  * @param version - CLI version
- * @param agentConfig - Optional agent-specific metrics configuration (for post-processing)
+ * @param options.agentConfig - Optional agent-specific metrics configuration (for post-processing)
+ * @param options.fallbackModelByBranch - Model for a branch whose deltas name none, tried before session.model
  */
 export function aggregateDeltas(
   deltas: MetricDelta[],
   session: Session,
   version: string,
   clientType: string,
-  agentConfig?: AgentMetricsConfig
+  options: {
+    agentConfig?: AgentMetricsConfig;
+    fallbackModelByBranch?: (branch: string) => string | undefined;
+  } = {}
 ): SessionMetric[] {
+  const { agentConfig, fallbackModelByBranch } = options;
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
 
   // Group deltas by branch.
@@ -68,7 +78,7 @@ export function aggregateDeltas(
   const deltasByBranch = new Map<string, MetricDelta[]>();
 
   for (const delta of deltas) {
-    const branch = delta.gitBranch || session.gitBranch || '';
+    const branch = branchKeyOf(delta, session);
     if (delta.gitBranch === undefined && session.gitBranch) {
       logger.debug(`[aggregator] delta has no gitBranch — falling back to session.gitBranch="${session.gitBranch}"`);
     }
@@ -90,7 +100,10 @@ export function aggregateDeltas(
     logger.debug(`[aggregator] Building metric for branch "${branch}" with ${branchDeltas.length} deltas`);
 
     // Build attributes from deltas for this branch
-    const attributes = buildSessionAttributes(branchDeltas, session, version, clientType, branch);
+    const attributes = buildSessionAttributes(branchDeltas, session, version, clientType, {
+      branch,
+      fallbackModel: fallbackModelByBranch?.(branch)
+    });
 
     // Create session metric for this branch
     const metric: SessionMetric = {
@@ -114,7 +127,7 @@ function buildSessionAttributes(
   session: Session,
   version: string,
   clientType: string,
-  branch: string
+  { branch, fallbackModel }: { branch: string; fallbackModel?: string }
 ): ToolUsageAttributes {
   // Use agent session ID from session correlation for API calls
   // This is the canonical source of truth set during SessionStart
@@ -222,8 +235,7 @@ function buildSessionAttributes(
   }
 
   // Determine most-used model
-  const sessionModel = (session as Session & { model?: string }).model;
-  const primaryModel = getMostUsedModel(modelCounts) || sessionModel;
+  const primaryModel = getMostUsedModel(modelCounts) || fallbackModel || session.model;
 
   // Calculate total tool calls from internal counts
   const totalToolCalls = Object.values(toolCounts).reduce((sum, c) => sum + c, 0);

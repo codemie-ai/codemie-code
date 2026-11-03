@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-10-15-epmcdme-15316-expired-sso-session (2026-10-15)
+
+- **Unbounded body read on redirect drain** — `src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts:62` — `tools.readBody(response)` buffers the entire response in memory with no size/time bound before relabeling. Pre-existing: the call goes through the shared `ProxyHttpClient.readResponseBody` (`src/providers/plugins/sso/proxy/proxy-http-client.ts:249`), which already carries this exact unbounded-buffering risk and is already called the same way by the pre-existing `copilot-encrypted-content-sanitizer.plugin.ts:63`; this change reuses an existing shared tool as designed rather than introducing the risk.

@@ -19,6 +19,13 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
 
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 import {
   isKimiCompatibleModelName,
   resolveKimiModel,
@@ -196,5 +203,43 @@ describe('assertExplicitKimiModelAllowed', () => {
 
   it('skips the availability check when the list is empty (cannot adjudicate)', () => {
     expect(() => assertExplicitKimiModelAllowed('kimi-k2', [])).not.toThrow();
+  });
+});
+
+describe('resolveKimiModel SSO lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const profile = JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' });
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+  });
+
+  it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([model({ deployment_name: 'kimi-k2', base_name: 'kimi-k2', label: 'K' })]);
+
+    const result = await resolveKimiModel({ CODEMIE_PROFILE_CONFIG: profile });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(result.selectedModel).toBe('kimi-k2');
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([model({ deployment_name: 'kimi-k2', base_name: 'kimi-k2', label: 'K' })]);
+
+    await resolveKimiModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_BASE_URL: 'http://localhost:4321' });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+  });
+
+  it('reports the resolved URL when SSO credentials are missing', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(null);
+
+    await expect(resolveKimiModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
+      'codemie profile login --url https://profile.example.com'
+    );
   });
 });

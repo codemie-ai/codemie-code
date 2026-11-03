@@ -1,0 +1,349 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile, access, utimes } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+let tempDir: string;
+
+vi.mock('@/utils/paths.js', () => ({
+  getCodemiePath: (...parts: string[]) => join(tempDir, ...parts),
+  getDirname: () => '/fake/dist/providers/plugins/sso',
+}));
+vi.mock('@/utils/processes.js', () => ({
+  spawnDetached: vi.fn(),
+  isProcessAlive: vi.fn(),
+}));
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  existsSync: vi.fn(() => true),
+}));
+vi.mock('@/utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { existsSync } from 'node:fs';
+import { spawnDetached, isProcessAlive } from '@/utils/processes.js';
+import {
+  startDetachedSsoLogin,
+  releaseLoginLockOnSuccess,
+  releaseLoginLockOnFailure,
+  waitForDetachedSsoLogin,
+  describeLogin,
+} from '../sso.detached-login.js';
+
+const URL_ = 'https://codemie.example.com';
+const lockPath = (): string => join(tempDir, 'sso-login.lock');
+const writeLock = (lock: unknown): Promise<void> => writeFile(lockPath(), typeof lock === 'string' ? lock : JSON.stringify(lock));
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('startDetachedSsoLogin', () => {
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+    vi.clearAllMocks();
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(spawnDetached).mockReturnValue(4242);
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('starts a sign-in when there is no lock', async () => {
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+
+    const [command, args, options] = vi.mocked(spawnDetached).mock.calls[0];
+    expect(command).toBe(process.execPath);
+    expect(args[1]).toBe('--url');
+    expect(args[2]).toBe(URL_);
+    expect(args[0]).toMatch(/sso-login\.js$/);
+    expect(options).toEqual({ windowsHide: true });
+
+    const lock = JSON.parse(await readFile(lockPath(), 'utf-8'));
+    expect(lock).toMatchObject({ pid: 4242 });
+  });
+
+  it('reports in-progress for a fresh lock with a live pid', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 5_000 });
+    vi.mocked(isProcessAlive).mockReturnValue(true);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('in-progress');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('reports cooldown for a dead pid within 30s', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 5_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('cooldown');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('replaces a stale lock with a dead pid older than 30s', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports cooldown within 30s of a successful sign-in, even though its process has already exited (PR #655 review)', async () => {
+    // The sign-in child's own process has exited after succeeding (isProcessAlive => false),
+    // and its startedAt could be from well before the 30s window — succeededAt is the only
+    // signal that a login just completed and repeated redirects should be damped.
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('cooldown');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('starts a new sign-in once the post-success cooldown has elapsed', async () => {
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a new sign-in once the cooldown elapses even if the succeeded process is still lingering (caught by blind review)', async () => {
+    // A succeeded lock's own age (startedAt) and live pid must NOT fall through to the
+    // isProcessAlive/LOCK_MAX_AGE_MS "in-progress" branch — that branch is for an unresolved
+    // attempt, not a succeeded-but-slow-to-exit one. Without that split, this would wrongly
+    // report 'in-progress' for up to 150s instead of releasing after the 30s cooldown.
+    vi.mocked(isProcessAlive).mockReturnValue(true); // the succeeded process hasn't exited yet
+    await writeLock({ pid: 1, startedAt: Date.now() - 40_000, succeededAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces a lock with a live pid older than 150s', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 151_000 });
+    vi.mocked(isProcessAlive).mockReturnValue(true);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+  });
+
+  it.each([['not json'], [{ pid: 'x' }], [{ startedAt: 1 }]])('treats an old corrupt lock (%j) as stale', async (lock) => {
+    await writeLock(lock);
+    const old = new Date(Date.now() - 10_000);
+    await utimes(lockPath(), old, old);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+  });
+
+  it.each([[''], ['not json']])('reports in-progress for a freshly written unreadable lock (%j)', async (lock) => {
+    await writeLock(lock);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('in-progress');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('fails and removes the lock when spawn returns -1', async () => {
+    vi.mocked(spawnDetached).mockReturnValue(-1);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('failed');
+    expect(await exists(lockPath())).toBe(false);
+  });
+
+  it('fails and removes the lock when spawn throws', async () => {
+    vi.mocked(spawnDetached).mockImplementation(() => {
+      throw new Error('spawn failed');
+    });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('failed');
+    expect(await exists(lockPath())).toBe(false);
+  });
+
+  it('fails and removes the lock when the child script is missing', async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('failed');
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(await exists(lockPath())).toBe(false);
+  });
+
+  it('lets exactly one of two concurrent calls start a sign-in', async () => {
+    vi.mocked(isProcessAlive).mockReturnValue(true);
+
+    const results = await Promise.all([startDetachedSsoLogin(URL_), startDetachedSsoLogin(URL_)]);
+
+    expect([...results].sort()).toEqual(['in-progress', 'started']);
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('releaseLoginLockOnSuccess', () => {
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('stamps an owned lock as succeeded rather than removing it (PR #655 review: damp repeated sign-ins)', async () => {
+    const startedAt = Date.now();
+    await writeLock({ pid: process.pid, startedAt });
+
+    await releaseLoginLockOnSuccess();
+
+    expect(await exists(lockPath())).toBe(true);
+    const lock = JSON.parse(await readFile(lockPath(), 'utf-8'));
+    expect(lock).toMatchObject({ pid: process.pid, startedAt });
+    expect(lock.succeededAt).toBeTypeOf('number');
+  });
+
+  it('leaves a lock owned by another process untouched', async () => {
+    const lock = { pid: process.pid + 1, startedAt: 1000 };
+    await writeLock(lock);
+
+    await releaseLoginLockOnSuccess();
+
+    expect(JSON.parse(await readFile(lockPath(), 'utf-8'))).toEqual(lock);
+  });
+
+  it('does nothing when there is no lock', async () => {
+    await expect(releaseLoginLockOnSuccess()).resolves.toBeUndefined();
+  });
+});
+
+describe('describeLogin', () => {
+  it('describes a started sign-in', () => {
+    expect(describeLogin('started')).toContain('opened automatically');
+  });
+
+  it('describes an in-progress sign-in', () => {
+    expect(describeLogin('in-progress')).toContain('already in progress');
+  });
+
+  it('describes a cooldown', () => {
+    expect(describeLogin('cooldown')).toContain('codemie profile login');
+  });
+
+  it('describes a failure', () => {
+    expect(describeLogin('failed')).toContain('Could not open the browser sign-in');
+  });
+
+  it('says the sign-in finished but this profile is still unauthenticated after a succeeded wait', () => {
+    const text = describeLogin('cooldown', { wait: { status: 'succeeded' } });
+    expect(text).toContain('sign-in finished');
+    expect(text).toContain('still not authenticated');
+    expect(text).not.toContain('did not complete');
+    expect(text).toContain('re-send your prompt');
+  });
+
+  it('gives neutral text without the expected-expiry lead when no sign-in was attempted', () => {
+    const text = describeLogin(undefined);
+    expect(text).not.toContain('expired');
+    expect(text).not.toContain('codemie profile login');
+    expect(text).toContain('re-send your prompt');
+  });
+});
+
+describe('releaseLoginLockOnFailure', () => {
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('stamps an owned lock as failed with the error', async () => {
+    await writeLock({ pid: process.pid, startedAt: 1000 });
+
+    await releaseLoginLockOnFailure('Authentication cancelled by user');
+
+    const lock = JSON.parse(await readFile(lockPath(), 'utf-8'));
+    expect(lock).toMatchObject({ pid: process.pid, startedAt: 1000, error: 'Authentication cancelled by user' });
+    expect(lock.failedAt).toBeTypeOf('number');
+  });
+
+  it('leaves a lock owned by another process untouched', async () => {
+    const lock = { pid: process.pid + 1, startedAt: 1000 };
+    await writeLock(lock);
+
+    await releaseLoginLockOnFailure('x');
+
+    expect(JSON.parse(await readFile(lockPath(), 'utf-8'))).toEqual(lock);
+  });
+});
+
+describe('waitForDetachedSsoLogin', () => {
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+    vi.clearAllMocks();
+    vi.mocked(isProcessAlive).mockReturnValue(true);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('returns succeeded when succeededAt is stamped mid-wait', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() });
+    setTimeout(() => void writeLock({ pid: 1, startedAt: Date.now(), succeededAt: Date.now() }), 30);
+
+    expect(await waitForDetachedSsoLogin({ timeoutMs: 2_000, pollMs: 10 })).toEqual({ status: 'succeeded' });
+  });
+
+  it('returns failed with the stamped error', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now(), failedAt: Date.now(), error: 'Authentication cancelled by user' });
+
+    expect(await waitForDetachedSsoLogin({ timeoutMs: 2_000, pollMs: 10 })).toEqual({
+      status: 'failed',
+      error: 'Authentication cancelled by user',
+    });
+  });
+
+  it('returns failed immediately when the lock pid died without stamping', async () => {
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() });
+
+    const result = await waitForDetachedSsoLogin({ timeoutMs: 2_000, pollMs: 10 });
+
+    expect(result.status).toBe('failed');
+  });
+
+  it('returns failed when there is no lock', async () => {
+    expect((await waitForDetachedSsoLogin({ timeoutMs: 2_000, pollMs: 10 })).status).toBe('failed');
+  });
+
+  it('returns timeout when the deadline passes with a live pid', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() });
+
+    expect(await waitForDetachedSsoLogin({ timeoutMs: 50, pollMs: 10 })).toEqual({ status: 'timeout' });
+  });
+});
+
+describe('describeLogin variants', () => {
+  it('auto-resume text says it will continue automatically', () => {
+    const text = describeLogin('started', { resume: 'auto' });
+    expect(text).toContain('expected');
+    expect(text).toContain('continue automatically');
+    expect(text).not.toContain('re-send');
+  });
+
+  it('manual text tells the user to re-send', () => {
+    const text = describeLogin('started');
+    expect(text).toContain('expected');
+    expect(text).toContain('re-send your prompt');
+  });
+
+  it('failed wait names the error and recovery', () => {
+    const text = describeLogin('started', { wait: { status: 'failed', error: 'X' } });
+    expect(text).toContain('X');
+    expect(text).toContain('codemie profile login');
+  });
+
+  it('timed-out wait tells the user to re-send', () => {
+    expect(describeLogin('started', { wait: { status: 'timeout' } })).toContain('re-send your prompt');
+  });
+});

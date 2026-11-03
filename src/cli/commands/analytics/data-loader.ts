@@ -135,6 +135,16 @@ export interface RawSessionData {
   [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `--session <id>` matches the whole id, and a full UUID also matches its generations `<uuid>-<gen>`. */
+export function matchesSessionIdFilter(sessionId: string, filterId: string): boolean {
+  return sessionId === filterId || (UUID_PATTERN.test(filterId) && sessionId.startsWith(`${filterId}-`));
+}
+
+/** Suffix of the ownership sidecars written by `appendTranscriptMarker` (session-origin-audit.ts). */
+const MARKER_FILE_SUFFIX = '-codemie-marker.json';
+
 /**
  * Load all metric files from ~/.codemie/sessions/
  */
@@ -154,8 +164,11 @@ export class MetricsDataLoader {
     try {
       const files = readdirSync(this.sessionsDir);
 
-      // Find all .json files (session metadata)
-      const sessionFiles = files.filter(f => f.endsWith('.json') && !f.includes('_metrics'));
+      // Find all .json files (session metadata). Ownership sidecars (`<id>-codemie-marker.json`)
+      // live in the same directory but carry no session fields, so they are not sessions.
+      const sessionFiles = files.filter(
+        f => f.endsWith('.json') && !f.includes('_metrics') && !f.endsWith(MARKER_FILE_SUFFIX)
+      );
       const seenSessionIds = new Set<string>();
 
       for (const sessionFile of sessionFiles) {
@@ -165,8 +178,8 @@ export class MetricsDataLoader {
         // fallback pattern in src/cli/commands/log/reader.ts).
         const sessionId = sessionFile.replace('.json', '').replace(/^completed_/, '');
 
-        // Skip if filtering by session ID
-        if (filter?.sessionId && sessionId !== filter.sessionId) {
+        // Skip if filtering by session ID (a UUID also selects its `/clear` generations `<uuid>-<gen>`)
+        if (filter?.sessionId && !matchesSessionIdFilter(sessionId, filter.sessionId)) {
           continue;
         }
 
@@ -179,17 +192,10 @@ export class MetricsDataLoader {
         }
         seenSessionIds.add(sessionId);
 
-        // Load session records
         const sessionData = this.loadSession(sessionId);
-        if (!sessionData) {
+        if (!sessionData || !this.matchesFilter(sessionData, filter)) {
           continue;
         }
-
-        // Apply filters
-        if (!this.matchesFilter(sessionData, filter)) {
-          continue;
-        }
-
         sessions.push(sessionData);
       }
     } catch {
@@ -314,7 +320,7 @@ export class MetricsDataLoader {
     }
 
     // Filter by session ID
-    if (filter.sessionId && sessionData.sessionId !== filter.sessionId) {
+    if (filter.sessionId && !matchesSessionIdFilter(sessionData.sessionId, filter.sessionId)) {
       return false;
     }
 
@@ -323,8 +329,12 @@ export class MetricsDataLoader {
       return false;
     }
 
-    // Filter by agent name
-    if (filter.agentName && !agentMatchesAnalyticsFilter(startEvent.agentName, filter.agentName)) {
+    // Filter by agent name (a record without an agent name can never match a named agent)
+    if (
+      filter.agentName &&
+      (typeof startEvent.agentName !== 'string' ||
+        !agentMatchesAnalyticsFilter(startEvent.agentName, filter.agentName))
+    ) {
       return false;
     }
 

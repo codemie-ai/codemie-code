@@ -492,9 +492,24 @@ describe('buildPayload — complete native snapshot projection', () => {
     expect(record.perModelCost[0].costUSD).toBe(record.costSeries!.at(-1)!.cost);
   });
 
+  it('falls back to the aggregator\'s own duration when observedEnd is only a cosmetic estimate, and omits both fields from the payload (PR #655/#661 review)', () => {
+    // observedEndEstimated means observedEnd is the "next sibling's startTime, or now" cosmetic
+    // bound for an open session sharing a file (cost-enricher.ts's computeReportedObservedEnd) —
+    // using it for durationMs would otherwise grow the reported duration on every report run
+    // (the "now" case), or report a span the session's own cost attribution never assumed.
+    // Neither field is exported in this case: a consumer of the payload has no way to know about
+    // the flag, so the estimate must never reach `observedEnd` there at all (review comment).
+    const cost = { ...snapshot(), observedEnd: T0 + 9_999_999, observedEndEstimated: true };
+    const payload = payloadFor(cost);
+    expect(payload.sessions[0].durationMs).toBe(60000); // falls back to session().duration, not 9,999,999
+    expect(payload.sessions[0].observedEnd).toBeUndefined();
+    expect(payload.sessions[0].observedEndEstimated).toBeUndefined();
+  });
+
   it('uses captured activity bounds for the single-session duration and report period', () => {
     const payload = payloadFor();
     expect(payload.sessions[0]).toMatchObject({ capturedAt: T0 + 6_000, observedStart: T0, observedEnd: T0 + 5_000, startTime: T0, durationMs: 5_000, dispatchesComplete: true });
+    expect(payload.sessions[0].observedEndEstimated).toBeUndefined();
     expect(payload.meta.capturedAt).toBe(T0 + 6_000);
     expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
     expect(payload.meta.periodEnd).toBe(new Date(T0 + 5_000).toISOString());

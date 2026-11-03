@@ -6,7 +6,7 @@ import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
-import { commandExists } from '../../../utils/processes.js';
+import { commandExists, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
 import { getOpenCodeConfigDir, getOpenCodeDbPath, getOpenCodeDataDir } from './opencode.paths.js';
 import {
@@ -15,6 +15,7 @@ import {
 } from './opencode.incremental-sync.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { sendPathApiUrl } from '../../core/session/send-path.js';
 import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
 import { ensureSessionFile } from '../../core/session/ensure-session.js';
@@ -90,11 +91,14 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    env,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -237,7 +241,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         metadata: OpenCodePluginMetadata,
         buildContext: () => ({
           sessionId,
-          apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
+          apiBaseUrl: sendPathApiUrl(env) || '',
           cookies: '',
           clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
           version: env.CODEMIE_CLI_VERSION || '0.0.0',
@@ -245,7 +249,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
           gitBranch: env.CODEMIE_GIT_BRANCH,
         }),
         ssoUrl: env.CODEMIE_URL,
-        syncApiUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL,
+        env,
+        syncApiUrl: sendPathApiUrl(env),
         cliVersion: env.CODEMIE_CLI_VERSION,
       });
     },
@@ -297,12 +302,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       // Fetch live model catalogue from the CodeMie API.
       // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
-      const allModels = await fetchDynamicModelConfigs(
-        baseUrl,
-        env.CODEMIE_URL,
-        env.CODEMIE_JWT_TOKEN,
-        selectedModel,
-      );
+      const allModels = await fetchDynamicModelConfigs(baseUrl, env, selectedModel);
 
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
       // modelConfig resolves from the unfiltered allModels so the active model always has a

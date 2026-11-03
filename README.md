@@ -66,12 +66,28 @@ npx @codemieai/code install claude --supported
 
 ## Installation
 
+### System Requirements
+
+Before installing, verify the following:
+
+| Requirement | Details |
+|---|---|
+| Node.js | `>=20.0.0` |
+| npm | Required for the npm fallback and local/project installation methods; ships with Node.js |
+| Operating System | Windows, macOS, Linux, or WSL |
+| Network access | Access to `registry.npmjs.org` (or an enterprise npm mirror that exposes the `@codemieai` scope) **and** to GitHub Releases (`github.com`, `objects.githubusercontent.com`) — some native dependencies (e.g. `keytar`) fetch prebuilt binaries from there via `prebuild-install` |
+| npm permissions | A user-writable global npm prefix is recommended for `npm install -g`; when global npm is not writable, the bootstrap installers configure a user-local prefix automatically |
+
+Confirm the installed Node.js version with `node --version` before proceeding. Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-kimi`, etc.) additionally require a **global** installation — see [Local/Project npm Installation](#localproject-npm-installation).
+
 ### Native Bootstrap Installers
 
 For Windows and macOS, CodeMie ships two installer options:
 
-- **GUI installers** — a signed `.dmg` (macOS) and a `.exe` wizard (Windows) that guide you through installation with no terminal required. Download [CodeMie Connect 2.0.1 (macOS aarch64)](https://github.com/codemie-ai/codemie-code/raw/main/install/macos/CodeMie%20Connect_2.0.1_aarch64_signed.dmg) or browse the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos) / [Windows install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/windows) and run the file.
-- **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when the GUI installer is unavailable.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+
+  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
+- **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
 
@@ -587,7 +603,74 @@ Existing CodeMie-tracked sessions and other agents are still included as usual.
 Use an absolute path for scheduled jobs and set the variable in the job's environment;
 an alias or function in your interactive shell does not configure the scheduler.
 
-For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
+### Claude Code OTLP analytics
+
+Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
+
+```bash
+# Track every project (the default; same as --scope user). Asks for confirmation first.
+codemie proxy connect --claude-code-otlp
+
+# Track only the current project; run from its root (explicit opt-in)
+codemie proxy connect --claude-code-otlp --scope project
+
+# Unattended or CI run: skip the confirmation prompt
+codemie proxy connect --claude-code-otlp --silent
+
+# Optional: use the preview profile for this command only
+codemie proxy connect --claude-code-otlp --scope project --profile preview
+```
+
+| Option | Description |
+|---|---|
+| `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
+| `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
+| `--silent` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
+| `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
+| `--force` | Discard an invalid project allowlist so setup can continue; valid allowlists are not changed. |
+| `--verbose` | Show detailed command output. |
+
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--silent` writes the Global scope and replaces any listed projects; with `--scope project --silent` the current project is added and existing entries are kept.
+
+Disconnect a project or remove the integration entirely:
+
+```bash
+# Stop tracking the current project
+codemie proxy disconnect --claude-code-otlp --scope project
+
+# Remove the Claude Code hooks, OTel environment variables, and project allowlist
+codemie proxy disconnect --claude-code-otlp
+```
+
+Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
+
+```bash
+# Stop all analytics collection; hooks stay installed
+codemie proxy analytics disable
+
+# Exclude the current project, even when Global scope is enabled
+codemie proxy analytics exclude
+
+# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+codemie proxy analytics status
+```
+
+`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
+
+`include`/`enable` only undo `disable`/`exclude`; they do not add a project to the Project-scope allowlist. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
+
+For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
+
+The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+
+```bash
+# Copilot CLI or VS Code Copilot Chat
+codemie proxy analytics disable --copilot-cli-otlp
+codemie proxy analytics exclude --copilot-chat-otlp
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
 
 ## Codebase Memory MCP
 
@@ -676,6 +759,7 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 ```bash
 codemie proxy status
 codemie proxy inspect desktop --limit 5
+codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
 

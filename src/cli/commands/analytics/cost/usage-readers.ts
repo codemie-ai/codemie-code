@@ -12,10 +12,11 @@ import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { logger } from '@/utils/logger.js';
 // Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
-import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
-import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
+import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '../../../../utils/routing-headers.mjs';
+import { parseBackendModelName } from '../../../../utils/bedrock-pricing.mjs';
 import { resolveKimiModelId } from '@/agents/plugins/kimi/kimi.env-model.js';
 
 /** model -> usage */
@@ -152,6 +153,22 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
     out.push(record);
   }
   return out;
+}
+
+/** Keep only records this session's own window can plausibly own: untimed ones (existing
+ * earliest-owner fallback) or ones at-or-before `windowEnd` (this session's own observed end).
+ * The bound is inclusive because `windowEnd` can be the max ts across the session's own
+ * messages (for a native-loader-synthesized session, or the floored case in
+ * cost-enricher.ts's floorObservedEnd), so that session's own final usage record commonly has
+ * `ts === windowEnd` and must not be dropped by its own window. For an ordinary hook-tracked
+ * session `windowEnd` is instead the CodeMie session's own `endTime` (data-loader.ts), and for
+ * an OTel-synced one the latest event time (otel-loader.ts) — three different clocks, not all
+ * of them already equal to a message's own ts, but the inclusive bound is harmless either way
+ * (it only ever widens, never narrows, what a session's own window admits).
+ * `windowEnd` undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
+function withinWindow(records: UsageRecord[], windowEnd: number | undefined): UsageRecord[] {
+  if (windowEnd === undefined) return records;
+  return records.filter((r) => r.ts === null || r.ts <= windowEnd);
 }
 
 /**
@@ -544,14 +561,27 @@ function readCodex(parsed: ParsedSession): UsageMap {
  * per-turn records ({@link extractCodexUsageRecords}); this returns just the linked child rollouts
  * so callers on the per-turn path can fold sub-agent spend into the session/run total without
  * touching the parent-only series.
+ *
+ * `windowEnd`, when given, excludes a sub-agent rollout line timestamped after it before taking
+ * the "last" `total_token_usage` — the same bound {@link extractCodexUsageRecords}'s caller
+ * applies to the parent transcript, kept consistent here even though sub-agent rollout files are
+ * linked to one parent dispatch (via `toolUseId` within that session's own parse) and are not
+ * currently known to be shared across sessions the way a resumed top-level log is.
  */
-export function readCodexSubagentUsage(parsed: ParsedSession): UsageMap {
+export function readCodexSubagentUsage(parsed: ParsedSession, windowEnd?: number): UsageMap {
   const out: UsageMap = new Map();
   for (const sub of parsed.subagents ?? []) {
     if (!Array.isArray(sub.messages)) {
       continue;
     }
-    const subParsed = { ...parsed, messages: sub.messages, subagents: undefined } as ParsedSession;
+    const messages = windowEnd === undefined
+      ? sub.messages
+      : sub.messages.filter((m) => {
+          const line = m as CodexRolloutLine;
+          const ts = line.timestamp ? Date.parse(line.timestamp) : NaN;
+          return !Number.isFinite(ts) || ts <= windowEnd;
+        });
+    const subParsed = { ...parsed, messages, subagents: undefined } as ParsedSession;
     for (const [model, usage] of readCodex(subParsed)) {
       accumulate(out, model, usage);
     }
@@ -854,9 +884,19 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
  * Per-model usage for the cost enricher, deduping Claude API responses across sessions
  * by `(message.id, requestId)`. `seen` is shared across all sessions in a run (pass a
  * fresh set to disable cross-session dedup). When a Claude session carries an authoritative
- * SDK `modelUsage` rollup (audit.jsonl), that is used as-is (session-local, no cross-file dup).
+ * SDK `modelUsage` rollup (audit.jsonl) AND `allowRollup` is true, that is used as-is. Callers
+ * MUST pass `allowRollup: false` when this session's native log is shared with other sessions
+ * (resumed/continued into one file) — the rollup is a whole-file aggregate, not a per-session
+ * one, so trusting it for a shared file would let every sharing session report the same
+ * combined total instead of its own slice.
  */
-export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageMap {
+export function gatherUsageDeduped(
+  agentName: string,
+  parsed: ParsedSession,
+  seen: Set<string>,
+  windowEnd?: number,
+  allowRollup = true
+): UsageMap {
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
     return readGemini(parsed);
@@ -877,19 +917,34 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractPiUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
   }
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
-    const rollup = readClaudeSdkResult(parsed);
-    if (rollup) {
-      return rollup; // authoritative SDK rollup
+    // The rollup sums every `result` message in `parsed` — for a session sharing its native
+    // log with others, `parsed` is the ENTIRE shared file, not just this session's own slice.
+    // Only trust it when this session is the sole owner of its log file (allowRollup); when
+    // unsafe, fall through to the windowed per-message path below instead.
+    const sdkRollup = readClaudeSdkResult(parsed);
+    if (allowRollup && sdkRollup) {
+      return sdkRollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractClaudeUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen)) {
       accumulate(out, r.model, r.usage);
+    }
+    // A shared-file session whose only usage signal is the (now-distrusted) rollup, with no
+    // per-message records to fall back to, reports 0 usage here rather than double-counting
+    // the rollup across its siblings — the safer of two wrong answers (CR-002), but previously
+    // silent. Surface it so a real loss of billed usage isn't invisible.
+    if (!allowRollup && sdkRollup && out.size === 0) {
+      // logger.warn, not debug: this is a real loss of billed usage for this session (reported
+      // as $0), not a routine/expected condition — it must be visible without debug logging on.
+      logger.warn(
+        '[cost] Shared-file SDK rollup present but untrusted (session shares its native log) and no per-message records to fall back to — reporting 0 usage for this session instead of double-counting'
+      );
     }
     return out;
   }
@@ -903,25 +958,31 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
  * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-supported agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */
-export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageRecord[] {
+export function gatherDedupedUsageRecords(
+  agentName: string,
+  parsed: ParsedSession,
+  seen: Set<string>,
+  windowEnd?: number,
+  allowRollup = true
+): UsageRecord[] {
   const a = agentName.toLowerCase();
   if (a === 'kimi') {
     // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
     return extractKimiUsageRecords(parsed);
   }
   if (isCodexFamilyAgent(a)) {
-    return takeUnseenRecords(extractCodexUsageRecords(parsed), seen);
+    return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd), seen);
   }
   if (a === 'pi') {
-    return takeUnseenRecords(extractPiUsageRecords(parsed), seen);
+    return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
   }
-  if (readClaudeSdkResult(parsed)) {
+  if (allowRollup && readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
-  return takeUnseenRecords(extractClaudeUsageRecords(parsed), seen);
+  return takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen);
 }
 
 /** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */

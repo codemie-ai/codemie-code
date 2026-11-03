@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "Make CLI OTLP analytics send a normalized parent/current repository identifier instead of the full cwd when a git repo has no remote origin (EPMCDME-15937).",
+  "generated": "2026-10-14T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 17,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Open design decisions: which field carries the fallback (repo_remote overloaded vs a new repository field), and whether raw cwd must stop being sent to satisfy the no-username/home-exposure criterion. The latter may need backend coordination." },
+    { "dimension": "technical_risk", "reason": "The closest pattern is resolveRepositoryName/extractRepository, which gives parent/current. It does not cover the privacy aspect: a cwd directly under home yields username/dir, and raw cwd still reaches the backend. That gap is treated as a divergence. The AC also lists cross-OS path cases with no adapter-level test template for them. The change sits in the shared OtlpAgentAdapter base class, which affects all adapters." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to L: the existing fallback helper does not cover the security-sensitive aspect (username/home exposure, raw cwd still sent)",
+    "Component Scope kept at M: touches the shared OtlpAgentAdapter base class used by all OTLP adapters"
+  ],
+  "split_recommendation": null
+}

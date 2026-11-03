@@ -10,6 +10,8 @@ import * as path from 'path';
 import { ConfigLoader } from '../config.js';
 import type { MultiProviderConfig, CodeMieIntegrationInfo } from '../../env/types.js';
 import * as paths from '../paths.js';
+import { PassThrough } from 'node:stream';
+import { logger } from '../logger.js';
 
 // Test utilities
 const TEST_DIR = path.join(process.cwd(), 'tmp-test-config');
@@ -458,6 +460,8 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
     });
 
     afterEach(async () => {
+      // The logger keeps its log file under TEST_DIR open; Windows cannot remove it while open.
+      await logger.close();
       await fs.rm(TEST_DIR, { recursive: true, force: true });
       vi.restoreAllMocks();
       (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG = ORIGINAL_GLOBAL_CONFIG;
@@ -732,6 +736,117 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
 
       expect(merged.codeMieUrl).toBe('https://local-workspace.example.com');
       expect(sources['codeMieUrl']?.source).toBe('project');
+    });
+
+    it('writes the profile-protection debug line to the logger console stream, not stdout', async () => {
+      await writeGlobal('dbg', {
+        dbg: {
+          provider: 'ai-run-sso',
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'profile-model',
+          name: 'dbg',
+          debug: true
+        }
+      });
+      process.env.CODEMIE_MODEL = 'env-model';
+      const stream = new PassThrough();
+      let captured = '';
+      stream.on('data', (chunk: Buffer) => { captured += chunk.toString(); });
+      const stdoutSpy = vi.spyOn(process.stdout, 'write');
+      logger.setConsoleStream(stream);
+      try {
+        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'dbg' });
+        expect(cfg.model).toBe('profile-model');
+      } finally {
+        logger.setConsoleStream(process.stdout);
+        delete process.env.CODEMIE_MODEL;
+      }
+
+      const line = '[ConfigLoader] Profile protection: filtered environment vars: model';
+      expect(captured).toContain(line);
+      const stdoutText = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(stdoutText).not.toContain(line);
+    });
+
+    describe('linked .codemie project vs global profile (AC7)', () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+
+      async function setup(globalProject?: string, localProject?: string) {
+        await writeGlobal('g', { g: { provider: 'ai-run-sso', model: 'm', name: 'g' } });
+        if (globalProject) {
+          const raw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: globalProject, codeMieUrl: 'https://g.example.com' };
+          await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+        if (localProject) {
+          await writeLocal('other', { other: { name: 'other' } });
+          const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: localProject };
+          await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+      }
+
+      // The launcher (AgentCLI) loads config before it creates CODEMIE_SESSION_ID, so managed-vs-native
+      // is never inferred from that variable: the linked-project preference is an explicit opt-in.
+      beforeEach(() => {
+        delete process.env.CODEMIE_SESSION_ID;
+      });
+
+      it('default (launcher / profile commands, no session id yet): keeps the profile project', async () => {
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+        expect(ws.codeMieProject).toBe('global-proj');
+        expect((await ConfigLoader.load(workingDir, { name: 'g' })).codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('native hook opt-in: linked project beats global profile project, origin linked_folder', async () => {
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false, true);
+        expect(ws.codeMieProject).toBe('linked-proj');
+        expect(ws.codeMieUrl).toBe('https://g.example.com');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, true)).toBe('linked_folder');
+        expect((await ConfigLoader.load(workingDir, { name: 'g' }, { preferLinkedProject: true })).codeMieProject).toBe('linked-proj');
+      });
+
+      it('isLocalProfile: false for a global profile beside a linked workspace-only .codemie', async () => {
+        await setup('global-proj', 'linked-proj');
+        expect(await ConfigLoader.isLocalProfile(workingDir, 'g')).toBe(false);
+      });
+
+      it('no linked project: profile origin', async () => {
+        await setup('global-proj');
+        expect((await ConfigLoader.resolveProfileWorkspace(workingDir, false)).codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('native opt-in with no genuine link: a global-scope project is no source (none); managed keeps profile', async () => {
+        await setup('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, true)).toBe('none');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, false)).toBe('profile');
+      });
+
+      it('a local profile without a local workspace only inherits the global project: not a link when native', async () => {
+        await setup('global-proj');
+        await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
+        expect(await ConfigLoader.isLocalProfile(workingDir, 'g')).toBe(true);
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, true)).toBe('none');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, false)).toBe('profile');
+      });
+
+      it('a local profile beside a local workspace project is a linked folder in both modes', async () => {
+        await setup('global-proj', 'linked-proj');
+        await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
+        const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+        await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ ...raw, workspace: { codeMieProject: 'linked-proj' } }));
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, true)).toBe('linked_folder');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, false)).toBe('linked_folder');
+      });
+
+      it('no project anywhere: none', async () => {
+        await setup();
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('none');
+      });
     });
   });
 });
