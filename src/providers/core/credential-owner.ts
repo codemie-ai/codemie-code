@@ -27,7 +27,8 @@ export function normalizeOwnerEmail(value: unknown): string {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(email) ? email : '';
 }
 
-function fingerprint(credentials: SSOCredentials): string {
+/** Identifies the exact login (API URL + cookie values). Binds pending hook data to it; reveals no cookie. */
+export function credentialFingerprint(credentials: SSOCredentials): string {
   const cookies = Object.entries(credentials.cookies).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return createHash('sha256').update(JSON.stringify([credentials.apiUrl, cookies])).digest('hex');
 }
@@ -74,7 +75,7 @@ export async function withVerifiedOwner<T extends SSOCredentials | JWTCredential
     }
     if (resolveEmailFromCredentials(credentials)) return credentials;
 
-    const fp = fingerprint(credentials);
+    const fp = credentialFingerprint(credentials);
     const path = recordPath(credentials.apiUrl);
     const known = await readRecord(path, fp);
     if (known?.email) return { ...credentials, email: known.email };

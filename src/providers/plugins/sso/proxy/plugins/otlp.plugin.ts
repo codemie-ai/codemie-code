@@ -15,6 +15,7 @@ import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
 import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
+import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
 import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
@@ -167,6 +168,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     // Same owner the hook stamps with: the forwarder's evidence key must match it.
     const creds = this.credentials && (await withVerifiedOwner(this.credentials));
     if (!creds) {
+      await processPendingOwner(undefined); // still expires held hook events
       return;
     }
 
@@ -185,6 +187,10 @@ class OtlpInterceptor implements ProxyInterceptor {
         })
       )
     );
+
+    // Hook events held for a login whose owner was unknown: replay under this login, expire past retention (no hook
+    // needed). After the walk, so a replayed session is sent by the next tick.
+    await processPendingOwner(creds);
   }
 
   async handleRequest(
