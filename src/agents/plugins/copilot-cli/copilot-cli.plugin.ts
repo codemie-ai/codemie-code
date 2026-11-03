@@ -3,7 +3,7 @@ import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import {
   COPILOT_CLI_AGENT_NAME,
@@ -51,6 +51,7 @@ function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: COPILOT_CLI_CLIENT_TYPE,
+    ...wrapperOwnerFromEnv(env),
   };
 }
 

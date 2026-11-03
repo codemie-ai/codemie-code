@@ -55,6 +55,7 @@ const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
 const readSubagentMetaMock = vi.fn();
 const readForkedSkillMarkerMock = vi.fn();
+const resolveSubagentSkillMock = vi.fn(async (_transcript: string, _agentId: string) => ({ skillName: '', pending: false }));
 const subagentFilePathMock = vi.fn((transcriptPath: string, agentId: string) => `${transcriptPath}:${agentId}`);
 const resolveSessionEnvFieldsMock = vi.fn();
 
@@ -94,6 +95,7 @@ vi.mock('../transcript/orchestrator.js', () => ({
 vi.mock('../transcript/subagent-usage.js', () => ({
   readSubagentMeta: readSubagentMetaMock,
   readForkedSkillMarker: readForkedSkillMarkerMock,
+  resolveSubagentSkill: resolveSubagentSkillMock,
   subagentFilePath: subagentFilePathMock,
 }));
 
@@ -935,6 +937,51 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
   });
 
+  it('forwards skill_name and a /skill description on SubagentStop for a marker-less fork the main transcript names (EPMCDME-16352)', async () => {
+    readSubagentMetaMock.mockResolvedValue({ spawnDepth: 1 });
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: 'forkme', pending: false });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'fork-1',
+        agent_transcript_path: '/tmp/agent-fork-1.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    // The hook's own transcript path travels as the candidate, so a path discovery cannot find resolves.
+    expect(resolveSubagentSkillMock).toHaveBeenCalledWith(
+      '/tmp/transcript.jsonl',
+      'fork-1',
+      expect.objectContaining({ agentId: 'fork-1', filePath: '/tmp/agent-fork-1.jsonl' })
+    );
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'forkme', description: '/forkme' });
+  });
+
+  it('marks a still-undecidable SubagentStop pending, without skill_name (usage is deferred)', async () => {
+    readSubagentMetaMock.mockResolvedValue({});
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: '', pending: true });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'fork-1',
+        agent_transcript_path: '/tmp/agent-fork-1.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openSubagentPassMock.mock.calls[0][1]).toMatchObject({ agentId: 'fork-1', pending: true });
+    expect(forwardedEvents()[0]).not.toHaveProperty('skill_name');
+  });
+
   it('does not add skill_name on SubagentStop for a regular (non-skill) agent dispatch', async () => {
     readSubagentMetaMock.mockResolvedValue({ spawnDepth: 0, description: 'Explore the repo' });
     const plugin = new ClaudeCodeOtlpPlugin();
@@ -982,6 +1029,19 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
+  });
+
+  it('forwards skill_name on SubagentStart for a marker-less fork the main transcript names (EPMCDME-16352)', async () => {
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: 'forkme', pending: false });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({ hook_event_name: 'SubagentStart', agent_id: 'fork-1', agent_type: 'general-purpose' })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'forkme' });
   });
 
   it('does not add skill_name on SubagentStart for a regular agent (no forked-skill marker)', async () => {

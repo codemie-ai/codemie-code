@@ -168,7 +168,11 @@ describe('hook.ts external-resume origin gating', () => {
     await processEvent(event, { ...baseConfig, sessionId });
 
     expect(mockSendSessionEnd).not.toHaveBeenCalled();
+    const completedPath = getCodemiePath('sessions', `completed_${sessionId}.json`);
+    expect(existsSync(sessionFilePath(sessionId))).toBe(false);
+    expect(JSON.parse(readFileSync(completedPath, 'utf-8')).endMetricSkipped).toBe('external-resume');
 
+    rmSync(completedPath, { force: true });
     cleanupSession(sessionId, claudeSessionId);
   });
 });

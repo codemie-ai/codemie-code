@@ -649,7 +649,7 @@ codemie analytics --last 30d --export -o ./team.html   # Custom path
 codemie analytics --export both                 # Write both .html and .report.json (shared stem)
 
 # View specific session
-codemie analytics --session abc-123-def         # Single session details
+codemie analytics --session abc-123-def         # Single session details (a UUID also selects its /clear generations <uuid>-<gen>)
 ```
 
 ### HTML Dashboard (`--export`)
@@ -1383,7 +1383,7 @@ codemie analytics [options]
 ```
 
 **Filter Options:**
-- `--session <id>` - Filter by session ID
+- `--session <id>` - Filter by session ID (a full UUID also matches its `/clear` generations `<uuid>-<gen>`)
 - `--project <pattern>` - Filter by project path (basename, partial, or full path)
 - `--agent <name>` - Filter by agent name (claude, gemini, etc.)
 - `--branch <name>` - Filter by git branch
@@ -1514,7 +1514,7 @@ codemie log clean --yes                  # Skip confirmation
 
 Options:
 - `--days <number>` - Retention period in days (default: 5)
-- `--sessions` - Also delete old sessions (not just debug logs)
+- `--sessions` - Also delete old sessions (not just debug logs). A live `<id>.json` older than N days may be an undelivered record (completed, waiting for delivery) — its pending data is lost with it; completed sessions (`completed_*`) are never deleted
 - `--dry-run` - Preview without deleting
 - `--yes` - Skip confirmation prompt
 

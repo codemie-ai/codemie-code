@@ -46,7 +46,8 @@ import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { sendPathApiUrl } from '../../core/session/send-path.js';
+import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { CodexSessionAdapter } from './codex.session.js';
@@ -60,7 +61,6 @@ import {
   startCodexIncrementalSync,
   stopCodexIncrementalSync,
 } from './codex.incremental-sync.js';
-import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
 import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation.js';
 import { mkdir } from 'fs/promises';
 
@@ -108,6 +108,7 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -208,15 +209,6 @@ export const CodexPluginMetadata: AgentMetadata = {
         logger.error(`[codex] SessionStart hook failed (non-blocking): ${msg}`);
       }
 
-      // Reconcile previously stranded codex sessions. Codex 0.129.0 has no
-      // graceful-shutdown guarantee, so kill -9 / OS shutdown leaves sessions
-      // marked `active` with no terminal lifecycle metric. Fire-and-forget so
-      // a slow reconcile never blocks the new session from starting.
-      void reconcileStaleCodexSessions(env, buildHookConfig).catch((error) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[codex] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
-
       // Start the in-process incremental sync timer. Because Codex 0.129.0
       // hooks were verified non-firing on `codex exec`, we re-parse the rollout
       // file every ~30 s and write deltas/conversations to JSONL. The SSO proxy
@@ -229,11 +221,11 @@ export const CodexPluginMetadata: AgentMetadata = {
           metadata: CodexPluginMetadata,
           ssoUrl: env.CODEMIE_URL,
           env,
-          syncApiUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL,
+          syncApiUrl: sendPathApiUrl(env),
           cliVersion: env.CODEMIE_CLI_VERSION,
           buildContext: () => ({
             sessionId,
-            apiBaseUrl: env.CODEMIE_BASE_URL || '',
+            apiBaseUrl: sendPathApiUrl(env) || '',
             cookies: '',
             clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
             version: env.CODEMIE_CLI_VERSION || '0.0.0',
@@ -381,7 +373,7 @@ export const CodexPluginMetadata: AgentMetadata = {
 
           const context = {
             sessionId,
-            apiBaseUrl: env.CODEMIE_BASE_URL || '',
+            apiBaseUrl: sendPathApiUrl(env) || '',
             cookies: '',
             clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
             version: env.CODEMIE_CLI_VERSION || '1.0.0',

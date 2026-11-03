@@ -46,7 +46,7 @@ export type AuthGateResult =
  * of baseUrl/syncApiUrl/loginUrl. No candidate resolved at all (e.g. no SSO configured) ⇒ treat
  * the marker as still applicable rather than silently ignore a real problem.
  */
-function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrls: Array<string | undefined>): boolean {
+export function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrls: Array<string | undefined>): boolean {
   if (!marker.baseUrl) {
     // Old/malformed marker with no key of its own — treat as matching rather than silently
     // ignore a real problem it might still be reporting.

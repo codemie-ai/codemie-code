@@ -19,6 +19,18 @@ import {
   NON_RETRYABLE_HTTP_CODES,
   RETRY_DELAY_MS
 } from './constants.js';
+import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { clearAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
+
+/**
+ * A 2xx HTML page where JSON was expected: fetch follows the redirect of an expired session, so the SSO login page
+ * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failure
+ * counted by its status, not rejected credentials.
+ */
+function isLoginPage(response: Response): boolean {
+  return response.headers.get('content-type')?.includes('text/html') === true && response.ok;
+}
 
 /**
  * Conversation API Client interface
@@ -40,7 +52,8 @@ export interface ConversationApiClient {
  */
 export function createApiClient(config: ConversationApiConfig): ConversationApiClient {
   // Private state (closure)
-  const apiConfig: Required<ConversationApiConfig> = {
+  const bounds: SyncBounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
+  const apiConfig: Required<Omit<ConversationApiConfig, 'deadlineMs' | 'abortSignal'>> = {
     baseUrl: config.baseUrl,
     cookies: config.cookies || '',
     apiKey: config.apiKey || '',
@@ -61,17 +74,16 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
   }
 
   /**
-   * Sleep utility
-   */
-  function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
    * Check if HTTP status code should NOT trigger retry
    */
   function isNonRetryableError(statusCode: number): boolean {
     return NON_RETRYABLE_HTTP_CODES.includes(statusCode as any);
+  }
+
+  /** The server rejected the credentials: the attempt is not counted and analytics auth waits for a re-login. */
+  async function rejectCredentials(signal: AbortSignal | undefined, reason: string): Promise<void> {
+    noteAuthFailure(signal);
+    await markAnalyticsAuthInvalid(reason, apiConfig.baseUrl);
   }
 
   // Public interface
@@ -87,6 +99,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       folder: string = DEFAULT_CONVERSATION_FOLDER,
       llmModel?: string
     ): Promise<ConversationSyncResponse> {
+      // Throws SyncStoppedError when the caller's abort or deadline stops it (the payload stays pending)
       const url = `${apiConfig.baseUrl}/v1/conversations/${conversationId}/history`;
 
       const payload = {
@@ -120,9 +133,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       let lastError: Error | null = null;
 
       for (let attempt = 0; attempt < apiConfig.retryAttempts; attempt++) {
+        throwIfStopped(bounds);
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
+          const request = boundedRequest(apiConfig.timeout, bounds);
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -146,11 +159,21 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               method: 'PUT',
               headers,
               body: JSON.stringify(payload),
-              signal: controller.signal
+              signal: request.signal
             });
-            body = response.ok ? await response.json() : await response.text();
+            body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
+          } catch (error) {
+            const stopReason = request.stopReason();
+            throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
-            clearTimeout(timeoutId);
+            request.dispose();
+          }
+
+          if (isLoginPage(response)) {
+            const message = `API answered ${response.status} with an HTML page (an SSO login page) instead of JSON`;
+            await rejectCredentials(bounds.abortSignal, message);
+            logger.error(`[ConversationApiClient] ${message}`);
+            return { success: false, message };
           }
 
           if (!response.ok) {
@@ -169,6 +192,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             const apiDetails = errorData?.error?.details
               || errorData?.details;
             const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
+            if (response.status === 401) {
+              await rejectCredentials(bounds.abortSignal, message);
+            }
 
             // Check for non-retryable errors
             if (isNonRetryableError(response.status)) {
@@ -196,6 +222,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             totalMessages: data.total_messages,
             created: data.created
           });
+          // Server accepted our credentials — clear any stale invalid-auth marker
+          await clearAnalyticsAuthStatus();
 
           if (llmModel?.trim()) {
             const metadataResult = await updateConversationMetadata(conversationId, {
@@ -220,13 +248,17 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           };
 
         } catch (error: any) {
+          if (error instanceof SyncStoppedError) {
+            logger.info(`[ConversationApiClient] Stopped (${error.reason}) at attempt ${attempt + 1}; the payload stays pending`);
+            throw error;
+          }
           lastError = error;
 
           // Log retry attempt
           if (attempt < apiConfig.retryAttempts - 1) {
             const delay = getRetryDelay(attempt);
             logger.warn(`[ConversationApiClient] Sync failed (attempt ${attempt + 1}/${apiConfig.retryAttempts}), retrying in ${delay}ms:`, error.message);
-            await sleep(delay);
+            await backoffWithin(delay, bounds);
           }
         }
       }
@@ -271,9 +303,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       headers['Cookie'] = apiConfig.cookies;
     }
 
+    throwIfStopped(bounds);
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
+      const request = boundedRequest(apiConfig.timeout, bounds);
       let response: Response;
       let errorText = '';
       try {
@@ -281,13 +313,16 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           method: 'PUT',
           headers,
           body: JSON.stringify(metadata),
-          signal: controller.signal
+          signal: request.signal
         });
         if (!response.ok) {
           errorText = await response.text();
         }
+      } catch (error) {
+        const stopReason = request.stopReason();
+        throw stopReason ? new SyncStoppedError(stopReason) : error;
       } finally {
-        clearTimeout(timeoutId);
+        request.dispose();
       }
 
       if (!response.ok) {
@@ -321,6 +356,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
         conversation_id: conversationId
       };
     } catch (error: any) {
+      if (error instanceof SyncStoppedError) throw error;
       logger.error(`[ConversationApiClient] Metadata update failed for ${conversationId}:`, error.message);
       return {
         success: false,
