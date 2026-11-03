@@ -92,10 +92,10 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    *   re-auth, an accepted metrics send).
    *
    * `lastRefreshedAt` is set when a read starts, so a failing store costs at most one read per
-   * window. The stamp is remembered only after a read that returned credentials: a failed, empty or
-   * timed-out read leaves the sign-in signal unspent, and the stamp bypass is allowed again once a
-   * window has passed since that attempt (the plain throttled path then reads and commits the stamp
-   * on success). Calls arriving while a bypass read is pending await it (after a sign-in a resumed
+   * window. Both sign-in signals are spent only by a read that returned credentials: after a failed,
+   * empty or timed-out read the stamp stays unacted on and the marker edge is re-armed, and each
+   * bypass is allowed again once a window has passed since that attempt (the plain throttled path
+   * then reads and commits the stamp on success). Calls arriving while a bypass read is pending await it (after a sign-in a resumed
    * agent often sends several requests at once, and each old-cookie request would be rejected
    * again); calls arriving during a plain throttle read get the snapshot at once.
    */
@@ -120,7 +120,12 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
     if (markerEdge || stampChanged) {
       this.lastRefreshedAt = Date.now();
       const pending = this.readAndAssign(stamp)
-        .then(() => this.current)
+        .then((fresh) => {
+          if (!fresh && markerEdge) {
+            this.sawAuthInvalid = true;
+          }
+          return this.current;
+        })
         .finally(() => {
           if (this.bypassRead === pending) {
             this.bypassRead = null;
@@ -215,7 +220,9 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   /**
    * Returns true exactly once, on the first call after the analytics-auth-status marker
    * transitions from invalid to cleared — the signal that a re-login just stored fresh
-   * credentials. An unreadable marker never blocks the normal throttled path.
+   * credentials. It is held back while the latest failed read is younger than the throttle window
+   * and re-armed by `refresh()` when the read it triggered fails, so a broken store costs at most
+   * one read per window. An unreadable marker never blocks the normal throttled path.
    */
   private consumeAuthRecoveryEdge(markerInvalid: boolean | null): boolean {
     if (markerInvalid === null) {
@@ -225,7 +232,7 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
       this.sawAuthInvalid = true;
       return false;
     }
-    if (this.sawAuthInvalid) {
+    if (this.sawAuthInvalid && Date.now() - this.lastFailedReadAt >= CREDENTIAL_REFRESH_INTERVAL_MS) {
       this.sawAuthInvalid = false;
       return true;
     }

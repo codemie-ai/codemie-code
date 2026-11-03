@@ -3,6 +3,8 @@
  * credential store, plus a check whether a later sign-in replaced what was sent.
  */
 
+import { logger } from '@/utils/logger.js';
+
 export const STORE_READ_DEADLINE_MS = 3000;
 
 /**
@@ -49,6 +51,21 @@ export function buildCookieHeader(cookies: Record<string, string>): string {
 }
 
 /**
+ * Debug-logs a failure by message only, run through the log sanitizer. The sanitizer is loaded on
+ * demand: it pulls in credential-storage modules that resolve filesystem paths at import time,
+ * which this module (imported by every sync path) must not do.
+ */
+async function logFailure(message: string, error: unknown): Promise<void> {
+  const err = error instanceof Error ? error.message : String(error);
+  try {
+    const { sanitizeLogArgs } = await import('@/utils/security.js');
+    logger.debug(message, ...sanitizeLogArgs({ err }));
+  } catch {
+    logger.debug(message);
+  }
+}
+
+/**
  * Wraps a store read so it can never hang its caller: a throw, an empty result or
  * a read slower than the deadline all yield null. A read that outlives its
  * deadline keeps running but its late result is dropped; the next call starts
@@ -62,7 +79,8 @@ export function readWithDeadline<T>(
     const attempt = (async (): Promise<T | null> => {
       try {
         return (await read()) ?? null;
-      } catch {
+      } catch (error) {
+        await logFailure('[cookie-auth] store read failed', error);
         return null;
       }
     })();
@@ -70,6 +88,7 @@ export function readWithDeadline<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<null>((resolve) => {
       timer = setTimeout(() => {
+        logger.debug(`[cookie-auth] store read timed out after ${deadlineMs}ms`);
         resolve(null);
       }, deadlineMs);
       timer.unref();
@@ -103,7 +122,8 @@ export async function sentCredentialsSuperseded(
     }
     const freshHeader = buildCookieHeader(fresh.cookies);
     return freshHeader !== '' && freshHeader !== sentCookieHeader;
-  } catch {
+  } catch (error) {
+    await logFailure('[cookie-auth] supersede check failed', error);
     return false;
   }
 }
@@ -121,8 +141,15 @@ export async function readCookieAuth(
   const first = await guardedRead();
   const source: CookieSource = { refreshNow: guardedRead };
 
+  let cookies = '';
+  try {
+    cookies = first ? buildCookieHeader(first.cookies) : '';
+  } catch (error) {
+    await logFailure('[cookie-auth] stored credentials are malformed', error);
+  }
+
   return {
-    cookies: first ? buildCookieHeader(first.cookies) : '',
+    cookies,
     credentialsSuperseded: (sentCookies: string) => sentCredentialsSuperseded(sentCookies, source),
   };
 }

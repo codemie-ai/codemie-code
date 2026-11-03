@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetStoredAnalyticsCredentials = vi.fn();
 
+const mockLoggerDebug = vi.hoisted(() => vi.fn());
+
+vi.mock('@/utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: mockLoggerDebug },
+}));
 vi.mock('../../../../core/codemie-auth-helpers.js', () => ({
   getStoredAnalyticsCredentials: mockGetStoredAnalyticsCredentials,
 }));
@@ -306,5 +311,58 @@ describe('readAnalyticsCookieAuth', () => {
     mockGetStoredAnalyticsCredentials.mockResolvedValue(null);
     const auth = await readAnalyticsCookieAuth('https://sso', {} as NodeJS.ProcessEnv);
     expect(auth.cookies).toBe('');
+  });
+});
+
+describe('diagnostics', () => {
+  const logged = (): string => JSON.stringify(mockLoggerDebug.mock.calls);
+
+  beforeEach(() => {
+    mockLoggerDebug.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('logs a timed-out store read with the deadline and no credentials', async () => {
+    vi.useFakeTimers();
+    const guarded = readWithDeadline<Creds>(() => new Promise(() => {}), 50);
+    const result = guarded();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await result).toBeNull();
+
+    expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] store read timed out after 50ms');
+  });
+
+  it('does not log a timeout for a read that answers in time', async () => {
+    await readWithDeadline<Creds>(async () => ({ cookies: { a: '1' } }))();
+
+    expect(mockLoggerDebug).not.toHaveBeenCalled();
+  });
+
+  it('logs a store read that throws, without secrets from the error', async () => {
+    const guarded = readWithDeadline<Creds>(async () => {
+      throw new Error('keychain locked');
+    });
+    expect(await guarded()).toBeNull();
+
+    expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] store read failed', expect.anything());
+    expect(logged()).toContain('keychain locked');
+  });
+
+  it('logs a failing supersede check and never the sent header or cookie values', async () => {
+    const source = { refreshNow: vi.fn().mockRejectedValue(new Error('boom')) };
+    expect(await sentCredentialsSuperseded('session=super-secret-value', source)).toBe(false);
+
+    expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] supersede check failed', expect.anything());
+    expect(logged()).not.toContain('super-secret-value');
+  });
+
+  it('logs and yields an empty header when the stored credentials are malformed', async () => {
+    const result = await readCookieAuth(async () => ({}) as never);
+
+    expect(result.cookies).toBe('');
+    expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] stored credentials are malformed', expect.anything());
   });
 });

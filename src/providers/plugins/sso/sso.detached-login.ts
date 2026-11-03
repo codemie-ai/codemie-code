@@ -25,6 +25,12 @@ interface LoginLock {
   startedAt: number;
   /** Epoch millis when this lock's own sign-in succeeded, if it has (see releaseLoginLockOnSuccess). */
   succeededAt?: number;
+  /**
+   * `succeededAt` of the sign-in this lock replaced. Read only by `getLastSignInAt`: the cooldown
+   * and in-progress decisions in `acquireLock` look at `succeededAt` alone, so a carried stamp can
+   * neither trigger nor extend them.
+   */
+  lastSucceededAt?: number;
   /** Epoch millis when this lock's own sign-in failed, if it has (see releaseLoginLockOnFailure). */
   failedAt?: number;
   /** The sign-in child's failure reason, stamped with failedAt. */
@@ -51,6 +57,7 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
       pid: lock.pid,
       startedAt: lock.startedAt,
       ...(typeof lock.succeededAt === 'number' && { succeededAt: lock.succeededAt }),
+      ...(typeof lock.lastSucceededAt === 'number' && { lastSucceededAt: lock.lastSucceededAt }),
       ...(typeof lock.failedAt === 'number' && { failedAt: lock.failedAt }),
       ...(typeof lock.error === 'string' && { error: lock.error }),
     };
@@ -59,13 +66,19 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
   }
 }
 
+/** The most recent completed sign-in a lock knows about: its own, else the one it replaced. */
+function lastSignInOf(lock: LoginLock | null): number | undefined {
+  return lock?.succeededAt ?? lock?.lastSucceededAt;
+}
+
 /**
- * `succeededAt` of the lock record as it stands; null while a newer attempt holds the lock or
- * after it failed. The lock is global, so `source` does not select anything.
+ * Time of the last completed sign-in, which survives a newer in-progress or failed attempt
+ * taking over the lock; null when none is known. The lock is global, so `source` does not
+ * select anything.
  */
 export async function getLastSignInAt(_source: PlatformUrlSource): Promise<number | null> {
   try {
-    return (await readLock(getLockPath()))?.succeededAt ?? null;
+    return lastSignInOf(await readLock(getLockPath())) ?? null;
   } catch {
     return null;
   }
@@ -132,8 +145,12 @@ async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
  * is the only consequence this race can have. Simplified back to `wx` rather than keep machinery
  * guarding a race that grace period already covers.
  */
-async function tryCreateLock(lockPath: string): Promise<boolean> {
-  const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
+async function tryCreateLock(lockPath: string, lastSucceededAt?: number): Promise<boolean> {
+  const lock: LoginLock = {
+    pid: process.pid,
+    startedAt: Date.now(),
+    ...(lastSucceededAt !== undefined && { lastSucceededAt }),
+  };
   try {
     await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
     return true;
@@ -177,6 +194,7 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
     }
 
     const existing = await readLock(lockPath);
+    const replacedSignIn = lastSignInOf(existing);
     if (existing?.succeededAt !== undefined) {
       // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
       // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
@@ -203,7 +221,7 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
 
     // Stale or corrupt: replace it. Losing this race means another login just started.
     await removeLock(lockPath);
-    return (await tryCreateLock(lockPath)) ? null : 'in-progress';
+    return (await tryCreateLock(lockPath, replacedSignIn)) ? null : 'in-progress';
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to acquire lock:', error);
     return 'failed';
@@ -225,7 +243,7 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
-      await writeLockAtomically(lockPath, { ...lock, succeededAt: Date.now() });
+      await writeLockAtomically(lockPath, { pid: lock.pid, startedAt: lock.startedAt, succeededAt: Date.now() });
     }
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to release lock:', error);
@@ -283,6 +301,30 @@ export async function waitForDetachedSsoLogin(
 }
 
 /**
+ * Drops the lock of an attempt that never started. When an earlier sign-in is on record the lock
+ * is kept as a failed attempt with no process behind it (an old `startedAt` makes `acquireLock`
+ * replace it at once), so that sign-in time is not lost with the file.
+ */
+async function discardAttempt(lockPath: string, lastSucceededAt: number | undefined): Promise<void> {
+  if (lastSucceededAt === undefined) {
+    await removeLock(lockPath);
+    return;
+  }
+  try {
+    await writeLockAtomically(lockPath, {
+      pid: process.pid,
+      startedAt: 0,
+      failedAt: Date.now(),
+      error: 'the sign-in process could not be started',
+      lastSucceededAt,
+    });
+  } catch (error) {
+    logger.debug('[sso-detached-login] Failed to keep the earlier sign-in time:', error);
+    await removeLock(lockPath);
+  }
+}
+
+/**
  * Start a browser SSO sign-in in a detached process without waiting for it.
  * A lock file prevents concurrent sign-ins and enforces a cooldown after a
  * failed attempt — or after a successful one (see releaseLoginLockOnSuccess).
@@ -296,6 +338,9 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
     return blocked;
   }
 
+  const lastSucceededAt = lastSignInOf(await readLock(lockPath));
+  const carriedSignIn = lastSucceededAt !== undefined ? { lastSucceededAt } : {};
+
   try {
     const script = join(getDirname(import.meta.url), '../../../bin/sso-login.js');
     if (!existsSync(script)) {
@@ -307,17 +352,18 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
       throw new Error('Failed to spawn sign-in process');
     }
 
-    await writeLockAtomically(lockPath, { pid, startedAt: Date.now() });
+    await writeLockAtomically(lockPath, { pid, startedAt: Date.now(), ...carriedSignIn });
     return 'started';
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to start sign-in:', error);
-    await removeLock(lockPath);
+    await discardAttempt(lockPath, carriedSignIn.lastSucceededAt);
     return 'failed';
   }
 }
 
 const EXPIRED_LEAD = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
 const MANUAL_RESUME = 'After login completes, re-send your prompt.';
+const OPEN_FAILED = `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
 
 /**
  * All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in.
@@ -361,12 +407,12 @@ export function describeLogin(
       return `A sign-in finished moments ago; re-send your prompt. If it is rejected again, wait about ${Math.round(COOLDOWN_MS / 1000)} seconds and re-send: a new sign-in then opens automatically.`;
     case 'failed':
     case undefined:
-      return `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
-    default:
-      return assertNever(outcome);
+      return OPEN_FAILED;
+    default: {
+      // Compile-time exhaustiveness only: the caller must never see a throw for an unexpected value.
+      const unexpected: never = outcome;
+      void unexpected;
+      return OPEN_FAILED;
+    }
   }
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled login outcome: ${String(value)}`);
 }

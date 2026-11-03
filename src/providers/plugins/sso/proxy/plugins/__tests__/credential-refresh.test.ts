@@ -301,6 +301,69 @@ describe('CredentialRefresher', () => {
     });
   });
 
+  describe('marker edge', () => {
+    it('a failed read does not spend the marker edge: it is held for the window, then served as a bypass again', async () => {
+      const t0 = Date.now();
+      storeReturns({ credentials: creds('a'), url: URL_ });
+      const refresher = newRefresher(creds('init'));
+      await refresher.refresh();
+
+      await markAnalyticsAuthInvalid('HTTP 401', URL_);
+      vi.setSystemTime(t0 + 1_000);
+      await refresher.refresh();
+      await clearAnalyticsAuthStatus();
+
+      // The re-login cleared the marker, but the store read it triggers fails.
+      storeReturns(null);
+      vi.setSystemTime(t0 + 2_000);
+      expect(token(await refresher.refresh())).toBe('a');
+      expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(2);
+
+      // Inside the window of that failed read nothing else is read.
+      storeReturns({ credentials: creds('new'), url: URL_ });
+      vi.setSystemTime(t0 + 2_000 + CREDENTIAL_REFRESH_INTERVAL_MS - 1);
+      expect(token(await refresher.refresh())).toBe('a');
+      expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(2);
+
+      // Past the window the edge fires again as a bypass: a concurrent caller waits for the read.
+      vi.setSystemTime(t0 + 2_000 + CREDENTIAL_REFRESH_INTERVAL_MS + 1);
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+      const leader = refresher.refresh();
+      await untilStoreCalls(3);
+      const follower = refresher.refresh();
+      let followerSettled = false;
+      void follower.then(() => {
+        followerSettled = true;
+      });
+      await flush();
+      expect(followerSettled).toBe(false);
+      slow.resolve({ credentials: creds('new'), url: URL_ });
+      expect(token(await leader)).toBe('new');
+      expect(token(await follower)).toBe('new');
+    });
+
+    it('a successful read spends the marker edge', async () => {
+      const t0 = Date.now();
+      storeReturns({ credentials: creds('a'), url: URL_ });
+      const refresher = newRefresher(creds('init'));
+      await refresher.refresh();
+
+      await markAnalyticsAuthInvalid('HTTP 401', URL_);
+      vi.setSystemTime(t0 + 1_000);
+      await refresher.refresh();
+      await clearAnalyticsAuthStatus();
+      storeReturns({ credentials: creds('b'), url: URL_ });
+      vi.setSystemTime(t0 + 2_000);
+      expect(token(await refresher.refresh())).toBe('b');
+
+      storeReturns({ credentials: creds('c'), url: URL_ });
+      vi.setSystemTime(t0 + 2_500);
+      expect(token(await refresher.refresh())).toBe('b');
+      expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('refreshNow()', () => {
     it('starts its own read while a throttle read is in flight and gets the post-sign-in store', async () => {
       const t0 = Date.now();

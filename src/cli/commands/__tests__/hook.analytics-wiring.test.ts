@@ -22,7 +22,7 @@ vi.mock('../../../providers/plugins/sso/index.js', () => ({
   }),
 }));
 
-import { writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { writeFileSync, rmSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHookCommand, processEvent } from '../hook.js';
@@ -102,6 +102,8 @@ describe('hook command analytics wiring', () => {
 describe('hook command stored-credentials wiring', () => {
   const superseded = vi.fn().mockResolvedValue(false);
   const TMP = join(tmpdir(), `codemie-hook-wiring-${process.pid}`);
+  let codemieHome: string;
+  let previousHome: string | undefined;
   const baseConfig = {
     agentName: 'claude',
     provider: 'ai-run-sso',
@@ -114,6 +116,9 @@ describe('hook command stored-credentials wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     metricsSenderOptions.length = 0;
+    previousHome = process.env.CODEMIE_HOME;
+    codemieHome = mkdtempSync(join(tmpdir(), 'codemie-hook-wiring-home-'));
+    process.env.CODEMIE_HOME = codemieHome;
     mkdirSync(TMP, { recursive: true });
     mkdirSync(getCodemiePath('sessions'), { recursive: true });
     readAnalyticsCookieAuth.mockResolvedValue({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
@@ -121,6 +126,12 @@ describe('hook command stored-credentials wiring', () => {
 
   afterEach(() => {
     rmSync(TMP, { recursive: true, force: true });
+    if (previousHome === undefined) {
+      delete process.env.CODEMIE_HOME;
+    } else {
+      process.env.CODEMIE_HOME = previousHome;
+    }
+    rmSync(codemieHome, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 

@@ -176,25 +176,20 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  try {
-    const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-    if (!cookies) {
-      logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
-      return null;
-    }
-    return {
-      apiBaseUrl: syncApiUrl,
-      cookies,
-      credentialsSuperseded,
-      clientType: 'codemie-codex',
-      version,
-      dryRun: false,
-      sessionId,
-    };
-  } catch (error) {
-    logger.debug('[codex-incremental-sync] Failed to build upload context:', error);
+  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies) {
+    logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
+  return {
+    apiBaseUrl: syncApiUrl,
+    cookies,
+    credentialsSuperseded,
+    clientType: 'codemie-codex',
+    version,
+    dryRun: false,
+    sessionId,
+  };
 }
 
 async function safeRealpath(p: string): Promise<string> {
