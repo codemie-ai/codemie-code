@@ -13,6 +13,7 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
 
 const {
   STORE_READ_DEADLINE_MS,
+  PROXY_STORE_READ_DEADLINE_MS,
   buildCookieHeader,
   droppedCookieKeys,
   readWithDeadline,
@@ -301,6 +302,27 @@ describe('readCookieAuth', () => {
     expect(auth.cookies).toBe('');
     expect(await auth.credentialsSuperseded('s=old')).toBe(true);
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks a read cut off by the deadline as timed out, unlike an empty store', async () => {
+    const pending = readCookieAuth(() => new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS);
+    const timedOut = await pending;
+    const empty = await readCookieAuth(vi.fn().mockResolvedValue(null));
+
+    expect(timedOut).toMatchObject({ cookies: '', readTimedOut: true });
+    expect(empty).toMatchObject({ cookies: '', readTimedOut: false });
+  });
+
+  it('waits up to the deadline it is given instead of the default', async () => {
+    const read = vi.fn(
+      () => new Promise<{ cookies: Record<string, string> }>((resolve) => setTimeout(() => resolve({ cookies: { a: '1' } }), STORE_READ_DEADLINE_MS + 1_000))
+    );
+    const pending = readCookieAuth(read, { deadlineMs: PROXY_STORE_READ_DEADLINE_MS });
+    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS + 1_000);
+    const auth = await pending;
+
+    expect(auth).toMatchObject({ cookies: 'a=1', readTimedOut: false });
   });
 
   it('reports not superseded when the re-read never answers', async () => {

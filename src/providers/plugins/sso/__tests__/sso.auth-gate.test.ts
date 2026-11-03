@@ -205,14 +205,17 @@ describe('ensureCodeMieSsoAuth', () => {
       expect(clearAnalyticsAuthStatus).not.toHaveBeenCalled();
     });
 
-    it('does not clear when a newer sign-in stamp makes the re-read marker current again', async () => {
+    it('reads the sign-in stamp once, before the marker re-read, and ties the clear to the judged marker', async () => {
       vi.mocked(getAnalyticsAuthStatus).mockResolvedValue(marker(SIGNED_IN_AT - 1));
-      vi.mocked(getLastSignInAt).mockResolvedValueOnce(SIGNED_IN_AT).mockResolvedValueOnce(SIGNED_IN_AT - 10);
 
-      const result = await ensureCodeMieSsoAuth(configured);
+      expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
 
-      expect(result).toMatchObject({ ok: false });
-      expect(clearAnalyticsAuthStatus).not.toHaveBeenCalled();
+      expect(getLastSignInAt).toHaveBeenCalledTimes(1);
+      const stampRead = vi.mocked(getLastSignInAt).mock.invocationCallOrder[0];
+      const markerReads = vi.mocked(getAnalyticsAuthStatus).mock.invocationCallOrder;
+      expect(markerReads).toHaveLength(2);
+      expect(stampRead).toBeLessThan(markerReads[1]);
+      expect(clearAnalyticsAuthStatus).toHaveBeenCalledWith({ ifDetectedAt: SIGNED_IN_AT - 1 });
     });
 
     it('passes when the marker disappears between the read and the re-read', async () => {

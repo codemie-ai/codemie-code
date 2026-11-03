@@ -69,26 +69,28 @@ function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): bo
 /**
  * A marker detected before the latest completed sign-in describes credentials that sign-in has
  * since replaced, so it is cleared instead of blocking the prompt and opening another browser.
- * Both the marker and the sign-in time are re-read right before the clear: a marker written in
- * between (a genuine rejection after the sign-in) is kept and returned. Returns the marker that
- * still applies, or null when none does.
+ * The sign-in time is read first and the marker is re-read after it, with nothing awaited between
+ * that re-read and the clear; the clear is also tied to the re-read marker's detection time, so a
+ * marker written in between (a genuine rejection after the sign-in) is kept and never deleted
+ * unexamined. Returns the marker that still applies, or null when none does.
  */
 async function dropMarkerOlderThanSignIn(
   marker: AnalyticsAuthStatus,
   source: PlatformUrlSource,
   candidateUrls: Array<string | undefined>
 ): Promise<AnalyticsAuthStatus | null> {
-  if (!isOlderThan(marker, await getLastSignInAt(source))) {
+  const signedInAt = await getLastSignInAt(source);
+  if (!isOlderThan(marker, signedInAt)) {
     return marker;
   }
   const current = await getAnalyticsAuthStatus();
   if (!current || !markerAppliesToProfile(current, candidateUrls)) {
     return null;
   }
-  if (!isOlderThan(current, await getLastSignInAt(source))) {
+  if (!isOlderThan(current, signedInAt)) {
     return current;
   }
-  await clearAnalyticsAuthStatus();
+  await clearAnalyticsAuthStatus({ ifDetectedAt: current.detectedAt });
   logger.debug('[sso-auth-gate] Cleared an auth-status marker older than the last sign-in');
   return null;
 }

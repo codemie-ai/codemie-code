@@ -80,6 +80,7 @@ vi.mock('@/utils/config.js', () => ({
 
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -321,6 +322,18 @@ describe('DesktopTelemetryRuntime', () => {
       expect(context.credentialsSuperseded).toBeTypeOf('function');
       mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
       expect(await context.credentialsSuperseded('session=abc123')).toBe(true);
+    });
+
+    it('bounds the long-lived runtime\'s store read by the longer proxy deadline', async () => {
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const delays = timers.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(PROXY_STORE_READ_DEADLINE_MS);
+      expect(delays).not.toContain(STORE_READ_DEADLINE_MS);
+      timers.mockRestore();
     });
 
     it('sends no metrics when there are no stored cookies', async () => {

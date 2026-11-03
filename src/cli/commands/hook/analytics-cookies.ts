@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger.js';
-import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
+import type { CookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { getConfigValue } from './config-value.js';
 
@@ -12,7 +12,7 @@ export async function loadAnalyticsCookies(
   logTag: string,
   ssoUrl: string | undefined,
   config?: HookProcessingConfig
-): Promise<{ cookies: string; credentialsSuperseded?: CredentialsSupersededCheck }> {
+): Promise<CookieAuth> {
   if (config?.cookies) {
     return { cookies: config.cookies };
   }

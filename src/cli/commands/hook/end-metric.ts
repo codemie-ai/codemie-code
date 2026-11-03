@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger.js';
-import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
+import type { CookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
@@ -24,10 +24,14 @@ async function markEndMetric(
 export async function endMetricCookieAuth(
   ssoUrl: string,
   config: HookProcessingConfig | undefined
-): Promise<{ cookies: string; credentialsSuperseded?: CredentialsSupersededCheck } | undefined> {
+): Promise<CookieAuth | undefined> {
   const auth = await loadAnalyticsCookies('[hook:SessionEnd]', ssoUrl, config);
   if (!auth.cookies) {
-    logger.info(`[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`);
+    logger.info(
+      auth.readTimedOut
+        ? `[hook:SessionEnd] The credential store did not answer in time for ${ssoUrl}`
+        : `[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`
+    );
     return undefined;
   }
   return auth;

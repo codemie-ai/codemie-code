@@ -6,7 +6,7 @@ import type { Session } from '@/agents/core/session/types.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
-import { readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { PROXY_STORE_READ_DEADLINE_MS, readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type {
   DesktopTelemetryRuntimeConfig,
   LocalTelemetryAdapter,
@@ -354,9 +354,13 @@ export class DesktopTelemetryRuntime {
     discovered?: LocalTelemetryDiscoveredSession
   ): Promise<ProcessingContext> {
     const credentialsUrl = this.config.syncCodeMieUrl || this.config.targetApiUrl;
-    const { cookies, credentialsSuperseded } = await readCookieAuth(
-      () => new CodeMieSSO().getStoredCredentials(credentialsUrl)
+    const { cookies, credentialsSuperseded, readTimedOut } = await readCookieAuth(
+      () => new CodeMieSSO().getStoredCredentials(credentialsUrl),
+      { deadlineMs: PROXY_STORE_READ_DEADLINE_MS }
     );
+    if (readTimedOut) {
+      logger.warn('[desktop-telemetry] The credential store did not answer in time; sending without credentials');
+    }
 
     return {
       apiBaseUrl: this.config.syncApiUrl || this.config.targetApiUrl,
