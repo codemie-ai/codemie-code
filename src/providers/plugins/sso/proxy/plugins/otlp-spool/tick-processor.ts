@@ -3,7 +3,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { withSessionLock } from './session-lock.js';
-import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
+import { oldestCarried, readStatus, writeStatus, type SessionStatus } from './session-status.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
 import { hasPendingData, hooksGroupPresent, readSpoolState, type SpoolState } from './spool-state.js';
 import {
@@ -77,7 +77,9 @@ async function applySessionEvidenceLocked(
 
   const id = forwarderIdentity(credentials);
   const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
-  const heldSince = status.holds?.session?.since;
+  // Handed-over hook bytes keep their owner-pending age: a session hold does not restart their window.
+  const carriedFrom = oldestCarried(status, 'hooks')?.since;
+  const heldSince = status.holds?.session?.since ?? carriedFrom;
   let decision: TickEvidenceDecision = evaluateSessionEvidence({
     hasHooks: hooksGroupPresent(spool),
     marked: status.evidenceMarked === true,
@@ -100,7 +102,7 @@ async function applySessionEvidenceLocked(
   }
 
   if (decision.action === 'hold') {
-    const since = status.holds?.session?.since ?? now;
+    const since = status.holds?.session?.since ?? Math.min(carriedFrom ?? now, now);
     if (status.holds?.session?.reason !== decision.reason) {
       logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
     }
@@ -133,7 +135,7 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
     const status = await readStatus(sessionId);
     if (!status) return;
     if (!hasPendingData(await readSpoolState(sessionId, status))) return;
-    const heldSince = status.holds?.session?.since;
+    const heldSince = status.holds?.session?.since ?? oldestCarried(status, 'hooks')?.since;
     const decision = holdOrLose('analytics_endpoint_mismatch', heldSince, now, heldRetentionMs());
     if (decision.action === 'lose') {
       clearHold(status, 'session');
@@ -142,7 +144,7 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
       if (status.holds?.session?.reason !== decision.reason) {
         logger.warn('[otlp-tick] analytics endpoint does not match the credential identity; session held', ...sanitizeLogArgs({ sessionId }));
       }
-      status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
+      status.holds = { ...status.holds, session: { reason: decision.reason, since: Math.min(heldSince ?? now, now) } };
     }
     await writeStatus(sessionId, status);
   });

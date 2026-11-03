@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { readStatus, writeStatus, type DeliveryFailure, type SessionStatus } from './session-status.js';
+import { oldestCarried, readStatus, writeStatus, type DeliveryFailure, type SessionStatus } from './session-status.js';
 import { deliveryBackoffMs, heldRetentionMs } from './spool-config.js';
 import type { DeliveryLossReason } from './session-project.js';
 import type { SendOutcome } from './response.js';
@@ -96,12 +96,16 @@ export async function noteDeliveryFailure(
     }
     if (size <= cursor) return 'stale';
     const attempts = (previous?.attempts ?? 0) + 1;
+    const pending = Math.min(range.end, size);
+    // Bytes handed over from the owner-pending queue at the head of the range keep their original age, and only they expire with it.
+    const carried = oldestCarried(status, stream, cursor, pending);
+    const head = carried && carried.start <= cursor ? carried : undefined;
     const rec: DeliveryFailure = {
       reason: failure.reason,
       ...(failure.detail ? { detail: failure.detail.slice(0, 200) } : {}),
-      since: previous?.since ?? now,
+      since: previous?.since ?? (head ? Math.min(head.since, now) : now),
       cursor,
-      end: previous?.end ?? Math.min(range.end, size), // the range that failed, not everything pending behind it
+      end: previous?.end ?? (head ? Math.min(pending, head.end) : pending), // the range that failed, not everything pending behind it
       attempts,
       nextAt: now + deliveryBackoffMs(attempts),
     };

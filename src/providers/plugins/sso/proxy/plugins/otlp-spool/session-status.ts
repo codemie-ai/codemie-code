@@ -76,6 +76,43 @@ export interface SessionStatus {
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
   evidenceMarked?: true;
+  /**
+   * Original first-failure age of bytes handed over from the owner-pending queue (AC9: one finite window that a
+   * handover does not reset). Per stream, byte ranges of the CURRENT file; only the transferred bytes carry it.
+   */
+  carriedAge?: Partial<Record<SpoolStream, AgeSegment[]>>;
+}
+
+export interface AgeSegment {
+  start: number;
+  end: number;
+  since: number;
+}
+
+export const MAX_AGE_SEGMENTS = 64;
+
+/** The oldest carried segment of `stream` overlapping `[from, to)`: the age its unacknowledged bytes already have. */
+export function oldestCarried(status: SessionStatus, stream: SpoolStream, from: number = status.cursors[stream], to: number = Infinity): AgeSegment | undefined {
+  let oldest: AgeSegment | undefined;
+  for (const seg of status.carriedAge?.[stream] ?? []) {
+    if (seg.end > from && seg.start < to && (!oldest || seg.since < oldest.since)) oldest = seg;
+  }
+  return oldest;
+}
+
+function parseCarriedAge(raw: unknown): SessionStatus['carriedAge'] {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const out: Partial<Record<SpoolStream, AgeSegment[]>> = {};
+  for (const stream of SPOOL_STREAMS) {
+    const list = (raw as Record<string, unknown>)[stream];
+    if (!Array.isArray(list)) continue;
+    const segs = list
+      .map((s) => ({ start: toOffset(s?.start), end: toOffset(s?.end), since: toOffset(s?.since) }))
+      .filter((s) => s.since > 0 && s.end > s.start)
+      .slice(0, MAX_AGE_SEGMENTS);
+    if (segs.length > 0) out[stream] = segs;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface DeliveryFailure {
@@ -239,6 +276,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (discard) status.lastDiscard = discard;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
+  const carried = parseCarriedAge(source['carriedAge']);
+  if (carried) status.carriedAge = carried;
 
   return status;
 }
