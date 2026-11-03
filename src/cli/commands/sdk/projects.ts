@@ -146,11 +146,7 @@ async function run(
   }
 }
 
-export function createProjectsSubcommand(): Command {
-  const cmd = new Command("projects").description(
-    "Manage CodeMie projects and project membership",
-  );
-
+function registerListCommand(cmd: Command): void {
   cmd
     .command("list")
     .description(
@@ -198,6 +194,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerGetCommand(cmd: Command): void {
   cmd
     .command("get <name>")
     .description(
@@ -230,6 +229,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerMembersCommand(cmd: Command): void {
   cmd
     .command("members <name>")
     .description(
@@ -249,6 +251,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerExistsCommand(cmd: Command): void {
   cmd
     .command("exists <name>")
     .description(
@@ -268,6 +273,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerCreateCommand(cmd: Command): void {
   cmd
     .command("create")
     .description(
@@ -287,6 +295,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerUpdateCommand(cmd: Command): void {
   cmd
     .command("update <name>")
     .description(
@@ -306,6 +317,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerDeleteCommand(cmd: Command): void {
   cmd
     .command("delete <name>")
     .description("Permanently delete a project")
@@ -319,6 +333,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerTransferOwnershipCommand(cmd: Command): void {
   cmd
     .command("transfer-ownership <name> <userId>")
     .description("Transfer project ownership to another user")
@@ -332,6 +349,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerAssignCommand(cmd: Command): void {
   cmd
     .command("assign <name> <userId>")
     .description(`Assign a user to a project. ${MEMBER_404_NOTE}`)
@@ -346,6 +366,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerUpdateMemberCommand(cmd: Command): void {
   cmd
     .command("update-member <name> <userId>")
     .description(`Change a member's admin role. ${MEMBER_404_NOTE}`)
@@ -364,6 +387,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerRemoveMemberCommand(cmd: Command): void {
   cmd
     .command("remove-member <name> <userId>")
     .description(`Remove a user from a project. ${MEMBER_404_NOTE}`)
@@ -377,6 +403,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerBulkAssignCommand(cmd: Command): void {
   cmd
     .command("bulk-assign <name>")
     .description(
@@ -397,6 +426,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerBulkRemoveCommand(cmd: Command): void {
   cmd
     .command("bulk-remove <name> <userIds...>")
     .description("Remove many users (1-100) from a project")
@@ -410,6 +442,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerCsvValidateCommand(cmd: Command): void {
   cmd
     .command("csv-validate <name> <csvPath>")
     .description("Validate a users CSV for import without applying it")
@@ -424,6 +459,9 @@ export function createProjectsSubcommand(): Command {
       }),
     );
 
+}
+
+function registerCsvImportCommand(cmd: Command): void {
   cmd
     .command("csv-import <name> <csvPath>")
     .description(`Import users into a project from a CSV. ${MEMBER_404_NOTE}`)
@@ -437,6 +475,26 @@ export function createProjectsSubcommand(): Command {
         printBulkResult(result);
       }),
     );
+}
 
+export function createProjectsSubcommand(): Command {
+  const cmd = new Command("projects").description(
+    "Manage CodeMie projects and project membership",
+  );
+  registerListCommand(cmd);
+  registerGetCommand(cmd);
+  registerMembersCommand(cmd);
+  registerExistsCommand(cmd);
+  registerCreateCommand(cmd);
+  registerUpdateCommand(cmd);
+  registerDeleteCommand(cmd);
+  registerTransferOwnershipCommand(cmd);
+  registerAssignCommand(cmd);
+  registerUpdateMemberCommand(cmd);
+  registerRemoveMemberCommand(cmd);
+  registerBulkAssignCommand(cmd);
+  registerBulkRemoveCommand(cmd);
+  registerCsvValidateCommand(cmd);
+  registerCsvImportCommand(cmd);
   return cmd;
 }

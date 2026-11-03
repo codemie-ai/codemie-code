@@ -69,9 +69,7 @@ Only select a project automatically if the user has explicitly named it, or used
 Run this before creating or changing assets in a project:
 
 - **Default project** (the email-named personal project): skip the check.
-- **Admins**: run `codemie sdk projects exists '<project>'` for any named non-default project.
-- **Non-admins**: a project listed in `applications` needs no check; for any other name, run `exists`.
-- **Disagreement**: `exists` exit 0 wins over absence from `applications` (server-side visibility); `exists` exit 2 stops the flow even if `users me` lists the project.
+- **Any other named project** (admin or not): run `codemie sdk projects exists '<project>'`.
 
 Exit codes of `exists`:
 - **0** — project exists, proceed.
