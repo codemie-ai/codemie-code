@@ -102,9 +102,9 @@ export function startPiIncrementalSync(options: StartPiIncrementalSyncOptions): 
  *
  * The wait is the point. `clearInterval` cancels the *schedule*, not the tick already
  * executing, and the caller's next move is the end-of-session flush over the same
- * `{sessionId}_metrics.jsonl`. Both read the file's record ids before either appends, so
- * an overlap appends the same deltas twice — and the sync path uploads pending records
- * without deduplicating them by record id.
+ * `{sessionId}_metrics.jsonl`. Both derive the deltas from the same transcript, and the
+ * writer drops a delta whose record id is already in the file, so an overlap writes
+ * nothing twice; the wait still spares the exit a second transcript pass.
  *
  * The bound is the point too. This runs on the way out of the CLI, and the tick's upload
  * is a 30 s API timeout over three attempts *per batch*: waiting it out would hang the
@@ -112,11 +112,11 @@ export function startPiIncrementalSync(options: StartPiIncrementalSyncOptions): 
  * to skip its upload — the phase that can take minutes and that appends nothing — and only
  * the remainder is awaited, under {@link STOP_DRAIN_TIMEOUT_MS}.
  *
- * If the bound expires the tick was already mid-upload, and the hazard accepted is the
- * inverse of the double-append: `MetricsSyncProcessor` finishes by rewriting the whole
- * metrics file from the snapshot it read, so deltas the session-end flush appends in the
- * meantime can be dropped. One truncated shutdown is the price of never hanging every
- * user whose network is down.
+ * If the bound expires the tick was still mid-upload and finishes after the exit: the
+ * sync's final rewrite re-reads the metrics file under its lock, so the deltas the
+ * session-end flush appends meanwhile are kept, and the statuses of what the tick sent
+ * land when it ends. One truncated shutdown is the price of never hanging every user
+ * whose network is down.
  */
 export async function stopPiIncrementalSync(
   sessionId: string,

@@ -23,7 +23,9 @@ import { getSessionConversationPath } from '../../../../core/session/session-con
 import { SessionStore } from '../../../../core/session/SessionStore.js';
 import { detectTurns, filterNewMessages, type GeminiMessage, type TurnBoundary } from '../utils/turn-detector.js';
 import { extractToolThoughts } from '../utils/tool-aggregator.js';
-import { appendFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
+
 import { existsSync } from 'fs';
 import { dirname } from 'path';
 
@@ -71,7 +73,10 @@ export class GeminiConversationsProcessor implements SessionProcessor {
       const payloads = this.transformTurnsToPayloads(turns, context, lastHistoryIndex);
 
       // 5. Write payloads to JSONL
-      await this.writePayloads(context.sessionId!, payloads);
+      if (!(await this.writePayloads(context.sessionId!, payloads, context))) {
+        logger.warn(`[${this.name}] Conversation write dropped, will retry on the next pass`);
+        return { success: true, message: 'Conversation write dropped' };
+      }
 
       // 6. Update sync state
       const lastMessage = messages[messages.length - 1]; // Use all messages, not just new
@@ -182,7 +187,7 @@ export class GeminiConversationsProcessor implements SessionProcessor {
   /**
    * Write payloads to conversation JSONL file
    */
-  private async writePayloads(sessionId: string, payloads: ConversationPayloadRecord[]): Promise<void> {
+  private async writePayloads(sessionId: string, payloads: ConversationPayloadRecord[], context: ProcessingContext): Promise<boolean> {
     const conversationsPath = getSessionConversationPath(sessionId);
     const outputDir = dirname(conversationsPath);
 
@@ -191,12 +196,17 @@ export class GeminiConversationsProcessor implements SessionProcessor {
       await mkdir(outputDir, { recursive: true });
     }
 
-    // Append each payload as a JSONL line
-    for (const payload of payloads) {
-      await appendFile(conversationsPath, JSON.stringify(payload) + '\n', 'utf-8');
+    // One lock acquire, one append for the whole batch
+    const appended = await appendSessionFile(
+      'conversation',
+      sessionId,
+      payloads.map((payload) => JSON.stringify(payload) + '\n').join(''),
+      context
+    );
+    if (appended) {
+      logger.debug(`[${this.name}] Wrote ${payloads.length} payloads to ${conversationsPath}`);
     }
-
-    logger.debug(`[${this.name}] Wrote ${payloads.length} payloads to ${conversationsPath}`);
+    return appended;
   }
 
   /**

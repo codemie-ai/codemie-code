@@ -54,3 +54,19 @@ export function getSessionMetricsPath(sessionId: string): string {
 export function getSessionConversationPath(sessionId: string): string {
   return join(getCodemieHome(), 'sessions', `${sessionId}_conversation.jsonl`);
 }
+
+/**
+ * Get the lock file guarding a session's metrics JSONL
+ * Format: ~/.codemie/sessions/{sessionId}.metrics.lock
+ */
+export function getSessionMetricsLockPath(sessionId: string): string {
+  return join(getCodemieHome(), 'sessions', `${sessionId}.metrics.lock`);
+}
+
+/**
+ * Get the lock file guarding a session's conversation JSONL
+ * Format: ~/.codemie/sessions/{sessionId}.conversation.lock
+ */
+export function getSessionConversationLockPath(sessionId: string): string {
+  return join(getCodemieHome(), 'sessions', `${sessionId}.conversation.lock`);
+}
