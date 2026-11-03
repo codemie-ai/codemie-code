@@ -57,29 +57,69 @@ function validateWebhookUrl(webhook: string | undefined): string | undefined {
   return webhook;
 }
 
-/** Whether `rawUrl` embeds `user:pass@`/`user:token@` userinfo (a password, not just a
- * username). Matches both a URL with a scheme (`https://u:t@host/r`) and a scp-style ssh
- * URL (`git@host:org/r.git`, `user:pass@host:org/r.git`) — the latter has no `://`. A plain
- * `user@host` (ssh username, no password) is not flagged. */
+/** Whether `rawUrl` embeds credentials in its userinfo. On an `http(s)://` URL any userinfo
+ * counts — `https://<token>@host/r` is the common personal-access-token form. On an
+ * `ssh://` or scp-style URL (`git@host:org/r.git`, which has no `://`) a bare username is
+ * the normal ssh login and is allowed; only `user:pass@` is flagged. */
 function hasEmbeddedCredentials(rawUrl: string): boolean {
-  const match = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?([^@/]+)@/.exec(rawUrl);
-  return match !== null && match[1].includes(':');
+  const match = /^(?:([a-zA-Z][a-zA-Z0-9+.-]*):\/\/)?([^@/]+)@/.exec(rawUrl);
+  if (match === null) {
+    return false;
+  }
+
+  const scheme = match[1]?.toLowerCase();
+  if (scheme === 'http' || scheme === 'https') {
+    return true;
+  }
+
+  return match[2].includes(':');
 }
 
-/** `undefined`/blank -> no git repo URL given. Otherwise rejects embedded credentials. */
+/** `undefined`/blank -> no git repo URL given. Otherwise rejects a value git would parse as
+ * an option, and embedded credentials. The rejection never echoes the value, so a
+ * password or token in it never reaches the terminal or a log. */
 function validateGitRepoUrl(gitRepo: string | undefined): string | undefined {
   if (gitRepo === undefined || gitRepo.trim() === '') {
     return undefined;
   }
 
+  if (gitRepo.startsWith('-')) {
+    throw new SyncConfigError('--git-repo must be a repository URL, not a value starting with "-".');
+  }
+
   if (hasEmbeddedCredentials(gitRepo)) {
-    throw new SyncConfigError(`--git-repo must not embed credentials: ${redactSecrets(gitRepo)}`);
+    throw new SyncConfigError(
+      '--git-repo must not embed credentials: use an SSH key or a git credential helper instead.'
+    );
   }
 
   return gitRepo;
 }
 
-/** `undefined`/blank -> remote default branch. Otherwise trims and requires non-empty. */
+// Characters git forbids in a ref name (`git check-ref-format`), plus whitespace/control.
+// eslint-disable-next-line no-control-regex
+const INVALID_BRANCH_CHARS = /[\x00-\x20\x7f~^:?*[\\]/;
+
+/** Whether `branch` is a ref name git accepts for `--branch` — a subset of
+ * `git check-ref-format --branch` rules that also rules out option injection. */
+function isValidBranchName(branch: string): boolean {
+  return !(
+    branch.startsWith('-') ||
+    branch.startsWith('/') ||
+    branch.endsWith('/') ||
+    branch.endsWith('.') ||
+    branch.endsWith('.lock') ||
+    branch.includes('..') ||
+    branch.includes('//') ||
+    branch.includes('@{') ||
+    branch === '@' ||
+    INVALID_BRANCH_CHARS.test(branch) ||
+    branch.split('/').some((segment) => segment.startsWith('.'))
+  );
+}
+
+/** `undefined`/blank -> remote default branch. Otherwise trims and requires a valid,
+ * non-empty branch name. */
 function validateGitBranch(gitBranch: string | undefined): string | undefined {
   if (gitBranch === undefined) {
     return undefined;
@@ -90,11 +130,16 @@ function validateGitBranch(gitBranch: string | undefined): string | undefined {
     throw new SyncConfigError('--git-branch must not be empty.');
   }
 
+  if (!isValidBranchName(trimmed)) {
+    throw new SyncConfigError(`--git-branch is not a valid branch name: ${trimmed}`);
+  }
+
   return trimmed;
 }
 
 /** `undefined`/blank -> repo root. Rejects an absolute posix path, a Windows drive/UNC
- * path, and anything that escapes the repo once normalised. Returns a normalised
+ * path, anything that escapes the repo once normalised, and any `.git` segment (the
+ * repository's own metadata). Returns a normalised
  * posix-relative path, or `undefined` when it normalises to the repo root. */
 function validateGitPath(gitPath: string | undefined): string | undefined {
   if (gitPath === undefined) {
@@ -123,6 +168,10 @@ function validateGitPath(gitPath: string | undefined): string | undefined {
 
   if (normalized === '..' || normalized.startsWith('../') || posixPath.isAbsolute(normalized)) {
     throw new SyncConfigError(`--git-path escapes the repository: ${trimmed}`);
+  }
+
+  if (normalized.split('/').some((segment) => segment.toLowerCase() === '.git')) {
+    throw new SyncConfigError(`--git-path must not point inside .git: ${trimmed}`);
   }
 
   return normalized;
@@ -235,9 +284,11 @@ export function validateInstallOptions(options: InstallOptions): SyncSettings {
   };
 }
 
-/** Reads a non-empty string `git.repoUrl` out of an unknown stored value, or `undefined`
- * when it isn't usable. */
-function readStoredGit(storedGit: unknown): GitSettings | undefined {
+/** Reads the stored git target out of an unknown value: `undefined` when there is no
+ * usable `git.repoUrl`. The stored `repoUrl`, `branch` and `path` go through the same
+ * validation as `install`, so a hand-edited settings file cannot inject a git option or
+ * write outside the working copy; an invalid value throws `SyncConfigError`. */
+function readStoredGit(storedGit: unknown, path: string): GitSettings | undefined {
   if (typeof storedGit !== 'object' || storedGit === null) {
     return undefined;
   }
@@ -247,15 +298,16 @@ function readStoredGit(storedGit: unknown): GitSettings | undefined {
     return undefined;
   }
 
-  const git: GitSettings = { repoUrl: candidate.repoUrl };
-  if (typeof candidate.branch === 'string' && candidate.branch.trim() !== '') {
-    git.branch = candidate.branch;
+  try {
+    return validateGitSettings({
+      gitRepo: candidate.repoUrl,
+      gitBranch: typeof candidate.branch === 'string' && candidate.branch.trim() !== '' ? candidate.branch : undefined,
+      gitPath: typeof candidate.path === 'string' ? candidate.path : undefined
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new SyncConfigError(`Sync settings at ${path} has an invalid git target: ${reason}`);
   }
-  if (typeof candidate.path === 'string' && candidate.path.trim() !== '') {
-    git.path = candidate.path;
-  }
-
-  return git;
 }
 
 /**
@@ -294,7 +346,7 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
   const stored = parsed as Partial<SyncSettings>;
   const webhookUrl =
     typeof stored.webhookUrl === 'string' && stored.webhookUrl.trim() !== '' ? stored.webhookUrl : undefined;
-  const git = readStoredGit(stored.git);
+  const git = readStoredGit(stored.git, path);
 
   if (webhookUrl === undefined && git === undefined) {
     return null;

@@ -6,8 +6,9 @@
  * block for each configured delivery target (webhook host only / git repository, redacted)
  * with that target's own last run (or last failure, for git) parsed from the shared run log
  * and its own last successful send/push (its own marker). A run-log line with no
- * ` target=<id>` suffix — written by the previous single-target version, or a setup failure
- * resolved before any target was chosen — is treated as the webhook's. Every side effect is
+ * ` target=<id>` suffix is either a run-wide `fail setup` (resolved before any target was
+ * chosen), which counts for every target, or a line written by the previous single-target
+ * version, which is the webhook's. Every side effect is
  * injected via {@link StatusDeps} so tests run without touching the real scheduler,
  * filesystem or marker.
  *
@@ -63,12 +64,14 @@ const LAST_RUN_LINE = /^(\S+) ((?:ok sent|skip|fail \w+).*)$/;
 const TARGET_SUFFIX = / target=(webhook|git)$/;
 
 interface ParsedLine extends LastRun {
-  target: TargetId;
+  /** `'all'` for a run-wide setup failure, which belongs to every configured target. */
+  target: TargetId | 'all';
 }
 
-/** A line with no ` target=<id>` suffix is a legacy (pre-multi-target) line, or a setup
- * failure resolved before any target was chosen — both count as the webhook's, per the
- * run log's own contract (`run-sync.ts`). */
+/** A line with no ` target=<id>` suffix is a run-wide `fail setup` (no settings, no
+ * identity — resolved before any target was chosen), which counts for every target, or a
+ * legacy (pre-multi-target) line, which is the webhook's — per the run log's own contract
+ * (`run-sync.ts`). */
 function parseLine(rawLine: string): ParsedLine | null {
   const match = LAST_RUN_LINE.exec(rawLine.trim());
   if (!match) {
@@ -80,10 +83,14 @@ function parseLine(rawLine: string): ParsedLine | null {
   const suffixMatch = TARGET_SUFFIX.exec(rest);
 
   if (suffixMatch === null) {
-    return { at, outcome: rest, target: 'webhook' };
+    return { at, outcome: rest, target: rest.startsWith('fail setup') ? 'all' : 'webhook' };
   }
 
   return { at, outcome: rest.slice(0, suffixMatch.index).trim(), target: suffixMatch[1] as TargetId };
+}
+
+function belongsTo(parsed: ParsedLine, target: TargetId): boolean {
+  return parsed.target === 'all' || parsed.target === target;
 }
 
 /**
@@ -95,7 +102,7 @@ export function parseLastRun(log: string, target: TargetId): LastRun | null {
 
   for (const rawLine of log.split('\n')) {
     const parsed = parseLine(rawLine);
-    if (parsed !== null && parsed.target === target) {
+    if (parsed !== null && belongsTo(parsed, target)) {
       last = { at: parsed.at, outcome: parsed.outcome };
     }
   }
@@ -112,7 +119,7 @@ export function parseLastFailure(log: string, target: TargetId): LastRun | null 
 
   for (const rawLine of log.split('\n')) {
     const parsed = parseLine(rawLine);
-    if (parsed !== null && parsed.target === target && parsed.outcome.startsWith('fail')) {
+    if (parsed !== null && belongsTo(parsed, target) && parsed.outcome.startsWith('fail')) {
       last = { at: parsed.at, outcome: parsed.outcome };
     }
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { formatLogLine } from '../run-sync.js';
 import { parseLastFailure, parseLastRun, runStatus } from '../status.js';
 import type { StatusDeps } from '../status.js';
 import type { SyncSettings } from '../types.js';
@@ -141,6 +142,41 @@ describe('parseLastRun', () => {
       at: '2026-10-29T03:00:05.000Z',
       outcome: 'fail send auth failed: invalid credentials',
     });
+  });
+});
+
+describe('run-log attribution', () => {
+  it('attributes the last failure to git for a multi-line git error formatted by run-sync (CR-007)', () => {
+    const line = formatLogLine(
+      new Date('2026-10-29T03:00:05.000Z'),
+      'fail',
+      "send remote: denied\n ! [remote rejected] HEAD -> main\nerror: failed to push some refs",
+      'git'
+    );
+    const log = ['2026-10-28T03:00:05.000Z ok sent legacy.json 9', line].join('\n');
+
+    expect(parseLastFailure(log, 'git')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'fail send remote: denied | ! [remote rejected] HEAD -> main | error: failed to push some refs',
+    });
+    expect(parseLastRun(log, 'webhook')?.outcome).toBe('ok sent legacy.json 9');
+  });
+
+  it('counts an untargeted run-wide setup failure for every target (CR-009)', () => {
+    const log = '2026-10-29T03:00:05.000Z fail setup No sync identity could be resolved';
+
+    expect(parseLastFailure(log, 'git')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'fail setup No sync identity could be resolved',
+    });
+    expect(parseLastRun(log, 'webhook')?.outcome).toBe('fail setup No sync identity could be resolved');
+  });
+
+  it('keeps an untargeted legacy send failure as the webhook\'s only', () => {
+    const log = '2026-10-29T03:00:05.000Z fail send HTTP 500';
+
+    expect(parseLastFailure(log, 'git')).toBeNull();
+    expect(parseLastFailure(log, 'webhook')?.outcome).toBe('fail send HTTP 500');
   });
 });
 
@@ -337,6 +373,18 @@ describe('runStatus', () => {
     await runStatus(deps);
 
     expect(lineStarting(printed, 'Last failure:')).toMatch(/never$/);
+  });
+
+  it('shows an untargeted setup failure as the git last failure on a git-only install (CR-009)', async () => {
+    const { deps, printed } = makeDeps({
+      loadSettings: async () => GIT_SETTINGS,
+      readLog: async () => '2026-10-29T03:00:05.000Z fail setup No sync identity could be resolved',
+    });
+
+    await runStatus(deps);
+
+    expect(lineStarting(printed, 'Last failure:')).not.toMatch(/never$/);
+    expect(lineStarting(printed, 'Last failure:')).toMatch(/2026-10-29T03:00:05\.000Z.*setup/);
   });
 
   it('omits the webhook lines when only the git target is configured', async () => {

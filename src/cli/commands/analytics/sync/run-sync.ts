@@ -19,7 +19,9 @@
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
  * A setup failure resolved before any target is chosen (no settings file, no configured
- * target, no resolvable identity) carries no ` target=<id>` suffix. Exit code is 1 if any
+ * target, no resolvable identity) carries no ` target=<id>` suffix and counts for every
+ * target in `status`; a target whose own marker cannot be read fails `setup` with its
+ * suffix and the remaining targets still run. Exit code is 1 if any
  * target failed (or the run failed in setup), 0 otherwise. Category mapping per target:
  * a report-build failure -> `export`; a webhook delivery failure -> `export` when it is an
  * `ExportTooLargeError` (its message carries the byte count), else `send`; a git delivery
@@ -70,10 +72,13 @@ export interface SyncDeps {
 type Outcome = 'ok' | 'skip' | 'fail';
 
 /** Format one log/print line: `<ISO> <outcome> <rest>`, with a trailing ` target=<id>` when
- * `target` is given, and any webhook signature redacted. */
+ * `target` is given, and any secret redacted. Line breaks in `rest` (multi-line git stderr)
+ * are collapsed to ` | `, so every outcome is exactly one physical line and its
+ * ` target=<id>` suffix stays on the line `status` parses. */
 export function formatLogLine(at: Date, outcome: Outcome, rest: string, target?: TargetId): string {
   const suffix = target === undefined ? '' : ` target=${target}`;
-  return redactSecrets(`${at.toISOString()} ${outcome} ${rest}${suffix}`);
+  const singleLine = rest.trim().replace(/\s*[\r\n]+\s*/g, ' | ');
+  return redactSecrets(`${at.toISOString()} ${outcome} ${singleLine}${suffix}`);
 }
 
 async function emit(
@@ -126,8 +131,16 @@ async function runTarget(
   lookbackDays: number,
   target: TargetId
 ): Promise<boolean> {
-  const lastSent = await deps.readMarker(target, now);
-  const window = dailyWindow(now, lastSent, lookbackDays);
+  // A marker that cannot be read (EACCES, EISDIR) fails this target only: the loop in `run`
+  // still attempts the next target, so one target's state never blocks another's delivery.
+  let window: ReturnType<typeof dailyWindow>;
+  try {
+    const lastSent = await deps.readMarker(target, now);
+    window = dailyWindow(now, lastSent, lookbackDays);
+  } catch (err) {
+    await emit(deps, now, 'fail', `setup ${errorMessage(err)}`, target);
+    return true;
+  }
 
   let report: SyncReport | null;
   try {

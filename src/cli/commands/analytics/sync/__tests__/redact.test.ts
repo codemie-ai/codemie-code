@@ -22,6 +22,16 @@ describe('redactSecrets', () => {
     expect(result).not.toContain('FAKESIG');
   });
 
+  it('replaces a token-only https userinfo with ***@ (CR-001)', () => {
+    expect(redactSecrets('https://ghp_TOKEN@github.com/org/r.git')).toBe('https://***@github.com/org/r.git');
+    expect(redactSecrets('fatal: http://tok@h/r failed')).toBe('fatal: http://***@h/r failed');
+  });
+
+  it('keeps a bare ssh username, which is not a secret', () => {
+    expect(redactSecrets('ssh://git@host/r.git')).toBe('ssh://git@host/r.git');
+    expect(redactSecrets('git@host:org/r.git')).toBe('git@host:org/r.git');
+  });
+
   it('replaces a URL userinfo user:token@ with ***@', () => {
     expect(redactSecrets('https://u:t@h/r')).toBe('https://***@h/r');
   });

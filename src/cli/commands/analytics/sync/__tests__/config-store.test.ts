@@ -96,6 +96,35 @@ describe('validateInstallOptions', () => {
     expect(settings.git).toEqual({ repoUrl: 'ssh://git@host/r.git' });
   });
 
+  it('rejects a token-only https --git-repo URL without echoing the token (CR-001/CR-002)', () => {
+    const gitRepo = 'https://ghp_TOKEN@github.com/org/r.git';
+    expect(() => validateInstallOptions({ gitRepo })).toThrow(/--git-repo/);
+    expect(() => validateInstallOptions({ gitRepo })).not.toThrow(/ghp_TOKEN/);
+  });
+
+  it.each(['https://u:supersecret@host/r.git', 'user:supersecret@host:org/r.git'])(
+    'never echoes the password when rejecting %s (CR-002)',
+    (gitRepo) => {
+      expect(() => validateInstallOptions({ gitRepo })).toThrow(SyncConfigError);
+      expect(() => validateInstallOptions({ gitRepo })).not.toThrow(/supersecret/);
+    }
+  );
+
+  it('rejects a --git-repo value that git would parse as an option (CR-003)', () => {
+    expect(() => validateInstallOptions({ gitRepo: '--upload-pack=touch /tmp/x' })).toThrow(/--git-repo/);
+  });
+
+  it.each(['--upload-pack=x', '-b', 'a..b', 'has space', 'a:b', 'x.lock', 'a/', 'a@{1}'])(
+    'rejects an invalid --git-branch "%s" (CR-003)',
+    (gitBranch) => {
+      expect(() => validateInstallOptions({ gitRepo: FAKE_GIT_REPO, gitBranch })).toThrow(/--git-branch/);
+    }
+  );
+
+  it.each(['.git', 'a/.git/hooks', 'reports/.GIT'])('rejects a --git-path "%s" inside .git (CR-004)', (gitPath) => {
+    expect(() => validateInstallOptions({ gitRepo: FAKE_GIT_REPO, gitPath })).toThrow(/--git-path/);
+  });
+
   it('git-only validates to { git: { repoUrl }, format: "json" } with no webhookUrl', () => {
     const settings = validateInstallOptions({ gitRepo: FAKE_GIT_REPO });
     expect(settings).toEqual({
@@ -161,6 +190,30 @@ describe('sync settings file', () => {
         includeExternal: 'windows',
         at: '03:00'
       });
+    });
+
+    it.each([
+      { repoUrl: FAKE_GIT_REPO, path: '../../x' },
+      { repoUrl: FAKE_GIT_REPO, path: '.git/hooks' },
+      { repoUrl: FAKE_GIT_REPO, branch: '--upload-pack=x' },
+      { repoUrl: '-oProxyCommand=x' },
+      { repoUrl: 'https://ghp_TOKEN@github.com/org/r.git' }
+    ])('re-validates a stored git target and throws SyncConfigError for %o (CR-005)', async (git) => {
+      await writeFile(settingsPath, JSON.stringify({ git, includeExternal: 'windows', at: '03:00' }), 'utf-8');
+
+      await expect(loadSyncSettings(settingsPath)).rejects.toThrow(SyncConfigError);
+      await expect(loadSyncSettings(settingsPath)).rejects.not.toThrow(/ghp_TOKEN/);
+    });
+
+    it('loads a stored git target with its normalised path and branch', async () => {
+      await writeFile(
+        settingsPath,
+        JSON.stringify({ git: { repoUrl: FAKE_GIT_REPO, branch: 'main', path: './team/' }, at: '03:00' }),
+        'utf-8'
+      );
+
+      const settings = await loadSyncSettings(settingsPath);
+      expect(settings?.git).toEqual({ repoUrl: FAKE_GIT_REPO, branch: 'main', path: 'team' });
     });
 
     it('returns null when the file has neither a usable webhookUrl nor a usable git.repoUrl', async () => {

@@ -11,13 +11,15 @@ const MAX_CAUSE_DEPTH = 10;
 
 /**
  * Replace every `sig=<value>` query value in any URL found in `text` with `sig=REDACTED`,
- * and every `scheme://user:pass@` URL userinfo with `scheme://***@`. Other query
- * parameters, and a bare `user@host` with no password (e.g. a scp-style git URL), are left
- * untouched.
+ * every `scheme://user:pass@` URL userinfo with `scheme://***@`, and any `http(s)://`
+ * userinfo — with or without a colon, e.g. a token-only `https://<token>@host` — with
+ * `http(s)://***@`. Other query parameters, and a bare ssh username with no password
+ * (`ssh://git@host`, scp-style `git@host:org/r.git`), are left untouched.
  */
 export function redactSecrets(text: string): string {
   return text
     .replace(/\bsig=[^&\s"'<>)]+/g, 'sig=REDACTED')
+    .replace(/\b(https?:\/\/)[^/@\s]+@/gi, '$1***@')
     .replace(/\/\/[^/@\s]+:[^/@\s]+@/g, '//***@');
 }
 

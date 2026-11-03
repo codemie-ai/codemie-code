@@ -41,6 +41,25 @@ describe('gitEnv', () => {
     expect(env.GIT_SSH_COMMAND).toBe('ssh -o BatchMode=yes -i k');
   });
 
+  it('leaves a user GIT_SSH in force when neither GIT_SSH_COMMAND nor core.sshCommand is set (CR-010)', () => {
+    const env = gitEnv({ GIT_SSH: 'C:\\Program Files\\PuTTY\\plink.exe' });
+
+    expect('GIT_SSH_COMMAND' in env).toBe(false);
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0');
+  });
+
+  it('prefers a configured core.sshCommand over GIT_SSH, as git does (CR-010)', () => {
+    const env = gitEnv({ GIT_SSH: 'plink' }, 'ssh -i configured');
+
+    expect(env.GIT_SSH_COMMAND).toBe('ssh -i configured -o BatchMode=yes');
+  });
+
+  it('treats an empty GIT_SSH_COMMAND as unset (CR-010)', () => {
+    const env = gitEnv({ GIT_SSH_COMMAND: '' });
+
+    expect(env.GIT_SSH_COMMAND).toBe('ssh -o BatchMode=yes');
+  });
+
   it('uses a configured core.sshCommand as the base when the env var is unset', () => {
     const env = gitEnv({}, 'ssh -i configured');
 

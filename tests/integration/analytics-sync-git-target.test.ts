@@ -36,13 +36,20 @@ function report(owner: string): SyncReport {
   };
 }
 
+/** The git subcommand of `args`, skipping any leading `-c <key=value>` pairs. */
+function subcommand(args: string[]): string | undefined {
+  let i = 0;
+  while (args[i] === '-c') i += 2;
+  return args[i];
+}
+
 /** Wraps a real `GitRunner` so that the first call to `git push` runs `onFirstPush` (and
  * awaits it) before letting the real push proceed — used to deterministically land another
  * member's push in between this target's fetch/reset and its own push attempt. */
 function raceOnFirstPush(run: GitRunner, onFirstPush: () => Promise<void>): GitRunner {
   let triggered = false;
   return async (args, opts) => {
-    if (!triggered && args[0] === 'push') {
+    if (!triggered && subcommand(args) === 'push') {
       triggered = true;
       await onFirstPush();
     }
@@ -98,8 +105,8 @@ describe('GitTarget integration (local bare repos)', () => {
     let aPushCalls = 0;
     let aRebaseCalls = 0;
     const countingRun: GitRunner = async (args, opts) => {
-      if (args[0] === 'push') aPushCalls += 1;
-      if (args[0] === 'rebase') aRebaseCalls += 1;
+      if (subcommand(args) === 'push') aPushCalls += 1;
+      if (subcommand(args) === 'rebase') aRebaseCalls += 1;
       return raceRun(args, opts);
     };
     const targetA = new GitTarget(settings, 'alice@example.com', countingRun, aDir);
@@ -144,5 +151,48 @@ describe('GitTarget integration (local bare repos)', () => {
       'utf-8'
     );
     expect(JSON.parse(content)).toEqual({ owner: 'carol' });
+  }, 30_000);
+  it('rebases onto several intervening pushes from other members after a shallow fetch (CR-013)', async () => {
+    const run = createGitRunner();
+    const settings: GitSettings = { repoUrl };
+
+    const others = ['bob', 'dave', 'erin'].map((owner) => ({
+      target: new GitTarget(settings, `${owner}@example.com`, run, join(root, `${owner}-work`)),
+      report: report(owner),
+      owner,
+    }));
+
+    const raceRun = raceOnFirstPush(run, async () => {
+      for (const other of others) {
+        await other.target.deliver(other.report);
+      }
+    });
+    const targetA = new GitTarget(settings, 'alice@example.com', raceRun, join(root, 'a-work'));
+    const reportA = report('alice');
+
+    await targetA.deliver(reportA);
+
+    const verifyDir = cloneForVerification();
+    expect(JSON.parse(readFileSync(join(verifyDir, 'alice-example-com', reportA.fileName), 'utf-8'))).toEqual({
+      owner: 'alice',
+    });
+    for (const other of others) {
+      const content = readFileSync(join(verifyDir, `${other.owner}-example-com`, other.report.fileName), 'utf-8');
+      expect(JSON.parse(content)).toEqual({ owner: other.owner });
+    }
+    expect(readFileSync(join(verifyDir, 'README.md'), 'utf-8')).toBe('seed');
+  }, 60_000);
+
+  it('a second delivery to a reused working copy without a branch still lands on the remote default', async () => {
+    const run = createGitRunner();
+    const workDir = join(root, 'frank-work');
+    const settings: GitSettings = { repoUrl };
+
+    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver(report('frank'));
+    const second: SyncReport = { fileName: 'second.report.json', bytes: Buffer.from('{"n":2}', 'utf-8') };
+    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver(second);
+
+    const verifyDir = cloneForVerification();
+    expect(readFileSync(join(verifyDir, 'frank-example-com', 'second.report.json'), 'utf-8')).toBe('{"n":2}');
   }, 30_000);
 });

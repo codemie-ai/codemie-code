@@ -28,25 +28,34 @@ export interface GitRunner {
 
 /**
  * Build the env a `git` subprocess should run with: always prompt-free, and an ssh wrapper
- * that keeps whatever base command is already configured (an explicit `GIT_SSH_COMMAND`, or
+ * that keeps whatever base command is already configured (a non-empty `GIT_SSH_COMMAND`, or
  * `configuredSshCommand` — read from `core.sshCommand` by the caller — or plain `ssh`) and
- * appends `-o BatchMode=yes` unless it is already present.
+ * appends `-o BatchMode=yes` unless it is already present. Git ranks `GIT_SSH_COMMAND`, then
+ * `core.sshCommand`, then `GIT_SSH`: when only `GIT_SSH` is set (e.g. plink on Windows) no
+ * `GIT_SSH_COMMAND` is injected, so the user's own ssh program stays in force — `BatchMode`
+ * cannot be appended to a program git invokes without a shell.
  */
 export function gitEnv(
   base: NodeJS.ProcessEnv,
   configuredSshCommand?: string
 ): Record<string, string> {
-  const baseSshCommand = base.GIT_SSH_COMMAND ?? configuredSshCommand ?? 'ssh';
+  const promptFree: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+    SSH_ASKPASS_REQUIRE: 'never',
+  };
+
+  const explicitSshCommand = base.GIT_SSH_COMMAND || configuredSshCommand || undefined;
+  if (explicitSshCommand === undefined && base.GIT_SSH) {
+    return promptFree;
+  }
+
+  const baseSshCommand = explicitSshCommand ?? 'ssh';
   const sshCommand = baseSshCommand.includes('BatchMode=yes')
     ? baseSshCommand
     : `${baseSshCommand} ${BATCH_MODE_FLAG}`;
 
-  return {
-    GIT_TERMINAL_PROMPT: '0',
-    GCM_INTERACTIVE: 'never',
-    SSH_ASKPASS_REQUIRE: 'never',
-    GIT_SSH_COMMAND: sshCommand,
-  };
+  return { ...promptFree, GIT_SSH_COMMAND: sshCommand };
 }
 
 /**

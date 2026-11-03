@@ -354,6 +354,30 @@ describe('runSync', () => {
     });
   });
 
+  it('a multi-line git error is logged as exactly one line ending in target=git (CR-007)', async () => {
+    const stderr = [
+      'To git.example.invalid:team/analytics.git',
+      ' ! [remote rejected] HEAD -> main (pre-receive hook declined)',
+      "error: failed to push some refs to 'git.example.invalid:team/analytics.git'",
+      'hint: see the remote output',
+    ].join('\n');
+    const { deps, printed, logged } = makeDeps({
+      loadSettings: async () => GIT_ONLY_SETTINGS,
+      deliver: async () => {
+        throw new SyncGitError(stderr, 'protected');
+      },
+    });
+
+    const code = await runSync(deps);
+
+    expect(code).toBe(1);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).not.toMatch(/[\r\n]/);
+    expect(logged[0]).toMatch(/ fail send .*pre-receive hook declined.*failed to push/);
+    expect(logged[0]).toMatch(/ target=git$/);
+    expect(printed[0]).toBe(logged[0]);
+  });
+
   describe('both targets configured', () => {
     it('delivers to both, each marker moving only after its own successful delivery (AC7)', async () => {
       const writeMarker = vi.fn(async () => {});
@@ -379,6 +403,34 @@ describe('runSync', () => {
       expect(logged).toHaveLength(2);
       expect(logged.some((line) => /ok sent/.test(line) && line.endsWith(' target=webhook'))).toBe(true);
       expect(logged.some((line) => /fail send/.test(line) && line.endsWith(' target=git'))).toBe(true);
+    });
+
+    it('a webhook marker read failure fails that target in setup and still delivers to git (CR-006)', async () => {
+      const deliver = vi.fn(async () => {});
+      const writeMarker = vi.fn(async () => {});
+      const readMarker = vi.fn(async (target: TargetId) => {
+        if (target === 'webhook') {
+          throw Object.assign(new Error('EACCES: permission denied, open analytics-last-sent'), { code: 'EACCES' });
+        }
+        return null;
+      });
+
+      const { deps, logged } = makeDeps({
+        loadSettings: async () => BOTH_SETTINGS,
+        deliver,
+        writeMarker,
+        readMarker,
+      });
+
+      const code = await runSync(deps);
+
+      expect(code).toBe(1);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(deliver).toHaveBeenCalledWith('git', BOTH_SETTINGS, 'Jane.Doe@x.com', REPORT);
+      expect(writeMarker).toHaveBeenCalledWith('git', NOW);
+      expect(logged).toHaveLength(2);
+      expect(logged[0]).toMatch(/ fail setup .*EACCES.* target=webhook$/);
+      expect(logged[1]).toMatch(/ ok sent .* target=git$/);
     });
 
     it('reads each target window from its own marker', async () => {
