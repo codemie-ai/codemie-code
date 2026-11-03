@@ -21,7 +21,8 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, rmSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { dirname, join } from 'path';
 
 import { GeminiMetricsProcessor } from '../../../src/agents/plugins/gemini/session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from '../../../src/agents/plugins/gemini/session/processors/gemini.conversations-processor.js';
@@ -50,6 +51,9 @@ const createdSessionIds: string[] = [];
 function newSessionId(prefix: string): string {
   const id = `test-${prefix}-${Math.random().toString(36).slice(2)}`;
   createdSessionIds.push(id);
+  // The live record: a metrics / conversation file is created only while it exists
+  mkdirSync(dirname(getSessionPath(id)), { recursive: true });
+  writeFileSync(getSessionPath(id), JSON.stringify({ sessionId: id, startTime: 0 }));
   return id;
 }
 
@@ -64,6 +68,13 @@ function baseContext(sessionId: string, agentSessionId: string): ProcessingConte
     sessionId,
     agentSessionId,
   };
+}
+
+/** A SessionEnd rename in flight: the live record is gone, so conversation writes are dropped. */
+function hideRecord(sessionId: string): () => void {
+  const hidden = join(dirname(getSessionPath(sessionId)), `completed_${sessionId}.json`);
+  renameSync(getSessionPath(sessionId), hidden);
+  return () => renameSync(hidden, getSessionPath(sessionId));
 }
 
 function readJsonl<T>(path: string): T[] {
@@ -222,7 +233,7 @@ describe('GeminiConversationsProcessor.process', () => {
       agentName: 'gemini',
       provider: 'test-provider',
       project: 'test-project',
-      startTime: Date.now(),
+      startTime: 0, // before every fixture message: the run window keeps them all
       workingDirectory: '/test',
       gitBranch: 'main',
       status: 'active',
@@ -292,6 +303,28 @@ describe('GeminiConversationsProcessor.process', () => {
     const persisted = await store.loadSession(sessionId);
     expect(persisted?.sync?.conversations?.lastSyncedMessageUuid).toBe('a1');
     expect(persisted?.sync?.conversations?.lastSyncedHistoryIndex).toBe(0);
+  });
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const sessionId = newSessionId('gemini-conv-drop');
+    const agentSessionId = 'agent-gemini-drop';
+    await seedSession(sessionId, agentSessionId);
+    const session = buildSession(sessionId, [
+      { id: 'u1', type: 'user', timestamp: '2025-01-01T00:00:00Z', content: 'first' },
+      { id: 'a1', type: 'gemini', timestamp: '2025-01-01T00:00:02Z', content: 'reply', model: 'gemini-3-pro' },
+    ]);
+
+    const restore = hideRecord(sessionId);
+    const dropped = await new GeminiConversationsProcessor().process(session, baseContext(sessionId, agentSessionId));
+    expect(dropped.success).toBe(true);
+    expect(dropped.message).toBe('Conversation write dropped');
+    expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
+
+    restore();
+    expect((await store.loadSession(sessionId))?.sync?.conversations).toBeUndefined();
+    const retried = await new GeminiConversationsProcessor().process(session, baseContext(sessionId, agentSessionId));
+    expect(retried.metadata?.turnsProcessed).toBe(1);
+    expect(readJsonl(getSessionConversationPath(sessionId))).toHaveLength(1);
   });
 
   it('is idempotent - a second pass over the same transcript queues no new records', async () => {
@@ -481,6 +514,62 @@ describe('OpenCodeConversationsProcessor.process', () => {
     expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
   });
 
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const sessionId = newSessionId('oc-conv-drop');
+    const session = buildSession(
+      sessionId,
+      [userMessage],
+      { 'msg-u': [{ id: 'pu1', messageID: 'msg-u', sessionID: OC_SESSION_ID, type: 'text', text: 'a prompt' }] },
+    );
+
+    const restore = hideRecord(sessionId);
+    const dropped = await new OpenCodeConversationsProcessor().process(session, baseContext(sessionId, OC_SESSION_ID));
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.recordsProcessed).toBe(0);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
+
+    restore();
+    const retried = await new OpenCodeConversationsProcessor().process(session, baseContext(sessionId, OC_SESSION_ID));
+    expect(retried.metadata?.recordsProcessed).toBe(1);
+    expect(readJsonl(getSessionConversationPath(sessionId))).toHaveLength(1);
+  });
+
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const sessionId = newSessionId('oc-conv-torn');
+    const messages: Array<Record<string, unknown>> = [];
+    const partsMap: Record<string, Array<Record<string, unknown>>> = {};
+    const addTurn = (n: number) => {
+      messages.push(
+        { id: `msg-u${n}`, sessionID: OC_SESSION_ID, role: 'user', time: { created: 1_700_000_000_000 + n * 10_000 } },
+        { ...assistantMessage, id: `msg-a${n}`, time: { created: 1_700_000_005_000 + n * 10_000 } },
+      );
+      partsMap[`msg-u${n}`] = [{ id: `pu${n}`, messageID: `msg-u${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `question ${n}` }];
+      partsMap[`msg-a${n}`] = [{ id: `pa${n}`, messageID: `msg-a${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `answer ${n}` }];
+    };
+    const processor = new OpenCodeConversationsProcessor();
+    const path = getSessionConversationPath(sessionId);
+
+    addTurn(1);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    addTurn(2);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    const [first, second] = readFileSync(path, 'utf-8').trim().split('\n');
+    writeFileSync(path, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    addTurn(3);
+    const result = await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(path, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual([
+      'question 3',
+      'answer 3',
+    ]);
+  });
+
   it('queues a user-only payload when the prompt has no assistant reply yet', async () => {
     const sessionId = newSessionId('oc-conv-noreply');
     // A brand-new user prompt is published immediately (messageCount 1, no
@@ -552,6 +641,26 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(deltas).toHaveLength(2);
     expect(deltas[0].tools).toEqual({ read: 2, write: 1, bash: 3 });
     expect(deltas[1].tools).toEqual({});
+  });
+
+  it('writes a supplement delta whose session time predates the record start, and dedupes it by recordId', async () => {
+    const sessionId = newSessionId('copilot-metrics-resumed');
+    const context = baseContext(sessionId, 'copilot-agent');
+    // The session was created long before this record started (a resumed session)
+    writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime: Date.parse('2026-10-01T00:00:00Z') }));
+    const session = {
+      ...buildSession(sessionId, { tools: { read: 2 } }, []),
+      metadata: { createdAt: '2026-05-09T12:00:00Z' },
+    } as ParsedSession;
+
+    const first = await processor.process(session, context);
+    const second = await processor.process(session, context);
+
+    expect(first.metadata?.recordsProcessed).toBe(1);
+    expect(second.metadata?.recordsProcessed).toBe(0);
+    const deltas = readJsonl<MetricDelta>(getSessionMetricsPath(sessionId));
+    expect(deltas.map((d) => d.recordId)).toEqual(['copilot-agent-supplement-0']);
+    expect(deltas[0].tools).toEqual({ read: 2 });
   });
 
   it('returns zero when metrics carry no tools and there are no assistant turns', async () => {

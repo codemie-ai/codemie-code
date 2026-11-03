@@ -25,6 +25,7 @@ import type {
 } from '../../opencode-message-types.js';
 import { isToolPart } from '../../opencode-message-types.js';
 import { readJsonlTolerant, loadPartsForMessage } from '../../opencode.storage-utils.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { logger } from '../../../../../utils/logger.js';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -182,19 +183,23 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
           models: delta.models,
           userPrompts: (delta as any).userPrompts?.length || 0
         });
-
-        await writer.appendDelta(delta);
       }
 
-      logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[opencode-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+      }
+
+      logger.info(`[opencode-metrics] Wrote ${appended.written} of ${deltas.length} deltas for session ${session.sessionId}`);
       logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);
 
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
         metadata: {
           recordsProcessed: messages.length,
-          deltasWritten: deltas.length,
+          deltasWritten: appended.written,
           deltasSkipped: stats.skippedDueToDedup,
           ...stats
         }

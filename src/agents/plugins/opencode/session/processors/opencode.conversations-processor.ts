@@ -31,9 +31,11 @@ import {
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { loadPartsForMessage } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 /**
  * The conversation folder these payloads are filed under in CodeMie.
@@ -89,10 +91,10 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
     return session.messages.length > 0;
   }
 
-  // _context is intentionally unused: conversation identity comes from
+  // The context only bounds the file lock wait: conversation identity comes from
   // session.metadata.openCodeSessionId, never from context.agentSessionId,
   // which differs between the timer/Stop and in-process SessionEnd paths.
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       const metadata = session.metadata as (OpenCodeMetadata & { storagePath?: string }) | undefined;
       const openCodeSessionId = metadata?.openCodeSessionId;
@@ -127,8 +129,7 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       );
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { readJSONL } = await import('../../../../../providers/plugins/sso/session/utils/jsonl-reader.js');
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, '[opencode-conversations]');
 
       // Payloads already queued but not yet uploaded also advance the watermark,
       // otherwise every tick re-queues the same turn.
@@ -161,7 +162,7 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
         return { success: true, message: 'No visible history generated', metadata: { recordsProcessed: 0 } };
       }
 
-      const { appendFile, mkdir } = await import('fs/promises');
+      const { mkdir } = await import('fs/promises');
       const { dirname } = await import('path');
       await mkdir(dirname(conversationsPath), { recursive: true });
 
@@ -189,7 +190,15 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
         status: CONVERSATION_SYNC_STATUS.PENDING,
       };
 
-      await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n', 'utf-8');
+      const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+      if (!appended) {
+        logger.warn(`[opencode-conversations] Window ${sentinel} write dropped, will retry on the next pass`);
+        return {
+          success: true,
+          message: 'Conversation write dropped',
+          metadata: { recordsProcessed: 0 }
+        };
+      }
 
       return {
         success: true,
