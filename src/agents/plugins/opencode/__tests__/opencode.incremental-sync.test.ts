@@ -346,6 +346,32 @@ describe('opencode.incremental-sync', () => {
       );
     });
 
+    it('hands the sender a supersede check that re-reads the same credentials', async () => {
+      process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
+      discoverSessions.mockResolvedValue([matchingDescriptor()]);
+      processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+      const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
+      startOpenCodeIncrementalSync({
+        ...commonOptions(),
+        ssoUrl: 'https://codemie.example.com',
+        syncApiUrl: 'https://sync.example.com',
+      } as never);
+
+      await runTicks(5000, 1);
+      const context = mockSync.mock.calls[0][1];
+      expect(typeof context.credentialsSuperseded).toBe('function');
+
+      const readsBefore = mockGetStoredCredentials.mock.calls.length;
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
+      await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
+      expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+      expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
+    });
+
     it('uploads with the clientType returned by buildContext() (e.g. codemie-opencode-acp)', async () => {
       // Regression guard: the upload context used to hardcode 'codemie-opencode'
       // regardless of what buildContext() returned, so opencode-acp sessions

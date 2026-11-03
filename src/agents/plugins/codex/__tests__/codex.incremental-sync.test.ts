@@ -252,6 +252,35 @@ describe('codex.incremental-sync', () => {
     );
   });
 
+  it('hands the sender a supersede check that re-reads the same credentials', async () => {
+    process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '50';
+    discoverSessions.mockResolvedValue([
+      { sessionId: 'codex-uuid', filePath: '/tmp/rollout.jsonl', createdAt: Date.now(), agentName: 'codex' },
+    ]);
+    parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+    processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+    const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+    startCodexIncrementalSync({
+      ...commonOptions(),
+      ssoUrl: 'https://codemie.example.com',
+      syncApiUrl: 'https://sync.example.com',
+    });
+
+    await waitFor(() => mockSync.mock.calls.length >= 1);
+    const context = mockSync.mock.calls[0][1];
+    expect(typeof context.credentialsSuperseded).toBe('function');
+
+    const readsBefore = mockGetStoredCredentials.mock.calls.length;
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+    await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
+    await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
+    expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
+  });
+
   it('skips upload when ssoUrl or syncApiUrl is not set', async () => {
     process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '50';
     discoverSessions.mockResolvedValue([

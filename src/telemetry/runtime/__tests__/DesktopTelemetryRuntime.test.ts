@@ -6,6 +6,7 @@ const mockSendSessionEnd = vi.fn().mockResolvedValue(undefined);
 const mockSync = vi.fn().mockResolvedValue({ message: 'ok' });
 const mockIndexSessionsByExternalId = vi.fn();
 const mockFindSessionByExternalId = vi.fn().mockResolvedValue(null);
+const mockGetStoredCredentials = vi.fn();
 
 // Persisted sessions shared by every SessionStore instance, so a new runtime instance sees
 // what a previous one saved — the same as a restarted daemon reading ~/.codemie/sessions.
@@ -64,7 +65,7 @@ vi.mock('@/providers/plugins/sso/session/SessionSyncer.js', () => ({
 
 vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: vi.fn(function (this: Record<string, unknown>) {
-    this.getStoredCredentials = vi.fn().mockResolvedValue({ cookies: { session: 'abc123' } });
+    this.getStoredCredentials = mockGetStoredCredentials;
   })
 }));
 
@@ -78,6 +79,7 @@ vi.mock('@/utils/config.js', () => ({
 }));
 
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
+import { MetricsSender } from '@/providers/plugins/sso/index.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -231,6 +233,8 @@ describe('DesktopTelemetryRuntime', () => {
     vi.setSystemTime(T0);
     persistedSessions.clear();
     transcripts.clear();
+    mockGetStoredCredentials.mockReset();
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     sentDeltas = [];
     desktopSessions = new Map();
     mockIndexSessionsByExternalId.mockImplementation(async (agentName: string) =>
@@ -263,6 +267,72 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       const [sessionArg] = mockSendSessionEnd.mock.calls[0];
       expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+    });
+  });
+
+  describe('cookie auth', () => {
+    function lastSenderOptions(): { cookies: string; credentialsSuperseded?: (sent: string) => Promise<boolean> } {
+      const calls = vi.mocked(MetricsSender).mock.calls;
+      return calls[calls.length - 1][0] as never;
+    }
+
+    it('reads cookies from the SSO store for the configured URL', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://api.example.com');
+      expect(lastSenderOptions().cookies).toBe('session=abc123');
+    });
+
+    it('passes a supersession check to the session START sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      expect(await credentialsSuperseded!('session=abc123')).toBe(false);
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('passes a supersession check to the session END sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('hands the supersession check to the session syncer in the context', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      mockSync.mockClear();
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const [, context] = mockSync.mock.calls[0];
+      expect(context.cookies).toBe('session=abc123');
+      expect(context.credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await context.credentialsSuperseded('session=abc123')).toBe(true);
+    });
+
+    it('sends no metrics when there are no stored cookies', async () => {
+      mockGetStoredCredentials.mockResolvedValue(null);
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      expect(MetricsSender).not.toHaveBeenCalled();
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
     });
   });
 

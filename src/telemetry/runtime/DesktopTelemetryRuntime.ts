@@ -6,6 +6,7 @@ import type { Session } from '@/agents/core/session/types.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type {
   DesktopTelemetryRuntimeConfig,
   LocalTelemetryAdapter,
@@ -352,26 +353,15 @@ export class DesktopTelemetryRuntime {
     session: Session,
     discovered?: LocalTelemetryDiscoveredSession
   ): Promise<ProcessingContext> {
-    let cookies = '';
     const credentialsUrl = this.config.syncCodeMieUrl || this.config.targetApiUrl;
-
-    try {
-      const credentials = await new CodeMieSSO().getStoredCredentials(credentialsUrl);
-      if (credentials?.cookies) {
-        cookies = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-      }
-    } catch (error) {
-      logger.debug('[desktop-telemetry] Failed to load SSO credentials', {
-        credentialsUrl,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+    const { cookies, credentialsSuperseded } = await readCookieAuth(
+      () => new CodeMieSSO().getStoredCredentials(credentialsUrl)
+    );
 
     return {
       apiBaseUrl: this.config.syncApiUrl || this.config.targetApiUrl,
       cookies,
+      credentialsSuperseded,
       clientType: this.config.clientType,
       version: this.config.version,
       dryRun: false,
@@ -393,6 +383,7 @@ export class DesktopTelemetryRuntime {
     const sender = new MetricsSender({
       baseUrl: context.apiBaseUrl,
       cookies: context.cookies,
+      credentialsSuperseded: context.credentialsSuperseded,
       version: this.config.version,
       clientType: this.config.clientType,
       retryAttempts: 2,
@@ -433,6 +424,7 @@ export class DesktopTelemetryRuntime {
     const sender = new MetricsSender({
       baseUrl: context.apiBaseUrl,
       cookies: context.cookies,
+      credentialsSuperseded: context.credentialsSuperseded,
       version: this.config.version,
       clientType: this.config.clientType,
       retryAttempts: 2,
