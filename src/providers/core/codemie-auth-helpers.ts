@@ -13,6 +13,8 @@ export interface CodeMieUserInfo {
   userId: string;
   name: string;
   username: string;
+  /** Authenticated email as the backend reports it; `username` is a different value. */
+  email?: string;
   isAdmin: boolean;
   applications: string[];
   applications_admin: string[];
@@ -268,25 +270,33 @@ export async function getStoredAnalyticsCredentials(
 }
 
 /* eslint-disable no-redeclare */
+export interface UserInfoRequestOptions {
+  timeout?: number;
+  maxRetries?: number;
+}
+
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  jwtToken: string
+  jwtToken: string,
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  options: UserInfoRequestOptions = {}
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
   const url = `${apiUrl}/v1/user`;
 
   const client = new HTTPClient({
-    timeout: 10000,
-    maxRetries: 3,
+    timeout: options.timeout ?? 10000,
+    maxRetries: options.maxRetries ?? 3,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
   });

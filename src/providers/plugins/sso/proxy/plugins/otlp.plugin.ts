@@ -3,6 +3,7 @@ import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { withVerifiedOwner } from '../../../../core/credential-owner.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
@@ -155,7 +156,8 @@ class OtlpInterceptor implements ProxyInterceptor {
   private async tick(): Promise<void> {
     await this.refreshCredentialsIfStale();
 
-    const creds = this.credentials;
+    // Same owner the hook stamps with: the forwarder's evidence key must match it.
+    const creds = this.credentials && (await withVerifiedOwner(this.credentials));
     if (!creds) {
       return;
     }
