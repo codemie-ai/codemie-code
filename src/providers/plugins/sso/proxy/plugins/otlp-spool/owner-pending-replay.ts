@@ -60,18 +60,28 @@ async function sweepPending(now: number): Promise<void> {
   }
 }
 
-async function replayEntry(path: string, fp: string, api: string, email: string): Promise<void> {
+async function sessionOf(path: string): Promise<string | undefined> {
+  try {
+    const id = (JSON.parse(await readFile(path, 'utf8')) as PendingOwnerEntry).session_id;
+    return typeof id === 'string' ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `true` only when the entry's events are in the spool; `false` leaves it queued (and blocks the session's later entries, keeping order). */
+async function replayEntry(path: string, fp: string, api: string, email: string): Promise<boolean> {
   let entry: PendingOwnerEntry;
   try {
     entry = JSON.parse(await readFile(path, 'utf8')) as PendingOwnerEntry;
   } catch {
-    return; // unreadable: left to expire
+    return false; // unreadable: left to expire
   }
   if (
     entry.v !== 1 || entry.fp !== fp || entry.api_identity !== api || !isSafeSessionId(entry.session_id) ||
     !Array.isArray(entry.events) || entry.events.length === 0
   ) {
-    return; // not this login/environment, or malformed: never replayed, left to expire
+    return false; // not this login/environment, or malformed: never replayed, left to expire
   }
 
   const owner = ownerHash(email);
@@ -82,14 +92,16 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
     const { pendingSpoolSessionIds } = await import('./sweep.js');
     created = await createOrRead(key, fields, { pendingSessionIds: await pendingSpoolSessionIds() });
   }
-  if (created.kind !== 'created' && created.kind !== 'existing') return; // retried on a later tick
+  if (created.kind !== 'created' && created.kind !== 'existing') return false; // retried on a later tick
 
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
   const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));
-  await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at);
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at);
+  if (!appended) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);
+  return true;
 }
 
 /**
@@ -108,10 +120,15 @@ export async function processPendingOwner(
     const fp = credentialFingerprint(credentials);
     const dir = join(pendingOwnerDir(), fpDirName(fp));
     const api = apiIdentity(credentials.apiUrl);
+    const blocked = new Set<string>(); // a deferred entry blocks later entries of its session (order)
     for (const file of (await list(dir)).filter((f) => f.endsWith('.json')).sort()) {
       try {
-        await replayEntry(join(dir, file), fp, api, email);
+        const sid = await sessionOf(join(dir, file));
+        if (sid && blocked.has(sid)) continue;
+        if (!(await replayEntry(join(dir, file), fp, api, email)) && sid) blocked.add(sid);
       } catch (error) {
+        const sid = await sessionOf(join(dir, file));
+        if (sid) blocked.add(sid);
         logger.debug(`[owner-pending] replay deferred: ${error instanceof Error ? error.name : 'error'}`);
       }
     }

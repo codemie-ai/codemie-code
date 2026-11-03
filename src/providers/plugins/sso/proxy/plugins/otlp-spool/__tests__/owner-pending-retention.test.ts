@@ -1,12 +1,12 @@
 /**
- * EPMCDME-16776 R3 / AC9: bytes handed over from the owner-pending queue keep their ORIGINAL first-failure age in the
- * real spool delivery and hold lifecycle (single finite window, not reset by the handover or by a changed reason).
- * Real: pending store, replay, spool files, session status, forwarder/tick-processor, delivery-state; a daemon restart is
- * simulated by resetting modules. Faked: fetch, daemon state, auth state, logger and `Date` only.
+ * EPMCDME-16776 R3 / AC9: bytes handed over from the owner-pending queue keep their ORIGINAL age as an exact byte range in
+ * the real spool delivery/hold lifecycle: only that range expires at its deadline; younger, unrelated and other-stream bytes
+ * keep their own windows. Real: pending store, replay, spool files, session status, forwarder/tick-processor, delivery-state;
+ * a daemon restart is simulated by resetting modules. Faked: fetch, daemon state, auth state, logger and `Date` only.
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,9 +40,10 @@ const DAY = 24 * 60 * MIN;
 const hookEvent = (n: number) => ({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A', event_id: `e${n}`, n });
 const rawLine = (n: number): string => JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(hookEvent(n)), evidence_v: 1 }) + '\n';
 
-describe('owner-pending handover keeps the original age', () => {
+describe('owner-pending handover keeps the original age as an exact range', () => {
   const fetchMock = vi.fn();
   const unavailable = (): Response => new Response(JSON.stringify({ detail: 'default_project_unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+  const ok200 = (): Response => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
   let home = '';
   const priorHome = process.env.CODEMIE_HOME;
 
@@ -80,89 +81,156 @@ describe('owner-pending handover keeps the original age', () => {
     const { processSessionTick } = await import('../tick-processor.js');
     return { ...store, ...replay, ...io, ...status, forwardSession, processSessionTick, credentialFingerprint, apiIdentity };
   }
+  type Daemon = Awaited<ReturnType<typeof daemon>>;
   const at = (ms: number): void => vi.setSystemTime(T0 + ms);
+  const hooksSize = async (): Promise<number> => (await stat(join(state.root, SESSION + '.hooks.ndjson'))).size;
+  const queued = async (): Promise<number> => {
+    let n = 0;
+    const base = join(home, 'analytics', 'state', 'owner-pending');
+    for (const dir of await readdir(base).catch(() => [] as string[])) {
+      n += (await readdir(join(base, dir)).catch(() => [] as string[])).filter((f) => f.endsWith('.json')).length;
+    }
+    return n;
+  };
 
-  async function holdAtT0(d: Awaited<ReturnType<typeof daemon>>): Promise<void> {
+  async function holdAtT0(d: Daemon): Promise<void> {
     const fields = {
       session_id: SESSION, launch_mode: 'native' as const, routed_via_codemie: false, routing_proof: 'unproven' as const,
       project: 'A', project_source: 'none' as const, api_identity: d.apiIdentity(API),
     };
-    const ok = await d.enqueuePendingOwner({
+    const stored = await d.enqueuePendingOwner({
       fp: d.credentialFingerprint(credentials), agentName: 'claude-code-otlp', api_identity: d.apiIdentity(API),
       session_id: SESSION, fields, events: [hookEvent(1)],
     }, T0);
-    expect(ok).toBe(true);
+    expect(stored).toBe(true);
   }
+  const freshOtherStreams = async (d: Daemon): Promise<void> => {
+    await d.appendSpool(SESSION, 'logs', Buffer.from('fresh-log-bytes'));
+    await d.appendSpool(SESSION, 'metrics', Buffer.from('fresh-metric-bytes'));
+  };
 
-  it('queue at t0, recover just before the deadline, destination unavailable, restart: the ORIGINAL range expires, newer data keeps its own window', async () => {
+  it('queue at t0, recover before the deadline, 503, restart: ONLY the handed-over range expires; the newer tail keeps its own window', async () => {
     let d = await daemon();
     await holdAtT0(d);
-
-    at(DAY - MIN); // owner lookup recovers one minute before the deadline
+    at(DAY - MIN);
     await d.processPendingOwner(credentials as never, T0 + DAY - MIN);
-    const replayed = (await d.readStatus(SESSION))!;
-    expect(replayed.carriedAge?.hooks).toEqual([expect.objectContaining({ start: 0, since: T0 })]);
-    const handedOver = replayed.carriedAge!.hooks![0].end;
-
-    await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']); // newer data after the handover: its own window
+    const handedOver = (await d.readStatus(SESSION))!.carriedAge!.hooks![0].end;
+    await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']);
     fetchMock.mockImplementation(async () => unavailable());
     await d.forwardSession(SESSION, true, credentials as never);
-    const rec = (await d.readStatus(SESSION))!.delivery!.hooks!;
-    expect(rec).toMatchObject({ reason: 'destination_unavailable', since: T0, cursor: 0, end: handedOver }); // age carried, scope = handed-over bytes
-    const callsBefore = fetchMock.mock.calls.length;
+    expect((await d.readStatus(SESSION))!.delivery!.hooks).toMatchObject({ reason: 'destination_unavailable', since: T0 + DAY - MIN, cursor: 0 });
 
-    // daemon restart; time passes the ORIGINAL deadline
-    d = await daemon();
+    d = await daemon(); // restart; past the ORIGINAL deadline
     at(DAY + MIN);
     await d.forwardSession(SESSION, true, credentials as never);
     const after = (await d.readStatus(SESSION))!;
     expect(after.lastLoss).toMatchObject({ reason: 'destination_unavailable', bytes: handedOver });
-    expect(after.cursors.hooks).toBe(handedOver); // only the handed-over range was dropped
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore); // the newer range was still attempted
-    expect(after.delivery?.hooks).toMatchObject({ since: T0 + DAY + MIN, cursor: handedOver }); // own, fresh window
+    expect(after.cursors.hooks).toBe(handedOver);
+    expect(after.carriedAge).toBeUndefined();
+    expect(after.delivery?.hooks).toMatchObject({ since: T0 + DAY - MIN, cursor: handedOver }); // tail: own clock, neither reset nor inherited
   });
 
-  it('a failure reason that changes does not restart the carried clock', async () => {
+  it('mixed prefix: a fresh normal hook ahead of a queued older event defers the replay; the prefix never expires early and the entry keeps its own deadline', async () => {
+    let d = await daemon();
+    await holdAtT0(d);
+    at(DAY - 2 * MIN);
+    await d.appendSpool(SESSION, 'hooks', rawLine(7), ['A']); // first successful hook after recovery lands before the daemon replay
+    const sizeBefore = await hooksSize();
+    await d.processPendingOwner(credentials as never, T0 + DAY - 2 * MIN);
+    expect(await hooksSize()).toBe(sizeBefore); // replay deferred: nothing behind the normal prefix
+    expect(await queued()).toBe(1);
+    expect((await d.readStatus(SESSION))!.carriedAge).toBeUndefined();
+
+    fetchMock.mockImplementation(async () => unavailable());
+    await d.forwardSession(SESSION, true, credentials as never); // the prefix fails
+    d = await daemon();
+    at(DAY + MIN); // the ORIGINAL deadline has passed
+    await d.processPendingOwner(credentials as never, T0 + DAY + MIN);
+    const after = (await d.readStatus(SESSION))!;
+    expect(after.cursors.hooks).toBe(0); // the normal prefix was not expired by the older entry's age
+    expect(after.lastLoss).toBeUndefined();
+    expect(await queued()).toBe(0); // the aged entry itself expired (owner_unresolved_expired), nothing was appended
+    expect(await hooksSize()).toBe(sizeBefore);
+  });
+
+  it('mixed prefix, drained: once the prefix is acknowledged the older event is handed over and keeps its original age', async () => {
     const d = await daemon();
     await holdAtT0(d);
     at(DAY - 2 * MIN);
+    await d.appendSpool(SESSION, 'hooks', rawLine(7), ['A']);
     await d.processPendingOwner(credentials as never, T0 + DAY - 2 * MIN);
-
-    fetchMock.mockImplementation(async () => unavailable());
-    await d.forwardSession(SESSION, true, credentials as never);
-    at(DAY - MIN);
-    fetchMock.mockImplementation(async () => new Response('{}', { status: 500 }));
-    await d.forwardSession(SESSION, true, credentials as never);
-    expect((await d.readStatus(SESSION))!.delivery?.hooks?.since).toBe(T0);
+    const status = (await d.readStatus(SESSION))!;
+    status.cursors.hooks = await hooksSize(); // prefix acknowledged
+    await d.writeStatus(SESSION, status);
+    await d.processPendingOwner(credentials as never, T0 + DAY - 2 * MIN);
+    expect(await queued()).toBe(0);
+    expect((await d.readStatus(SESSION))!.carriedAge!.hooks).toEqual([expect.objectContaining({ since: T0 })]);
   });
 
-  it('unrelated bytes (no handover) are untouched: a plain append gets no carried age', async () => {
+  it.each(['session hold', 'endpoint mismatch'])('%s: at the carried deadline only the carried hook bytes are dropped; fresh hooks/logs/metrics keep their own windows', async (kind) => {
+    const d = await daemon();
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0); // carried; evidence record missing / endpoint wrong
+    const carriedEnd = (await d.readStatus(SESSION))!.carriedAge!.hooks![0].end;
+    at(DAY - MIN);
+    await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']); // fresh hook behind the carried one
+    await freshOtherStreams(d);
+    if (kind === 'endpoint mismatch') readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://other.example.com/x', syncApiUrl: 'https://other.example.com/x' });
+    fetchMock.mockImplementation(async () => ok200());
+    await d.processSessionTick(SESSION, credentials as never); // the hold on the fresh data starts here
+    const heldSince = (await d.readStatus(SESSION))!.holds?.session?.since;
+    expect(heldSince).toBe(T0 + DAY - MIN);
+
+    at(DAY + MIN);
+    await d.processSessionTick(SESSION, credentials as never);
+    const status = (await d.readStatus(SESSION))!;
+    expect(status.lastLoss).toMatchObject({ bytes: carriedEnd });
+    expect(status.cursors.hooks).toBe(carriedEnd); // the fresh hook is still pending
+    expect(status.cursors.logs ?? 0).toBe(0);
+    expect(status.cursors.metrics ?? 0).toBe(0);
+    expect(status.holds?.session?.since).toBe(heldSince); // unrelated data keeps its own hold clock
+    expect(status.carriedAge).toBeUndefined();
+  });
+
+  it('cap: 65 small adjacent handovers are never merged; the 65th stays queued until the head is acknowledged', async () => {
+    const d = await daemon();
+    let accepted = 0;
+    for (let n = 0; n < 65; n++) {
+      at(n * 1000);
+      if (await d.appendSpool(SESSION, 'hooks', rawLine(n), ['A'], T0 + n * 1000)) accepted++;
+    }
+    const st = (await d.readStatus(SESSION))!;
+    expect(accepted).toBe(64);
+    expect(st.carriedAge!.hooks).toHaveLength(64);
+    expect(new Set(st.carriedAge!.hooks!.map((x) => x.since)).size).toBe(64); // distinct clocks, none merged
+    st.cursors.hooks = await hooksSize(); // everything pending acknowledged
+    await d.writeStatus(SESSION, st);
+    expect(await d.appendSpool(SESSION, 'hooks', rawLine(64), ['A'], T0 + 64_000)).toBe(true);
+    const last = (await d.readStatus(SESSION))!.carriedAge!.hooks!;
+    expect(last).toEqual([expect.objectContaining({ since: T0 + 64_000 })]);
+  });
+
+  it('recovery after a crash window: the surviving queue entry replays again with the same event_id and its original age', async () => {
+    let d = await daemon();
+    await holdAtT0(d);
+    at(DAY - MIN);
+    await d.processPendingOwner(credentials as never, T0 + DAY - MIN);
+    const lines = (await readFile(join(state.root, SESSION + '.hooks.ndjson'), 'utf8')).trim().split('\n');
+    expect(JSON.parse(JSON.parse(lines[0]).hookEvent).event_id).toBe('e1');
+    expect((await d.readStatus(SESSION))!.carriedAge!.hooks![0]).toMatchObject({ start: 0, since: T0 });
+
+    // the crash: bytes + age are on disk, but the queue file was not renamed -> it is still queued
+    d = await daemon();
+    await holdAtT0(d);
+    await d.processPendingOwner(credentials as never, T0 + DAY - MIN + 1000);
+    const twice = (await readFile(join(state.root, SESSION + '.hooks.ndjson'), 'utf8')).trim().split('\n');
+    expect(twice.map((l) => JSON.parse(JSON.parse(l).hookEvent).event_id)).toEqual(['e1', 'e1']); // duplicate copy, identical event_id (backend dedupes by identity)
+    expect((await d.readStatus(SESSION))!.carriedAge!.hooks!.map((x) => x.since)).toEqual([T0, T0]); // age present for both copies
+    expect(await queued()).toBe(0);
+  });
+
+  it('a plain append gets no carried age', async () => {
     const d = await daemon();
     await d.appendSpool(SESSION, 'hooks', rawLine(9), ['A']);
     expect((await d.readStatus(SESSION))!.carriedAge).toBeUndefined();
-  });
-
-  it('a session hold (no evidence record) is measured from the carried age: lost, named, at the original deadline', async () => {
-    const d = await daemon();
-    // handed-over bytes whose evidence record is not there (e.g. evicted): the hold must not start a fresh window
-    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0);
-    fetchMock.mockImplementation(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }));
-
-    at(DAY + MIN);
-    await d.processSessionTick(SESSION, credentials as never);
-    const status = (await d.readStatus(SESSION))!;
-    expect(status.lastLoss).toMatchObject({ reason: 'stamp_invalid' }); // named: the evidence record is gone
-    expect(status.lastLoss!.bytes).toBeGreaterThan(0);
-    expect(status.holds?.session).toBeUndefined();
-  });
-
-  it('control: the same hold without a carried age starts a fresh window (held, nothing lost)', async () => {
-    const d = await daemon();
-    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A']);
-    at(DAY + MIN);
-    await d.processSessionTick(SESSION, credentials as never);
-    const status = (await d.readStatus(SESSION))!;
-    expect(status.lastLoss).toBeUndefined();
-    expect(status.holds?.session).toMatchObject({ since: T0 + DAY + MIN });
   });
 });

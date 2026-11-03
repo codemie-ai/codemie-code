@@ -78,7 +78,8 @@ export interface SessionStatus {
   evidenceMarked?: true;
   /**
    * Original first-failure age of bytes handed over from the owner-pending queue (AC9: one finite window that a
-   * handover does not reset). Per stream, byte ranges of the CURRENT file; only the transferred bytes carry it.
+   * handover does not reset). Hooks byte ranges of the CURRENT file, ascending, always the head of the pending range;
+   * each expires on its own clock (`expireCarriedAgeLocked`), whatever else holds or fails the session.
    */
   carriedAge?: Partial<Record<SpoolStream, AgeSegment[]>>;
 }
@@ -91,13 +92,18 @@ export interface AgeSegment {
 
 export const MAX_AGE_SEGMENTS = 64;
 
-/** The oldest carried segment of `stream` overlapping `[from, to)`: the age its unacknowledged bytes already have. */
-export function oldestCarried(status: SessionStatus, stream: SpoolStream, from: number = status.cursors[stream], to: number = Infinity): AgeSegment | undefined {
-  let oldest: AgeSegment | undefined;
-  for (const seg of status.carriedAge?.[stream] ?? []) {
-    if (seg.end > from && seg.start < to && (!oldest || seg.since < oldest.since)) oldest = seg;
+/**
+ * True when every pending hooks byte `[cursor, size)` belongs to a carried segment (or nothing is pending). Handed-over bytes
+ * are only ever appended in that state, so they stay the head run of the pending range and expire on their own clock.
+ */
+export function pendingIsCarriedOnly(status: SessionStatus, size: number): boolean {
+  let pos = status.cursors.hooks;
+  for (const seg of [...(status.carriedAge?.hooks ?? [])].sort((x, y) => x.start - y.start)) {
+    if (seg.end <= pos) continue;
+    if (seg.start > pos) break;
+    pos = seg.end;
   }
-  return oldest;
+  return pos >= size;
 }
 
 function parseCarriedAge(raw: unknown): SessionStatus['carriedAge'] {

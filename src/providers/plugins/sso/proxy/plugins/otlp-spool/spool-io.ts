@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { MAX_AGE_SEGMENTS, createStatus, oldestCarried, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { MAX_AGE_SEGMENTS, createStatus, pendingIsCarriedOnly, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
 import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
@@ -137,13 +137,12 @@ export async function noteStreamHold(
       await writeStatus(sessionId, status);
       return 'clear';
     }
-    const heldFrom = previous?.since ?? oldestCarried(status, stream)?.since;
-  const decision = holdOrLose(reason, heldFrom, now, heldRetentionMs());
+    const decision = holdOrLose(reason, previous?.since, now, heldRetentionMs());
     if (decision.action === 'lose') {
       clearHold(status, stream);
       await recordLossLocked(sessionId, status, decision.reason, [stream], now);
     } else {
-      status.holds = { ...status.holds, [stream]: { reason, since: heldFrom !== undefined ? Math.min(heldFrom, now) : now } };
+      status.holds = { ...status.holds, [stream]: { reason, since: previous?.since ?? now } };
     }
     await writeStatus(sessionId, status);
     return decision.action === 'lose' ? 'lost' : 'held';
@@ -277,31 +276,19 @@ export async function isSendAllowed(
  * Holds the session lock so an append can never interleave with a forwarder
  * snapshot (torn record), a cursor advance, or a sweep deletion.
  */
-/**
- * Remember that `[start, start + bytes)` of the hooks file is older than its arrival. Written after the bytes: a crash in
- * between only loses the age (a fresh window), it can never age bytes that were not written. Caller holds the lock.
- */
-async function recordCarriedAgeLocked(sessionId: string, start: number, bytes: number, since: number, recreated: boolean): Promise<void> {
-  const status = (await readStatus(sessionId)) ?? createStatus();
-  const segs = recreated ? [] : (status.carriedAge?.hooks ?? []).filter((s) => s.end > status.cursors.hooks);
-  segs.push({ start, end: start + bytes, since: Math.min(since, Date.now()) });
-  while (segs.length > MAX_AGE_SEGMENTS) {
-    // ponytail: merging the two oldest gives the younger one the older clock; only past 64 handovers in one session.
-    const [a, b] = segs.splice(0, 2);
-    segs.unshift({ start: a.start, end: b.end, since: Math.min(a.since, b.since) });
-  }
-  status.carriedAge = { ...status.carriedAge, hooks: segs };
-  await writeStatus(sessionId, status);
-}
-
 export async function appendSpool(
   sessionId: string,
   stream: SpoolStream,
   data: string | Buffer,
   projectNames?: string[],
-  /** Hooks only: these bytes were first held at this time (owner-pending handover); the age is carried, not reset. */
+  /**
+   * Hooks only: these bytes were first held at this time (owner-pending handover); the age is carried, not reset. They are
+   * appended only when the pending hooks range is empty or entirely carried (so they stay its head) and fewer than
+   * `MAX_AGE_SEGMENTS` ranges are tracked; otherwise nothing is written and `false` is returned (the caller keeps the data).
+   */
   carriedSince?: number
-): Promise<void> {
+): Promise<boolean> {
+  let appended = true;
   await withSessionLock(sessionId, async () => {
     // The epoch exists before this version writes any session status: a new session is never pre-epoch.
     await readOrCreateEpoch();
@@ -318,6 +305,22 @@ export async function appendSpool(
       const status = (await readStatus(sessionId)) ?? createStatus();
       // The exact end of everything written so far: the end of the sealed prefix if this batch conflicts.
       const sizeBefore = exists ? (await stat(path)).size : 0;
+      // Age ranges describe offsets of the current incarnation, and only bytes that exist: a crashed append leaves a range
+      // past EOF, which must never age bytes written later.
+      const cursor = recreated ? 0 : status.cursors.hooks;
+      const live = (recreated ? [] : status.carriedAge?.hooks ?? [])
+        .map((seg) => ({ ...seg, end: Math.min(seg.end, sizeBefore) }))
+        .filter((seg) => seg.end > seg.start && seg.end > cursor);
+      if (carriedSince !== undefined) {
+        if (live.length >= MAX_AGE_SEGMENTS || !pendingIsCarriedOnly({ ...status, cursors: { ...status.cursors, hooks: cursor }, carriedAge: { hooks: live } }, sizeBefore)) {
+          appended = false;
+          return;
+        }
+        live.push({ start: sizeBefore, end: sizeBefore + Buffer.byteLength(data), since: Math.min(carriedSince, Date.now()) });
+      }
+      if (live.length > 0) status.carriedAge = { ...status.carriedAge, hooks: live };
+      else if (status.carriedAge) delete status.carriedAge.hooks;
+      if (status.carriedAge && Object.keys(status.carriedAge).length === 0) delete status.carriedAge;
       if (!status.projectScanned) {
         if (exists) {
           await resolveLegacyProjectLocked(sessionId, status);
@@ -331,12 +334,10 @@ export async function appendSpool(
         // A new file is a new incarnation: a seal of the old one must not point into it.
         status.cursors.hooks = 0;
         delete status.projectSeal;
-        if (status.carriedAge) delete status.carriedAge.hooks; // ages of the old incarnation's offsets
       }
       await writeStatus(sessionId, status);
       if (!hadConflict && status.projectConflict) warnConflictStarted(sessionId, status);
       await appendFile(path, data, { mode: 0o600 });
-      if (carriedSince !== undefined) await recordCarriedAgeLocked(sessionId, sizeBefore, Buffer.byteLength(data), carriedSince, recreated);
       return;
     }
 
@@ -354,6 +355,7 @@ export async function appendSpool(
       await writeStatus(sessionId, status);
     }
   });
+  return appended;
 }
 
 /* --------------------------------------------------------------- consumers --- */
