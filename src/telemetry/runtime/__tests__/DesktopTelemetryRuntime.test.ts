@@ -201,7 +201,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 /** Runtimes a test starts: their real poll timers would otherwise poll the next tests' state. */
 const startedRuntimes: DesktopTelemetryRuntime[] = [];
 
-/** Starts a runtime with `start()` and waits for its start-up scan. */
+/** Starts a runtime with `start()` and waits for its start-up scan and first poll. */
 async function startRuntime(
   adapter: LocalTelemetryAdapter,
   runtimeConfig: DesktopTelemetryRuntimeConfig = config
@@ -209,7 +209,7 @@ async function startRuntime(
   const runtime = new DesktopTelemetryRuntime(adapter, runtimeConfig);
   startedRuntimes.push(runtime);
   await runtime.start();
-  await (runtime as any).startupPass;
+  await (runtime as any).startupChain;
   return runtime;
 }
 
@@ -773,7 +773,7 @@ describe('DesktopTelemetryRuntime', () => {
       const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
       startedRuntimes.push(runtime);
       await expect(runtime.start()).resolves.toBeUndefined();
-      await (runtime as any).startupPass;
+      await (runtime as any).startupChain;
 
       expect(readRecord(restarted)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
       expect(mockIndexSessionsByExternalId).toHaveBeenCalledTimes(2);
@@ -806,11 +806,13 @@ describe('DesktopTelemetryRuntime', () => {
 
       const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
       startedRuntimes.push(runtime);
-      const started = runtime.start();
-      // The first poll is under way while the pass is still pending
-      await waitFor(() => (runtime as any).isPolling);
+      await runtime.start();
+      // The start-up index has failed and the pass is still pending: a poll asked for now waits for the pass
+      await waitFor(() => resolvePass !== undefined);
+      const polled = runtime.triggerPoll();
       resolvePass!();
-      await started;
+      await polled;
+      await (runtime as any).startupChain;
 
       expect(passResolvedAtIndex).toEqual([false, true]);
       expect(sessionIdFor('ext-1')).toBeDefined();
@@ -1781,7 +1783,7 @@ describe('DesktopTelemetryRuntime', () => {
   });
 
   describe('a reopen and a delivery never interleave', () => {
-    /** The first poll of a started runtime reaches the record only once the start-up scan holds its lock. */
+    /** The next poll reaches the record only once a start-up or re-delivery pass holds its lock. */
     function adapterAfterLock(sessionId: string): LocalTelemetryAdapter {
       const adapter = createAdapter();
       const discover = vi.mocked(adapter.discoverSessions).getMockImplementation()!;
@@ -1797,11 +1799,12 @@ describe('DesktopTelemetryRuntime', () => {
       mockSendSessionEnd.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 300)));
     }
 
-    it('reopens an undelivered record after the re-delivery that holds it, 5 runs of 5', async () => {
+    it('reopens an undelivered record after the re-delivery pass that holds it, 5 runs of 5', async () => {
       for (let run = 0; run < 5; run++) {
         await resetCodemieHome();
         transcripts.clear();
         desktopSessions = new Map();
+        mockSendSessionEnd.mockClear();
         openDesktopChat('ext-1', 2, T0 - HOUR_MS);
         const sessionId = writeRecord('ext-1', {
           status: 'completed',
@@ -1812,15 +1815,19 @@ describe('DesktopTelemetryRuntime', () => {
         slowEndMetric();
         const runtime = new DesktopTelemetryRuntime(adapterAfterLock(sessionId), config);
         startedRuntimes.push(runtime);
-        // A new line in the conversation before the daemon starts
-        vi.setSystemTime(Date.now() + 1_000);
+        // A new line in the conversation once the re-delivery is due
+        vi.setSystemTime(Date.now() + DESKTOP_REDELIVERY_INTERVAL_MS);
         appendMessages('ext-1', 1);
 
-        await runtime.start();
-        await (runtime as any).startupPass;
+        (runtime as any).startRedeliveryIfDue(Date.now());
+        await runtime.triggerPoll();
+        await (runtime as any).redeliveryPass;
 
+        expect(mockSendSessionEnd).toHaveBeenCalledOnce();
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+        // The reopened stretch is not marked sent by the delivery of the one before it
+        expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
         await runtime.stop();
         vi.setSystemTime(T0);
       }
@@ -1832,16 +1839,24 @@ describe('DesktopTelemetryRuntime', () => {
       slowEndMetric();
       const runtime = new DesktopTelemetryRuntime(adapterAfterLock(sessionId), config);
       startedRuntimes.push(runtime);
-      vi.setSystemTime(Date.now() + 1_000);
+      const T1 = T0 + 1_000;
+      vi.setSystemTime(T1);
       appendMessages('ext-1', 1);
 
+      // The index succeeded, so this poll does not wait for the pass and meets its lock
       await runtime.start();
-      await (runtime as any).startupPass;
+      await runtime.triggerPoll();
+      // Reopened by the triggered poll itself, before the chain's first poll
+      expect(readRecord(sessionId)).toMatchObject({ status: 'active', stretchStartTime: T1 });
+      await (runtime as any).startupChain;
 
+      expect(readRecord(sessionId)!.stretchStartTime).toBe(T1);
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       expect(mockSendSessionEnd.mock.calls[0][2]).toMatchObject({ reason: 'desktop-daemon-restart' });
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+      // The reopened stretch is not marked sent by the finalization of the one before it
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
       await runtime.stop();
     });
 

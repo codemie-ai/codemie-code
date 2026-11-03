@@ -29,7 +29,7 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { authWasRejected, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptNeverReached, authWasRejected, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
@@ -43,10 +43,17 @@ import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/prov
  */
 export const LEGACY_IDLE_MS = 72 * 60 * 60 * 1000;
 
-/** At most this many records are handled per start, newest `startTime` first. */
+/**
+ * The CLI start pass handles at most this many records per start, newest `startTime` first. The Desktop passes cap
+ * their `undelivered` sends by it and finalize a predecessor's records uncapped.
+ */
 export const RECONCILE_PER_START = 5;
 
-/** Attempts per record: past them a stranded record is finalized without its flush, an undelivered one renamed unsent. */
+/**
+ * Attempts per record: past them a stranded record is finalized without its flush, an undelivered one renamed unsent.
+ * An attempt is not counted when no request of it reached the server: every request it made failed before the
+ * connection opened (a connection refused, an unresolved host or an unreachable network), so no server can have served it.
+ */
 export const MAX_ATTEMPTS = 3;
 
 /** How long `abandon()` waits for the attempt in hand to stop and roll its own counter back. */
@@ -300,14 +307,17 @@ async function rollBackAttempt(attempt: Attempt): Promise<void> {
 }
 
 /**
- * Settles an attempt that ran to its end or threw: rejected credentials anywhere in it, or an abort of
- * the pass before any send, put its counter back; any other outcome keeps it counted — the attempt's
- * own deadline expiring included, so a record that always runs past it reaches its last attempt.
+ * Settles an attempt that ran to its end or threw: rejected credentials anywhere in it, no request of it that
+ * reached the server (see {@link attemptNeverReached}), or an abort of the pass before any send, put its counter
+ * back; any other outcome keeps it counted — an HTTP answer, a timeout or a reset after the send of any of its
+ * requests, and the attempt's own deadline expiring included, so a record that always runs past it reaches its last attempt.
  */
 export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise<void> {
   if (authWasRejected(attempt.signal)) {
     // Rejected credentials are no attempt: the record waits for a re-login
     await restoreCounter(attempt, 'credentials rejected by the server');
+  } else if (attemptNeverReached(attempt.signal)) {
+    await restoreCounter(attempt, 'request never reached the server');
   } else if (aborted) {
     await rollBackAttempt(attempt);
   }
@@ -435,7 +445,7 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
         closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
       }
     } finally {
-      // Also on a throw: a flush cut by the pass's abort or met by rejected credentials is no attempt
+      // Also on a throw: a flush cut by the pass's abort, met by rejected credentials or that never reached the server is no attempt
       if (!closedLocally) await settleAttempt(attempt, controller.signal.aborted);
     }
   } finally {

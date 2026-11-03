@@ -161,8 +161,10 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               body: JSON.stringify(payload),
               signal: request.signal
             });
+            request.noteOutcome();
             body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
           } catch (error) {
+            request.noteOutcome(error);
             const stopReason = request.stopReason();
             throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
@@ -315,10 +317,12 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           body: JSON.stringify(metadata),
           signal: request.signal
         });
+        request.noteOutcome();
         if (!response.ok) {
           errorText = await response.text();
         }
       } catch (error) {
+        request.noteOutcome(error);
         const stopReason = request.stopReason();
         throw stopReason ? new SyncStoppedError(stopReason) : error;
       } finally {

@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import { stat } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
@@ -20,8 +19,8 @@ import {
   daemonOwner, hasActivityAfter,
   isForeignRecord,
   isSameFingerprint,
-  type TrackedSession,
-  type TranscriptFingerprint
+  readTranscriptFingerprint,
+  type TrackedSession
 } from '@/telemetry/runtime/desktop-session.js';
 import { ReconcileLockHeldError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -51,6 +50,8 @@ export class DesktopTelemetryRuntime {
    */
   private reopenLockFailed = false;
   private startupPass?: Promise<void>;
+  private startupChain?: Promise<void>;
+  private stopped = false;
   private redeliveryPass?: Promise<void>;
 
   constructor(
@@ -61,6 +62,10 @@ export class DesktopTelemetryRuntime {
     this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
   }
 
+  /**
+   * One start and one stop per instance: a start() after stop() polls nothing (the daemon constructs one runtime
+   * per process).
+   */
   async start(): Promise<void> {
     // The start-up pass renames records; the scan runs before it so no record is missed between listing and reading
     try {
@@ -68,21 +73,28 @@ export class DesktopTelemetryRuntime {
     } catch (error) {
       logger.error('[desktop-telemetry] Session index failed; built at the next poll', error);
     }
-    // Fire-and-forget: records a previous daemon left are finalized and delivered while polling starts
+    // Records a previous daemon left are finalized and delivered before the first poll: a poll that re-tracked a
+    // predecessor's `active` record first would keep the downtime inside one stretch under this daemon.
+    // Detached: the daemon starts its proxy watcher after start(), which must not wait for the pass's sends.
     this.startupPass = this.delivery.reconcileRecords(true).catch((error) => {
       logger.error('[desktop-telemetry] Start-up scan failed:', error);
     });
-    await this.poll().catch((error) => {
-      logger.error('[desktop-telemetry] Poll failed:', error);
-    });
-    this.timer = setInterval(() => {
-      this.poll().catch((error) => {
+    this.startupChain = this.startupPass.then(async () => {
+      if (this.stopped) return;
+      await this.poll().catch((error) => {
         logger.error('[desktop-telemetry] Poll failed:', error);
       });
-    }, this.config.pollIntervalMs);
+      if (this.stopped) return;
+      this.timer = setInterval(() => {
+        this.poll().catch((error) => {
+          logger.error('[desktop-telemetry] Poll failed:', error);
+        });
+      }, this.config.pollIntervalMs);
+    });
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -122,8 +134,9 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
-      // The start-up pass renames records: the index waits for it so it never lists while records are renamed
-      // ponytail: on an index failure at start the first poll waits for the whole start-up pass (network sends per record); polling resumes after it
+      // Every start orders its first poll after the start-up pass; a poll asked for during the pass (triggerPoll, stop())
+      // waits for it only when the start-up index failed, so the index never lists while the pass renames records
+      // ponytail: that poll waits for the whole start-up pass (network sends per record); polling resumes after it
       if (!this.knownSessionIds) await this.startupPass;
       this.knownSessionIds ??= await this.indexSessions();
       const discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
@@ -196,7 +209,7 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  /** Starts a re-delivery pass every {@link DESKTOP_REDELIVERY_INTERVAL_MS} unless one is running. */
+  /** Starts a re-delivery pass every {@link DESKTOP_REDELIVERY_INTERVAL_MS} unless one is running; each pass sends at most `RECONCILE_PER_START` records. */
   private startRedeliveryIfDue(now: number): void {
     // Not awaited: a pass whose sends hang must not stall the polls
     if (!this.redeliveryPass && now - this.lastRedeliveryAt >= DESKTOP_REDELIVERY_INTERVAL_MS) {
@@ -215,7 +228,7 @@ export class DesktopTelemetryRuntime {
     const knownSessionIds = this.knownSessionIds!;
     const tracked = this.trackedSessions.get(discovered.externalSessionId);
     // Taken before parsing, so a write that lands mid-processing is picked up next tick.
-    const transcript = await this.readTranscriptFingerprint(discovered.transcriptPath);
+    const transcript = await readTranscriptFingerprint(discovered.transcriptPath);
 
     // Desktop bumps lastActivityAt without necessarily appending to the transcript.
     // Nothing new to parse or sync, so keep the session alive and skip the work.
@@ -253,20 +266,6 @@ export class DesktopTelemetryRuntime {
     // Record the fingerprint only once processing succeeded: a failed parse or sync must
     // not mark this transcript state as handled, or the delta would wait for the next write.
     nextTracked.transcript = transcript;
-  }
-
-  private async readTranscriptFingerprint(transcriptPath: string): Promise<TranscriptFingerprint | undefined> {
-    try {
-      const stats = await stat(transcriptPath);
-      return { mtimeMs: stats.mtimeMs, size: stats.size };
-    } catch (error) {
-      // Unknown fingerprint never matches, so the session is processed as before.
-      logger.debug('[desktop-telemetry] Failed to stat transcript', {
-        transcriptPath,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return undefined;
-    }
   }
 
   /**

@@ -236,6 +236,32 @@ describe('reconcileOtherSessions', () => {
     expect(attemptsSeenByDelivery).toBe(1);
   });
 
+  it('gives back the attempt whose end metric was refused at the connection; a timed-out one is counted', async () => {
+    const refused = record({
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-refused' },
+    });
+    const timedOut = record({
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - 2 * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-timeout' },
+    });
+    save(refused);
+    save(timedOut);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      throw String(init?.body).includes('native-refused')
+        ? new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) })
+        : new DOMException('This operation was aborted', 'AbortError');
+    });
+    try {
+      await onFakeClock(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(load(refused.sessionId).deliveryAttempts).toBe(1);
+    expect(load(timedOut.sessionId).deliveryAttempts).toBe(2);
+  });
+
   it('leaves a completed record of a live owner untouched; one of a dead owner is delivered once', async () => {
     const ownedPath = save(record({ status: 'completed', ownerPid: process.pid, ownerStartedAt: processStartedAt() }));
     const before = readFileSync(ownedPath, 'utf-8');

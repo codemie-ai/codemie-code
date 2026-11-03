@@ -1,5 +1,7 @@
+import { stat } from 'fs/promises';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
+import { logger } from '@/utils/logger.js';
 import { processStartedAt } from '@/utils/processes.js';
 
 /** How often a live daemon retries delivering its undelivered records; these retries spend no attempt. */
@@ -61,4 +63,18 @@ export function isSameFingerprint(
   return previous !== undefined
     && previous.mtimeMs === current.mtimeMs
     && previous.size === current.size;
+}
+
+/** A transcript's stat() fingerprint; undefined when it cannot be read, so it never matches a saved one. */
+export async function readTranscriptFingerprint(transcriptPath: string): Promise<TranscriptFingerprint | undefined> {
+  try {
+    const stats = await stat(transcriptPath);
+    return { mtimeMs: stats.mtimeMs, size: stats.size };
+  } catch (error) {
+    logger.debug('[desktop-telemetry] Failed to stat transcript', {
+      transcriptPath,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return undefined;
+  }
 }

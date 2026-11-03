@@ -10,6 +10,7 @@ import {
   markDroppedIfUndelivered,
   MAX_ATTEMPTS,
   readLiveRecord,
+  RECONCILE_PER_START,
   reconcileLockPath,
   settleAttempt
 } from '@/agents/core/session/stale-session-reconciliation.js';
@@ -92,7 +93,7 @@ export class DesktopSessionDelivery {
    * metric — then the `completed_*` rename once delivered; the caller holds the reconcile lock. Without
    * usable credentials (no stored cookies, or the analytics auth marked invalid) the record is saved, its flush
    * processed locally, nothing sent, and it waits for a re-login. A counted attempt saves the record with `deliveryAttempts` + 1 before any send and
-   * gives it back when the server rejected the credentials; past {@link MAX_ATTEMPTS} the record is renamed
+   * gives it back when the server rejected the credentials or no request of it reached the server; past {@link MAX_ATTEMPTS} the record is renamed
    * without sending. A failed send is logged, never thrown: the record stays `{id}.json`.
    */
   private async deliverLocked(record: Session, options: { countAttempt: boolean; flush: boolean }): Promise<void> {
@@ -105,7 +106,7 @@ export class DesktopSessionDelivery {
       }
       return;
     }
-    // Never aborted: it only tags this attempt's requests, so the API clients can note a credential rejection
+    // Never aborted: it only tags this attempt's requests, so the API clients can note a credential rejection and whether a request reached the server
     const signal = new AbortController().signal;
     if (options.countAttempt) {
       const attempts = record.deliveryAttempts ?? 0;
@@ -119,7 +120,17 @@ export class DesktopSessionDelivery {
       await this.sessionStore.saveSession({ ...record, deliveryAttempts: attempts + 1 });
     }
 
-    if (options.flush) {
+    await this.sendRecord(record, options.flush, signal);
+    if (options.countAttempt) {
+      await settleAttempt({ sessionId, field: 'deliveryAttempts', before: record.deliveryAttempts, signal }, false);
+    }
+    await this.renameToCompleted(sessionId);
+  }
+
+  /** The final flush when asked, the sync and the end-metric send of one delivery; each failure is logged, never thrown. */
+  private async sendRecord(record: Session, flush: boolean, signal: AbortSignal): Promise<void> {
+    const sessionId = record.sessionId;
+    if (flush) {
       await this.flushTranscript(record, true, signal);
     }
     try {
@@ -138,10 +149,6 @@ export class DesktopSessionDelivery {
         error: error instanceof Error ? error.message : String(error)
       });
     }
-    if (options.countAttempt) {
-      await settleAttempt({ sessionId, field: 'deliveryAttempts', before: record.deliveryAttempts, signal }, false);
-    }
-    await this.renameToCompleted(sessionId);
   }
 
   /** The final transcript processing of a session, its transcript rediscovered; a failure is logged. */
@@ -206,27 +213,15 @@ export class DesktopSessionDelivery {
    * than {@link LEGACY_IDLE_MS} is closed locally (nothing sent), and an undelivered `completed` one with an
    * owner is delivered as a counted attempt (of this daemon's host; another host's gone `active` record is
    * closed locally `desktop-daemon-gone`, its `completed` one left as it is). Every `DESKTOP_REDELIVERY_INTERVAL_MS`: undelivered records
-   * only, no attempt counted, so an outage of any length on a live daemon never drops a record unsent.
+   * only, no attempt counted, so an outage of any length on a live daemon never drops a record unsent. Every
+   * `restart`, `legacy` and `foreign-gone` record is handled, first: one left `active` would be re-tracked by the
+   * first poll with the downtime inside its stretch. Of the `undelivered` ones each pass takes at most
+   * {@link RECONCILE_PER_START}, newest `startTime` first, so their sends stay bounded; the rest wait for a later
+   * pass, and a host that never answers keeps its records in the queue.
    */
   async reconcileRecords(atStart: boolean): Promise<void> {
-    const sessionsDir = getCodemiePath('sessions');
-    let names: string[];
-    try {
-      names = await readdir(sessionsDir);
-    } catch {
-      return;
-    }
-
-    for (const name of names) {
-      if (!isLiveRecordFileName(name)) {
-        continue;
-      }
-      const sessionId = name.slice(0, -'.json'.length);
+    for (const sessionId of await this.listCandidates(atStart)) {
       try {
-        const listed = JSON.parse(await readFile(join(sessionsDir, name), 'utf-8')) as Session;
-        if (!(await this.classifyRecord(listed, atStart))) {
-          continue;
-        }
         const lock = await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' });
         if (!lock) {
           logger.debug('[desktop-telemetry] Record held by another process; skipped', { sessionId });
@@ -248,6 +243,51 @@ export class DesktopSessionDelivery {
         });
       }
     }
+  }
+
+  /**
+   * The ids of the live records this pass acts on: every start-time kind first, uncapped, so no dead daemon's
+   * `active` record is left for the first poll; then the `undelivered` ones, newest `startTime` first, at most
+   * {@link RECONCILE_PER_START}, which bounds the pass's sends.
+   */
+  private async listCandidates(atStart: boolean): Promise<string[]> {
+    const sessionsDir = getCodemiePath('sessions');
+    let names: string[];
+    try {
+      names = await readdir(sessionsDir);
+    } catch {
+      return [];
+    }
+
+    const atStartKinds: string[] = [];
+    const undelivered: Array<{ sessionId: string; startTime: number }> = [];
+    for (const name of names) {
+      if (!isLiveRecordFileName(name)) {
+        continue;
+      }
+      const sessionId = name.slice(0, -'.json'.length);
+      try {
+        const listed = JSON.parse(await readFile(join(sessionsDir, name), 'utf-8')) as Session;
+        const kind = await this.classifyRecord(listed, atStart);
+        if (kind === 'undelivered') {
+          undelivered.push({ sessionId, startTime: listed.startTime ?? 0 });
+        } else if (kind === 'restart' || kind === 'legacy' || kind === 'foreign-gone') {
+          atStartKinds.push(sessionId);
+        } else if (kind !== undefined) {
+          logger.warn('[desktop-telemetry] Record of an unknown kind skipped', { sessionId, kind });
+        }
+      } catch (error) {
+        logger.warn('[desktop-telemetry] Record listing failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    const capped = undelivered
+      .sort((a, b) => b.startTime - a.startTime)
+      .slice(0, RECONCILE_PER_START)
+      .map(candidate => candidate.sessionId);
+    return [...atStartKinds, ...capped];
   }
 
   /** The kind of a listed record this pass acts on; a record of another CodeMie host is never delivered. */
