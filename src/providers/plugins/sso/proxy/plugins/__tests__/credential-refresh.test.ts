@@ -313,7 +313,10 @@ describe('CredentialRefresher', () => {
       void call.then(() => {
         settled = true;
       });
-      await flush();
+      const deadline = performance.now() + 2_000;
+      while (!settled && performance.now() < deadline) {
+        await new Promise((r) => realSetTimeout(r, 1));
+      }
       return settled;
     }
 
