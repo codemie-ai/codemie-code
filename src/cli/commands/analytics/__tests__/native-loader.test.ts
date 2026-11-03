@@ -563,6 +563,51 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
     const { realNativeDeps } = await import('../native-loader.js');
     expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
   });
+
+  it('tracks and owns the switched transcript of a record whose agentSessionFile no longer exists', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-3.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: join(mockSessionsDir, 'moved-away.jsonl') },
+        runtimeCheckpoint: { transcriptPath: ownedTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.trackedLogPaths().has(realNativeDeps.realPath(ownedTranscript))).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+  });
+
+  it('tracks and owns both transcripts of a record whose agentSessionFile and switched transcript both exist', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-4.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: ownedTranscript },
+        runtimeCheckpoint: { transcriptPath: externalTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    const tracked = realNativeDeps.trackedLogPaths();
+    expect(tracked.has(realNativeDeps.realPath(ownedTranscript))).toBe(true);
+    expect(tracked.has(realNativeDeps.realPath(externalTranscript))).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(true);
+  });
+
+  it('tracks only the string transcript paths of a record with a malformed one', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-5.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: 42 },
+        runtimeCheckpoint: { transcriptPath: ownedTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect([...realNativeDeps.trackedLogPaths()]).toEqual([realNativeDeps.realPath(ownedTranscript)]);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+  });
 });
 
 describe('synthesizeCodexRawSession', () => {

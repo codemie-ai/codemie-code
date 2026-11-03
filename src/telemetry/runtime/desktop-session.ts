@@ -1,3 +1,4 @@
+import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { processStartedAt } from '@/utils/processes.js';
 
@@ -23,6 +24,11 @@ export function daemonOwner(): Pick<Session, 'ownerPid' | 'ownerStartedAt'> {
   return { ownerPid: process.pid, ownerStartedAt: processStartedAt() };
 }
 
+/** Activity newer than the record's saved one and its end: an end at a touch with no transcript write is only in `endTime`. */
+export function hasActivityAfter(record: Session, updatedAt: number): boolean {
+  return updatedAt > Math.max(record.runtimeCheckpoint?.lastSeenActivityAt ?? 0, record.endTime ?? 0);
+}
+
 /**
  * A Desktop session's end: its last activity — the later of the tracked (in-memory) and the saved one —, else
  * its last discovery, else its start. Never the moment it is finalized.
@@ -35,7 +41,18 @@ export function desktopEndTime(session: Session, trackedActivityAt?: number): nu
   return activity ?? session.runtimeCheckpoint?.lastDiscoveredAt ?? session.startTime;
 }
 
-export type RecordKind = 'restart' | 'legacy' | 'undelivered';
+/**
+ * A record is handled only by a daemon of its own CodeMie host: the cookies are keyed by host, and another host
+ * would receive the data under its own account. A record without `codemieUrl` predates the field and is this
+ * host's; a daemon whose own URL has no host treats nothing as foreign.
+ */
+export function isForeignRecord(record: Session, daemonUrl: string): boolean {
+  const recordHost = hostOf(record.codemieUrl);
+  const daemonHost = hostOf(daemonUrl);
+  return recordHost !== undefined && daemonHost !== undefined && recordHost !== daemonHost;
+}
+
+export type RecordKind = 'restart' | 'legacy' | 'undelivered' | 'foreign-gone';
 
 export function isSameFingerprint(
   previous: TranscriptFingerprint | undefined,

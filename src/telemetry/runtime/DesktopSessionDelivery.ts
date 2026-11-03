@@ -2,6 +2,7 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import type { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { Session } from '@/agents/core/session/types.js';
+import { hostOf } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
 import {
   isLiveRecordFileName,
@@ -20,7 +21,7 @@ import type {
   LocalTelemetryDiscoveredSession
 } from '@/telemetry/runtime/types.js';
 import type { DesktopSessionMetrics } from '@/telemetry/runtime/DesktopSessionMetrics.js';
-import { desktopEndTime, type RecordKind } from '@/telemetry/runtime/desktop-session.js';
+import { desktopEndTime, isForeignRecord, type RecordKind } from '@/telemetry/runtime/desktop-session.js';
 import { logger } from '@/utils/logger.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
@@ -203,7 +204,8 @@ export class DesktopSessionDelivery {
    * process holds it) and re-checked under it. At start: an `active` record whose owning daemon is gone is
    * finalized at its last activity (`desktop-daemon-restart`), an ownerless (legacy) `active` one idle longer
    * than {@link LEGACY_IDLE_MS} is closed locally (nothing sent), and an undelivered `completed` one with an
-   * owner is delivered as a counted attempt. Every `DESKTOP_REDELIVERY_INTERVAL_MS`: undelivered records
+   * owner is delivered as a counted attempt (of this daemon's host; another host's gone `active` record is
+   * closed locally `desktop-daemon-gone`, its `completed` one left as it is). Every `DESKTOP_REDELIVERY_INTERVAL_MS`: undelivered records
    * only, no attempt counted, so an outage of any length on a live daemon never drops a record unsent.
    */
   async reconcileRecords(atStart: boolean): Promise<void> {
@@ -248,13 +250,15 @@ export class DesktopSessionDelivery {
     }
   }
 
+  /** The kind of a listed record this pass acts on; a record of another CodeMie host is never delivered. */
   private async classifyRecord(record: Session, atStart: boolean): Promise<RecordKind | undefined> {
     if (record.agentName !== this.config.clientType) {
       return undefined;
     }
+    const foreign = isForeignRecord(record, this.metrics.credentialsUrl);
     // Never a legacy record: re-delivering ownerless records sent duplicate end metrics
     if (record.status === 'completed') {
-      return record.ownerPid !== undefined ? 'undelivered' : undefined;
+      return record.ownerPid !== undefined && !foreign ? 'undelivered' : undefined;
     }
     if (!atStart || record.status !== 'active') {
       return undefined;
@@ -262,7 +266,10 @@ export class DesktopSessionDelivery {
     if (record.ownerPid === undefined) {
       return Date.now() - desktopEndTime(record) > LEGACY_IDLE_MS ? 'legacy' : undefined;
     }
-    return (await isOwnerAlive({ pid: record.ownerPid, startedAt: record.ownerStartedAt })) ? undefined : 'restart';
+    if (await isOwnerAlive({ pid: record.ownerPid, startedAt: record.ownerStartedAt })) {
+      return undefined;
+    }
+    return foreign ? 'foreign-gone' : 'restart';
   }
 
   private async reconcileRecord(record: Session, kind: RecordKind, atStart: boolean): Promise<void> {
@@ -272,6 +279,17 @@ export class DesktopSessionDelivery {
         ownerPid: record.ownerPid,
       });
       await this.finalizeLocked(record, 'desktop-daemon-restart');
+    } else if (kind === 'foreign-gone') {
+      logger.info('[desktop-telemetry] Record of another CodeMie host\'s gone daemon — closed locally, its daemon delivers it', {
+        sessionId: record.sessionId,
+        host: hostOf(record.codemieUrl),
+      });
+      await this.sessionStore.saveSession({
+        ...record,
+        status: 'completed',
+        reason: 'desktop-daemon-gone',
+        endTime: desktopEndTime(record)
+      });
     } else if (kind === 'legacy') {
       logger.info('[desktop-telemetry] Legacy record idle past the limit — closed locally, nothing sent', {
         sessionId: record.sessionId,

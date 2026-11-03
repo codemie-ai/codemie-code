@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { stat } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
@@ -16,7 +17,8 @@ import { DesktopSessionMetrics } from '@/telemetry/runtime/DesktopSessionMetrics
 import {
   DESKTOP_REDELIVERY_INTERVAL_MS,
   DESKTOP_REOPEN_LOCK_BUDGET_MS,
-  daemonOwner,
+  daemonOwner, hasActivityAfter,
+  isForeignRecord,
   isSameFingerprint,
   type TrackedSession,
   type TranscriptFingerprint
@@ -42,6 +44,12 @@ export class DesktopTelemetryRuntime {
   private lastPollAt = this.startedAt;
   private lastRedeliveryAt = this.startedAt;
   private isPolling = false;
+  /**
+   * A re-track lock wait of this poll failed: `lastPollAt` is held back so the next poll re-reads this window, for as
+   * long as the wait keeps failing. Discovery is bounded by the sessions active since `startedAt`, so the cost is
+   * their metadata reads per poll and one lock wait per poll until the holder releases.
+   */
+  private reopenLockFailed = false;
   private startupPass?: Promise<void>;
   private redeliveryPass?: Promise<void>;
 
@@ -54,6 +62,12 @@ export class DesktopTelemetryRuntime {
   }
 
   async start(): Promise<void> {
+    // The start-up pass renames records; the scan runs before it so no record is missed between listing and reading
+    try {
+      this.knownSessionIds ??= await this.indexSessions();
+    } catch (error) {
+      logger.error('[desktop-telemetry] Session index failed; built at the next poll', error);
+    }
     // Fire-and-forget: records a previous daemon left are finalized and delivered while polling starts
     this.startupPass = this.delivery.reconcileRecords(true).catch((error) => {
       logger.error('[desktop-telemetry] Start-up scan failed:', error);
@@ -108,7 +122,10 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
-      this.knownSessionIds ??= await this.sessionStore.indexSessionsByExternalId(this.config.clientType);
+      // The start-up pass renames records: the index waits for it so it never lists while records are renamed
+      // ponytail: on an index failure at start the first poll waits for the whole start-up pass (network sends per record); polling resumes after it
+      if (!this.knownSessionIds) await this.startupPass;
+      this.knownSessionIds ??= await this.indexSessions();
       const discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
       logger.debug('[desktop-telemetry] Poll tick', {
         discovered: discoveredSessions.length,
@@ -136,9 +153,21 @@ export class DesktopTelemetryRuntime {
       await this.finalizeInactive(now);
       this.startRedeliveryIfDue(now);
     } finally {
-      this.lastPollAt = now;
+      // held back on a failed reopen lock wait
+      if (!this.reopenLockFailed) {
+        this.lastPollAt = now;
+      }
+      this.reopenLockFailed = false;
       this.isPolling = false;
     }
+  }
+
+  /** The index of this host's records: a record of another CodeMie host belongs to that host's daemon. */
+  private indexSessions(): Promise<Map<string, string>> {
+    return this.sessionStore.indexSessionsByExternalId(
+      this.config.clientType,
+      (record) => !isForeignRecord(record, this.metrics.credentialsUrl)
+    );
   }
 
   /** Finalizes every tracked session idle past the inactivity timeout; a failure is retried at the next poll. */
@@ -208,7 +237,8 @@ export class DesktopTelemetryRuntime {
       discovered,
       tracked?.codemieSessionId ?? knownSessionIds.get(discovered.externalSessionId)
     );
-    if (!session) {
+    if (!session || session === 'idle') {
+      this.reopenLockFailed ||= !session;
       return;
     }
     knownSessionIds.set(discovered.externalSessionId, session.sessionId);
@@ -241,12 +271,12 @@ export class DesktopTelemetryRuntime {
 
   /**
    * The record of a discovered session: the known one re-tracked under its reconcile lock, else a new one.
-   * Undefined when the known record's lock stays held past {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}.
+   * Undefined when its lock stays held past {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}; `idle` when it is `completed` with no newer activity.
    */
   private async ensureSession(
     discovered: LocalTelemetryDiscoveredSession,
     knownSessionId?: string
-  ): Promise<Session | undefined> {
+  ): Promise<Session | 'idle' | undefined> {
     if (knownSessionId) {
       const retracked = await this.retrackUnderLock(knownSessionId, discovered);
       if (retracked !== null) {
@@ -291,14 +321,15 @@ export class DesktopTelemetryRuntime {
 
   /**
    * The known record re-tracked under its reconcile lock: undefined while another process holds the lock past
-   * {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}, null when the record is gone.
+   * {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}, null when the record is gone or of another CodeMie host, `idle` when it is
+   * `completed` with no newer activity (both left untouched).
    */
   private async retrackUnderLock(
     knownSessionId: string,
     discovered: LocalTelemetryDiscoveredSession
-  ): Promise<Session | undefined | null> {
-    // ponytail: the wait blocks the rest of this poll and isPolling skips the polls due meanwhile;
-    // the discovery window (lastPollAt − pollIntervalMs) covers the gap
+  ): Promise<Session | 'idle' | undefined | null> {
+    // The wait blocks the rest of this poll and isPolling skips the polls due meanwhile;
+    // lastPollAt is held back so the next poll re-reads this window
     const lock = await acquirePidLock(reconcileLockPath(knownSessionId), {
       mode: 'wait',
       budgetMs: DESKTOP_REOPEN_LOCK_BUDGET_MS
@@ -313,6 +344,13 @@ export class DesktopTelemetryRuntime {
     try {
       // Read under the lock: a delivery or finalization that held it may have changed or renamed the record
       const existing = await this.sessionStore.loadSession(knownSessionId);
+      if (existing && isForeignRecord(existing, this.metrics.credentialsUrl)) {
+        logger.info('[desktop-telemetry] Record of another CodeMie host; a new record for this host', {
+          sessionId: knownSessionId,
+          host: hostOf(existing.codemieUrl),
+        });
+        return null;
+      }
       return existing ? await this.retrackSession(existing, discovered) : null;
     } finally {
       await lock.release();
@@ -329,6 +367,7 @@ export class DesktopTelemetryRuntime {
       sessionId: randomUUID(),
       agentName: this.config.clientType,
       provider: this.config.provider,
+      codemieUrl: this.metrics.credentialsUrl,
       startTime: baselineCutoffMs ?? discovered.createdAt,
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
@@ -354,36 +393,25 @@ export class DesktopTelemetryRuntime {
   }
 
   /**
-   * Re-tracks a known record; the caller holds its reconcile lock. A `completed` one is reopened: its
+   * Re-tracks a known record; the caller holds its reconcile lock. A `completed` one with newer activity is reopened: its
    * `completed_*` set moved back to the live names, its end and delivery state cleared so the resumed
    * stretch gets its own end metric (`startTime` kept). Its folder follows Desktop's: a switched transcript
    * or working directory is taken over, with the branch, repository and project of the new directory.
    */
-  private async retrackSession(existing: Session, discovered: LocalTelemetryDiscoveredSession): Promise<Session> {
+  private async retrackSession(existing: Session, discovered: LocalTelemetryDiscoveredSession): Promise<Session | 'idle'> {
     if (existing.status === 'completed') {
+      // Finalized idle, it stays indexed and in a held-back discovery window: reopened with no newer activity it ends again this poll
+      if (!hasActivityAfter(existing, discovered.updatedAt)) return 'idle';
       await this.reopenCompleted(existing, discovered);
     }
     Object.assign(existing, daemonOwner());
+    // A record written before the field existed is this host's from the moment this daemon owns it
+    existing.codemieUrl ??= this.metrics.credentialsUrl;
 
     if (discovered.transcriptPath !== existing.correlation.agentSessionFile) {
       existing.correlation.agentSessionFile = discovered.transcriptPath;
     }
-    if (discovered.workingDirectory !== existing.workingDirectory) {
-      // ponytail: the start metric and the deltas sent before the switch keep the previous folder's attribution
-      const [gitBranch, repository, project] = await this.detectAttribution(discovered.workingDirectory);
-      logger.info('[desktop-telemetry] Session switched folder', {
-        sessionId: existing.sessionId,
-        from: existing.workingDirectory,
-        to: discovered.workingDirectory,
-        gitBranch,
-        repository,
-        project,
-      });
-      existing.workingDirectory = discovered.workingDirectory;
-      existing.gitBranch = gitBranch || undefined;
-      existing.repository = repository || undefined;
-      existing.project = project || undefined;
-    }
+    await this.followFolder(existing, discovered.workingDirectory);
 
     setRuntimeCheckpoint(existing, {
       // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
@@ -397,6 +425,19 @@ export class DesktopTelemetryRuntime {
     return existing;
   }
 
+  private async followFolder(existing: Session, workingDirectory: string): Promise<void> {
+    if (workingDirectory === existing.workingDirectory) return;
+    // ponytail: the start metric and the deltas sent before the switch keep the previous folder's attribution
+    const [gitBranch, repository, project] = await this.detectAttribution(workingDirectory);
+    logger.info('[desktop-telemetry] Session switched folder', {
+      sessionId: existing.sessionId, from: existing.workingDirectory, to: workingDirectory, gitBranch, repository, project
+    });
+    existing.workingDirectory = workingDirectory;
+    existing.gitBranch = gitBranch || undefined;
+    existing.repository = repository || undefined;
+    existing.project = project || undefined;
+  }
+
   /** Moves a `completed` record's set back to its live names and clears its end and delivery state. */
   private async reopenCompleted(existing: Session, discovered: LocalTelemetryDiscoveredSession): Promise<void> {
     logger.info('[desktop-telemetry] Reopening completed session — activity resumed', {
@@ -404,7 +445,11 @@ export class DesktopTelemetryRuntime {
       externalSessionId: discovered.externalSessionId,
     });
     await restoreCompletedFiles(existing.sessionId);
-    const endMetricLeft = existing.endMetricSentAt !== undefined || existing.endMetricSkipped !== undefined;
+    // An ownerless completed record is either a pre-upgrade one, whose daemon sent its end metric without recording it,
+    // or a legacy one closed locally with nothing sent — either way its earlier stretch is not reported again
+    const endMetricLeft = existing.ownerPid === undefined
+      || existing.endMetricSentAt !== undefined
+      || existing.endMetricSkipped !== undefined;
     existing.status = 'active';
     delete existing.endTime;
     delete existing.reason;

@@ -18,12 +18,17 @@ export class DesktopSessionMetrics {
     private readonly sessionStore: SessionStore
   ) {}
 
+  /** This daemon's CodeMie host: the URL its cookies are stored under and its records are stamped with. */
+  get credentialsUrl(): string {
+    return this.config.syncCodeMieUrl || this.config.targetApiUrl;
+  }
+
   /**
    * The daemon holds the cookies a delivery would carry and the server has not rejected them; without
    * them a delivery makes no request and spends no attempt.
    */
   async canDeliver(): Promise<boolean> {
-    const urls = [this.config.syncCodeMieUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
+    const urls = [this.credentialsUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
     return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookies()) !== '';
   }
 
@@ -48,7 +53,7 @@ export class DesktopSessionMetrics {
 
   private async loadCookies(): Promise<string> {
     let cookies = '';
-    const credentialsUrl = this.config.syncCodeMieUrl || this.config.targetApiUrl;
+    const credentialsUrl = this.credentialsUrl;
 
     try {
       const credentials = await new CodeMieSSO().getStoredCredentials(credentialsUrl);
