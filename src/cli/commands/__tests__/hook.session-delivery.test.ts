@@ -2246,7 +2246,9 @@ describe('SessionStart source=clear closes the previous generation', () => {
     });
 
     try {
-      await onFakeClock(() => processEvent(clearStart(), config(session)));
+      // Real clock: the lock frees after one 25 ms poll, so no clock needs faking. A fake clock
+      // advanced in fixed steps burns the 2 s close budget on slow file I/O and marks it dropped.
+      await processEvent(clearStart(), config(session));
     } finally {
       vi.mocked(writeFile).mockImplementation(actual.writeFile);
     }
