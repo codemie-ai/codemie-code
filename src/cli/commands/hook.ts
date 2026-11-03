@@ -21,6 +21,7 @@ import { isClosedGeneration, moveSetToGeneration } from '@/agents/core/session/s
 import { configSendPathApiUrl, getConfigValue } from './hook/config-value.js';
 import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
 import type { PidLock } from '@/utils/pid-lock.js';
+import { isSessionFileLockTimeout } from '@/utils/errors.js';
 import { buildProcessingContext } from './hook/processing-context.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
@@ -299,7 +300,9 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
 
     // Re-checked under the lock: a record another process already completed is only delivered
     if (record?.status !== 'completed') {
-      await finalizeSession(event, sessionId, config, options);
+      if (!(await finalizeSession(event, sessionId, config, options))) {
+        return;
+      }
     } else {
       logger.debug(`[hook:SessionEnd] Session ${sessionId} is already completed; delivering only`);
     }
@@ -354,16 +357,20 @@ async function establishOwnGenerationLocked(
  * max(startTime, activityStartedAt, the last transcript record the flush read,
  * else the latest delta already written) — and the active time is capped at it;
  * otherwise the end is now.
+ *
+ * A final pass that could not take a session file lock within its budget closes nothing: the record
+ * stays `active` (false), and the next CodeMie start finalizes it as stranded from the sync pointer.
  */
-async function finalizeSession(event: SessionEndEvent, sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<void> {
+async function finalizeSession(event: SessionEndEvent, sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<boolean> {
   if (!event.endTimeFromActivity) {
     // 0. Final activity accumulation (handles edge case: session ends without Stop)
     await accumulateActiveDuration(sessionId);
     // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
-    await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, undefined, { finalPass: true });
+    const pass = await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, undefined, { finalPass: true });
+    if (pass.lockTimedOut) return keptActive(sessionId);
     // 2. Update session status
     await updateSessionStatus(event, sessionId, event.endTime, config);
-    return;
+    return true;
   }
 
   // The record's own fields are read before the flush writes anything
@@ -373,7 +380,9 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
   // The later-record bound is a wrapper-side scan; a hook process keeps the lower bound alone
   const recordsBeforeMs = record && !options.hookProcess ? await nextRecordStart(record) : undefined;
 
-  const lastRecordAt = await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, recordsBeforeMs, { finalPass: true });
+  const pass = await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, recordsBeforeMs, { finalPass: true });
+  if (pass.lockTimedOut) return keptActive(sessionId);
+  const { lastRecordAt } = pass;
 
   // ponytail: activity that produced no transcript record is not counted
   const endTime = event.endTime ?? Math.max(
@@ -387,6 +396,13 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
   );
   await accumulateActiveDuration(sessionId, endTime);
   await updateSessionStatus(event, sessionId, endTime, config);
+  return true;
+}
+
+/** Logs a SessionEnd whose final pass met a held session file lock; always false (not closed). */
+function keptActive(sessionId: string): false {
+  logger.warn(`[hook:SessionEnd] The final pass of ${sessionId} could not take a session file lock in its budget; kept active, nothing sent, for the next start to finalize`);
+  return false;
 }
 
 /**
@@ -439,6 +455,8 @@ function logProcessingResult(
  *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
  * @param options - The hook's bounds and mode, applied to the processing context; absent → the context stays unbounded
  * @param finalPass - `{ finalPass }`, set only by SessionEnd: the session's last processing pass
+ * @returns The latest timed transcript record read, and whether a processor failed on a session file lock it
+ *   could not take within the bounds
  */
 async function performIncrementalSync(
   event: BaseHookEvent,
@@ -448,9 +466,10 @@ async function performIncrementalSync(
   options?: SessionEndOptions,
   recordsBeforeMs?: number,
   { finalPass = false }: { finalPass?: boolean } = {}
-): Promise<number | undefined> {
+): Promise<{ lastRecordAt?: number; lockTimedOut: boolean }> {
   // Latest timed transcript record read across the processed files
   let lastRecordAt: number | undefined;
+  let lockTimedOut = false;
   logger.debug(`[hook:${hookName}] Event received: ${JSON.stringify(event)}`);
   logger.info(`[hook:${hookName}] Starting session processing (agent_session=${event.session_id})`);
 
@@ -463,7 +482,7 @@ async function performIncrementalSync(
         throw new Error(`Missing required config: agentName`);
       }
       logger.warn(`[hook:${hookName}] Missing CODEMIE_AGENT, skipping extraction`);
-      return;
+      return { lockTimedOut: false };
     }
 
     // Agents may provide a single transcript path or a list of paths (e.g. Pi's
@@ -476,7 +495,7 @@ async function performIncrementalSync(
         : [];
     if (agentSessionFiles.length === 0) {
       logger.warn(`[hook:${hookName}] No transcript_path in event, skipping incremental sync`);
-      return;
+      return { lockTimedOut: false };
     }
 
     logger.debug(`[hook:${hookName}] Using transcript(s): ${agentSessionFiles.join(', ')}`);
@@ -488,7 +507,7 @@ async function performIncrementalSync(
         throw new Error(`Agent not found in registry: ${agentName}`);
       }
       logger.error(`[hook:${hookName}] Agent not found in registry: ${agentName}`);
-      return;
+      return { lockTimedOut: false };
     }
 
     // Get session adapter (unified approach)
@@ -498,7 +517,7 @@ async function performIncrementalSync(
         throw new Error(`No session adapter available for agent ${agentName}`);
       }
       logger.warn(`[hook:${hookName}] No session adapter available for agent ${agentName}`);
-      return;
+      return { lockTimedOut: false };
     }
 
     const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
@@ -521,6 +540,10 @@ async function performIncrementalSync(
       if (result.lastRecordAt !== undefined && (lastRecordAt === undefined || result.lastRecordAt > lastRecordAt)) {
         lastRecordAt = result.lastRecordAt;
       }
+      if (Object.values(result.processors as Record<string, { success: boolean; message?: string }>)
+        .some((processor) => !processor.success && isSessionFileLockTimeout(processor.message))) {
+        lockTimedOut = true;
+      }
 
       logProcessingResult(result, hookName, agentSessionFile, config);
     }
@@ -531,9 +554,10 @@ async function performIncrementalSync(
     if (config?.holdsReconcileLock) {
       throw error;
     }
+    if (isSessionFileLockTimeout(error)) lockTimedOut = true;
     // Don't throw - hook should not block agent execution or user prompts
   }
-  return lastRecordAt;
+  return { lastRecordAt, lockTimedOut };
 }
 
 /**
@@ -1097,7 +1121,7 @@ async function setAsideUnclosed(
   if (live.status !== 'completed' && !isOtherGeneration(live, nativeSessionId)) return { outcome: 'own' };
   const previousEnd = live.status === 'completed' ? live.endTime : await closeUnclosedLocally(live, config);
   if (live.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
-  return (await moveUnclosedGeneration(sessionId)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
+  return (await moveUnclosedGeneration(sessionId, options)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
 }
 
 /**
@@ -1133,11 +1157,17 @@ function sendsThroughThisLaunch(record: Session, config: HookProcessingConfig | 
 
 /**
  * Moves a completed `{id}.json` set the previous generation's close left in place to its generation
- * name as it is, delivered or not. False when the move failed: the set is kept and no fresh record is written.
+ * name as it is, delivered or not, its file locks waited for within {@link GENERATION_CLOSE_BUDGET_MS}
+ * and the SessionEnd's bounds. False when the move failed or a lock stayed held: the set is kept and no
+ * fresh record is written.
  */
-async function moveUnclosedGeneration(sessionId: string): Promise<boolean> {
+async function moveUnclosedGeneration(sessionId: string, options: SessionEndOptions): Promise<boolean> {
   try {
-    const moved = await moveSetToGeneration(sessionId, '');
+    const moved = await moveSetToGeneration(sessionId, '', {
+      deadlineMs: Math.min(Date.now() + GENERATION_CLOSE_BUDGET_MS, options.deadlineMs ?? Infinity),
+      signal: options.abortSignal,
+      pidOnlyLiveness: options.hookProcess === true,
+    });
     logger.warn(`[hook] New generation: the previous generation of ${sessionId} could not be closed; it stays local as ${moved}, unsent`);
     return true;
   } catch (error) {
@@ -1413,7 +1443,7 @@ async function closeGenerationLocked(
     if (ours && after?.status === 'completed') {
       await markDroppedIfUndelivered(sessionId);
     }
-    await moveSetToGeneration(sessionId, '');
+    await moveSetToGeneration(sessionId, '', { deadlineMs, signal: options.abortSignal, pidOnlyLiveness: options.hookProcess === true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook] New generation: failed to close the previous generation: ${errorMessage}`);

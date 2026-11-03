@@ -4,7 +4,7 @@ import type { ParsedSession } from '../../../../../core/session/BaseSessionAdapt
 import type { ProcessingContext } from '../../../../../core/session/BaseProcessor.js';
 
 // Mock MetricsWriter to avoid actual file system writes during unit testing
-const mockAppendDeltas = vi.fn();
+const mockAppendDeltas = vi.fn(async (deltas: unknown[]) => ({ written: deltas.length, gone: false, dup: 0, beforeStart: 0, afterEnd: 0 }));
 vi.mock('../../../../../core/session/run-window.js', () => ({
   resolveRunWindow: async () => ({ startTime: 0 }),
 }));

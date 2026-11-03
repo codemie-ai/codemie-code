@@ -6,7 +6,7 @@ import { renameSessionFiles } from '@/agents/core/session/session-generation.js'
 import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { syncApplies } from './config-value.js';
-import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
+import { applySessionEndOptions, sessionEndDeadlineMs, sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
 import { buildProcessingContext } from './processing-context.js';
 import { sendSessionEndMetrics } from './end-metric.js';
 
@@ -49,7 +49,11 @@ export async function deliverSessionRecord(
   if (await isDeliveryDone(sessionId, config)) {
     // A line past its sync-attempt cap counts as done: it leaves the queue unsent
     if (syncApplies(config)) await markDroppedIfUndelivered(sessionId);
-    await renameSessionFiles(sessionId, lockBoundsOf({ syncDeadlineMs: options.deadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }));
+    // A hook process waits for the file locks no longer than the SessionEnd budget, never the 10 s per-lock wait
+    const syncDeadlineMs = options.hookProcess ? sessionEndDeadlineMs(options) : options.deadlineMs;
+    if (!await renameSessionFiles(sessionId, lockBoundsOf({ syncDeadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }))) {
+      logger.warn(`[hook:SessionEnd] Session ${sessionId} not renamed; kept live for a later start pass`);
+    }
   } else {
     logger.info(`[hook:SessionEnd] Session ${sessionId} is not completed or not fully delivered yet; kept as ${sessionId}.json for a later run`);
   }
@@ -95,14 +99,14 @@ async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig):
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
 
   try {
-    const { readJSONL } = await import('../../../providers/plugins/sso/session/utils/jsonl-reader.js');
+    const { readJSONLTolerant } = await import('../../../agents/core/session/utils/jsonl-reader.js');
     const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');
-    const deltas = await readJSONL<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId));
+    const deltas = await readJSONLTolerant<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId), '[hook:SessionEnd]');
     if (deltas.some(isDeltaSendCandidate)) {
       return false;
     }
     const { isSendCandidate } = await import('../../../providers/plugins/sso/session/processors/conversations/payload-queue.js');
-    const payloads = await readJSONL<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId));
+    const payloads = await readJSONLTolerant<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId), '[hook:SessionEnd]');
     return !payloads.some(isSendCandidate);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

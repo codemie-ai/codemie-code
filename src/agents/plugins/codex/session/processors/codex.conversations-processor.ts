@@ -29,6 +29,7 @@ import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/sessi
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { logger } from '../../../../../utils/logger.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 type CodexNormalizedEventKind =
   | 'user_prompt'
@@ -125,8 +126,7 @@ export class CodexConversationsProcessor implements SessionProcessor {
       }
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { readJSONL } = await import('../../../../../providers/plugins/sso/session/utils/jsonl-reader.js');
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, '[codex-conversations]');
       const queuedCheckpoint = getQueuedCheckpoint(existingPayloads);
       const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex);
       const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex);

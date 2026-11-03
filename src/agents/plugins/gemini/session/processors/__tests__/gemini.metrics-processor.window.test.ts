@@ -92,4 +92,20 @@ describe('GeminiMetricsProcessor over the shared writer', () => {
     }
     expect(lines().slice(0, 3)).toEqual(firstRun);
   });
+
+  it('writes only the messages inside [startTime, recordsBeforeMs)', async () => {
+    writeRecord(T0 + 1500);
+    const result = await new GeminiMetricsProcessor().process(session(transcript), { recordsBeforeMs: T0 + 3000 } as never);
+
+    expect(result.success).toBe(true);
+    expect(lines().map((l) => l.recordId)).toEqual(['m2']);
+  });
+
+  it('a hook process without recordsBeforeMs has no upper bound, only the start bound', async () => {
+    writeRecord(T0 + 1500);
+    const result = await new GeminiMetricsProcessor().process(session(transcript), { hookProcess: true } as never);
+
+    expect(result.success).toBe(true);
+    expect(lines().map((l) => l.recordId)).toEqual(['m2', 'm3']);
+  });
 });

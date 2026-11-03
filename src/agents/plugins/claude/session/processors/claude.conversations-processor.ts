@@ -16,7 +16,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/ag
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import type { ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
-import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '@/utils/logger.js';
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
@@ -279,7 +279,7 @@ export class ConversationsProcessor implements SessionProcessor {
    * read can still both append.
    */
   private async readQueuedPayloadIds(conversationsPath: string): Promise<Set<string>> {
-    const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+    const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, `[${this.name}]`);
     const queuedPayloadIds = new Set<string>();
     for (const existing of existingPayloads) {
       const existingId = existing.payloadId ?? existing.lastProcessedMessageUuid;

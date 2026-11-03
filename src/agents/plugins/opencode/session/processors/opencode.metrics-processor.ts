@@ -185,17 +185,21 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         });
       }
 
-      await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[opencode-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+      }
 
-      logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
+      logger.info(`[opencode-metrics] Wrote ${appended.written} of ${deltas.length} deltas for session ${session.sessionId}`);
       logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);
 
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
         metadata: {
           recordsProcessed: messages.length,
-          deltasWritten: deltas.length,
+          deltasWritten: appended.written,
           deltasSkipped: stats.skippedDueToDedup,
           ...stats
         }

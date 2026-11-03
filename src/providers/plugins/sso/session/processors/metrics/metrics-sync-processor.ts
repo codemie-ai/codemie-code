@@ -20,10 +20,11 @@ import { MetricsSender } from './metrics-api-client.js';
 import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
-import { readJSONL } from '../../utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
+import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
 
@@ -69,7 +70,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       const metricsFile = getSessionMetricsPath(session.sessionId);
 
       // 1. Read all deltas from JSONL
-      const allDeltas = await readJSONL<MetricDelta>(metricsFile);
+      const allDeltas = await readJSONLTolerant<MetricDelta>(metricsFile, `[${this.name}]`);
 
       // 2. Retry pending deltas and previously failed deltas until the attempt cap.
       const pendingDeltas = allDeltas.filter(isDeltaSendCandidate);
@@ -281,16 +282,28 @@ export class MetricsSyncProcessor implements SessionProcessor {
       });
 
       let updatedDeltas = allDeltas;
-      const rewritten = await rewriteSessionFile<MetricDelta>('metrics', session.sessionId, (current) => {
-        updatedDeltas = applyStatuses(current);
-        return updatedDeltas;
-      }, context);
-      if (!rewritten) {
-        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone, sync outcome dropped`);
-      }
-
       const successCount = successfulRecordIds.size;
       const failedCount = failedByRecordId.size;
+      try {
+        const rewritten = await rewriteSessionFile<MetricDelta>('metrics', session.sessionId, (current) => {
+          updatedDeltas = applyStatuses(current);
+          return updatedDeltas;
+        }, context);
+        if (!rewritten) {
+          logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone, sync outcome dropped`);
+        }
+      } catch (error) {
+        if (!(error instanceof SessionFileLockTimeoutError)) throw error;
+        logger.warn(
+          `[${this.name}] Metrics lock of session ${session.sessionId} stayed held: the outcomes of ${successCount} accepted / ` +
+          `${failedCount} failed deltas were not persisted; they stay pending and will be re-sent`
+        );
+        return {
+          success: true,
+          message: `Sync not persisted: ${successCount}/${pendingDeltas.length} deltas accepted, their outcome not written (metrics lock held)`,
+          metadata: { persisted: false }
+        };
+      }
       // Deferral is not a failure: remaining branch metrics stay pending for the next run
       const message = deferred
         ? `Sync deferred: ${metrics.length - processedBranches} items remaining (deadline/abort)`

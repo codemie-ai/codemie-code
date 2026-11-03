@@ -22,7 +22,7 @@ import { getSessionConversationPath } from '../../../../core/session/session-con
 import { CODEMIE_ASSISTANT_ID, CONVERSATION_PROCESSOR_NAME } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
-import { readJSONL } from '../../../../../providers/plugins/sso/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '../../../../../utils/logger.js';
 
 interface CopilotTurnRecord {
@@ -315,7 +315,7 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
     const conversationsPath = getSessionConversationPath(session.sessionId);
     await mkdir(dirname(conversationsPath), { recursive: true });
 
-    const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+    const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, `[${this.name}]`);
 
     const { SessionStore } = await import('../../../../core/session/SessionStore.js');
     const sessionStore = new SessionStore();

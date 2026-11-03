@@ -212,6 +212,27 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
     expect(await loadPointer()).toBe(turn2.lastProcessedMessageUuid);
   });
 
+  it('reads the queue past a torn line and appends the next turn after it', async () => {
+    const turn = (n: number) => [
+      { type: 'user', uuid: `u${n}`, timestamp: new Date(1_700_000_000_000 + n * 2000).toISOString(), message: { role: 'user', content: `question ${n}` } },
+      { type: 'assistant', uuid: `a${n}`, timestamp: new Date(1_700_000_001_000 + n * 2000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: `answer ${n}` }] } },
+    ];
+    await seedSession();
+    await processSession(turn(1));
+    await processSession([...turn(1), ...turn(2)]);
+    const [first, second] = readFileSync(conversationsFile, 'utf8').trim().split('\n');
+    writeFileSync(conversationsFile, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    const result = await processSession([...turn(1), ...turn(2), ...turn(3)]);
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsFile, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    const appended = JSON.parse(lines[3]) as { payload: { history: Array<{ message: string }> } };
+    expect(appended.payload.history.map(h => h.message)).toEqual(['question 3', 'answer 3']);
+  });
+
   describe('head lines re-written after compact_boundary', () => {
     const line = (type: string, uuid: string, ms: number, extra: Record<string, unknown> = {}) => ({
       type,

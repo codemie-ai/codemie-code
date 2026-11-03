@@ -12,6 +12,7 @@ import { basename, join } from 'path';
 import { Readable } from 'node:stream';
 import { rename, writeFile } from 'fs/promises';
 import type { Session } from '../../../agents/core/session/types.js';
+import { onFakeClock } from '../../../../tests/helpers/fake-clock.js';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: {
@@ -46,6 +47,7 @@ vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal
 }));
 
 const { processEvent, createHookCommand } = await import('../hook.js');
+const { deliverSessionRecord } = await import('../hook/delivery.js');
 const { renameSessionFiles } = await import('../../../agents/core/session/session-generation.js');
 const { finalizeOwnRecord, reconcileOtherSessions } = await import('../../../agents/core/session/stale-session-reconciliation.js');
 const { noticeDeliveryAtExit } = await import('../../../agents/core/session/exit-notice.js');
@@ -219,23 +221,6 @@ function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] }
     });
   });
   return times;
-}
-
-/** Runs `work` on a fake clock (setTimeout and Date) in 25 ms steps, real I/O running between them. */
-async function onFakeClock(work: () => Promise<void>): Promise<void> {
-  const realSetTimeout = setTimeout;
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-  try {
-    let finished = false;
-    const run = work().then(() => { finished = true; });
-    for (let step = 0; !finished && step < 2000; step++) {
-      await vi.advanceTimersByTimeAsync(25);
-      await new Promise((resolve) => realSetTimeout(resolve, 1));
-    }
-    await run;
-  } finally {
-    vi.useRealTimers();
-  }
 }
 
 beforeEach(() => {
@@ -613,6 +598,61 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const { appendSessionFile } = await import('../../../providers/plugins/sso/session/utils/locked-jsonl.js');
     expect(await appendSessionFile('conversation', id, '{"payloadId":"later"}\n')).toBe(true);
     expect(readFileSync(join(sessionsDir, `${id}_conversation.jsonl`), 'utf-8')).toBe('{"payloadId":"later"}\n');
+  });
+
+  it('inside a hook process the rename after delivery gives up a held metrics lock within the SessionEnd budget: the set live, the record completed', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now() });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced', syncAttempts: 1 }]);
+    // Another live process (this test's parent) holds the metrics lock throughout
+    writeFileSync(join(sessionsDir, `${session.sessionId}.metrics.lock`), JSON.stringify({ pid: process.ppid }));
+    const budgetMs = 500;
+    process.env.CODEMIE_SESSION_END_SYNC_BUDGET_MS = String(budgetMs);
+    clearLogs();
+
+    const started = Date.now();
+    await deliverSessionRecord(session.sessionId, 'claude-native-1', 'exit', config(session), { hookProcess: true });
+    const elapsed = Date.now() - started;
+
+    // One budget for the sync, one for the rename's lock wait; never the 10 s per-lock wait
+    expect(elapsed).toBeLessThan(2 * budgetMs + 1500);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(true);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith(`completed_${session.sessionId}`))).toEqual([]);
+    expect(readRecord(session.sessionId).status).toBe('completed');
+    expect(vi.mocked(logger.warn).mock.calls.map(([line]) => String(line)))
+      .toContain(`[hook:SessionEnd] Session ${session.sessionId} not renamed; kept live for a later start pass`);
+  });
+
+  it('a delivered set with a torn metrics line and a torn conversation line is done: renamed to completed_', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now() });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced', syncAttempts: 1 }]);
+    appendFileSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`), '{"recordId":"torn\n');
+    writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), '{"payloadId":"c@0","status":"success"}\n{"payloadId":"torn\n');
+
+    await deliverSessionRecord(session.sessionId, 'claude-native-1', 'exit', config(session), {});
+
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+    expect(readRecord(session.sessionId, 'completed_').status).toBe('completed');
+  });
+
+  it('a sidecar rename that fails after the .json moved answers false and warns naming the file', async () => {
+    const session = baseRecord({ status: 'completed' });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }]);
+    const actualRename = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).rename;
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      if (String(from).endsWith(`${session.sessionId}_metrics.jsonl`)) throw new Error('EPERM: rename');
+      return actualRename(from, to);
+    });
+    clearLogs();
+
+    expect(await renameSessionFiles(session.sessionId)).toBe(false);
+
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}.json`))).toBe(true);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.map(([line]) => String(line)))
+      .toContain('[hook:SessionEnd] File rename errors: metrics: EPERM: rename');
   });
 
   it('moves an older completed_ set aside when neither record file is readable', async () => {
@@ -1237,6 +1277,36 @@ describe('SessionEnd inside the agent hook process', () => {
 
     expect(readDeltas(session.sessionId).map((d) => d.syncStatus)).toEqual(['pending']);
     expect(vi.mocked(exec).mock.calls.filter(([command]) => command === 'ps')).toEqual([]);
+  });
+
+  it('a SessionEnd whose final pass meets a metrics lock held past the budget stays active, sends nothing; the next start finalizes it with the line it missed', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:05:00Z', '2026-10-01T10:06:00Z']);
+    const missedRecordId = (JSON.parse(readFileSync(transcript, 'utf-8').split('\n')[1]) as { uuid: string }).uuid;
+    const session = baseRecord({
+      ownerPid: 999_999,
+      ownerStartedAt: Date.now() - 3600 * SECOND,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    delete process.env.CODEMIE_WRAPPER_PID;
+    // A live writer (this test's parent) holds the metrics lock past the SessionEnd's budget
+    const lockPath = join(sessionsDir, `${session.sessionId}.metrics.lock`);
+    writeFileSync(lockPath, JSON.stringify({ pid: process.ppid }));
+
+    await runHook({ ...syntheticEnd(transcript), endTimeFromActivity: undefined, reason: 'exit' }, session, { CODEMIE_SESSION_END_SYNC_BUDGET_MS: '300' });
+
+    expect(process.exitCode).toBe(0);
+    expect(readRecord(session.sessionId).status).toBe('active');
+    expect(endMetrics()).toEqual([]);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith(`completed_${session.sessionId}`))).toEqual([]);
+
+    rmSync(lockPath);
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(readRecord(session.sessionId, 'completed_').status).toBe('completed');
+    expect(readDeltas(session.sessionId, 'completed_').map((d) => d.recordId)).toContain(missedRecordId);
+    expect(endMetrics()).toHaveLength(1);
   });
 
   it('a SessionEnd that met a failing server is delivered by the next start: once, then nothing more', async () => {
@@ -1933,6 +2003,25 @@ describe('SessionStart source=clear closes the previous generation', () => {
 
     expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(recordBefore);
     expect(readFileSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`), 'utf-8')).toBe(deltasBefore);
+    expect(vi.mocked(logger.error).mock.calls.some(([line]) => String(line).includes('could not be closed; the fresh record is not written'))).toBe(true);
+  });
+
+  it('a completed {id}.json whose metrics lock another process holds is not moved: no generation file, the close reported failed as for a failed move', async () => {
+    // Another host's generation: closed locally, sent nothing, so only the move touches it
+    const session = baseRecord({ status: 'completed', endTime: Date.now(), codemieUrl: 'https://other.example.com', correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-locked' } });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    const recordBefore = readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8');
+    const deltasBefore = readFileSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`), 'utf-8');
+    // A live writer (this test's parent) holds the metrics lock throughout
+    writeFileSync(join(sessionsDir, `${session.sessionId}.metrics.lock`), JSON.stringify({ pid: process.ppid }));
+    vi.mocked(logger.error).mockClear();
+
+    await processEvent(clearStart(), config(session, { deadlineMs: Date.now() + 300 }));
+
+    expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(recordBefore);
+    expect(readFileSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`), 'utf-8')).toBe(deltasBefore);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith(`completed_${session.sessionId}-`))).toEqual([]);
     expect(vi.mocked(logger.error).mock.calls.some(([line]) => String(line).includes('could not be closed; the fresh record is not written'))).toBe(true);
   });
 

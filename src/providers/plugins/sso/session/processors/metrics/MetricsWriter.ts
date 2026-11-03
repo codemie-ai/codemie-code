@@ -7,13 +7,14 @@
  * written (dedupe), then writes the batch in one append. Also filters by sync status.
  */
 
-import { appendFile, readFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
-import { withSessionFile, type LockBounds } from '../../utils/locked-jsonl.js';
+import { appendJsonlLines, withSessionFile, type LockBounds } from '../../utils/locked-jsonl.js';
 import { createErrorContext, formatErrorForLog } from '../../../../../../utils/errors.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 /** The record's own slice of a shared transcript: [`startTime`, `upperBound`), plus what stops the lock wait. */
 export interface RunWindow extends LockBounds {
@@ -22,7 +23,10 @@ export interface RunWindow extends LockBounds {
 }
 
 export interface AppendResult {
+  /** Deltas appended to the file */
   written: number;
+  /** The live file is gone (the session was completed and renamed): nothing appended */
+  gone: boolean;
   dup: number;
   beforeStart: number;
   afterEnd: number;
@@ -46,15 +50,16 @@ export class MetricsWriter {
    * Dropped: a delta whose `recordId` is already in the file (or earlier in the batch), one older than
    * the record's `startTime`, one at or after `upperBound` (the next record's start over the same
    * transcript). A time that is not a finite number (or an ISO string) is never judged. A lock that stays
-   * held throws and writes nothing; a file already completed and renamed is not re-created.
+   * held throws and writes nothing; a file already completed and renamed is not re-created (`gone`).
+   * @throws {SessionFileLockTimeoutError} When the metrics lock stays held past the window's bounds
    */
   async appendDeltas(
     deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>,
     window: RunWindow
   ): Promise<AppendResult> {
-    const result: AppendResult = { written: 0, dup: 0, beforeStart: 0, afterEnd: 0 };
+    const result: AppendResult = { written: 0, gone: false, dup: 0, beforeStart: 0, afterEnd: 0 };
     try {
-      await withSessionFile('metrics', this.sessionId, window, false, async () => {
+      const done = await withSessionFile('metrics', this.sessionId, window, false, async () => {
         const known = await this.readRecordIds();
         const lines: string[] = [];
         for (const delta of deltas) {
@@ -76,13 +81,15 @@ export class MetricsWriter {
           lines.push(JSON.stringify(full) + '\n');
         }
         if (lines.length > 0) {
-          await appendFile(this.filePath, lines.join(''), 'utf-8');
+          await appendJsonlLines(this.filePath, lines.join(''));
         }
         result.written = lines.length;
+        return true;
       });
+      result.gone = done !== true;
       logger.debug(
         `[MetricsWriter] in=${deltas.length} dup=${result.dup} before_start=${result.beforeStart} ` +
-        `after_end=${result.afterEnd} written=${result.written}`
+        `after_end=${result.afterEnd} written=${result.written} gone=${result.gone}`
       );
       return result;
     } catch (error) {
@@ -108,19 +115,11 @@ export class MetricsWriter {
   }
 
   /**
-   * Read all deltas from JSONL file
+   * Read all deltas from JSONL file; a torn line is skipped with a warn
    */
   async readAll(): Promise<MetricDelta[]> {
     try {
-      if (!existsSync(this.filePath)) {
-        return [];
-      }
-
-      const content = await readFile(this.filePath, 'utf-8');
-      const lines = content.trim().split('\n').filter(line => line.length > 0);
-
-      return lines.map(line => JSON.parse(line) as MetricDelta);
-
+      return await readJSONLTolerant<MetricDelta>(this.filePath, '[MetricsWriter]');
     } catch (error) {
       const errorContext = createErrorContext(error);
       logger.error('[MetricsWriter] Failed to read deltas', formatErrorForLog(errorContext));

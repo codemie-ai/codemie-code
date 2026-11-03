@@ -506,12 +506,17 @@ export class PiMetricsProcessor implements SessionProcessor {
 
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
-      await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[pi-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+      }
 
+      logger.debug(`[pi-metrics] Generated ${deltas.length} deltas, wrote ${appended.written}`);
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: entries.length, deltasWritten: deltas.length, deltasSkipped: skippedDueToDedup },
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
+        metadata: { recordsProcessed: entries.length, deltasWritten: appended.written, deltasSkipped: skippedDueToDedup },
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

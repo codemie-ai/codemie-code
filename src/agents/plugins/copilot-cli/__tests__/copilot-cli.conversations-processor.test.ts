@@ -104,6 +104,44 @@ describe('CopilotCliConversationsProcessor', () => {
     });
   });
 
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const { CopilotCliConversationsProcessor } = await import('../session/processors/copilot-cli.conversations-processor.js');
+    const processor = new CopilotCliConversationsProcessor();
+    const turn = (n: number) => [
+      { type: 'user', timestamp: `2026-08-11T11:3${n}:00.000Z`, message: { role: 'user', content: `question ${n}` } },
+      {
+        type: 'assistant',
+        timestamp: `2026-08-11T11:3${n}:05.000Z`,
+        message: { role: 'assistant', model: 'gpt-5.5-2026-04-24', content: `answer ${n}` },
+      },
+    ];
+    const session = (messages: unknown[]) => ({
+      sessionId: 'sess-copilot',
+      agentName: 'GitHub Copilot CLI',
+      metadata: { createdAt: '2026-08-11T11:29:15.437Z', projectPath: '/repo/app' },
+      messages,
+      metrics: {},
+    }) as unknown as import('../../../core/session/BaseSessionAdapter.js').ParsedSession;
+    const ctx = { agentSessionId: 'cp-turn-1' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const spool = join(tempHome, 'sessions', 'sess-copilot_conversation.jsonl');
+
+    await processor.process(session(turn(1)), ctx);
+    await processor.process(session([...turn(1), ...turn(2)]), ctx);
+    const [first, second] = readFileSync(spool, 'utf-8').trim().split('\n');
+    writeFileSync(spool, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    const result = await processor.process(session([...turn(1), ...turn(2), ...turn(3)]), ctx);
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(spool, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual([
+      'question 3',
+      'answer 3',
+    ]);
+  });
+
   it('does not report a dropped write as queued, so the next pass writes it', async () => {
     const { CopilotCliConversationsProcessor } = await import('../session/processors/copilot-cli.conversations-processor.js');
     const parsedSession = {

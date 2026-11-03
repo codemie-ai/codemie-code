@@ -5,9 +5,9 @@
 import type { ProcessingContext } from './BaseProcessor.js';
 import { SessionStore } from './SessionStore.js';
 import { nextRecordStart } from './next-record-start.js';
-import type { RunWindow } from '../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
-import { lockBoundsOf } from '../../../providers/plugins/sso/session/utils/locked-jsonl.js';
-import { SessionRecordNotFoundError } from '../../../utils/errors.js';
+import type { RunWindow } from '@/providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
+import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
+import { SessionRecordNotFoundError } from '@/utils/errors.js';
 
 /**
  * The upper bound is the context's, else the later-record scan of a wrapper / daemon process; a

@@ -70,12 +70,37 @@ async function readGeneration(jsonPath: string): Promise<string | undefined> {
 }
 
 /**
+ * Runs `fn` holding the session's metrics and conversation locks, both taken before it runs: a writer holds
+ * a file's lock for its whole read-and-write, so a lock that cannot be taken leaves the set as it is.
+ * @throws {SessionFileLockTimeoutError} When a lock stays held past the bounds
+ */
+async function withSetLocks<T>(sessionId: string, bounds: LockBounds | undefined, fn: () => Promise<T>): Promise<T> {
+  const locks: PidLock[] = [];
+  try {
+    for (const lockPath of [getSessionMetricsLockPath(sessionId), getSessionConversationLockPath(sessionId)]) {
+      locks.push(await acquireSessionFileLock(lockPath, bounds));
+    }
+    return await fn();
+  } finally {
+    for (const lock of locks) await lock.release();
+  }
+}
+
+/**
  * Move a session set (`<prefix><id>.json`, `_metrics.jsonl`, `_conversation.jsonl`) to its
  * generation name `completed_<id>-<generation>*`, `-<n>` appended when that name is taken.
+ * The live set (`''`) moves under its metrics and conversation locks, taken within `bounds` before anything moves.
  * A failed rename moves the files already moved back and rethrows: the set never ends half-moved.
  * Returns the new base name, or undefined when there was no set to move.
+ * @throws {SessionFileLockTimeoutError} When a lock of the live set stays held past `bounds`: nothing moved
  */
-export async function moveSetToGeneration(sessionId: string, prefix: '' | 'completed_'): Promise<string | undefined> {
+export async function moveSetToGeneration(sessionId: string, prefix: '' | 'completed_', bounds?: LockBounds): Promise<string | undefined> {
+  return prefix === ''
+    ? withSetLocks(sessionId, bounds, () => moveSetToGenerationUnlocked(sessionId, prefix))
+    : moveSetToGenerationUnlocked(sessionId, prefix);
+}
+
+async function moveSetToGenerationUnlocked(sessionId: string, prefix: '' | 'completed_'): Promise<string | undefined> {
   const sessionsDir = dirname(getSessionPath(sessionId));
   const from = sessionSetFiles(sessionsDir, `${prefix}${sessionId}`);
   if (!existsSync(from.json)) return undefined;
@@ -124,30 +149,24 @@ async function renameLiveSet(
 ): Promise<{ renamedFiles: string[]; errors: string[] }> {
   const renamedFiles: string[] = [];
   const errors: string[] = [];
-  const locks: PidLock[] = [];
   try {
-    // A writer holds the file's lock for its whole read-and-write; both locks are taken before any rename,
-    // so a lock that cannot be taken leaves the whole set live
-    for (const lockPath of [getSessionMetricsLockPath(sessionId), getSessionConversationLockPath(sessionId)]) {
-      locks.push(await acquireSessionFileLock(lockPath, bounds));
-    }
-    for (const [label, key] of [['session', 'json'], ['metrics', 'metrics'], ['conversations', 'conversation']] as const) {
-      try {
-        if (existsSync(live[key])) {
-          await rename(live[key], completed[key]);
-          renamedFiles.push(label);
-          logger.debug(`[hook:SessionEnd] Renamed ${label} file: ${basename(live[key])} → ${basename(completed[key])}`);
+    await withSetLocks(sessionId, bounds, async () => {
+      for (const [label, key] of [['session', 'json'], ['metrics', 'metrics'], ['conversations', 'conversation']] as const) {
+        try {
+          if (existsSync(live[key])) {
+            await rename(live[key], completed[key]);
+            renamedFiles.push(label);
+            logger.debug(`[hook:SessionEnd] Renamed ${label} file: ${basename(live[key])} → ${basename(completed[key])}`);
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          errors.push(`${label}: ${errorMessage}`);
+          logger.warn(`[hook:SessionEnd] Failed to rename ${label} file: ${errorMessage}`);
         }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        errors.push(`${label}: ${errorMessage}`);
-        logger.warn(`[hook:SessionEnd] Failed to rename ${label} file: ${errorMessage}`);
       }
-    }
+    });
   } catch (lockError) {
     errors.push(`not renamed: ${lockError instanceof Error ? lockError.message : String(lockError)}`);
-  } finally {
-    for (const lock of locks) await lock.release();
   }
   return { renamedFiles, errors };
 }
@@ -168,8 +187,9 @@ async function renameLiveSet(
  *
  * @param sessionId - The CodeMie session ID
  * @param bounds - What stops the wait for the metrics and conversation locks; past it nothing is renamed
+ * @returns Whether the whole set was renamed: no rename failed and no live `{sessionId}.json` is left
  */
-export async function renameSessionFiles(sessionId: string, bounds?: LockBounds): Promise<void> {
+export async function renameSessionFiles(sessionId: string, bounds?: LockBounds): Promise<boolean> {
   const sessionsDir = dirname(getSessionPath(sessionId));
   const live = sessionSetFiles(sessionsDir, sessionId);
   const completed = sessionSetFiles(sessionsDir, `completed_${sessionId}`);
@@ -183,7 +203,7 @@ export async function renameSessionFiles(sessionId: string, bounds?: LockBounds)
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.warn(`[hook:SessionEnd] Failed to move the previous generation aside; not renaming: ${errorMessage}`);
-        return;
+        return false;
       }
     }
     // ponytail: same generation — lines only in the older completed_ files are lost locally (already delivered)
@@ -199,4 +219,5 @@ export async function renameSessionFiles(sessionId: string, bounds?: LockBounds)
   if (errors.length > 0) {
     logger.warn(`[hook:SessionEnd] File rename errors: ${errors.join('; ')}`);
   }
+  return errors.length === 0 && !existsSync(live.json);
 }

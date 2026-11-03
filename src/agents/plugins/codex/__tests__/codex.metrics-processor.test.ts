@@ -185,6 +185,24 @@ describe('CodexMetricsProcessor — per-call_id deltas', () => {
     expect(readFileSync(jsonlPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l).recordId)).toEqual(['c1']);
   });
 
+  it('writes a call before recordsBeforeMs, none at it: the next record over the same rollout owns it', async () => {
+    const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
+    const session = buildSession();
+    (session.messages as unknown[]).length = 0;
+    for (const [callId, timestamp] of [['early', '2026-05-09T12:05:00.000Z'], ['at-bound', '2026-05-09T12:06:00.000Z']]) {
+      (session.messages as unknown[]).push(
+        { timestamp, type: 'response_item', payload: { type: 'function_call', call_id: callId, name: 'exec_command' } },
+        { timestamp, type: 'response_item', payload: { type: 'function_call_output', call_id: callId } },
+      );
+    }
+
+    const result = await new CodexMetricsProcessor().process(session, { recordsBeforeMs: Date.parse('2026-05-09T12:06:00.000Z') } as never);
+
+    expect(result.metadata?.deltasWritten).toBe(1);
+    const jsonlPath = join(tempHome, 'sessions', `${session.sessionId}_metrics.jsonl`);
+    expect(readFileSync(jsonlPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l).recordId)).toEqual(['early']);
+  });
+
   it('returns success with deltasWritten=0 when there are no function_calls', async () => {
     const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
     const session = {

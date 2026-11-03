@@ -245,6 +245,13 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(toolTotal(rows)).toBe(2);
   });
 
+  it('writes a turn before recordsBeforeMs, none at it: the next record over the same transcript owns it', async () => {
+    const file = writeNative('n1', [start('n1'), user(10), assistant(20), user(30), assistant(40)]);
+    await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).processSession(file, sid, { ...ctx, recordsBeforeMs: T0 + 40 });
+
+    expect(read(`${sid}_metrics.jsonl`).map((r) => r.recordId)).toEqual([`${sid}-turn-0`]);
+  });
+
   it('keeps a late tool result with no new turn as one identified supplement delta', async () => {
     const base = [start('n1'), user(10), assistant(20), toolStart('c1', 30)];
     const file = writeNative('n1', base);

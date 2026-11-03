@@ -69,11 +69,19 @@ export class SessionRecordNotFoundError extends CodeMieError {
   }
 }
 
+const SESSION_FILE_LOCK_TIMEOUT = 'Timed out waiting for lock';
+
 export class SessionFileLockTimeoutError extends CodeMieError {
   constructor(lockPath: string) {
-    super(`Timed out waiting for lock ${lockPath}`);
+    super(`${SESSION_FILE_LOCK_TIMEOUT} ${lockPath}`);
     this.name = 'SessionFileLockTimeoutError';
   }
+}
+
+/** Whether an error, or a processor's failure message carrying its text, is a session file lock timeout. */
+export function isSessionFileLockTimeout(reason: unknown): boolean {
+  return reason instanceof SessionFileLockTimeoutError ||
+    (typeof reason === 'string' && reason.includes(SESSION_FILE_LOCK_TIMEOUT));
 }
 
 export class PartialRegistrationError extends CodeMieError {

@@ -35,6 +35,7 @@ import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { loadPartsForMessage } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 /**
  * The conversation folder these payloads are filed under in CodeMie.
@@ -128,8 +129,7 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       );
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { readJSONL } = await import('../../../../../providers/plugins/sso/session/utils/jsonl-reader.js');
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, '[opencode-conversations]');
 
       // Payloads already queued but not yet uploaded also advance the watermark,
       // otherwise every tick re-queues the same turn.

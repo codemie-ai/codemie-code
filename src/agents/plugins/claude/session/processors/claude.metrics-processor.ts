@@ -95,23 +95,28 @@ export class MetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+      }
 
-      logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+      logger.info(`[${this.name}] Generated ${deltas.length} deltas, wrote ${appended.written}`);
 
       // Return sync updates for the adapter to persist
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
         metadata: {
-          recordsProcessed: deltas.length,
-          syncUpdates: deltas.length > 0 ? {
+          recordsProcessed: appended.written,
+          deltasWritten: appended.written,
+          syncUpdates: {
             metrics: {
               processedRecordIds: Array.from(existingProcessedIds),
               lastProcessedTimestamp: Date.now(),
-              totalDeltas: deltas.length
+              totalDeltas: appended.written
             }
-          } : undefined
+          }
         }
       };
 

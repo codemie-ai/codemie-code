@@ -29,7 +29,7 @@ import type { ConversationPayloadRecord } from '@/providers/plugins/sso/session/
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import { CODEMIE_ASSISTANT_ID } from '@/providers/plugins/sso/session/processors/conversations/constants.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '@/utils/logger.js';
 import {
   extractPiToolCalls,
@@ -167,7 +167,10 @@ export class PiConversationsProcessor implements SessionProcessor {
       }
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(
+        conversationsPath,
+        `[${PI_CONVERSATIONS_PROCESSOR_NAME}]`
+      );
       const syncedSourceIndex = await this.resolveSyncedSourceIndex(
         session.sessionId,
         conversationId,

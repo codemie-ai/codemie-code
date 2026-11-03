@@ -25,7 +25,7 @@ import {
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { readJSONL } from '../../utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import {
   DEFAULT_API_TIMEOUT_MS,
@@ -61,8 +61,11 @@ export function createSyncProcessor(): SessionProcessor {
     try {
       // Read conversation payloads from JSONL
       const conversationsFile = getSessionConversationPath(session.sessionId);
-      const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
+      const allPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsFile, `[${CONVERSATION_PROCESSOR_NAME}]`);
       const pendingPayloads = await prepareSendList(allPayloads, session.sessionId, context);
+      if (pendingPayloads === undefined) {
+        return { success: true, message: 'Sync deferred: conversation file gone' };
+      }
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -93,8 +96,9 @@ export function createSyncProcessor(): SessionProcessor {
       let lastSentConversationId: string | undefined;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
-      // payloadId -> syncError of every payload sent this run, in send order
-      const runOutcomes = new Map<string, string | undefined>();
+      // payloadId -> syncError of the payloads sent this run whose outcome is not on disk yet, in send order;
+      // a persisted outcome is never applied again, so a failed send counts one attempt
+      const unpersistedOutcomes = new Map<string, string | undefined>();
 
       for (const pendingPayload of pendingPayloads) {
         // Stop BEFORE sending the next payload when the caller's sync deadline
@@ -164,18 +168,26 @@ export function createSyncProcessor(): SessionProcessor {
         // A kill mid-loop must never lose progress made so far. The file is re-read under its lock and
         // every outcome of this run applied by payloadId, so a payload appended during the network wait is kept.
         applyPayloadOutcome(allPayloads, payloadId, syncError);
-        runOutcomes.set(payloadId, syncError);
+        unpersistedOutcomes.set(payloadId, syncError);
+        let rewritten: boolean;
         try {
-          await rewriteSessionFile<ConversationPayloadRecord>('conversation', session.sessionId, (current) => {
-            for (const [outcomeId, outcomeError] of runOutcomes) {
+          rewritten = await rewriteSessionFile<ConversationPayloadRecord>('conversation', session.sessionId, (current) => {
+            for (const [outcomeId, outcomeError] of unpersistedOutcomes) {
               applyPayloadOutcome(current, outcomeId, outcomeError);
             }
             return current;
           }, context);
         } catch (writeError) {
-          // Keep going: the next payload's rewrite re-applies this outcome; after the last one it stays pending on disk
+          // Keep going: the next payload's rewrite applies this outcome; after the last one it stays pending on disk
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist payload outcome:`, writeError);
+          continue;
         }
+        if (!rewritten) {
+          logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Conversation file of session ${session.sessionId} is gone, sync outcome dropped; run stopped`);
+          deferred = true;
+          break;
+        }
+        unpersistedOutcomes.clear();
       }
 
       const syncedAt = Date.now();
@@ -292,13 +304,13 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
  * whatever it leaves stays pending and keeps the session undelivered — its record
  * is not renamed `completed_` — until a later run delivers it.
  *
- * @returns the payloads to send this run, in queue order
+ * @returns the payloads to send this run, in queue order; undefined when the live file is gone
  */
 async function prepareSendList(
   allPayloads: ConversationPayloadRecord[],
   sessionId: string,
   context: ProcessingContext
-): Promise<ConversationPayloadRecord[]> {
+): Promise<ConversationPayloadRecord[] | undefined> {
   // Heal: a candidate whose payloadId already has a success record was synced.
   const healedCount = healSyncedDuplicates(allPayloads);
 
@@ -314,11 +326,15 @@ async function prepareSendList(
       `${supersededCount} fully covered payload(s)`
     );
     try {
-      await rewriteSessionFile<ConversationPayloadRecord>('conversation', sessionId, (current) => {
+      const rewritten = await rewriteSessionFile<ConversationPayloadRecord>('conversation', sessionId, (current) => {
         healSyncedDuplicates(current);
         collapseSupersededPayloads(current.filter(isSendCandidate));
         return current;
       }, context);
+      if (!rewritten) {
+        logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Conversation file of session ${sessionId} is gone; nothing sent`);
+        return undefined;
+      }
     } catch (writeError) {
       logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
     }

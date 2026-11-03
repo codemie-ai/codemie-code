@@ -628,6 +628,36 @@ describe('PiConversationsProcessor', () => {
     expect(payloads[1].historyIndices).toEqual([1, 1]);
   });
 
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const processor = await createProcessor();
+    const first = [userEntry('first question'), assistantEntry([{ type: 'text', text: 'first answer' }])];
+    const second = [
+      ...first,
+      userEntry('second question', '2026-08-01T10:01:00.000Z'),
+      assistantEntry([{ type: 'text', text: 'second answer' }], '2026-08-01T10:01:05.000Z'),
+    ];
+    const third = [
+      ...second,
+      userEntry('third question', '2026-08-01T10:02:00.000Z'),
+      assistantEntry([{ type: 'text', text: 'third answer' }], '2026-08-01T10:02:05.000Z'),
+    ];
+    await processor.process(buildSession(first), buildContext());
+    await processor.process(buildSession(second), buildContext());
+    const [line1, line2] = readFileSync(conversationsPath(), 'utf-8').trim().split('\n');
+    writeFileSync(conversationsPath(), `${line1}\n{"payloadId":"torn\n${line2}\n`);
+
+    const result = await processor.process(buildSession(third), buildContext());
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsPath(), 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([line1, '{"payloadId":"torn', line2]);
+    expect(JSON.parse(lines[3]).payload.history.map((message: any) => message.message)).toEqual([
+      'third question',
+      'third answer',
+    ]);
+  });
+
   it('completes a turn whose answer arrived after the prompt was already queued', async () => {
     const processor = await createProcessor();
     const prompt = userEntry('will you answer?');

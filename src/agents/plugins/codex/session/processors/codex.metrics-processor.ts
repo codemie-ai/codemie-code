@@ -96,13 +96,18 @@ export class CodexMetricsProcessor implements SessionProcessor {
         existingCallIds.add(callId);
       }
 
+      let deltasWritten = 0;
       if (deltas.length > 0) {
         // ponytail: a call without a timestamped line gets the session's createdAt, earlier than a resumed record's
         // start, so the window's lower bound stays off; enable it once every call carries its own line time.
         const window = await resolveRunWindow(session.sessionId, context);
-        await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        if (appended.gone) {
+          logger.warn(`[codex-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+          return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+        }
+        deltasWritten = appended.written;
       }
-      const deltasWritten = deltas.length;
 
       logger.debug(
         '[codex-metrics] Wrote deltas',

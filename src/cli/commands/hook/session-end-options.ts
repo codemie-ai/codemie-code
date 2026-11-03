@@ -43,15 +43,20 @@ function resolveSessionEndSyncBudgetMs(): number {
 }
 
 /**
- * Bounds a processing run by the hook's options: a hook process and a caller without bounds get the
+ * The deadline of a SessionEnd step starting now: a hook process and a caller without bounds get the
  * sync budget; an in-process caller with a deadline or abort signal is bounded by those alone.
  */
-export function applySessionEndOptions(context: ProcessingContext, options: SessionEndOptions): void {
+export function sessionEndDeadlineMs(options: SessionEndOptions): number | undefined {
   const callerBounded = !options.hookProcess && (options.deadlineMs !== undefined || options.abortSignal !== undefined);
   const budgetDeadlineMs = Date.now() + resolveSessionEndSyncBudgetMs();
-  context.syncDeadlineMs = callerBounded
+  return callerBounded
     ? options.deadlineMs
     : Math.min(budgetDeadlineMs, options.deadlineMs ?? budgetDeadlineMs);
+}
+
+/** Bounds a processing run by the hook's options: its deadline by {@link sessionEndDeadlineMs}, the abort, the mode. */
+export function applySessionEndOptions(context: ProcessingContext, options: SessionEndOptions): void {
+  context.syncDeadlineMs = sessionEndDeadlineMs(options);
   context.abortSignal = options.abortSignal;
   context.hookProcess = options.hookProcess === true;
 }

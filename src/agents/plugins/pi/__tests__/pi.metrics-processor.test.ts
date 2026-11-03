@@ -315,6 +315,20 @@ describe('model_change entries', () => {
     expect(await run(buildSession([entry]))).toEqual([]);
   });
 
+  it('writes a model switch before recordsBeforeMs, none at it: the next record over the same transcript owns it', async () => {
+    const modelChange = (id: string, at: number) => ({
+      type: 'model_change', id, parentId: null, timestamp: new Date(at).toISOString(), modelId: 'claude-opus-4',
+    });
+
+    const deltas = await run(
+      buildSession([modelChange('early', SESSION_START + 2000), modelChange('at-bound', SESSION_START + 5000)]),
+      undefined,
+      { ...context, recordsBeforeMs: SESSION_START + 5000 }
+    );
+
+    expect(deltas.map((d) => d.recordId)).toEqual(['early:model']);
+  });
+
   it('does not double-count an entry already seen on another transcript', async () => {
     const entry = {
       type: 'model_change',

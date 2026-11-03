@@ -164,6 +164,33 @@ describe('CodexConversationsProcessor — incremental', () => {
     expect(lines[1].payload.history[0].history_index).toBe(1);
   });
 
+  it('reads the conversation file past a torn line and appends the next payload after it', async () => {
+    const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
+    const processor = new CodexConversationsProcessor();
+    const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const turn = (question: string, answer: string) => [
+      { type: 'event_msg', payload: { type: 'user_message', message: question } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: answer }] } },
+    ];
+    const conversationsPath = join(tempHome, 'sessions', 'sess-conv-1_conversation.jsonl');
+
+    await processor.process(buildSession(turn('first', 'one')), ctx);
+    await processor.process(buildSession([...turn('first', 'one'), ...turn('second', 'two')]), ctx);
+    const [first, second] = readFileSync(conversationsPath, 'utf-8').trim().split('\n');
+    writeFileSync(conversationsPath, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    const result = await processor.process(
+      buildSession([...turn('first', 'one'), ...turn('second', 'two'), ...turn('third', 'three')]),
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsPath, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual(['third', 'three']);
+  });
+
   it('returns recordsProcessed=0 when there are no new messages beyond lastSyncedHistoryIndex', async () => {
     const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
     const processor = new CodexConversationsProcessor();

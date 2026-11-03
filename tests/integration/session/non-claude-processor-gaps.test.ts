@@ -535,6 +535,41 @@ describe('OpenCodeConversationsProcessor.process', () => {
     expect(readJsonl(getSessionConversationPath(sessionId))).toHaveLength(1);
   });
 
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const sessionId = newSessionId('oc-conv-torn');
+    const messages: Array<Record<string, unknown>> = [];
+    const partsMap: Record<string, Array<Record<string, unknown>>> = {};
+    const addTurn = (n: number) => {
+      messages.push(
+        { id: `msg-u${n}`, sessionID: OC_SESSION_ID, role: 'user', time: { created: 1_700_000_000_000 + n * 10_000 } },
+        { ...assistantMessage, id: `msg-a${n}`, time: { created: 1_700_000_005_000 + n * 10_000 } },
+      );
+      partsMap[`msg-u${n}`] = [{ id: `pu${n}`, messageID: `msg-u${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `question ${n}` }];
+      partsMap[`msg-a${n}`] = [{ id: `pa${n}`, messageID: `msg-a${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `answer ${n}` }];
+    };
+    const processor = new OpenCodeConversationsProcessor();
+    const path = getSessionConversationPath(sessionId);
+
+    addTurn(1);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    addTurn(2);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    const [first, second] = readFileSync(path, 'utf-8').trim().split('\n');
+    writeFileSync(path, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    addTurn(3);
+    const result = await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(path, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual([
+      'question 3',
+      'answer 3',
+    ]);
+  });
+
   it('queues a user-only payload when the prompt has no assistant reply yet', async () => {
     const sessionId = newSessionId('oc-conv-noreply');
     // A brand-new user prompt is published immediately (messageCount 1, no

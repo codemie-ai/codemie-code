@@ -6,21 +6,21 @@
  * file gone (the session was completed and renamed) is dropped and logged, never re-creating the file.
  */
 
-import { appendFile, mkdir } from 'fs/promises';
+import { appendFile, mkdir, open } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
-import { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS, type PidLock } from '../../../../../utils/pid-lock.js';
-import { logger } from '../../../../../utils/logger.js';
-import { SessionFileLockTimeoutError } from '../../../../../utils/errors.js';
+import { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS, type PidLock } from '@/utils/pid-lock.js';
+import { logger } from '@/utils/logger.js';
+import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 import {
   getSessionConversationLockPath,
   getSessionConversationPath,
   getSessionMetricsLockPath,
   getSessionMetricsPath,
   getSessionPath
-} from '../../../../../agents/core/session/session-config.js';
-import type { ProcessingContext } from '../../../../../agents/core/session/BaseProcessor.js';
-import { readJSONL } from './jsonl-reader.js';
+} from '@/agents/core/session/session-config.js';
+import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { writeJSONLAtomic } from './jsonl-writer.js';
 
 /** How long a writer waits for a session file's lock (poll interval: the pid-lock's 25 ms). */
@@ -70,6 +70,7 @@ export async function acquireSessionFileLock(
  * Runs `fn(filePath)` under the file's lock. With `mustExist` the file has to exist already; otherwise
  * it may be created only while the live session record exists. A file that is gone is not re-created:
  * `fn` is skipped, the drop is logged and undefined is returned.
+ * @throws {SessionFileLockTimeoutError} When the lock stays held past the budget, the deadline or the abort
  */
 export async function withSessionFile<T>(
   kind: SessionFileKind,
@@ -91,7 +92,36 @@ export async function withSessionFile<T>(
   }
 }
 
-/** Appends `data` to a session file under its lock. False when dropped because the file is gone. */
+/**
+ * Appends JSONL `data` to `file`. A file whose last byte is not a newline (a torn line of a cut write) gets one
+ * first: the torn line stays torn and is skipped by the sync, rewrite, `readAll` and delivery-check readers
+ * (a rewrite drops it), the new line stays readable.
+ * The caller holds the file's lock.
+ */
+export async function appendJsonlLines(file: string, data: string): Promise<void> {
+  let separator = '';
+  try {
+    const handle = await open(file, 'r');
+    try {
+      const { size } = await handle.stat();
+      if (size > 0) {
+        const last = Buffer.alloc(1);
+        await handle.read(last, 0, 1, size - 1);
+        if (last[0] !== 0x0a) separator = '\n';
+      }
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  await appendFile(file, separator + data, 'utf-8');
+}
+
+/**
+ * Appends `data` to a session file under its lock. False when dropped because the file is gone.
+ * @throws {SessionFileLockTimeoutError} When the lock stays held past the budget, the deadline or the abort
+ */
 export async function appendSessionFile(
   kind: SessionFileKind,
   sessionId: string,
@@ -100,7 +130,7 @@ export async function appendSessionFile(
 ): Promise<boolean> {
   const done = await withSessionFile(kind, sessionId, lockBoundsOf(context), false, async (file) => {
     await mkdir(dirname(file), { recursive: true });
-    await appendFile(file, data, 'utf-8');
+    await appendJsonlLines(file, data);
     return true;
   });
   return done === true;
@@ -110,6 +140,7 @@ export async function appendSessionFile(
  * Re-reads the file under its lock, lets `merge` apply this run's changes to the lines as they are now
  * (lines appended meanwhile stay as read), and writes the result with tmp + rename.
  * False when dropped because the file is gone.
+ * @throws {SessionFileLockTimeoutError} When the lock stays held past the budget
  */
 export async function rewriteSessionFile<T>(
   kind: SessionFileKind,
@@ -120,7 +151,7 @@ export async function rewriteSessionFile<T>(
   // Not bounded by the caller's abort / deadline: the outcome of requests already sent must be recorded
   const bounds: LockBounds = { pidOnlyLiveness: context?.hookProcess === true };
   const done = await withSessionFile(kind, sessionId, bounds, true, async (file) => {
-    await writeJSONLAtomic(file, merge(await readJSONL<T>(file)));
+    await writeJSONLAtomic(file, merge(await readJSONLTolerant<T>(file, '[locked-jsonl]')));
     return true;
   });
   return done === true;

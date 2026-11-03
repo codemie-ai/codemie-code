@@ -15,6 +15,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 const { MetricsWriter } = await import('../MetricsWriter.js');
 const { acquirePidLock } = await import('@/utils/pid-lock.js');
+const { readJSONLTolerant } = await import('@/agents/core/session/utils/jsonl-reader.js');
 
 const SESSION_ID = '00000000-0000-4000-8000-0000000000dd';
 const START = Date.parse('2026-10-01T10:00:00Z');
@@ -54,8 +55,8 @@ describe('MetricsWriter.appendDeltas', () => {
     const first = await writer.appendDeltas([delta('a', START + 1), delta('a', START + 1), delta('b', START + 2)], { startTime: START });
     const second = await writer.appendDeltas([delta('b', START + 2), delta('c', START + 3)], { startTime: START });
 
-    expect(first).toEqual({ written: 2, dup: 1, beforeStart: 0, afterEnd: 0 });
-    expect(second).toEqual({ written: 1, dup: 1, beforeStart: 0, afterEnd: 0 });
+    expect(first).toEqual({ written: 2, gone: false, dup: 1, beforeStart: 0, afterEnd: 0 });
+    expect(second).toEqual({ written: 1, gone: false, dup: 1, beforeStart: 0, afterEnd: 0 });
     expect(readIds()).toEqual(['a', 'b', 'c']);
   });
 
@@ -66,7 +67,7 @@ describe('MetricsWriter.appendDeltas', () => {
       { startTime: START, upperBound: START + 10 }
     );
 
-    expect(result).toEqual({ written: 2, dup: 0, beforeStart: 1, afterEnd: 2 });
+    expect(result).toEqual({ written: 2, gone: false, dup: 0, beforeStart: 1, afterEnd: 2 });
     expect(readIds()).toEqual(['at-start', 'inside']);
   });
 
@@ -82,7 +83,7 @@ describe('MetricsWriter.appendDeltas', () => {
       { startTime: START, upperBound: START + 5000 }
     );
 
-    expect(result).toEqual({ written: 3, dup: 0, beforeStart: 1, afterEnd: 0 });
+    expect(result).toEqual({ written: 3, gone: false, dup: 0, beforeStart: 1, afterEnd: 0 });
     expect(readIds()).toEqual(['iso-ok', 'nan', 'garbage']);
   });
 
@@ -139,6 +140,8 @@ describe('MetricsWriter.appendDeltas', () => {
     writeFileSync(metricsFile(), `${JSON.stringify({ ...delta('old', START + 1), syncStatus: 'pending', syncAttempts: 0 })}\n{"recordId":"tor`);
     const result = await new MetricsWriter(SESSION_ID).appendDeltas([delta('old', START + 1), delta('new', START + 2)], { startTime: START });
     expect(result).toMatchObject({ written: 1, dup: 1 });
+    // The appended line never glues to the torn one: the tolerant reader skips the torn line and yields the new
+    expect((await readJSONLTolerant<MetricDelta>(metricsFile())).map((d) => d.recordId)).toEqual(['old', 'new']);
   });
 
   it('drops an append that finds its record renamed to completed_, creating no live file', async () => {
@@ -149,7 +152,7 @@ describe('MetricsWriter.appendDeltas', () => {
 
     const result = await writer.appendDeltas([delta('after-rename', START + 2)], { startTime: START });
 
-    expect(result.written).toBe(0);
+    expect(result).toMatchObject({ written: 0, gone: true });
     expect(existsSync(metricsFile())).toBe(false);
     expect(readFileSync(join(sessionsDir, `completed_${SESSION_ID}_metrics.jsonl`), 'utf-8')).not.toContain('after-rename');
   });

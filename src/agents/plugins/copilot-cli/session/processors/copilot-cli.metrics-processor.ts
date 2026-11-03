@@ -92,15 +92,21 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
         deltas.push(build(key, session.metadata?.createdAt ?? Date.now(), undefined, undefined, true));
       }
 
+      let deltasWritten = 0;
       if (deltas.length > 0) {
         // ponytail: copilot's supplement delta time is session-level, not per-event, so the run window's lower
         // bound cannot apply here yet; restore it once the supplement delta carries lastRecordAt (13d3b).
         const window = await resolveRunWindow(session.sessionId, context);
-        await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        if (appended.gone) {
+          logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+          return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+        }
+        deltasWritten = appended.written;
       }
 
-      logger.debug(`[${this.name}] Wrote ${deltas.length} deltas for ${session.sessionId}`);
-      return { success: true, metadata: { recordsProcessed: deltas.length } };
+      logger.debug(`[${this.name}] Wrote ${deltasWritten} of ${deltas.length} deltas for ${session.sessionId}`);
+      return { success: true, metadata: { recordsProcessed: deltasWritten, deltasWritten } };
     } catch (error) {
       logger.error(`[${this.name}] Processing failed:`, error);
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
