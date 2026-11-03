@@ -98,6 +98,20 @@ describe('MetricsSyncProcessor final rewrite', () => {
 
     expect(statuses()).toEqual({ D1: 'failed', D2: 'pending' });
   });
+
+  // @case metrics-sync-preserves-concurrent-deltas_TC_004
+  it('sends and marks synced, on the next pass, the delta that was kept pending during the first request', async () => {
+    await syncWhileAppending(() => new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    expect(statuses()).toEqual({ D1: 'synced', D2: 'pending' });
+
+    vi.restoreAllMocks();
+    const secondFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => accepted());
+    const result = await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context);
+
+    expect(secondFetch).toHaveBeenCalledTimes(1);
+    expect(result.metadata?.syncUpdates?.metrics).toMatchObject({ processedRecordIds: ['D2'], totalSynced: 1, totalFailed: 0, totalDeltas: 1 });
+    expect(statuses()).toEqual({ D1: 'synced', D2: 'synced' });
+  });
 });
 
 const accepted = () => new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
