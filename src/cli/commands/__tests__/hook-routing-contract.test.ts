@@ -20,10 +20,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { getSessionPath } from '../../../agents/core/session/session-config.js';
 import type { BaseHookEvent } from '../../../agents/core/types.js';
-import { processEvent, type HookProcessingConfig } from '../hook.js';
+import type { ProcessingContext } from '../../../agents/core/session/BaseProcessor.js';
+import { createHookCommand, processEvent, type HookProcessingConfig } from '../hook.js';
 import { AgentRegistry } from '../../../agents/registry.js';
 
 const TMP = join(tmpdir(), `codemie-hook-routing-${process.pid}`);
@@ -284,7 +286,7 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       const claudeId = 'claude-end-prompts-1';
       createdSessions.add([sessionId, claudeId]);
       // The answered turn was emitted by an earlier run.
-      writeActiveSession(sessionId, { sync: { metrics: { processedRecordIds: ['msg-a1'] } } });
+      writeActiveSession(sessionId, { startTime: Date.parse('2026-10-31T11:59:00.000Z'), sync: { metrics: { processedRecordIds: ['msg-a1'] } } });
       const line = (fields: Record<string, unknown>) => JSON.stringify({ sessionId: claudeId, cwd: TMP, ...fields });
       const transcript = join(TMP, 'end-prompts-1.jsonl');
       writeFileSync(transcript, [
@@ -426,6 +428,91 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(existsSync(getSessionPath(sessionId))).toBe(false);
       expect(existsSync(completedPath(sessionId))).toBe(false);
     });
+  });
+
+  describe('the processor context carries the hook bounds', () => {
+    const HOOK_ENV = ['CODEMIE_AGENT', 'CODEMIE_SESSION_ID', 'CODEMIE_PROVIDER', 'CODEMIE_SESSION_END_SYNC_BUDGET_MS', 'CODEMIE_WRAPPER_PID'];
+    let savedEnv: Record<string, string | undefined>;
+    let contexts: ProcessingContext[];
+
+    beforeEach(() => {
+      savedEnv = Object.fromEntries(HOOK_ENV.map((key) => [key, process.env[key]]));
+      contexts = [];
+      const processSession = vi.fn(async (_file: string, _sessionId: string, context: ProcessingContext) => {
+        contexts.push({ ...context });
+        return { success: true, totalRecords: 0, failedProcessors: [], processors: {} };
+      });
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ processSession }) } as never);
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    function hookEvent(name: 'Stop' | 'SessionEnd' | 'SubagentStop', claudeId: string): BaseHookEvent {
+      return {
+        session_id: claudeId,
+        hook_event_name: name,
+        transcript_path: transcriptFile(claudeId),
+        permission_mode: 'default',
+        cwd: TMP,
+        reason: 'exit',
+      } as unknown as BaseHookEvent;
+    }
+
+    /** A `codemie hook` process: the event on stdin, the session from the env the wrapper exported. */
+    async function runHookProcess(event: BaseHookEvent, sessionId: string): Promise<void> {
+      Object.assign(process.env, { CODEMIE_AGENT: 'claude', CODEMIE_SESSION_ID: sessionId, CODEMIE_PROVIDER: 'jwt', CODEMIE_SESSION_END_SYNC_BUDGET_MS: '700' });
+      delete process.env.CODEMIE_WRAPPER_PID;
+      const stdin = Object.getOwnPropertyDescriptor(process, 'stdin');
+      Object.defineProperty(process, 'stdin', { value: Readable.from([JSON.stringify(event)]), configurable: true });
+      try {
+        await createHookCommand().parseAsync(['--agent', 'claude'], { from: 'user' });
+      } finally {
+        if (stdin) Object.defineProperty(process, 'stdin', stdin);
+      }
+    }
+
+    for (const name of ['Stop', 'SessionEnd', 'SubagentStop'] as const) {
+      it(`${name} in a hook process: hookProcess, its abort signal and the 700 ms sync budget`, async () => {
+        const sessionId = `route-bounds-hook-${name}-${process.pid}`;
+        const claudeId = `claude-bounds-hook-${name}`;
+        createdSessions.add([sessionId, claudeId]);
+        writeActiveSession(sessionId);
+
+        const startedAt = Date.now();
+        await runHookProcess(hookEvent(name, claudeId), sessionId);
+        const endedAt = Date.now();
+
+        expect(process.exitCode).toBe(0);
+        expect(contexts).toHaveLength(1);
+        expect(contexts[0].hookProcess).toBe(true);
+        expect(contexts[0].abortSignal).toBeInstanceOf(AbortSignal);
+        expect(contexts[0].syncDeadlineMs).toBeGreaterThanOrEqual(startedAt + 700);
+        expect(contexts[0].syncDeadlineMs).toBeLessThanOrEqual(endedAt + 700);
+      });
+    }
+
+    for (const name of ['Stop', 'SessionEnd'] as const) {
+      it(`${name} in process with a deadline and an abort signal: bounded by those alone`, async () => {
+        const sessionId = `route-bounds-caller-${name}-${process.pid}`;
+        const claudeId = `claude-bounds-caller-${name}`;
+        createdSessions.add([sessionId, claudeId]);
+        writeActiveSession(sessionId);
+        const abortSignal = new AbortController().signal;
+        const deadlineMs = Date.now() + 60_000;
+
+        await processEvent(hookEvent(name, claudeId), { ...baseConfig, sessionId, abortSignal, deadlineMs });
+
+        expect(contexts).toHaveLength(1);
+        expect(contexts[0].hookProcess).toBe(false);
+        expect(contexts[0].abortSignal).toBe(abortSignal);
+        expect(contexts[0].syncDeadlineMs).toBe(deadlineMs);
+      });
+    }
   });
 
   describe('SessionStart record owner and launch fields', () => {
