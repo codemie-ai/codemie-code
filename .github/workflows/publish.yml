@@ -54,9 +54,8 @@ jobs:
       - name: Run CI checks
         run: npm run ci
 
-      # dist/ is built by the CI checks, skip the prepack build
       - name: Pack tarball
-        run: npm pack --ignore-scripts
+        run: npm pack
 
       - name: Upload tarball
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
