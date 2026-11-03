@@ -22,7 +22,8 @@ vi.mock('../otlp-spool/auth-state.js', () => ({
   markCredentialsStale: vi.fn(),
   resolveFreshCredentials: resolveFreshCredentialsMock,
 }));
-vi.mock('../otlp-spool/spool-paths.js', () => ({
+vi.mock('../otlp-spool/spool-paths.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   listSessionIds: listSessionIdsMock,
 }));
 vi.mock('../otlp-spool/tick-processor.js', () => ({

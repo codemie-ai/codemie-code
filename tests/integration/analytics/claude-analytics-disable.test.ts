@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -98,6 +98,20 @@ function forwardingMarker(): string {
 }
 
 /**
+ * The fixture has no SSO login, so a tracked event stops at the evidence stage (fail closed,
+ * nothing enqueued) before the marker above is written. That stage runs only after the
+ * analytics gate let the event through, so its warning is the second proof of passing the gate.
+ * Full forwarding is covered in claude-code-otlp.disable-matrix.test.ts.
+ */
+function reachedEvidenceStage(): boolean {
+  const logs = join(codemieHome, 'logs');
+  return (
+    existsSync(logs) &&
+    readdirSync(logs).some((name) => readFileSync(join(logs, name), 'utf-8').includes('evidence record unavailable (no_credentials)'))
+  );
+}
+
+/**
  * Runs one prompt hook. `forwarded`: the event got past the gate. `wroteState`: the run left
  * anything behind in either home (spool, session, daemon or proxy files). A silenced hook must
  * do neither; a tracked one must forward.
@@ -107,17 +121,19 @@ function runPromptHook(
   sessionId: string
 ): { run: IsolatedRunResult; forwarded: boolean; wroteState: boolean } {
   rmSync(forwardingMarker(), { force: true });
+  rmSync(join(codemieHome, 'logs'), { recursive: true, force: true });
   const homeBefore = snapshotDir(codemieHome, skipLogs);
   const userBefore = snapshotDir(userHome);
   const run = runCli(['hook', '--agent', 'claude-code-otlp'], {
     cwd: project,
     pathPrefix: claudeShimDir,
+    env: { CODEMIE_DEBUG: 'true' },
     input: JSON.stringify({ session_id: sessionId, cwd: project, hook_event_name: 'UserPromptSubmit', prompt: `prompt for ${sessionId}` }),
   });
   const wroteState =
     JSON.stringify(snapshotDir(codemieHome, skipLogs)) !== JSON.stringify(homeBefore) ||
     JSON.stringify(snapshotDir(userHome)) !== JSON.stringify(userBefore);
-  return { run, forwarded: existsSync(forwardingMarker()), wroteState };
+  return { run, forwarded: existsSync(forwardingMarker()) || reachedEvidenceStage(), wroteState };
 }
 
 /**
