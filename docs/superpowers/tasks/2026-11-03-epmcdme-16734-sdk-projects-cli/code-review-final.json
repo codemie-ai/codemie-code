@@ -1,0 +1,213 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001/002 resolved; CR-003 accepted by user (squash-merge)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User: fix all 3 (CR-001..003)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001/002 resolved; CR-003 accepted by user (squash-merge)"
+    }
+  ],
+  "reviewed_head": "66b7a3d6e66c1f5e5fb303db9143789d42536766",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 and CR-002 resolved in current source (Step 4 now runs exists for every named non-default project; createProjectsSubcommand split into 15 register helpers, each under ~50 lines). CR-003 (ticket key in commit subjects) was intentionally not fixed and stays unresolved.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-sdk/SKILL.md",
+      "line": 72,
+      "title": "Skill Step 4 skips exists for non-admin projects",
+      "problem": "Spec requires running `codemie sdk projects exists` for any named non-default project. Step 4 exempts non-admins' projects listed in `applications` and adds an 'exit 0 wins over applications' disagreement rule not in the spec (AC6 partial).",
+      "impact": "Required behavior of the Project Clarification flow is unmet; the skill may proceed without the existence check the spec mandates.",
+      "recommendation": "Make Step 4 run `exists` for every named non-default project regardless of admin status; drop the applications exemption and the extra disagreement rule, or get the spec amended.",
+      "status": "resolved",
+      "check_notes": "SKILL.md line 72: exists required for any other named project; exemption and extra rule removed",
+      "fix": {
+        "change": "Step 4 runs exists for every named non-default project; dropped applications exemption and disagreement rule",
+        "test": "n/a"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/sdk/projects.ts",
+      "line": 149,
+      "title": "createProjectsSubcommand far exceeds 50 lines",
+      "problem": "code-quality.md requires functions under 50 lines; createProjectsSubcommand() is about 290 lines defining all subcommands inline.",
+      "impact": "Documented code-structure standard broken; blocks the workflow per standards review.",
+      "recommendation": "Split into per-subcommand registration helpers (e.g. registerListCommand(cmd)) called from createProjectsSubcommand().",
+      "status": "resolved",
+      "check_notes": "15 register* helpers plus a thin createProjectsSubcommand; no function exceeds ~50 lines",
+      "fix": {
+        "change": "split createProjectsSubcommand into per-command register helpers",
+        "test": "n/a (tsc + eslint pass)"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Ticket key suffixed on commit subjects",
+      "problem": "git-workflow.md lists the ticket key in the commit subject as a pitfall and says to reference it in the body footer; the three commit subjects (bfcd07d8, 6ebfb62f, aa58145e) carry (EPMCDME-16734) as a suffix.",
+      "impact": "Documented commit-format standard not met; same format feeds the squash-merge title.",
+      "recommendation": "Reword the subjects to drop the (EPMCDME-16734) suffix and put the ticket key in the body footer, or confirm the PR title follows the documented format.",
+      "status": "wont-fix",
+      "check_notes": "commit history not changed; no fix evidence mapped",
+      "disposition": {
+        "rationale": "Repo squash-merges PRs and the ticket branch must not be rebased; commit subjects are rewritten at squash time and the ticket key goes in the PR title/body footer. User approved leaving it.",
+        "source": "hitl"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: all 15 commands exposed; human and --json modes",
+      "status": "pass",
+      "notes": "all commands registered"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: exists on visible project prints exists, exit 0",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: exists on missing project exit 2",
+      "status": "pass",
+      "notes": "readProjectDetail 404 branch"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: get and members on missing project exit 2",
+      "status": "pass",
+      "notes": "route through readProjectDetail"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: 401/403/5xx exit 1, never not found",
+      "status": "pass",
+      "notes": "non-404 rethrown to handleSdkError"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: skill Project Clarification uses exists for named non-default project",
+      "status": "partial",
+      "notes": "SKILL.md Step 4 exempts non-admin projects in applications and adds exit-0-wins rule not in spec"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: skill asks before delete/transfer-ownership/bulk-remove",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: skill lists projects in Asset Types and Consult Examples; examples/projects.md",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: typecheck/lint/build pass; manifests unchanged",
+      "status": "pending-stage-7",
+      "notes": "execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "Pattern: thin services/projects.ts; single 404 helper",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "list options and raw --json output",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "update-member requires --admin/--no-admin",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "No confirmation prompt, no tests, no SDK changes",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "Skill quoting of project names",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "examples/projects.md format incl. jq and exit-code script",
+      "status": "pass",
+      "notes": ""
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "3 subjects match <type>(<scope>): <subject> with allowed scopes cli and skills; but each appends the ticket key (EPMCDME-16734) to the subject, which git-workflow.md pitfalls say to put in the body footer instead"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md says functions under 50 lines; createProjectsSubcommand() in src/cli/commands/sdk/projects.ts spans about lines 149-442. Imports use .js, exports have explicit return types, file is under 500 lines, no console.log debug output, no any."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No hardcoded secrets, no credential or header logging, no attribution header changes. File paths for bulk-assign and csv commands come from the invoking user's own CLI args, not an untrusted boundary."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Acceptance AC6 is partial (skill Step 4 exempts non-admin projects listed in applications from exists, contradicting the spec) and two blocking standards findings stand (ticket key in commit subjects; createProjectsSubcommand ~290 lines). 7 edge-case candidates dismissed (403 exit 1 is spec AC5; others are input hardening the server already rejects with a shown error); AC9 build evidence is pending-stage-7.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}
