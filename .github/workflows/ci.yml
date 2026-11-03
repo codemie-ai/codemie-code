@@ -11,7 +11,6 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on the same PR/branch to save runner minutes
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

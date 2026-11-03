@@ -13,7 +13,7 @@ on:
 permissions:
   contents: read
 
-# One run per tag. A fixed group would keep only the newest pending run and cancel the ones in between.
+# One run per tag, a fixed group would drop pending runs
 concurrency:
   group: publish-${{ github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
@@ -54,7 +54,7 @@ jobs:
       - name: Run CI checks
         run: npm run ci
 
-      # dist/ is already built by the CI checks above, so skip the prepack build
+      # dist/ is built by the CI checks, skip the prepack build
       - name: Pack tarball
         run: npm pack --ignore-scripts
 
