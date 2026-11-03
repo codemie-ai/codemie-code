@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16737_sso-double-browser",
+  "head": "81f5695e15cf4fe99b9baf3dfa61cd5e72315bf9",
+  "runner": "npm",
+  "started_at": "2026-11-03T12:19:25Z",
+  "completed_at": "2026-11-03T12:21:05Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "420 files, 7102 tests passed, 0 failed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 36000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "38 files passed, 1 file skipped; 300 tests passed, 10 skipped, 0 failed. Skipped file is env-gated (not identified by reporter); proxy-daemon-lifecycle runs and passes (4/4) with dist present"
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Exit 0 but output: 'No staged changes to scan'; script only scans staged changes, nothing is staged. CI runs the scan unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Exit 0 but output: 'lint-staged could not find any staged files.' Nothing staged (no git mutations allowed)."
+    }
+  ],
+  "failures": {}
+}
