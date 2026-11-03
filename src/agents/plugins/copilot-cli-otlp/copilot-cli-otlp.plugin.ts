@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
@@ -258,12 +258,12 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   private async ensureProxyAuth() {
-    const workingDir = process.cwd();
-    const config = await ConfigLoader.load(workingDir);
+    // The session's profile, not the cwd's: the hook follows the agent into subdirectories (EPMCDME-16308).
+    const profile = await resolveHookAuthProfile();
     return ensureCodeMieSsoAuth({
-      provider: config.provider,
-      ssoUrl: config.codeMieUrl || config.baseUrl,
-      baseUrl: config.baseUrl,
+      provider: profile.provider,
+      ssoUrl: profile.ssoUrl,
+      baseUrl: profile.baseUrl,
     });
   }
 }

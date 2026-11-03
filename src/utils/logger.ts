@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Console } from 'node:console';
 import { Writable } from 'node:stream';
 import * as fs from 'fs';
@@ -22,7 +23,15 @@ export interface LogContext {
   model?: string;
 }
 
+/** The agent / session / profile one call's log lines carry instead of the process-wide ones. */
+export interface LogCallContext {
+  agentName: string;
+  sessionId: string;
+  profileName?: string;
+}
+
 class Logger {
+  private readonly callContext = new AsyncLocalStorage<LogCallContext>();
   private sessionId: string = ''; // Will be set by agent
   private agentName: string | null = null;
   private profileName: string | null = null;
@@ -50,6 +59,23 @@ class Logger {
         }
       });
     this.consoleSink = new Console(target, target);
+  }
+
+  /**
+   * Run `fn` with its log lines (and those of everything it awaits) carrying `context`;
+   * lines logged outside it keep the process-wide agent / session / profile.
+   */
+  runWithContext<T>(context: LogCallContext, fn: () => Promise<T>): Promise<T> {
+    return this.callContext.run(context, fn);
+  }
+
+  /** The `[agent] [session]` and optional ` [profile]` part of a line's prefix. */
+  private contextPrefix(): string {
+    const call = this.callContext.getStore();
+    const agentName = (call ? call.agentName : this.agentName) || 'system';
+    const sessionId = call ? call.sessionId : this.sessionId;
+    const profileName = call ? call.profileName : this.profileName;
+    return `[${agentName}] [${sessionId}]${profileName ? ` [${profileName}]` : ''}`;
   }
 
   /**
@@ -224,15 +250,7 @@ class Logger {
     try {
       const timestamp = new Date().toISOString();
 
-      // Build log prefix using agent/session/profile set at startup
-      const agentName = this.agentName || 'system';
-
-      let prefix = `[${timestamp}] [${level.toUpperCase()}] [${agentName}] [${this.sessionId}]`;
-
-      // Add profile if set
-      if (this.profileName) {
-        prefix += ` [${this.profileName}]`;
-      }
+      const prefix = `[${timestamp}] [${level.toUpperCase()}] ${this.contextPrefix()}`;
 
       // Sanitize args before writing to file
       const sanitizedArgs = sanitizeLogArgs(...args);
@@ -319,15 +337,7 @@ class Logger {
     if (this.isDebugMode()) {
       // Write to log file
       this.writeToLogFile('debug', message, ...args);
-      // Build console prefix using agent/session/profile set at startup
-      const agentName = this.agentName || 'system';
-
-      let prefix = `[DEBUG] [${agentName}] [${this.sessionId}]`;
-
-      // Add profile if set
-      if (this.profileName) {
-        prefix += ` [${this.profileName}]`;
-      }
+      const prefix = `[DEBUG] ${this.contextPrefix()}`;
 
       this.consoleSink.error(chalk.dim(`${prefix} ${message}`), ...args);
     }

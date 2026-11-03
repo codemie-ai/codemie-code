@@ -19,9 +19,11 @@
  * and no absolute path leaves the hook process.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { evidenceCacheFor } from './evidence-index.js';
+import { probePromptHead, resolveForkSkills } from './fork-skill.js';
 import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
@@ -44,6 +46,20 @@ export interface SubagentFile {
    *  {@link readForkedSkillMarker}: that field is the Agent tool's optional addressing name,
    *  which any named agent can carry, forked skill or not). */
   skillName?: string;
+  /** Set when the subagent cannot yet be told from a skill fork; its usage must not be sent yet
+   *  (see `fork-skill.ts`). */
+  pending?: boolean;
+  /** Settled by an earlier pass (from the parse-state registry): usage scope is known and is not
+   *  resolved again; see `ForkCandidate.settled`. */
+  settled?: boolean;
+  /** The `promptId` recorded when the subagent settled ('' / absent: not in its file yet). */
+  promptId?: string;
+  /** The file head was fully read (see `PromptHead.done`): it is not probed again. */
+  headDone?: boolean;
+  /** Size of the file when its (incomplete) head was last read; the head is probed again once it changed. */
+  headSize?: number;
+  /** Only at `final`: left an agent for lack of any proof, so its scope is not a known one. */
+  unproven?: boolean;
 }
 
 interface SubagentMeta {
@@ -137,9 +153,13 @@ export function subagentFilePath(mainTranscriptPath: string, agentId: string): s
  * {@link readSubagentMeta} and its `.forked-skill.marker.json` via {@link readForkedSkillMarker}.
  *
  * Never throws: a missing subagents directory, an unreadable directory, or any other failure all
- * resolve to `[]`.
+ * resolve to `[]`. Names a skill only from the marker; see {@link findSubagentFiles}.
  */
-export async function findSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
+export async function discoverSubagentFiles(
+  mainTranscriptPath: string,
+  /** Agents whose sidecars need not be read (the caller supplies them as settled candidates). */
+  skipSidecars: ReadonlySet<string> = new Set()
+): Promise<SubagentFile[]> {
   try {
     const subagentsDir = subagentsDirFor(mainTranscriptPath);
 
@@ -150,6 +170,7 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
         .map(async (f): Promise<SubagentFile> => {
           const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '');
           const filePath = join(subagentsDir, f);
+          if (skipSidecars.has(agentId)) return { agentId, filePath };
           const [meta, marker] = await Promise.all([readSubagentMeta(filePath), readForkedSkillMarker(filePath)]);
           return { agentId, filePath, ...meta, ...marker };
         })
@@ -159,6 +180,121 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
   } catch {
     return [];
   }
+}
+
+/**
+ * {@link discoverSubagentFiles} plus the skill of each marker-less fork, resolved from the
+ * transcripts by exact ids (see `fork-skill.ts`). A subagent that cannot yet be told from a skill
+ * fork is flagged `pending` (never with `final`, which is the end of the session). Never throws.
+ *
+ * `extra` are candidates the caller already knows by path (the `SubagentStop` hook's own
+ * `agent_transcript_path`, or a path kept in the parse state for a deferred subagent): directory
+ * discovery cannot see a file outside the standard directory or one not created yet. An extra
+ * replaces the discovered entry with the same `agentId` (its path is the actual one) and is merged
+ * with the sidecars read at that path.
+ */
+export async function findSubagentFiles(
+  mainTranscriptPath: string,
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
+): Promise<SubagentFile[]> {
+  return (await resolveSubagentSnapshot(mainTranscriptPath, options)).files;
+}
+
+/**
+ * A settled subagent keeps its known scope, but its correlation metadata (the `promptId` the slash
+ * confirmation needs) may not have been in its file yet. Probe the head again only while it was
+ * incomplete and the file has changed since; a head that is complete is never read again.
+ */
+export async function refreshHead(file: SubagentFile): Promise<void> {
+  if (file.promptId || file.headDone) return;
+  try {
+    if ((await stat(file.filePath)).size === file.headSize) return;
+  } catch {
+    return; // missing file: nothing new
+  }
+  const head = await probePromptHead(file.filePath);
+  file.promptId = head.promptId;
+  file.headDone = head.done;
+  file.headSize = head.size;
+}
+
+/** One resolution of the subagent set: the files and the prompts whose plain `/name` started a fork. */
+export interface SubagentSnapshot {
+  files: SubagentFile[];
+  slashPromptIds: Set<string>;
+}
+
+/**
+ * {@link findSubagentFiles} that also returns the confirmed slash-fork prompts, so the session
+ * summary (`commands`) and the usage events are derived from one and the same resolution of the same
+ * candidate set. `raw`, when given, is the main transcript text already read by the caller.
+ */
+export async function resolveSubagentSnapshot(
+  mainTranscriptPath: string,
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
+): Promise<SubagentSnapshot> {
+  const files = await discoverSubagentFiles(
+    mainTranscriptPath,
+    new Set((options.extra ?? []).filter((e) => e.settled).map((e) => e.agentId))
+  );
+  for (const extra of options.extra ?? []) {
+    // A settled candidate carries everything needed: no sidecar reads.
+    const [meta, marker] = extra.settled
+      ? [{}, {}]
+      : await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
+    const known = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined));
+    const merged = { ...meta, ...marker, ...known } as SubagentFile;
+    const at = files.findIndex((f) => f.agentId === extra.agentId);
+    if (at >= 0) files[at] = merged;
+    else files.push(merged);
+    if (merged.settled) await refreshHead(merged);
+  }
+  const evidence = evidenceCacheFor(mainTranscriptPath);
+  const { skillByAgentId, pendingAgentIds, unprovenAgentIds, slashPromptIds } = await resolveForkSkills(
+    mainTranscriptPath,
+    files,
+    options.raw,
+    { ...options, evidence }
+  );
+  await evidence.save();
+  for (const file of files) {
+    const skillName = skillByAgentId.get(file.agentId);
+    if (skillName) {
+      file.skillName = skillName;
+      file.description ||= `/${skillName}`;
+    } else if (pendingAgentIds.has(file.agentId)) {
+      file.pending = true;
+    } else if (unprovenAgentIds.has(file.agentId)) {
+      file.unproven = true;
+    }
+  }
+  return { files, slashPromptIds };
+}
+
+/** Whether directory discovery ({@link discoverSubagentFiles}) finds this subagent file by itself. */
+export function isDiscoverableSubagentFile(mainTranscriptPath: string, file: SubagentFile): boolean {
+  // A path that merely spells the same file differently reads as "not discoverable": it is then
+  // kept registered, the safe direction.
+  return resolve(file.filePath) === resolve(subagentFilePath(mainTranscriptPath, file.agentId));
+}
+
+/**
+ * What one subagent is, from its marker or the transcripts ({@link findSubagentFiles}):
+ * `skillName` of a skill fork (`''` for an ordinary agent) and whether that is still `pending`.
+ * A subagent found neither by discovery nor as `candidate` is `pending`.
+ */
+export async function resolveSubagentSkill(
+  mainTranscriptPath: string,
+  agentId: string,
+  candidate?: SubagentFile
+): Promise<{ skillName: string; pending: boolean }> {
+  const file = (await findSubagentFiles(mainTranscriptPath, { extra: candidate ? [candidate] : [] })).find(
+    (f) => f.agentId === agentId
+  );
+  // A subagent that cannot be found is unproven, not a settled ordinary agent: its scope would be
+  // permanent. (A caller that knows the file passes it as `candidate`.)
+  if (!file) return { skillName: '', pending: true };
+  return { skillName: file.skillName ?? '', pending: file.pending === true };
 }
 
 /** One row of the contract's `usage[]`: `agent.usage.request`'s own fields, plus `api_calls`. */

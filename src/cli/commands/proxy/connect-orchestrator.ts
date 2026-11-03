@@ -55,7 +55,7 @@ import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
-import { isProcessAlive } from '@/utils/processes.js';
+import { isProcessAliveStrict } from '@/utils/processes.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { isNonInteractiveEnvironment } from '@/utils/interactive.js';
@@ -450,7 +450,7 @@ async function ensureDaemon(
 export async function ensureOtlpProxy(agentName: string): Promise<void> {
   const state = await readState();
 
-  if (state && isProcessAlive(state.pid)) {
+  if (state && isProcessAliveStrict(state.pid)) {
     return;
   }
 

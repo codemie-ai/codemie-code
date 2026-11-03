@@ -1199,3 +1199,28 @@ describe('enrichCosts — routing classifier cost', () => {
     expect(c.costUSD).toBeCloseTo(3, 6);
   });
 });
+
+describe('realDeps.loadAgentSessionFile', () => {
+  it('resolves the transcript of a completed /clear generation completed_<uuid>-<gen>.json', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'cost-enricher-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const id = 'eddd66b2-0e73-4167-841c-9263207870ae-gen-alpha';
+      writeFileSync(
+        join(home, 'sessions', `completed_${id}.json`),
+        JSON.stringify({ correlation: { agentSessionFile: '/transcripts/gen-alpha.jsonl' } })
+      );
+
+      expect(await realDeps.loadAgentSessionFile({ sessionId: id } as never)).toBe('/transcripts/gen-alpha.jsonl');
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

@@ -109,6 +109,17 @@ describe('copilot-cli launch args (--session-id pinning)', () => {
   );
 });
 
+describe('copilot-cli SessionStart', () => {
+  it('hands processEvent the wrapper owner from the env, so the record stores it', async () => {
+    await lifecycle.onSessionStart!('sid-owner', { CODEMIE_WRAPPER_PID: '4242', CODEMIE_WRAPPER_STARTED_AT: '1790000000000' });
+
+    expect(processEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'SessionStart' }),
+      expect.objectContaining({ ownerPid: 4242, ownerStartedAt: 1_790_000_000_000 }),
+    );
+  });
+});
+
 describe('copilot-cli SessionEnd correlation', () => {
   it('gives two concurrent managed sessions in one cwd their own native session, ignoring a newer standalone one', async () => {
     const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

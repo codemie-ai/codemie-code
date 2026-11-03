@@ -43,6 +43,7 @@ vi.mock('../../../utils/logger.js', () => ({
 vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+  wrapperOwnerFromEnv: vi.fn(() => ({})),
 }));
 
 // Mock processEvent from hook.js
@@ -252,6 +253,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
       await onSessionEnd(0, env);
 
+      expect(mockProcessEvent).toHaveBeenCalled();
       expect(mockCleanupReasoningSanitizer).toHaveBeenCalled();
     });
 

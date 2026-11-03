@@ -1,4 +1,5 @@
 import { logger } from '../../../utils/logger.js';
+import { processStartedAt } from '../../../utils/processes.js';
 
 /**
  * Ensure session metadata file exists for SessionSyncer.
@@ -45,24 +46,31 @@ export async function ensureSessionFile(
       }
     }
 
-    // Estimate startTime from grace period (session ended ~2 seconds ago during grace period)
-    // This prevents negative session durations in metrics aggregation
-    const estimatedStartTime = Date.now() - 2000;
+    const codemieUrl = env.CODEMIE_URL;
+    const clientType = env.CODEMIE_CLIENT_TYPE;
+    const model = env.CODEMIE_MODEL;
 
+    // A live record owned by this process (it runs in the wrapper): it ends by the agent's
+    // onSessionEnd, or — if the wrapper dies first — as a stranded record of a later start.
     const session = {
       sessionId,
       agentName,
       provider,
       ...(project && { project }),
-      startTime: estimatedStartTime,
+      ownerPid: process.pid,
+      ownerStartedAt: processStartedAt(),
+      ...(codemieUrl && { codemieUrl }),
+      ...(clientType && { clientType }),
+      ...(model && { model }),
+      startTime: Date.now(),
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
-      status: 'completed' as const,
+      status: 'active' as const,
       activeDurationMs: 0,
       correlation: {
         status: 'matched' as const,
-        agentSessionId: 'unknown',
+        agentSessionId: sessionId,
         retryCount: 0
       }
     };
