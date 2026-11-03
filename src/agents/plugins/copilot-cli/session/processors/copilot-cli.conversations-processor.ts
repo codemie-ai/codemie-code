@@ -8,7 +8,9 @@
  * `_conversation.jsonl` spool for the shared sync pipeline.
  */
 
-import { appendFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
+
 import { dirname } from 'path';
 import type {
   SessionProcessor,
@@ -20,7 +22,7 @@ import { getSessionConversationPath } from '../../../../core/session/session-con
 import { CODEMIE_ASSISTANT_ID, CONVERSATION_PROCESSOR_NAME } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
-import { readJSONL } from '../../../../../providers/plugins/sso/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '../../../../../utils/logger.js';
 
 interface CopilotTurnRecord {
@@ -313,7 +315,7 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
     const conversationsPath = getSessionConversationPath(session.sessionId);
     await mkdir(dirname(conversationsPath), { recursive: true });
 
-    const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+    const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, `[${this.name}]`);
 
     const { SessionStore } = await import('../../../../core/session/SessionStore.js');
     const sessionStore = new SessionStore();
@@ -359,7 +361,11 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
         status: CONVERSATION_SYNC_STATUS.PENDING,
       };
 
-      await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
+      const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+      if (!appended) {
+        logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Turn ${sentinel} write dropped, will retry on the next pass`);
+        break;
+      }
 
       payloadsWritten += 1;
       recordsProcessed += history.length;

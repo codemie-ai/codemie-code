@@ -9,8 +9,8 @@
  * it when the correlated transcript carries cost). Writing is append-only and idempotent:
  * turn deltas have deterministic ids, and tool/file/skill activity is written as the
  * difference between the transcript totals and what earlier runs already wrote, so a retry
- * neither duplicates nor drops activity. After SessionEnd renames the metrics file to
- * `completed_<id>_metrics.jsonl`, that file is the one read and appended to.
+ * neither duplicates nor drops activity. A write that finds the live metrics file already renamed to
+ * `completed_<id>_metrics.jsonl` is dropped, never appended to the completed file.
  */
 
 import type {
@@ -20,6 +20,7 @@ import type {
 } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { logger } from '../../../../../utils/logger.js';
 
 interface TurnRecord {
@@ -42,11 +43,7 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import(
         '../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js'
       );
-      let writer = new MetricsWriter(session.sessionId);
-      const completed = new MetricsWriter(`completed_${session.sessionId}`);
-      if (!writer.exists() && completed.exists()) {
-        writer = completed;
-      }
+      const writer = new MetricsWriter(session.sessionId);
       const existing = await writer.readAll();
       const written = new Set(existing.map((d) => d.recordId));
 
@@ -95,12 +92,21 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
         deltas.push(build(key, session.metadata?.createdAt ?? Date.now(), undefined, undefined, true));
       }
 
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
+      let deltasWritten = 0;
+      if (deltas.length > 0) {
+        // ponytail: copilot's supplement delta time is session-level, not per-event, so the run window's lower
+        // bound cannot apply here yet; restore it once the supplement delta carries lastRecordAt (13d3b).
+        const window = await resolveRunWindow(session.sessionId, context);
+        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        if (appended.gone) {
+          logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+          return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+        }
+        deltasWritten = appended.written;
       }
 
-      logger.debug(`[${this.name}] Wrote ${deltas.length} deltas for ${session.sessionId}`);
-      return { success: true, metadata: { recordsProcessed: deltas.length } };
+      logger.debug(`[${this.name}] Wrote ${deltasWritten} of ${deltas.length} deltas for ${session.sessionId}`);
+      return { success: true, metadata: { recordsProcessed: deltasWritten, deltasWritten } };
     } catch (error) {
       logger.error(`[${this.name}] Processing failed:`, error);
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
