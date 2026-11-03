@@ -40,6 +40,13 @@ vi.mock('../../daemon-manager.js', () => ({
   readState: vi.fn(),
 }));
 
+// The host's real codemie path must not leak into the written commands.
+const resolveCodemieBinaryMock = vi.hoisted(() => vi.fn(async () => 'codemie'));
+vi.mock('@/utils/hook-command.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/hook-command.js')>()),
+  resolveCodemieBinary: resolveCodemieBinaryMock,
+}));
+
 vi.mock('@/utils/project-root.js', () => ({
   resolveProjectRoot: vi.fn(),
 }));
@@ -130,6 +137,18 @@ describe('claude-code-otlp connector', () => {
 
   describe('writeClaudeCodeOtlpConfig', () => {
     describe('happy paths', () => {
+      it('writes codemie hooks with the resolved absolute path, not a bare codemie (EPMCDME-15907)', async () => {
+        resolveCodemieBinaryMock.mockResolvedValueOnce('C:/bin/codemie.cmd');
+
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        const commands = Object.values(settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
+          .flatMap((groups) => groups.flatMap((g) => g.hooks.map((h) => h.command)));
+        expect(commands.length).toBeGreaterThan(0);
+        for (const c of commands) expect(c).toContain('C:/bin/codemie.cmd hook --agent claude-code-otlp');
+      });
+
       it('creates settings.json and defaults a fresh connection to Global', async () => {
         const result = await writeClaudeCodeOtlpConfig();
 
