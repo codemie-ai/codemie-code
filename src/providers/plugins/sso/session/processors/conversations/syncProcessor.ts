@@ -85,7 +85,8 @@ export function createSyncProcessor(): SessionProcessor {
         clientType: context.clientType,
         dryRun: context.dryRun,
         deadlineMs: context.syncDeadlineMs,
-        abortSignal: context.abortSignal
+        abortSignal: context.abortSignal,
+        credentialsSuperseded: context.credentialsSuperseded
       });
 
       // Send each pending payload to API

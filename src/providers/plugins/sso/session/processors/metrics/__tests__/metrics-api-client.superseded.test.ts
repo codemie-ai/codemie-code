@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { MetricsSender } from '../metrics-api-client.js';
-import { logger } from '../../../../../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 
 const SENT_COOKIES = 'session=old-cookie-value';
 
@@ -261,8 +261,10 @@ describe('MetricsSender with a superseded-credentials check', () => {
       expect(credentialsSuperseded.mock.calls.map(([sent]) => sent)).toEqual(['session=first', 'session=second']);
     });
 
-    it('keeps writing the marker, once per failure, when the cached answer is "not superseded"', async () => {
-      const credentialsSuperseded = vi.fn(async () => false);
+    it('asks again after a "not superseded" answer, so a sign-in that finished meanwhile is noticed', async () => {
+      const credentialsSuperseded = vi.fn<(sent: string) => Promise<boolean>>()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
       const sender = senderWith(credentialsSuperseded);
 
       await expect(send(sender)).rejects.toThrow(/401/);
@@ -270,18 +272,52 @@ describe('MetricsSender with a superseded-credentials check', () => {
       rmSync(markerPath);
       await expect(send(sender)).rejects.toThrow(/401/);
 
-      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
-      expect(existsSync(markerPath)).toBe(true);
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(2);
+      expect(existsSync(markerPath)).toBe(false);
     });
 
-    it('caches a throwing check as "not superseded"', async () => {
+    it('does not cache a throwing check', async () => {
       const credentialsSuperseded = vi.fn(async (): Promise<boolean> => { throw new Error('store unreadable'); });
       const sender = senderWith(credentialsSuperseded);
 
       await expect(send(sender)).rejects.toThrow(/401/);
       await expect(send(sender)).rejects.toThrow(/401/);
 
-      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(2);
+      expect(existsSync(markerPath)).toBe(true);
+    });
+  });
+
+  describe('when no credentials were sent', () => {
+    beforeEach(() => {
+      fetchMock.mockImplementation(async () => unauthorized());
+    });
+
+    it('writes no marker for a 401 without cookies or api key', async () => {
+      const credentialsSuperseded = vi.fn(async () => false);
+      const sender = new MetricsSender({
+        baseUrl: 'http://api.test', cookies: '', retryAttempts: 0, credentialsSuperseded
+      });
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).not.toHaveBeenCalled();
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('still writes the marker when cookies were sent', async () => {
+      const sender = new MetricsSender({ baseUrl: 'http://api.test', cookies: SENT_COOKIES, retryAttempts: 0 });
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(existsSync(markerPath)).toBe(true);
+    });
+
+    it('still writes the marker when an api key was sent', async () => {
+      const sender = new MetricsSender({ baseUrl: 'http://api.test', apiKey: 'dev-user', retryAttempts: 0 });
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+
       expect(existsSync(markerPath)).toBe(true);
     });
   });

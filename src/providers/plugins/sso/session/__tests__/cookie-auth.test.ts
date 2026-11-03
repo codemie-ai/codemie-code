@@ -7,7 +7,7 @@ const mockLoggerDebug = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: mockLoggerDebug },
 }));
-vi.mock('../../../../core/codemie-auth-helpers.js', () => ({
+vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
   getStoredAnalyticsCredentials: mockGetStoredAnalyticsCredentials,
 }));
 

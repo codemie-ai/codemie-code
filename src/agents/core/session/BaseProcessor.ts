@@ -7,7 +7,7 @@
  */
 
 import type { ParsedSession } from './BaseSessionAdapter.js';
-import type { CredentialsSupersededCheck } from '../../../providers/plugins/sso/session/cookie-auth.js';
+import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 /**
  * Processing context passed to all processors.

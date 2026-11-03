@@ -20,7 +20,7 @@ import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
 import { logger } from '../../../utils/logger.js';
-import { readAnalyticsCookieAuth } from '../../../providers/plugins/sso/session/cookie-auth.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 export interface StartOpenCodeIncrementalSyncOptions {
   /** CodeMie session id (file naming key). */

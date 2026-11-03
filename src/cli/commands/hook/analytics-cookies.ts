@@ -20,7 +20,7 @@ export async function loadAnalyticsCookies(
     return { cookies: '' };
   }
   try {
-    const { readAnalyticsCookieAuth } = await import('../../../providers/plugins/sso/session/cookie-auth.js');
+    const { readAnalyticsCookieAuth } = await import('@/providers/plugins/sso/session/cookie-auth.js');
     return await readAnalyticsCookieAuth(ssoUrl, config?.env, {
       provider: getConfigValue('CODEMIE_PROVIDER', config),
     });

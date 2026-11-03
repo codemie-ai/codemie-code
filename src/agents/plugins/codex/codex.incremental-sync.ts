@@ -22,7 +22,7 @@ import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { CodexSessionAdapter } from './codex.session.js';
 import { recordRolloutCorrelation } from './codex.correlation.js';
 import { logger } from '../../../utils/logger.js';
-import { readAnalyticsCookieAuth } from '../../../providers/plugins/sso/session/cookie-auth.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 export interface StartCodexIncrementalSyncOptions {
   /** CodeMie session id (file naming key). */

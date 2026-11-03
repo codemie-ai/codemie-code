@@ -188,7 +188,7 @@ export async function readAnalyticsCookieAuth(
   overrides: AnalyticsOverrides = {}
 ): Promise<{ cookies: string; credentialsSuperseded: CredentialsSupersededCheck }> {
   return readCookieAuth(async () => {
-    const { getStoredAnalyticsCredentials } = await import('../../../core/codemie-auth-helpers.js');
+    const { getStoredAnalyticsCredentials } = await import('@/providers/core/codemie-auth-helpers.js');
     const found = await getStoredAnalyticsCredentials(ssoUrl, env, overrides);
     return found?.credentials ?? null;
   });
