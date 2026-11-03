@@ -62,9 +62,15 @@ function storeYields(next: Promise<StoreResult>): void {
   vi.mocked(getStoredPlatformCredentials).mockImplementationOnce(() => next as never);
 }
 
+// refresh() reads the marker and lock files before it reaches the store, so the wait is by wall
+// clock: a tick count runs out first on a loaded machine. Some tests fake setTimeout, so the
+// real one is captured before any test installs fake timers.
+const realSetTimeout = globalThis.setTimeout;
+
 async function untilStoreCalls(count: number): Promise<void> {
-  for (let i = 0; i < 200 && vi.mocked(getStoredPlatformCredentials).mock.calls.length < count; i++) {
-    await new Promise((r) => setImmediate(r));
+  const deadline = performance.now() + 5_000;
+  while (vi.mocked(getStoredPlatformCredentials).mock.calls.length < count && performance.now() < deadline) {
+    await new Promise((r) => realSetTimeout(r, 1));
   }
   expect(vi.mocked(getStoredPlatformCredentials)).toHaveBeenCalledTimes(count);
 }
