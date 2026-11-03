@@ -260,6 +260,39 @@ The JSON output deliberately ends in `.report.json` rather than `.json` so a dir
 
 All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta.userEmail` and `branch` are kept; branch names can still hint at a ticket or topic. It affects only the exported file — terminal output and local session data are untouched.
 
+**Ticket ids per session.** Exported reports (JSON, and the data embedded in the HTML dashboard) carry an optional `tickets` list on each session record: the work-item ids (Jira, Rally, …) the session is attributable to, with how often each source saw them. Only ids and counts are written — never prompt text or tool input text. The field is absent when nothing was found, so existing consumers are unaffected.
+
+```json
+"tickets": [{ "id": "CAKE-807", "sources": { "tool": 3, "branch": 1, "prompt": 2 } }],
+"ticketsTruncated": true
+```
+
+| Source | Read from | Counted as |
+|---|---|---|
+| `tool` | Tool calls matching the tool patterns, in the session's native log and its subagent transcripts; only key-like input fields — `key`, `issue`, `parent`, `jql`, `inwardIssue`, `outwardIssue`, and any field named `issue…`, `epic…`, `parent…`, `inward…` or `outward…` ending in `key(s)` or `id(s)`, in any case (`issueIdOrKey`, `issueKeys`, `epicKey`, `parentKey`, `issue_key`, `issueId`, …; a numeric issue id never matches), but not `projectKey` — as a string or an array of strings, including inside JSON encoded in a structural field (`additional_fields`, `fields`, `update`); JSON pasted into free text (`description`, `comment`) is never read | matching calls |
+| `branch` | Every branch the session touched, except bot dependency branches (`dependabot/…`, `renovate/…`); a match whose number runs on into a letter or into `.` plus a letter or digit (`lodash-4.17`, `node-20.x`, `claude/fix-login-bug-011CUabc`) is ignored | distinct branches |
+| `prompt` | Every user prompt (CodeMie-recorded turns and the native log); injected rows (skills, attachments, compaction summaries, sidechains) and slash-command plumbing or local command output are not prompts | distinct prompts |
+
+- There is no ranking: reading an issue is not working on it, so the consumer decides how to weigh sources.
+- **Only ids confirmed by a tool call are reported.** A tool call (an agent passing a key to the issue tracker) is the proof that a project key is real. A `branch` or `prompt` id is kept only when its project key (`NUTLA` in `NUTLA-996`) also appears in a tool-call id somewhere in the report — whether or not `tool` is among the requested sources. That drops library versions in branch names (`chore/react-17-upgrade` → `REACT-17`), models and encodings in prompts (`GPT-4`, `UTF-8`, `SHA-256`), and anything else whose key the tracker never saw.
+- The check is report-wide rather than per session, because a session often works on its ticket's branch without calling the tracker itself. It therefore depends on the date range and filters, and **a report with no matching tool calls at all reports no branch or prompt ids** (for example a team without a Jira MCP server; widen `--ticket-tools` if your tracker tools are named differently).
+- Prompt ids are also matched case-sensitively (an upper-case project key is required), and, like branch ids, never when the number runs on into a letter or into `.` plus a letter or digit (`ABC-7.1`, `ABC-6x`, `node-20.x`); a full stop ending a sentence (`Fix ABC-22.`) is fine. A prompt seen both in CodeMie's records and in the native log counts once.
+- Resumed and forked logs copy earlier rows. A replayed tool call, prompt or row branch is attributed once — to the session that comes first by start time (ties keep input order), the same rule cost uses — and anything after a session's own end is ignored. Codex rows have no id, so a Codex prompt is recognised as a replay by its original timestamp and text.
+- Inside tool inputs, `jql` is matched case-sensitively like prompts, and the values of text searches (`summary ~ "UTF-8 crash"`) are never read, except the value of an issue-key clause — `key`, `issue`, `issuekey` or `parent` with `=`, `!=`, `in (…)` or `not in (…)` — where any case is accepted (`key = epmcdme-7`). Bare key fields accept any case. A lower-case key elsewhere in a query (for example inside a function call) is not read.
+- Tool calls are read for Claude-shaped logs and Codex. A Codex `server__tool` name is also matched in its `mcp__server__tool` form, so the default `mcp__*` patterns apply whichever form a Codex version logs. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
+- `analytics otel` does not compute tickets (its cost comes from the events, not from native logs); passing the flags below to it is an error.
+- Tool-input values follow the same version and suffix rule as branches and prompts (`lodash-4.17`, `ABC-6x` are not ids).
+- Not read: Jira custom fields by id (the Epic Link field `customfield_10014` differs between Jira instances), and a generic `id` input field (usually a numeric id). Ids are kept as written, so `ABC-007` and `ABC-7` are two ids. JQL custom-field references (`cf[10014] = ABC-1`) and issue keys inside a function's JQL string (`subtasksOf("key = ABC-3")`) may be read as positive references. A tool call with neither an id nor a timestamp cannot be recognised as a replay. Project keys are ASCII letters and digits: a non-ASCII key is cut (`ÄBC-1` reads as `BC-1`).
+- At most 20 ids per tool call and 20 per session; the ids with the most evidence are kept. A session whose list was cut carries `"ticketsTruncated": true` (absent otherwise).
+- JQL: conditions on fields that do not hold issue keys (`fixVersion = "APP-2"`, `labels in (…)`, `sprint = …`) and text searches are never read. Quoted strings are opaque: words inside `status = "To Do"` or `summary = "key = ABC-9"` are never read as JQL. Key conditions are `key` and its alias `id`, `issue`, `issuekey`, `parent`, `parentEpic` and `"Epic Link"`; the values of positive ones (`=`, `in`) and keys in issue functions (`linkedIssues(abc-7)`, `childIssuesOf(…)`) are read in any case. Negative conditions (`key != ABC-1`, `key not in (…)`, `issue not in linkedIssues(…)`, `NOT key = …`, `NOT (…)` including nested groups) name excluded issues and are never read, nor are range comparisons (`key >= ABC-1`), history-predicate values (`status changed to "IN-1"`) or dotted fields ending in `id` (`project.id`). Known limitation: an upper-case key-shaped value of a custom field not written as `field = value` may still be read.
+
+Flags (validated on every run, used only when a report is exported):
+
+- `--ticket-sources <list>` — any of `tool,branch,prompt`, or `none`. Default: all three; **with `--redact`, `tool,branch`**, so a redacted report contains nothing derived from prompts unless `prompt` is asked for explicitly.
+- `--ticket-tools <globs>` — comma-separated tool-name globs, `*` wildcard, case-insensitive. Default: `analytics.ticketTools` from your CodeMie config (`~/.codemie/codemie-cli.config.json`, e.g. `"analytics": { "ticketTools": ["mcp__*rally*"] }`), else `mcp__*jira*,mcp__*atlassian*__*issue*`. Only the global config is read; a project-level `.codemie/` config does not set it. The default covers `mcp__claude_ai_Atlassian__getJiraIssue`, `mcp__claude_ai_Atlassian__createIssueLink`, `mcp__atlassian__jira_get_issue` and similar.
+
+Ticket ids still reveal which project keys and work items a developer touched, so a report shared off the machine needs access control on the receiving side even when `--redact` is set.
+
 **Report metadata and your email.** Reports embed the reporting user's email plus the period covered. The address is read from your CodeMie config; if it is missing and you're on an interactive terminal, report generation warns and prompts for it once, then saves it for future runs. Declining the prompt cancels report generation. The `<email-slug>` segment is dropped from the filenames when no email is available.
 
 ---
@@ -342,6 +375,8 @@ Export flags:
   --open                     Open the generated HTML report in the default browser
                               (implies --export html when --export is not given)
   --redact                   Omit prompt text and absolute paths from the exported report
+  --ticket-sources <list>    Ticket id sources: tool,branch,prompt, or none (default all; tool,branch with --redact)
+  --ticket-tools <globs>     Tool-name globs whose inputs carry ticket ids (default mcp__*jira*,mcp__*atlassian*__*issue*)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
