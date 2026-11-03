@@ -18,10 +18,12 @@ import {
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
   removeClaudeCodeOtlpConfig,
+} from '../claude-code-otlp.js';
+import {
   checkClaudeCodeOtlpEndpoint,
   readConfiguredOtlpPort,
   refreshClaudeCodeOtlpEndpoint,
-} from '../claude-code-otlp.js';
+} from '../claude-code-otlp-endpoint.js';
 import { readState } from '../../daemon-manager.js';
 import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';

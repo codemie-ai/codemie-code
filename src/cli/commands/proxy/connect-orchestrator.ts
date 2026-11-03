@@ -54,7 +54,7 @@ import {
   runClaudeCodeOtlp,
   type ClaudeCodeOtlpDisplay,
 } from './claude-code-otlp-flow.js';
-import { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp.js';
+import { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';

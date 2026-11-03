@@ -63,6 +63,8 @@ vi.mock('../connectors/claude-code-otlp.js', () => ({
     envVars: 9,
     allowlist: ['/repo/project'],
   }),
+}));
+vi.mock('../connectors/claude-code-otlp-endpoint.js', () => ({
   readConfiguredOtlpPort: vi.fn().mockResolvedValue(null),
   refreshClaudeCodeOtlpEndpoint: vi.fn().mockResolvedValue(false),
 }));
@@ -1063,7 +1065,7 @@ describe('ensureOtlpProxy', () => {
 
   it('respawns on the port the Claude settings point at and re-points them at the new daemon', async () => {
     const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
-    const { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp.js');
+    const { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
     // Stale state on P1, settings on P1, 4001 busy: the daemon falls back to P2.
     vi.mocked(readState).mockResolvedValue(daemonState({ pid: 999999, port: 62380 }) as Awaited<ReturnType<typeof readState>>);
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -1095,7 +1097,7 @@ describe('ensureOtlpProxy', () => {
 
   it('re-points the settings at an already-running daemon without spawning', async () => {
     const { readState, spawnDaemon } = await import('../daemon-manager.js');
-    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp.js');
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
     const running = daemonState({ port: 60005, url: 'http://127.0.0.1:60005' });
     vi.mocked(readState).mockResolvedValue(running as Awaited<ReturnType<typeof readState>>);
 

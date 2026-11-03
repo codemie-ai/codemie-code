@@ -9,7 +9,7 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
-import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp.js';
+import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
