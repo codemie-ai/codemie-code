@@ -266,14 +266,6 @@ describe('ensureCodeMieSsoAuth', () => {
 
       expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
     });
-
-    it('treats a failing sign-in stamp read as no stamp and blocks with a sign-in', async () => {
-      vi.mocked(getAnalyticsAuthStatus).mockResolvedValue(marker(SIGNED_IN_AT - 1));
-      vi.mocked(getLastSignInAt).mockRejectedValue(new Error('boom'));
-
-      expect(await ensureCodeMieSsoAuth(configured)).toMatchObject({ ok: false, loginOutcome: 'started' });
-      expect(clearAnalyticsAuthStatus).not.toHaveBeenCalled();
-    });
   });
 
   describe('profile-first URL resolution', () => {

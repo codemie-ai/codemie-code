@@ -26,7 +26,7 @@ import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getAnalyticsAuthStatus } from '../../../../../utils/analytics-auth-status.js';
 import { getLastSignInAt } from '../../sso.detached-login.js';
-import { readWithDeadline } from '../../session/cookie-auth.js';
+import { readWithDeadline, PROXY_STORE_READ_DEADLINE_MS } from '../../session/cookie-auth.js';
 
 /** Minimum time between stored-credential re-reads — see the class doc comment for why a flat
  * time window rather than gating on the credential's own `expiresAt`. */
@@ -42,7 +42,7 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   private current: T;
   private lastRefreshedAt = 0;
   private sawAuthInvalid = false;
-  /** Last lock `succeededAt` a successful read was made for; a different non-null value means a newer sign-in. */
+  /** Last lock `succeededAt` handled (read for, or already in the initial snapshot); a different non-null value means a newer sign-in. */
   private lastActedStamp: number | null = null;
   /** Start time of the latest read that came back without usable credentials. */
   private lastFailedReadAt = Number.NEGATIVE_INFINITY;
@@ -55,10 +55,12 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   /** A read started by `refreshNow()`; only other `refreshNow()` calls join it. */
   private refreshNowRead: Promise<T | null> | null = null;
   private readonly readStore: () => Promise<T | null>;
+  /** The initial snapshot already reflects any sign-in that finished before this time. */
+  private readonly createdAt = Date.now();
 
   constructor(initialCredentials: T, private readonly params: CredentialRefreshParams) {
     this.current = initialCredentials;
-    this.readStore = readWithDeadline(() => this.readStoredCredentials());
+    this.readStore = readWithDeadline(() => this.readStoredCredentials(), PROXY_STORE_READ_DEADLINE_MS);
   }
 
   /** Last known-good credentials — the daemon-startup snapshot until the first successful refresh. */
@@ -86,7 +88,8 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    * - the sign-in lock's `succeededAt` stamp differs from the one last acted on: covers the
    *   detached sign-in, which can mark, sign in and clear the marker entirely between two calls.
    *   Compared by identity, not against `lastRefreshedAt`, so a stepped-back clock cannot turn
-   *   every call into a store read;
+   *   every call into a store read. A stamp from before this instance was created is already in
+   *   the initial snapshot, so the first one seen is only remembered;
    * - the shared analytics-auth-status marker was seen invalid and then cleared: covers sign-ins
    *   that clear the marker without stamping the lock (`codemie profile login`, the launch-time
    *   re-auth, an accepted metrics send).
@@ -108,6 +111,9 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
 
     // From here to publishing the pending read there is no await, so two calls can never both
     // start a bypass read or let one slip past the other.
+    if (stamp !== null && this.lastActedStamp === null && stamp <= this.createdAt) {
+      this.lastActedStamp = stamp;
+    }
     const markerEdge = this.consumeAuthRecoveryEdge(markerInvalid);
     const stampChanged =
       stamp !== null &&

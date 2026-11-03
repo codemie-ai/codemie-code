@@ -5,7 +5,7 @@
 
 import { logger } from '@/utils/logger.js';
 import { markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
-import type { CredentialsSupersededCheck } from './cookie-auth.js';
+import { logFailure, type CredentialsSupersededCheck } from './cookie-auth.js';
 
 /**
  * How long a "superseded" answer is reused. At most the credential refresher's re-read window, so a
@@ -43,7 +43,7 @@ async function askSuperseded(check: CredentialsSupersededCheck, sent: string): P
   try {
     return await check(sent);
   } catch (error) {
-    logger.debug('[analytics-auth-marker] Superseded-credentials check failed', error);
+    await logFailure('[analytics-auth-marker] Superseded-credentials check failed', error);
     return false;
   }
 }

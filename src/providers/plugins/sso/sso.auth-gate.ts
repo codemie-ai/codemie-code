@@ -62,15 +62,6 @@ export function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrl
   return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
 }
 
-async function readSignInStamp(source: PlatformUrlSource): Promise<number | null> {
-  try {
-    return await getLastSignInAt(source);
-  } catch (error) {
-    logger.debug('[sso-auth-gate] Failed to read the last sign-in time:', error);
-    return null;
-  }
-}
-
 function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): boolean {
   return signedInAt !== null && Number.isFinite(marker.detectedAt) && marker.detectedAt < signedInAt;
 }
@@ -87,14 +78,14 @@ async function dropMarkerOlderThanSignIn(
   source: PlatformUrlSource,
   candidateUrls: Array<string | undefined>
 ): Promise<AnalyticsAuthStatus | null> {
-  if (!isOlderThan(marker, await readSignInStamp(source))) {
+  if (!isOlderThan(marker, await getLastSignInAt(source))) {
     return marker;
   }
   const current = await getAnalyticsAuthStatus();
   if (!current || !markerAppliesToProfile(current, candidateUrls)) {
     return null;
   }
-  if (!isOlderThan(current, await readSignInStamp(source))) {
+  if (!isOlderThan(current, await getLastSignInAt(source))) {
     return current;
   }
   await clearAnalyticsAuthStatus();

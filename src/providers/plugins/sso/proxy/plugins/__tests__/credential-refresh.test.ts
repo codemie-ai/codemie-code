@@ -20,7 +20,7 @@ vi.mock('@/utils/logger.js', () => ({
 import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
 import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { releaseLoginLockOnSuccess } from '@/providers/plugins/sso/sso.detached-login.js';
-import { STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { STORE_READ_DEADLINE_MS, PROXY_STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { CredentialRefresher, CREDENTIAL_REFRESH_INTERVAL_MS } from '../credential-refresh.js';
 
 const URL_ = 'https://codemie.example.com';
@@ -307,6 +307,88 @@ describe('CredentialRefresher', () => {
     });
   });
 
+  describe('sign-ins that finished before the daemon started', () => {
+    async function settlesWhileStorePending(call: Promise<unknown>): Promise<boolean> {
+      let settled = false;
+      void call.then(() => {
+        settled = true;
+      });
+      await flush();
+      return settled;
+    }
+
+    it('a stamp older than the refresher is not treated as a new sign-in: a concurrent caller is not held for the read', async () => {
+      const t0 = Date.now();
+      await stampLock(t0 - 60_000);
+      const refresher = newRefresher(creds('init'));
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+
+      vi.setSystemTime(t0 + 1_000);
+      const leader = refresher.refresh();
+      await untilStoreCalls(1);
+
+      expect(await settlesWhileStorePending(refresher.refresh())).toBe(true);
+      slow.resolve({ credentials: creds('a'), url: URL_ });
+      expect(token(await leader)).toBe('a');
+    });
+
+    it('an older stamp stays remembered after a failed read: the next read is a plain throttled one, not a bypass', async () => {
+      const t0 = Date.now();
+      await stampLock(t0 - 60_000);
+      const refresher = newRefresher(creds('init'));
+      storeReturns(null);
+      await refresher.refresh();
+
+      vi.setSystemTime(t0 + CREDENTIAL_REFRESH_INTERVAL_MS + 1);
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+      const leader = refresher.refresh();
+      await untilStoreCalls(2);
+
+      expect(await settlesWhileStorePending(refresher.refresh())).toBe(true);
+      slow.resolve({ credentials: creds('a'), url: URL_ });
+      expect(token(await leader)).toBe('a');
+    });
+
+    it('a stamp newer than the refresher takes the bypass path', async () => {
+      const t0 = Date.now();
+      const refresher = newRefresher(creds('init'));
+
+      await stampLock(t0 + 500);
+      vi.setSystemTime(t0 + 1_000);
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+      const leader = refresher.refresh();
+      await untilStoreCalls(1);
+      const follower = refresher.refresh();
+      let followerSettled = false;
+      void follower.then(() => {
+        followerSettled = true;
+      });
+      await flush();
+      expect(followerSettled).toBe(false);
+
+      slow.resolve({ credentials: creds('new'), url: URL_ });
+      expect(token(await leader)).toBe('new');
+      expect(token(await follower)).toBe('new');
+    });
+
+    it('a stamp that changes after an older one was remembered takes the bypass path', async () => {
+      const t0 = Date.now();
+      await stampLock(t0 - 60_000);
+      storeReturns({ credentials: creds('a'), url: URL_ });
+      const refresher = newRefresher(creds('init'));
+      await refresher.refresh();
+
+      await stampLock(t0 + 500);
+      storeReturns({ credentials: creds('fresh'), url: URL_ });
+      vi.setSystemTime(t0 + 1_000);
+      expect(token(await refresher.refresh())).toBe('fresh');
+      expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('marker edge', () => {
     it('a failed read does not spend the marker edge: it is held for the window, then served as a bypass again', async () => {
       const t0 = Date.now();
@@ -447,7 +529,27 @@ describe('CredentialRefresher', () => {
       expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(3);
     });
 
-    it('returns null after the deadline on a never-answering store; the next call starts a fresh read at once', async () => {
+    it('waits longer than a one-shot process does for a slow store: a read slower than the short deadline still lands', async () => {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      expect(PROXY_STORE_READ_DEADLINE_MS).toBeGreaterThan(STORE_READ_DEADLINE_MS);
+      const refresher = newRefresher(creds('init'));
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+
+      let settled = false;
+      const read = refresher.refreshNow().then((value) => {
+        settled = true;
+        return value;
+      });
+      await untilStoreCalls(1);
+      await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS + 1_000);
+      expect(settled).toBe(false);
+
+      slow.resolve({ credentials: creds('late-but-in-time'), url: URL_ });
+      expect(token(await read)).toBe('late-but-in-time');
+    });
+
+    it('returns null after the proxy deadline on a never-answering store; the next call starts a fresh read at once', async () => {
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       const refresher = newRefresher(creds('init'));
       const hung = deferred<StoreResult>();
@@ -455,7 +557,7 @@ describe('CredentialRefresher', () => {
 
       const first = refresher.refreshNow();
       await untilStoreCalls(1);
-      await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS);
+      await vi.advanceTimersByTimeAsync(PROXY_STORE_READ_DEADLINE_MS);
       expect(await first).toBeNull();
       expect(token(refresher.get())).toBe('init');
 

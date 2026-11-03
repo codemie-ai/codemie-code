@@ -85,6 +85,21 @@ describe('markAuthInvalidUnlessSuperseded', () => {
       expect(mockMark).toHaveBeenCalledTimes(1);
     });
 
+    it('logs a failing check without the secret its error carries, and still writes the marker', async () => {
+      // Built from parts so the source holds no JWT-shaped literal for the secret scanner.
+      const jwt = ['eyJhbGciOiJIUzI1NiIsInR5cCI6', 'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFt', 'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV'].join('.');
+
+      await mark({ credentialsSuperseded: async () => { throw new Error(jwt); } });
+
+      const logged = mockLoggerDebug.mock.calls
+        .flat()
+        .map((arg) => (arg instanceof Error ? arg.message : JSON.stringify(arg)))
+        .join(' | ');
+      expect(logged).toMatch(/superseded-credentials check failed/i);
+      expect(logged).not.toContain(jwt);
+      expect(mockMark).toHaveBeenCalledTimes(1);
+    });
+
     it('does not let a synchronously throwing check escape', async () => {
       await mark({ credentialsSuperseded: () => { throw new Error('boom'); } });
 

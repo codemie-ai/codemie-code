@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile, access, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile, access, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,10 @@ vi.mock('@/utils/processes.js', () => ({
   spawnDetached: vi.fn(),
   isProcessAlive: vi.fn(),
 }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, stat: vi.fn(actual.stat) };
+});
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs')>()),
   existsSync: vi.fn(() => true),
@@ -21,7 +25,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { spawnDetached, isProcessAlive } from '@/utils/processes.js';
 import {
   startDetachedSsoLogin,
@@ -32,7 +36,9 @@ import {
   getLastSignInAt,
 } from '../sso.detached-login.js';
 
+const realStat = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).stat;
 const URL_ = 'https://codemie.example.com';
+const source = { provider: 'ai-run-sso', baseUrl: URL_ };
 const lockPath = (): string => join(tempDir, 'sso-login.lock');
 const writeLock = (lock: unknown): Promise<void> => writeFile(lockPath(), typeof lock === 'string' ? lock : JSON.stringify(lock));
 async function exists(path: string): Promise<boolean> {
@@ -191,6 +197,98 @@ describe('startDetachedSsoLogin', () => {
 
     expect([...results].sort()).toEqual(['in-progress', 'started']);
     expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('replacing a stale lock under contention', () => {
+  const OTHER_PID = 999;
+  const readLockFile = async (): Promise<Record<string, unknown>> => JSON.parse(await readFile(lockPath(), 'utf-8'));
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+    vi.clearAllMocks();
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(spawnDetached).mockReturnValue(4242);
+    // Pid 1 is the dead owner of the stale lock; every other pid is a live sign-in.
+    vi.mocked(isProcessAlive).mockImplementation((pid: number) => pid !== 1);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('lets exactly one of many parallel calls over one stale lock start a sign-in', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 31_000 });
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => startDetachedSsoLogin(URL_)));
+
+    expect(results.filter((outcome) => outcome === 'started')).toHaveLength(1);
+    expect(results.filter((outcome) => outcome === 'in-progress')).toHaveLength(7);
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets exactly one of many parallel calls over one corrupt, old lock start a sign-in', async () => {
+    await writeLock('not json');
+    const old = new Date(Date.now() - 10_000);
+    await utimes(lockPath(), old, old);
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => startDetachedSsoLogin(URL_)));
+
+    expect(results.filter((outcome) => outcome === 'started')).toHaveLength(1);
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not remove a lock that another process replaced after this call judged it stale', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 31_000 });
+    // The staleness check is the gap between reading the lock and removing it: another process
+    // wins the replacement there.
+    vi.mocked(isProcessAlive).mockImplementation((pid: number) => {
+      if (pid === 1) {
+        writeFileSync(lockPath(), JSON.stringify({ pid: OTHER_PID, startedAt: Date.now() }));
+        return false;
+      }
+      return true;
+    });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('in-progress');
+
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(await readLockFile()).toMatchObject({ pid: OTHER_PID });
+  });
+
+  it('does not remove a corrupt lock that was rewritten after this call judged it stale', async () => {
+    await writeLock('not json');
+    const old = new Date(Date.now() - 10_000);
+    await utimes(lockPath(), old, old);
+    // A corrupt lock has no process to ask about: the gap is the grace-period check of its mtime.
+    vi.mocked(stat).mockImplementationOnce(async (...args: Parameters<typeof stat>) => {
+      const before = await realStat(...args);
+      writeFileSync(lockPath(), JSON.stringify({ pid: OTHER_PID, startedAt: Date.now() }));
+      return before;
+    });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('in-progress');
+
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(await readLockFile()).toMatchObject({ pid: OTHER_PID });
+  });
+
+  it('still replaces the stale lock when nothing changed it in between', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+
+    expect(await readLockFile()).toMatchObject({ pid: 4242 });
+  });
+
+  it('does not wedge later calls after a call fails inside the lock decision', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 31_000 });
+    vi.mocked(isProcessAlive).mockImplementationOnce(() => {
+      throw new Error('process table unavailable');
+    });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('failed');
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
   });
 });
 
@@ -391,41 +489,47 @@ describe('getLastSignInAt', () => {
   it('returns the succeededAt of the lock', async () => {
     await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000 });
 
-    expect(await getLastSignInAt(URL_)).toBe(5_000);
+    expect(await getLastSignInAt(source)).toBe(5_000);
   });
 
   it('returns null when there is no lock', async () => {
-    expect(await getLastSignInAt(URL_)).toBeNull();
+    expect(await getLastSignInAt(source)).toBeNull();
   });
 
   it('returns null while an attempt that never followed a sign-in holds the lock', async () => {
     await writeLock({ pid: 1, startedAt: Date.now() });
 
-    expect(await getLastSignInAt(URL_)).toBeNull();
+    expect(await getLastSignInAt(source)).toBeNull();
   });
 
   it('returns null for a failed lock that never followed a sign-in', async () => {
     await writeLock({ pid: 1, startedAt: 1_000, failedAt: 2_000, error: 'boom' });
 
-    expect(await getLastSignInAt(URL_)).toBeNull();
+    expect(await getLastSignInAt(source)).toBeNull();
   });
 
   it('returns the carried-forward sign-in of a lock written over an earlier success', async () => {
     await writeLock({ pid: 1, startedAt: Date.now(), lastSucceededAt: 5_000 });
 
-    expect(await getLastSignInAt(URL_)).toBe(5_000);
+    expect(await getLastSignInAt(source)).toBe(5_000);
   });
 
   it('prefers the lock\'s own succeededAt over a carried-forward one', async () => {
     await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 9_000, lastSucceededAt: 5_000 });
 
-    expect(await getLastSignInAt(URL_)).toBe(9_000);
+    expect(await getLastSignInAt(source)).toBe(9_000);
   });
 
   it('returns null for a corrupt lock', async () => {
     await writeLock('{not json');
 
-    expect(await getLastSignInAt(URL_)).toBeNull();
+    expect(await getLastSignInAt(source)).toBeNull();
+  });
+
+  it('resolves to null instead of rejecting when the lock cannot be read at all', async () => {
+    await mkdir(lockPath());
+
+    await expect(getLastSignInAt(source)).resolves.toBeNull();
   });
 });
 
@@ -453,7 +557,7 @@ describe('last sign-in surviving a newer attempt', () => {
     const lock = await readLockFile();
     expect(lock.succeededAt).toBeUndefined();
     expect(lock.pid).toBe(4242);
-    expect(await getLastSignInAt(URL_)).toBe(succeededAt);
+    expect(await getLastSignInAt(source)).toBe(succeededAt);
   });
 
   it('keeps it across two consecutive attempts that replace each other', async () => {
@@ -464,7 +568,7 @@ describe('last sign-in surviving a newer attempt', () => {
 
     expect(await startDetachedSsoLogin(URL_)).toBe('started');
 
-    expect(await getLastSignInAt(URL_)).toBe(succeededAt);
+    expect(await getLastSignInAt(source)).toBe(succeededAt);
   });
 
   it('still reports an earlier success after the newer attempt failed', async () => {
@@ -476,7 +580,7 @@ describe('last sign-in surviving a newer attempt', () => {
     await releaseLoginLockOnFailure('Authentication cancelled by user');
 
     expect(await readLockFile()).toMatchObject({ failedAt: expect.any(Number) });
-    expect(await getLastSignInAt(URL_)).toBe(succeededAt);
+    expect(await getLastSignInAt(source)).toBe(succeededAt);
   });
 
   it('still reports an earlier success when the newer attempt could not even be spawned', async () => {
@@ -486,7 +590,7 @@ describe('last sign-in surviving a newer attempt', () => {
 
     expect(await startDetachedSsoLogin(URL_)).toBe('failed');
 
-    expect(await getLastSignInAt(URL_)).toBe(succeededAt);
+    expect(await getLastSignInAt(source)).toBe(succeededAt);
   });
 
   it('a leftover lock from a failed spawn neither blocks nor delays the next attempt', async () => {
@@ -510,14 +614,14 @@ describe('last sign-in surviving a newer attempt', () => {
     expect(lock.succeededAt).toBeTypeOf('number');
     expect(lock.succeededAt).toBeGreaterThan(earlier);
     expect(lock.lastSucceededAt).toBeUndefined();
-    expect(await getLastSignInAt(URL_)).toBe(lock.succeededAt);
+    expect(await getLastSignInAt(source)).toBe(lock.succeededAt);
   });
 
   it('parses a lock written by an older version (no carried field)', async () => {
     await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 31_000 });
 
     expect(await startDetachedSsoLogin(URL_)).toBe('started');
-    expect(await getLastSignInAt(URL_)).not.toBeNull();
+    expect(await getLastSignInAt(source)).not.toBeNull();
   });
 
   it('a carried-forward stamp does not trigger the post-success cooldown', async () => {

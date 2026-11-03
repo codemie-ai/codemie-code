@@ -101,7 +101,8 @@ function carriedFields(signIn: CompletedSignIn | undefined): Pick<LoginLock, 'la
  * Time of the last completed sign-in for the CodeMie URL `source` resolves to, which survives a
  * newer in-progress or failed attempt taking over the lock; null when none is known. The lock
  * holds one sign-in, so a sign-in recorded for another URL is not returned. A sign-in without a
- * recorded URL, or a source that resolves to no URL, always matches.
+ * recorded URL, or a source that resolves to no URL, always matches. Never throws: callers rely on
+ * an unreadable lock reading as no sign-in.
  */
 export async function getLastSignInAt(source: PlatformUrlSource): Promise<number | null> {
   try {
@@ -235,50 +236,115 @@ async function writeLockAtomically(lockPath: string, lock: LoginLock): Promise<v
   });
 }
 
-/** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
-async function acquireLock(lockPath: string, url: string): Promise<DetachedLoginOutcome | null> {
-  await sweepOrphanedTmpFiles(lockPath);
-  try {
-    if (await tryCreateLock(lockPath)) {
-      return null;
-    }
+/** What decides whether two reads of a lock are the same lock. */
+function sameLock(a: LoginLock | null, b: LoginLock | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.pid === b.pid && a.startedAt === b.startedAt && a.succeededAt === b.succeededAt && a.failedAt === b.failedAt;
+}
 
-    const existing = await readLock(lockPath);
-    const replacedSignIn = lastSignInOf(existing);
-    if (existing?.succeededAt !== undefined) {
-      // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
-      // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
-      // split, a succeeded sign-in whose process lingers past COOLDOWN_MS but still within
-      // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
-      // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
-      // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
-      // The cooldown damps repeated sign-ins for the URL that just signed in; a sign-in for another
-      // URL is not a repeat. A lock without a URL (older versions) damps every URL.
-      const sameUrl = existing.url === undefined || normalizeUrlForKey(existing.url) === normalizeUrlForKey(url);
-      if (sameUrl && Date.now() - existing.succeededAt < COOLDOWN_MS) {
-        return 'signed-in-recently';
-      }
-      // Cooldown elapsed, or the success was for another URL: fall through to the replace path below.
-    } else if (existing) {
-      const age = Date.now() - existing.startedAt;
-      if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
-        return 'in-progress';
-      }
-      if (age < COOLDOWN_MS) {
-        return 'cooldown';
-      }
-    } else if (await isRecentlyModified(lockPath)) {
-      // Unreadable but just written: its owner is mid-write, not a corrupt lock.
+/**
+ * Removes the lock only if it is still the one the caller judged stale. Between the caller's read
+ * and this unlink another caller may have replaced it with a fresh lock, and unlinking that one
+ * would let both start a browser. An unreadable lock counts as changed once it is freshly written.
+ */
+async function removeLockIfUnchanged(lockPath: string, judged: LoginLock | null): Promise<boolean> {
+  const current = await readLock(lockPath);
+  if (!sameLock(current, judged) || (current === null && (await isRecentlyModified(lockPath)))) {
+    return false;
+  }
+  await removeLock(lockPath);
+  return true;
+}
+
+/** The outcome that blocks a new login given the lock found, or null when the lock may be replaced. */
+async function blockingOutcome(
+  lockPath: string,
+  existing: LoginLock | null,
+  url: string
+): Promise<DetachedLoginOutcome | null> {
+  if (existing?.succeededAt !== undefined) {
+    // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
+    // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
+    // split, a succeeded sign-in whose process lingers past COOLDOWN_MS but still within
+    // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
+    // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
+    // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
+    // The cooldown damps repeated sign-ins for the URL that just signed in; a sign-in for another
+    // URL is not a repeat. A lock without a URL (older versions) damps every URL.
+    const sameUrl = existing.url === undefined || normalizeUrlForKey(existing.url) === normalizeUrlForKey(url);
+    // Cooldown elapsed, or the success was for another URL: the lock may be replaced.
+    return sameUrl && Date.now() - existing.succeededAt < COOLDOWN_MS ? 'signed-in-recently' : null;
+  }
+  if (existing) {
+    const age = Date.now() - existing.startedAt;
+    if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
       return 'in-progress';
     }
-
-    // Stale or corrupt: replace it. Losing this race means another login just started.
-    await removeLock(lockPath);
-    return (await tryCreateLock(lockPath, replacedSignIn)) ? null : 'in-progress';
-  } catch (error) {
-    logger.debug('[sso-detached-login] Failed to acquire lock:', error);
-    return 'failed';
+    return age < COOLDOWN_MS ? 'cooldown' : null;
   }
+  // Unreadable but just written: its owner is mid-write, not a corrupt lock.
+  return (await isRecentlyModified(lockPath)) ? 'in-progress' : null;
+}
+
+/**
+ * Replacing a stale lock is read-judge-remove-create, so two callers judging the same stale lock
+ * could each remove the other's fresh one. Callers in this process are serialised per lock path;
+ * `removeLockIfUnchanged` covers other processes. A rare change between its read and unlink
+ * remains open — the lock file has no atomic compare-and-delete.
+ */
+const lockDecisionTails = new Map<string, Promise<void>>();
+
+async function serialiseLockDecision<T>(lockPath: string, decide: () => Promise<T>): Promise<T> {
+  const previous = lockDecisionTails.get(lockPath) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => gate);
+  lockDecisionTails.set(lockPath, tail);
+  await previous;
+  try {
+    return await decide();
+  } finally {
+    release();
+    if (lockDecisionTails.get(lockPath) === tail) {
+      lockDecisionTails.delete(lockPath);
+    }
+  }
+}
+
+/** How often a lock that keeps changing under this call is re-judged before giving way to it. */
+const MAX_LOCK_DECISIONS = 3;
+
+/** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
+function acquireLock(lockPath: string, url: string): Promise<DetachedLoginOutcome | null> {
+  return serialiseLockDecision(lockPath, async () => {
+    await sweepOrphanedTmpFiles(lockPath);
+    try {
+      for (let decision = 0; decision < MAX_LOCK_DECISIONS; decision++) {
+        if (await tryCreateLock(lockPath)) {
+          return null;
+        }
+
+        const existing = await readLock(lockPath);
+        const blocked = await blockingOutcome(lockPath, existing, url);
+        if (blocked) {
+          return blocked;
+        }
+
+        // Stale or corrupt: replace it. Losing this race means another login just started.
+        if (await removeLockIfUnchanged(lockPath, existing)) {
+          return (await tryCreateLock(lockPath, lastSignInOf(existing))) ? null : 'in-progress';
+        }
+      }
+      return 'in-progress';
+    } catch (error) {
+      logger.debug('[sso-detached-login] Failed to acquire lock:', error);
+      return 'failed';
+    }
+  });
 }
 
 /**

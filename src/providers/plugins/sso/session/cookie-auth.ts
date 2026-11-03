@@ -8,6 +8,12 @@ import { logger } from '@/utils/logger.js';
 export const STORE_READ_DEADLINE_MS = 3000;
 
 /**
+ * Deadline for the long-lived proxy's reads: a request waits on this read, so it is bounded but
+ * longer than for one-shot processes, whose slow keychain would otherwise look like an empty store.
+ */
+export const PROXY_STORE_READ_DEADLINE_MS = 10_000;
+
+/**
  * Answers whether the Cookie header a request was sent with has since been
  * replaced by a newer sign-in. Resolves false whenever that cannot be told.
  */
@@ -65,7 +71,7 @@ export function droppedCookieKeys(cookies: Record<string, string>): string[] {
  * demand: it pulls in credential-storage modules that resolve filesystem paths at import time,
  * which this module (imported by every sync path) must not do.
  */
-async function logFailure(message: string, error: unknown): Promise<void> {
+export async function logFailure(message: string, error: unknown): Promise<void> {
   const err = error instanceof Error ? error.message : String(error);
   try {
     const { sanitizeLogArgs } = await import('@/utils/security.js');
