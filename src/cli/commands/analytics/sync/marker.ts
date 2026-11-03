@@ -1,9 +1,13 @@
 /**
  * "Last sent" marker for `codemie analytics sync` — collector-compatible.
  *
- * A single file at `getCodemiePath('analytics-last-sent')` (no per-target markers), mode
- * `0o600`, re-chmod'd after every write, since the marker records when data last left the
- * machine. Content is an ISO timestamp, matching the standalone collector's marker so a
+ * `readMarker`/`writeMarker` take an optional `path`, defaulting to
+ * `getCodemiePath('analytics-last-sent')` — the webhook target's marker, kept at that exact
+ * path for collector compatibility. The git target has its own, separate marker file
+ * (`targets/git-target.ts#gitMarkerPath`, `analytics-last-sent-git`); `run-sync.ts` picks
+ * the path per target so each target's "last sent" is tracked independently. Mode `0o600`,
+ * re-chmod'd after every write, since the marker records when data last left the machine.
+ * Content is an ISO timestamp, matching the standalone collector's marker so a
  * collector-written marker is honoured by the first CLI run.
  *
  * `readMarker` falls back to the file's mtime — same as the collector — when the content is
