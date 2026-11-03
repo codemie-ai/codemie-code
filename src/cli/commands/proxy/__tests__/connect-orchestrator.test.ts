@@ -63,6 +63,8 @@ vi.mock('../connectors/claude-code-otlp.js', () => ({
     envVars: 9,
     allowlist: ['/repo/project'],
   }),
+  readConfiguredOtlpPort: vi.fn().mockResolvedValue(null),
+  refreshClaudeCodeOtlpEndpoint: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
@@ -1057,6 +1059,50 @@ describe('ensureOtlpProxy', () => {
       status.mockRestore();
       success.mockRestore();
     }
+  });
+
+  it('respawns on the port the Claude settings point at and re-points them at the new daemon', async () => {
+    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+    const { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp.js');
+    // Stale state on P1, settings on P1, 4001 busy: the daemon falls back to P2.
+    vi.mocked(readState).mockResolvedValue(daemonState({ pid: 999999, port: 62380 }) as Awaited<ReturnType<typeof readState>>);
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(readConfiguredOtlpPort).mockResolvedValueOnce(62380);
+    const respawned = daemonState({ port: 60005, url: 'http://127.0.0.1:60005' });
+    vi.mocked(spawnDaemon).mockResolvedValue(respawned as Awaited<ReturnType<typeof spawnDaemon>>);
+    await setupHappyMocks();
+
+    await ensureOtlpProxy('claude-code-otlp');
+
+    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
+    expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(respawned);
+  });
+
+  it('falls back to the last daemon port, then the default, when the settings name none', async () => {
+    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof spawnDaemon>>);
+    await setupHappyMocks();
+
+    vi.mocked(readState).mockResolvedValue(daemonState({ pid: 999999, port: 62380 }) as Awaited<ReturnType<typeof readState>>);
+    await ensureOtlpProxy('claude-code-otlp');
+    expect(spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 62380 }));
+
+    vi.mocked(readState).mockResolvedValue(null);
+    await ensureOtlpProxy('claude-code-otlp');
+    expect(spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 4001 }));
+  });
+
+  it('re-points the settings at an already-running daemon without spawning', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp.js');
+    const running = daemonState({ port: 60005, url: 'http://127.0.0.1:60005' });
+    vi.mocked(readState).mockResolvedValue(running as Awaited<ReturnType<typeof readState>>);
+
+    await ensureOtlpProxy('claude-code-otlp');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(running);
   });
 
   // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts

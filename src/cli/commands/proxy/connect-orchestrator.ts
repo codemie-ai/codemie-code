@@ -54,6 +54,7 @@ import {
   runClaudeCodeOtlp,
   type ClaudeCodeOtlpDisplay,
 } from './claude-code-otlp-flow.js';
+import { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -438,7 +439,7 @@ async function ensureDaemon(
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
-      port: DEFAULT_DAEMON_PORT,
+      port: requested.port,
       project: config.codeMieProject,
       ...(requested.projectBinding ? { projectBinding: requested.projectBinding } : {}),
       ...identity.spawnOptions,
@@ -456,6 +457,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
   const state = await readState();
 
   if (state && (await isDaemonAlive(state))) {
+    await refreshClaudeCodeOtlpEndpoint(state);
     return;
   }
 
@@ -477,9 +479,11 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
   // Hook cold start: an unowned profile is only logged, never printed or prompted.
   const projectBinding = await reportDaemonProfileIdentity(config, 'hook', cwd);
 
+  // Respawn on the port Claude Code is already told to export to (else the dead daemon's, else the
+  // default), so the configured endpoint stays valid; a busy port falls back and is re-pointed below.
   const daemonConfig = {
     clientType: agentName,
-    port: DEFAULT_DAEMON_PORT,
+    port: (await readConfiguredOtlpPort()) ?? state?.port ?? DEFAULT_DAEMON_PORT,
     profile: config.name ?? 'default',
     project: config.codeMieProject,
     projectBinding,
@@ -495,7 +499,8 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     spawnOptions: { clientType: agentName },
   } as DaemonIdentity;
 
-  await ensureDaemon(daemonConfig, daemonIdentity, config);
+  const { state: live } = await ensureDaemon(daemonConfig, daemonIdentity, config);
+  await refreshClaudeCodeOtlpEndpoint(live);
 }
 
 /** One per-target write outcome, collected for the summary (spec §3.4). */

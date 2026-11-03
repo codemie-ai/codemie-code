@@ -18,6 +18,9 @@ import {
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
   removeClaudeCodeOtlpConfig,
+  checkClaudeCodeOtlpEndpoint,
+  readConfiguredOtlpPort,
+  refreshClaudeCodeOtlpEndpoint,
 } from '../claude-code-otlp.js';
 import { readState } from '../../daemon-manager.js';
 import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
@@ -1580,6 +1583,62 @@ describe('claude-code-otlp connector', () => {
       await removeClaudeCodeOtlpConfig();
 
       expect(await readPreferencesBytes()).toBe(before);
+    });
+  });
+
+  describe('OTLP endpoint continuity', () => {
+    const live = { url: 'http://127.0.0.1:60005', gatewayKey: 'gk-new' };
+    const settingsPath = () => join(homeDir, '.claude', 'settings.json');
+
+    it('re-points only the CodeMie endpoint/header at the live daemon and keeps everything else', async () => {
+      await writeClaudeCodeOtlpConfig({ scope: 'project' });
+      const before = await readJson(settingsPath());
+      before.env.USER_VAR = 'keep';
+      before.theme = 'dark';
+      await writeFile(settingsPath(), JSON.stringify(before, null, 2));
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(true);
+
+      const after = await readJson(settingsPath());
+      expect(after.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:60005/v1/analytics/otlp');
+      expect(after.env.OTEL_EXPORTER_OTLP_HEADERS).toBe('Authorization=Bearer gk-new');
+      expect({ ...after, env: { ...after.env, OTEL_EXPORTER_OTLP_ENDPOINT: 0, OTEL_EXPORTER_OTLP_HEADERS: 0 } })
+        .toEqual({ ...before, env: { ...before.env, OTEL_EXPORTER_OTLP_ENDPOINT: 0, OTEL_EXPORTER_OTLP_HEADERS: 0 } });
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toMatchObject({ matches: true });
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+    });
+
+    it('leaves a foreign (non-CodeMie) endpoint and a missing file untouched', async () => {
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(existsSync(settingsPath())).toBe(false);
+
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      const foreign = JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318' } });
+      await writeFile(settingsPath(), foreign);
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toBeNull();
+      expect(await readConfiguredOtlpPort()).toBeNull();
+      expect(await readRaw(settingsPath())).toBe(foreign);
+    });
+
+    it('reports the port Claude Code is told to export to, and a mismatch against the live daemon', async () => {
+      await writeClaudeCodeOtlpConfig(); // mockState: :41999
+
+      expect(await readConfiguredOtlpPort()).toBe(41999);
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toEqual({
+        configured: 'http://127.0.0.1:41999/v1/analytics/otlp',
+        expected: 'http://127.0.0.1:60005/v1/analytics/otlp',
+        matches: false,
+      });
+    });
+
+    it('never throws on corrupt settings', async () => {
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      await writeFile(settingsPath(), '{not json');
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await readConfiguredOtlpPort()).toBeNull();
     });
   });
 });
