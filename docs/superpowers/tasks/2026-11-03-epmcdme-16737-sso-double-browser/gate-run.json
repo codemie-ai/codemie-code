@@ -1,18 +1,18 @@
 {
   "schema": 1,
   "branch": "EPMCDME-16737_sso-double-browser",
-  "head": "81f5695e15cf4fe99b9baf3dfa61cd5e72315bf9",
+  "head": "0641a59e2dcd08dc9c74bbb2657adf896a028442",
   "runner": "npm",
-  "started_at": "2026-11-03T12:19:25Z",
-  "completed_at": "2026-11-03T12:21:05Z",
-  "status": "PASSED",
+  "started_at": "2026-11-03T13:36:46Z",
+  "completed_at": "2026-11-03T13:41:05Z",
+  "status": "BLOCKED",
   "drift_detected": false,
   "gates": [
     {
       "id": "license",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 1000,
+      "duration_ms": 2000,
       "command": "npm run license-check",
       "exit_code": 0
     },
@@ -20,7 +20,7 @@
       "id": "lint",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 3000,
+      "duration_ms": 2000,
       "command": "npm run lint",
       "exit_code": 0
     },
@@ -28,7 +28,7 @@
       "id": "typecheck",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 2000,
+      "duration_ms": 3000,
       "command": "npm run typecheck",
       "exit_code": 0
     },
@@ -43,20 +43,20 @@
     {
       "id": "unit",
       "source": "guide",
-      "status": "PASS",
-      "duration_ms": 17000,
+      "status": "FAIL",
+      "duration_ms": 56000,
       "command": "npx vitest run --project unit",
-      "exit_code": 0,
-      "notes": "420 files, 7102 tests passed, 0 failed"
+      "exit_code": 1,
+      "notes": "1 failed | 7491 passed (7492); Test Files 1 failed | 440 passed (441). Failing: hook.session-delivery.test.ts > SessionEnd inside the agent hook process > generation A's SessionEnd holds the lock 12 s while its line waits on the server (expected 13000 to be less than 12000; known fake-clock/real-time race). Single-file reruns x2: both PASS (119/119)."
     },
     {
       "id": "integration",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 36000,
+      "duration_ms": 37000,
       "command": "npx vitest run --project cli",
       "exit_code": 0,
-      "notes": "38 files passed, 1 file skipped; 300 tests passed, 10 skipped, 0 failed. Skipped file is env-gated (not identified by reporter); proxy-daemon-lifecycle runs and passes (4/4) with dist present"
+      "notes": "40 files passed, 1 skipped; 317 passed, 10 skipped (327)"
     },
     {
       "id": "secrets",
@@ -65,25 +65,28 @@
       "duration_ms": 1000,
       "command": "npm run validate:secrets",
       "exit_code": 0,
-      "notes": "Exit 0 but output: 'No staged changes to scan'; script only scans staged changes, nothing is staged. CI runs the scan unconditionally."
+      "notes": "Output: 'No staged changes to scan'; nothing is staged. CI scans unconditionally."
     },
     {
       "id": "commitlint",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 1000,
+      "duration_ms": 500,
       "command": "npm run commitlint:last",
-      "exit_code": 0
+      "exit_code": 0,
+      "notes": "found 0 problems, 0 warnings"
     },
     {
       "id": "lint-staged",
       "source": "hook",
       "status": "SKIPPED",
-      "duration_ms": 1000,
+      "duration_ms": 500,
       "command": "npx lint-staged",
       "exit_code": 0,
-      "notes": "Exit 0 but output: 'lint-staged could not find any staged files.' Nothing staged (no git mutations allowed)."
+      "notes": "Output: 'lint-staged could not find any staged files.'; stage files to run it locally."
     }
   ],
-  "failures": {}
+  "failures": {
+    "unit": " FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > SessionEnd inside the agent hook process > generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten\nAssertionError: expected 13000 to be less than 12000\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:943:30\n    941|\n    942|     expect(startGaveUpAfter).toBeGreaterThanOrEqual(10 * SECOND);\n    943|     expect(startGaveUpAfter).toBeLessThan(12 * SECOND);\n       |                              ^\n    944|     expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);\n    945|     const aRecordBytes = readFileSync(join(sessionsDir, `completed_${i\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af\n\n\n Test Files  1 failed | 440 passed (441)\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af\n\n\n Test Files  1 failed | 440 passed (441)\n      Tests  1 failed | 7491 passed (7492)\n   Start at  14:37:11\n   Duration  55.40s (transform 13.81s, setup 0ms, import 110.08s, tests 161.44s, environment 20ms)\n"
+  }
 }
