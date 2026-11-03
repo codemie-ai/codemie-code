@@ -98,7 +98,7 @@ describe('CredentialRefresher', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('serves the re-login cookies to the next request even when the whole sign-in happened between two refreshes inside the throttle window (EPMCDME-16568 double browser)', async () => {

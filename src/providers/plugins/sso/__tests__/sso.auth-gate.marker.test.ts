@@ -48,7 +48,7 @@ describe('ensureCodeMieSsoAuth with real marker files', () => {
     } else {
       process.env.CODEMIE_HOME = previousHome;
     }
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('removes a marker older than the last sign-in and passes', async () => {

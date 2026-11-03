@@ -13,8 +13,8 @@ const metricsSenderOptions = vi.hoisted(() => [] as Array<Record<string, unknown
 const sendSessionStart = vi.hoisted(() => vi.fn());
 const sendSessionEnd = vi.hoisted(() => vi.fn());
 
-vi.mock('../../../providers/plugins/sso/session/cookie-auth.js', () => ({ readAnalyticsCookieAuth }));
-vi.mock('../../../providers/plugins/sso/index.js', () => ({
+vi.mock('@/providers/plugins/sso/session/cookie-auth.js', () => ({ readAnalyticsCookieAuth }));
+vi.mock('@/providers/plugins/sso/index.js', () => ({
   MetricsSender: vi.fn(function (this: Record<string, unknown>, options: Record<string, unknown>) {
     metricsSenderOptions.push(options);
     this.sendSessionStart = sendSessionStart;
@@ -27,9 +27,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHookCommand, processEvent } from '../hook.js';
 import type { HookProcessingConfig } from '../hook.js';
-import { getSessionPath } from '../../../agents/core/session/session-config.js';
-import { getCodemiePath } from '../../../utils/paths.js';
-import type { BaseHookEvent } from '../../../agents/core/types.js';
+import { getSessionPath } from '@/agents/core/session/session-config.js';
+import { getCodemiePath } from '@/utils/paths.js';
+import type { BaseHookEvent } from '@/agents/core/types.js';
 import { ensureOtlpProxy } from '../proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { AgentRegistry } from '../../../agents/registry.js';
@@ -131,7 +131,8 @@ describe('hook command stored-credentials wiring', () => {
     } else {
       process.env.CODEMIE_HOME = previousHome;
     }
-    rmSync(codemieHome, { recursive: true, force: true });
+    // maxRetries: Windows can briefly hold a handle (logger) on files under the temp home.
+    rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     vi.restoreAllMocks();
   });
 

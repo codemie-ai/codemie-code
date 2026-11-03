@@ -47,7 +47,7 @@ describe('ensureCodeMieSsoAuth with the real sign-in lock', () => {
     } else {
       process.env.CODEMIE_HOME = previousHome;
     }
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('clears a marker older than the last sign-in while the lock belongs to a newer in-progress attempt', async () => {
