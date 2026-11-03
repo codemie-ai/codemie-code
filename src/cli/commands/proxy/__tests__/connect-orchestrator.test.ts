@@ -1059,7 +1059,8 @@ describe('ensureOtlpProxy', () => {
     }
   });
 
-  it('starts the proxy when the state names a pid that now belongs to another process', async () => {
+  // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
+  it.skipIf(process.platform === 'win32')('starts the proxy when the state names a pid that now belongs to another process', async () => {
     const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
     const { isOwnerAlive } = await import('@/utils/processes.js');
     vi.mocked(readState).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof readState>>);
@@ -1093,7 +1094,8 @@ describe('ensureOtlpProxy', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
   });
 
-  it('starts nothing for an old-format state written 10 minutes after its daemon started', async () => {
+  // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
+  it.skipIf(process.platform === 'win32')('starts nothing for an old-format state written 10 minutes after its daemon started', async () => {
     const { readState, spawnDaemon } = await import('../daemon-manager.js');
     const processes = await import('@/utils/processes.js');
     const exec = await import('@/utils/exec.js');

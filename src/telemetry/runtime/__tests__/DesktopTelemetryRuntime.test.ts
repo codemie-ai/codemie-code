@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { Session } from '@/agents/core/session/types.js';
+import { logger } from '@/utils/logger.js';
 
 const mockSendSessionStart = vi.fn().mockResolvedValue(undefined);
 const mockSendSessionEnd = vi.fn().mockResolvedValue(undefined);
@@ -124,9 +125,15 @@ function sessionsDir(): string {
   return join(codemieHome, 'sessions');
 }
 
+/** Closes the logger's file under the home first: Windows cannot delete an open file. */
+async function removeCodemieHome(): Promise<void> {
+  await logger.close();
+  rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
 /** A fresh, empty ~/.codemie, as on a machine the daemon never ran on. */
-function resetCodemieHome(): void {
-  if (codemieHome) rmSync(codemieHome, { recursive: true, force: true });
+async function resetCodemieHome(): Promise<void> {
+  if (codemieHome) await removeCodemieHome();
   codemieHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-'));
   process.env.CODEMIE_HOME = codemieHome;
   mkdirSync(sessionsDir(), { recursive: true });
@@ -326,11 +333,11 @@ async function startDaemon(adapter: LocalTelemetryAdapter): Promise<DesktopTelem
 }
 
 describe('DesktopTelemetryRuntime', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
-    resetCodemieHome();
+    await resetCodemieHome();
     transcripts.clear();
     sentDeltas = [];
     desktopSessions = new Map();
@@ -341,10 +348,10 @@ describe('DesktopTelemetryRuntime', () => {
     realSessionSyncer = false;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    rmSync(codemieHome, { recursive: true, force: true });
+    await removeCodemieHome();
     if (previousCodemieHome === undefined) delete process.env.CODEMIE_HOME;
     else process.env.CODEMIE_HOME = previousCodemieHome;
   });
@@ -1390,7 +1397,7 @@ describe('DesktopTelemetryRuntime', () => {
 
     it('reopens an undelivered record after the re-delivery that holds it, 5 runs of 5', async () => {
       for (let run = 0; run < 5; run++) {
-        resetCodemieHome();
+        await resetCodemieHome();
         transcripts.clear();
         desktopSessions = new Map();
         openDesktopChat('ext-1', 2, T0 - HOUR_MS);
