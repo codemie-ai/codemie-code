@@ -29,6 +29,7 @@ import { createHookCommand, processEvent } from '../hook.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { logger } from '@/utils/logger.js';
 import type { BaseHookEvent } from '@/agents/core/types.js';
 import { ensureOtlpProxy } from '../proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
@@ -124,14 +125,15 @@ describe('hook command stored-credentials wiring', () => {
     readAnalyticsCookieAuth.mockResolvedValue({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     rmSync(TMP, { recursive: true, force: true });
     if (previousHome === undefined) {
       delete process.env.CODEMIE_HOME;
     } else {
       process.env.CODEMIE_HOME = previousHome;
     }
-    // maxRetries: Windows can briefly hold a handle (logger) on files under the temp home.
+    // The logger keeps its log file open under the temp home; Windows cannot remove the folder until it is released.
+    await logger.close();
     rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     vi.restoreAllMocks();
   });
