@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on the same PR/branch to save runner minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   secrets-detection:
     name: Security
@@ -23,6 +28,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [secrets-detection]
     if: |
       always() &&
@@ -66,6 +72,7 @@ jobs:
   test-ubuntu:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [build]
     permissions:
       contents: read
@@ -101,6 +108,7 @@ jobs:
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
+    timeout-minutes: 30
     needs: [build]
     permissions:
       contents: read
@@ -132,3 +140,57 @@ jobs:
 
       - name: Run integration tests
         run: npx vitest run --project cli
+
+  # Final report: execution order, per-job duration, queue time and total pipeline time
+  pipeline-summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [secrets-detection, build, test-ubuntu, test-windows]
+    if: always()
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Report job order and timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          jobs_json=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --jq '.jobs[]' | jq -s .)
+          run_started=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT" --jq '.run_started_at')
+
+          fmt='def fmt: (. as $s | "\($s / 60 | floor)m \($s % 60)s");'
+          icon='def icon: if .=="success" then "✅" elif .=="failure" then "❌" elif .=="cancelled" then "🚫" elif .=="skipped" then "⏭️" else "❔" end;'
+
+          total=$(( $(date +%s) - $(date -d "$run_started" +%s) ))
+
+          {
+            echo "## ⏱️ Pipeline timing"
+            echo
+            echo "**Total so far: $((total / 60))m $((total % 60))s** (excludes this summary job's own tail)"
+            echo
+            echo "| # | Job | Result | Queued | Duration | Started (UTC) |"
+            echo "|--:|-----|:------:|-------:|---------:|--------------|"
+            echo "$jobs_json" | jq -r "$fmt $icon"'
+              map(select(.started_at != null and .completed_at != null and .name != "Pipeline Summary"))
+              | sort_by(.started_at) | to_entries[]
+              | .key as $i | .value as $j
+              | "| \($i + 1) | \($j.name) | \($j.conclusion | icon) | \(((($j.started_at | fromdate) - ($j.created_at | fromdate))) | fmt) | \(((($j.completed_at | fromdate) - ($j.started_at | fromdate))) | fmt) | \($j.started_at | sub("T"; " ") | sub("Z"; "")) |"'
+            echo
+            echo "### 🐢 Slowest steps"
+            echo
+            echo "| Job | Step | Duration |"
+            echo "|-----|------|---------:|"
+            echo "$jobs_json" | jq -r "$fmt"'
+              [ .[] | select(.name != "Pipeline Summary") | .name as $n
+                | .steps[]? | select(.started_at != null and .completed_at != null)
+                | {job: $n, step: .name, d: ((.completed_at | fromdate) - (.started_at | fromdate))} ]
+              | sort_by(-.d) | .[:8][]
+              | "| \(.job) | \(.step) | \(.d | fmt) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
