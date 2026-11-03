@@ -412,31 +412,65 @@ codemie analytics sync uninstall
 ```
 codemie analytics sync install [options]
 
-  --webhook <url>             The team's https webhook URL that receives the daily report (required)
+  --webhook <url>             The team's https webhook URL that receives the daily report
+  --git-repo <url>            URL of a team git repository to push the daily report into
+  --git-branch <name>         Branch to push to (default: the repository's default branch)
+  --git-path <dir>            Repo-relative directory the report is pushed under (default: the repository root)
+  --format <json>             Report export format for every configured target (default and only accepted value: json)
   --at <HH:MM>                Daily run time, 24-hour local time (default: 03:00)
   --lookback-days <n>         Session window looked back on each run, 1-30 (default: 7)
   --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)
 ```
 
+At least one of `--webhook`/`--git-repo` is required; both may be given together, in which
+case every run delivers to each configured target independently. `--git-repo` must not
+embed `user:token@`/`user:pass@` credentials — no token is ever requested or stored;
+pushing authenticates with the developer's own git setup (SSH key, credential helper, …).
+`--git-path` must be a posix-relative path that does not escape the repository (no leading
+`/`, no `..`, no Windows path).
+
 Validation runs before anything is written or registered: a missing/non-`https:`/invalid
-`--webhook`, a malformed `--at`, an out-of-range `--lookback-days`, or an unrecognized
-`--include-external` value fails with a message naming the bad option. `--lookback-days`
-is written to settings only when given, so the default (7 days) keeps following CLI
-updates for an install that never set it.
+`--webhook`, an invalid/credential-bearing `--git-repo`, an empty `--git-branch`, an
+escaping `--git-path`, a malformed `--at`, an out-of-range `--lookback-days`, or an
+unrecognized `--include-external`/`--format` value fails with a message naming the bad
+option — before the scheduler or filesystem are ever touched. `--lookback-days` is written
+to settings only when given, so the default (7 days) keeps following CLI updates for an
+install that never set it.
 
 Install resolves the reporting email (saved CLI config, then `git config --global user.email`; in a
 terminal with neither it prompts and saves the answer; without a terminal it fails with
-instructions and registers nothing), runs the per-platform preflight, removes any existing
-job with the same identity (the collector's or a previous CLI install's), writes the
-settings file, and registers the new job. If registration fails after the settings were
-written, the settings file is deleted and install exits non-zero — nothing half-installed
-is left behind.
+instructions and registers nothing), runs the per-platform preflight, and — when
+`--git-repo` is configured — performs a prompt-free test push of a placeholder file into the
+caller's own slug folder in that repository, proving push access *before* anything else is
+touched. A failed test push prints the likely cause (an auth problem, an untrusted SSH host
+key, an unreachable remote, a protected branch, …) plus the redacted git error, removes the
+working copy, and registers nothing: no job is unregistered, no settings are written, no job
+is registered. Only once the test push (if any) succeeds does install remove any existing
+job with the same identity (the collector's or a previous CLI install's), write the settings
+file, and register the new job. If registration fails after the settings were written, the
+settings file is deleted and install exits non-zero — nothing half-installed is left behind.
 
 On success it prints the run time, the lookback (marked "default" when `--lookback-days`
 was omitted), the include-external policy, the webhook host only (the signature is always
-masked), the resolved email, and a hint to try `sync run` and `sync status`. Running
-`install` again replaces the existing job and settings rather than duplicating them, and
-never touches the last-sent marker.
+masked), the git repository (redacted), branch and path when configured, the resolved
+email, and a hint to try `sync run` and `sync status`. Running `install` again replaces the
+existing job and settings rather than duplicating them, and never touches the last-sent
+marker(s).
+
+### Git delivery target
+
+Git runs never prompt: every `git` call sets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`
+and ssh `BatchMode=yes`, so an unattended daily run can never hang on a credential or host-key
+prompt. An unknown SSH host key fails the run instead of prompting — run `ssh -T <host>` once
+on this machine to trust it, then retry. Credentials come from the developer's own git setup
+(SSH key, credential helper, …); no token is ever requested or stored, and a `--git-repo` URL
+embedding `user:token@`/`user:pass@` credentials is rejected at install time.
+
+Each report is pushed to `<git-path>/<lowercased email slug>/codemie-analytics-<slug>-<UTC
+date>.report.json` in the configured repository (repo root when `--git-path` is unset) —
+each developer writes only inside their own slug folder, so concurrent pushes from different
+developers never conflict on content. `codemie analytics sync install`'s test push proves
+access to that same folder with a small placeholder file before anything is registered.
 
 ### Per-platform job
 
@@ -523,13 +557,16 @@ All paths resolve via `getCodemiePath()` under `~/.codemie`:
 
 | What | Path |
 |---|---|
-| Settings (webhook, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
-| Last-sent marker | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
+| Settings (webhook, git target, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
+| Last-sent marker (webhook) | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
+| Last-sent marker (git) | `analytics-last-sent-git` (ISO timestamp; tracked independently of the webhook marker) |
+| Git working copy | `analytics-sync-repo` (one shared shallow clone of the configured `--git-repo`, refreshed/re-cloned each run; removed and re-cloned if its remote no longer matches the settings, or by install when a test push fails) |
 | Run log | `logs/analytics-sync.log` (log directory mode `700`, log file mode `600`) |
 | macOS launchd stdout/stderr | `logs/analytics-sync.launchd.log` (kept apart from the run log so each run writes its outcome line once) |
 
 There are no `ANALYTICS_*` environment-variable overrides for any of this. The webhook URL
-lives only in the `600` settings file, never in `CredentialStore` — the unattended job must
-read it without an OS keychain prompt (see the exception in
+and git repository URL live only in the `600` settings file, never in `CredentialStore` —
+the unattended job must read them without an OS keychain prompt (see the exception in
 `.ai-run/guides/security/security-practices.md`). Every printed or logged string that may
-contain the URL is redacted to the host only before it is ever shown.
+contain a URL is redacted (signature stripped for the webhook, userinfo stripped for git)
+before it is ever shown.

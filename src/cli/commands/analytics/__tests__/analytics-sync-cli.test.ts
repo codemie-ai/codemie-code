@@ -96,13 +96,25 @@ describe('analytics sync CLI wiring — command surface', () => {
 
     const run = sync.commands.find((c) => c.name() === 'run')!;
     expect(run.description()).toBe(
-      'Developer or the daily scheduled job: send the pending analytics report to the webhook now'
+      'Developer or the daily scheduled job: send the pending analytics report to the configured webhook and/or team git repository now'
     );
 
     for (const name of ['status', 'run', 'uninstall']) {
       const sub = sync.commands.find((c) => c.name() === name)!;
       expect(sub.description().length).toBeGreaterThan(0);
     }
+  });
+
+  it('"sync install --help" lists the git options and --format next to --webhook', async () => {
+    const sync = findSync(await buildCommand());
+    const install = sync.commands.find((c) => c.name() === 'install')!;
+    const help = install.helpInformation();
+
+    expect(help).toContain('--webhook <url>');
+    expect(help).toContain('--git-repo <url>');
+    expect(help).toContain('--git-branch <name>');
+    expect(help).toContain('--git-path <dir>');
+    expect(help).toContain('--format <json>');
   });
 
   it('--help lists every subcommand and hides --scheduled', async () => {
@@ -150,6 +162,23 @@ describe('analytics sync CLI wiring — subcommand dispatch', () => {
     expect(opts.includeExternal).toBe('windows');
     expect(deps).toEqual({ fake: 'install-deps' });
     expect(process.exitCode).toBe(0);
+  });
+
+  it('"sync install" forwards --git-repo, --git-branch, --git-path and --format too', async () => {
+    runInstallMock.mockResolvedValue(0);
+    await parse([
+      'sync', 'install',
+      '--git-repo', 'https://example.invalid/team/repo.git',
+      '--git-branch', 'reports',
+      '--git-path', 'analytics',
+      '--format', 'json',
+    ]);
+
+    const [opts] = runInstallMock.mock.calls[0];
+    expect(opts.gitRepo).toBe('https://example.invalid/team/repo.git');
+    expect(opts.gitBranch).toBe('reports');
+    expect(opts.gitPath).toBe('analytics');
+    expect(opts.format).toBe('json');
   });
 
   it('"sync install" forwards --at and --lookback-days too', async () => {

@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { SyncIdentityMissingError, SyncSchedulerUnsupportedError } from '@/utils/errors.js';
+import { SyncGitError, SyncIdentityMissingError, SyncSchedulerUnsupportedError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
 import { runInstall } from '../install.js';
 import type { InstallDeps } from '../install.js';
 import type { RegisterResult, Scheduler } from '../scheduler/index.js';
+import { gitHint } from '../targets/git-client.js';
 import type { InstallOptions } from '../types.js';
 
 const FAKE_WEBHOOK = 'https://hooks.example.invalid/abc?sig=SUPERSECRET123';
+const FAKE_GIT_REPO = 'https://example.invalid/team/repo.git';
 
 function makeScheduler(overrides: Partial<Scheduler> = {}): Scheduler {
   return {
@@ -28,6 +30,8 @@ interface Harness {
   deleteSettings: ReturnType<typeof vi.fn>;
   saveUserEmail: ReturnType<typeof vi.fn>;
   promptEmail: ReturnType<typeof vi.fn>;
+  testGitPush: ReturnType<typeof vi.fn>;
+  removeWorkingCopy: ReturnType<typeof vi.fn>;
 }
 
 function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = {}): Harness {
@@ -37,6 +41,8 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
   const deleteSettings = vi.fn(async () => true);
   const saveUserEmail = vi.fn(async () => {});
   const promptEmail = vi.fn(async () => 'dev@example.com');
+  const testGitPush = vi.fn(async () => {});
+  const removeWorkingCopy = vi.fn(async () => {});
 
   const deps: InstallDeps = {
     scheduler,
@@ -52,16 +58,19 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
       entry: '/home/dev/.codemie/bin/codemie.js',
       args: ['analytics', 'sync', 'run', '--scheduled'],
     }),
+    testGitPush,
+    removeWorkingCopy,
     print: (line: string): void => {
       printed.push(line);
     },
     ...overrides,
   };
 
-  return { deps, printed, scheduler, writeSettings, deleteSettings, saveUserEmail, promptEmail };
+  return { deps, printed, scheduler, writeSettings, deleteSettings, saveUserEmail, promptEmail, testGitPush, removeWorkingCopy };
 }
 
 const VALID_OPTS: InstallOptions = { webhook: FAKE_WEBHOOK };
+const VALID_GIT_OPTS: InstallOptions = { gitRepo: FAKE_GIT_REPO };
 
 describe('runInstall', () => {
   it('fails before any scheduler call on a bad option', async () => {
@@ -250,5 +259,61 @@ describe('runInstall', () => {
 
     expect(code).toBe(0);
     expect(printed.join('\n')).toMatch(/loginctl enable-linger failed/);
+  });
+});
+
+describe('runInstall — git target test push', () => {
+  it('test-pushes the git target with the resolved email before touching the scheduler, then registers', async () => {
+    const { deps, scheduler, testGitPush, writeSettings } = makeDeps();
+
+    const code = await runInstall(VALID_GIT_OPTS, deps);
+
+    expect(code).toBe(0);
+    expect(testGitPush).toHaveBeenCalledTimes(1);
+    expect(testGitPush).toHaveBeenCalledWith({ repoUrl: FAKE_GIT_REPO }, 'dev@example.com');
+    expect(scheduler.unregister).toHaveBeenCalled();
+    expect(writeSettings).toHaveBeenCalledTimes(1);
+    expect(scheduler.register).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails with the auth hint, removes the working copy, and registers nothing when the test push rejects with an auth SyncGitError', async () => {
+    const testGitPush = vi.fn(async () => {
+      throw new SyncGitError('Authentication failed for repo', 'auth');
+    });
+    const { deps, scheduler, writeSettings, removeWorkingCopy, printed } = makeDeps({ testGitPush });
+
+    const code = await runInstall(VALID_GIT_OPTS, deps);
+
+    expect(code).toBe(1);
+    const output = printed.join('\n');
+    expect(output).toContain(gitHint('auth'));
+    expect(scheduler.unregister).not.toHaveBeenCalled();
+    expect(writeSettings).not.toHaveBeenCalled();
+    expect(scheduler.register).not.toHaveBeenCalled();
+    expect(removeWorkingCopy).toHaveBeenCalledTimes(1);
+    expect(testGitPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('never calls testGitPush or removeWorkingCopy for a webhook-only install', async () => {
+    const { deps, testGitPush, removeWorkingCopy } = makeDeps();
+
+    const code = await runInstall(VALID_OPTS, deps);
+
+    expect(code).toBe(0);
+    expect(testGitPush).not.toHaveBeenCalled();
+    expect(removeWorkingCopy).not.toHaveBeenCalled();
+  });
+
+  it('prints the redacted repository, branch and path in the summary on a successful git install', async () => {
+    const { deps, printed } = makeDeps();
+
+    const code = await runInstall({ gitRepo: FAKE_GIT_REPO, gitBranch: 'reports', gitPath: 'analytics' }, deps);
+
+    expect(code).toBe(0);
+    const output = printed.join('\n');
+    expect(output).toContain('Repository:');
+    expect(output).toContain(FAKE_GIT_REPO);
+    expect(output).toContain('reports');
+    expect(output).toContain('analytics');
   });
 });

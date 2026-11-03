@@ -56,8 +56,9 @@ export function createAnalyticsCommand(): Command {
   command.addCommand(otel);
 
   // `codemie analytics sync` — a daily per-user OS job that sends this machine's analytics
-  // reports one way to the team's webhook. A pure group (no action of its own, no
-  // `--from/--to/--last`): everything lives in its four subcommands below.
+  // reports one way to the team's webhook and/or a team git repository. A pure group (no
+  // action of its own, no `--from/--to/--last`): everything lives in its four subcommands
+  // below.
   command.addCommand(createSyncCommand());
 
   return command;
@@ -72,7 +73,9 @@ export function createAnalyticsCommand(): Command {
  */
 function createSyncCommand(): Command {
   const sync = new Command('sync')
-    .description("Send this machine's analytics reports one way to the team's webhook on a daily schedule")
+    .description(
+      "Send this machine's analytics reports one way to the team's webhook and/or a team git repository on a daily schedule"
+    )
     .enablePositionalOptions();
 
   sync.addCommand(createSyncInstallCommand());
@@ -88,7 +91,14 @@ function createSyncCommand(): Command {
 function createSyncInstallCommand(): Command {
   return new Command('install')
     .description('Developer: register the daily delivery job on this machine')
-    .option('--webhook <url>', "The team's https webhook URL that receives the daily report")
+    .option(
+      '--webhook <url>',
+      "The team's https webhook URL that receives the daily report (one of two possible delivery targets, alongside --git-repo; at least one is required)"
+    )
+    .option('--git-repo <url>', 'URL of a team git repository to push the daily report into (the other possible delivery target)')
+    .option('--git-branch <name>', 'Branch to push to (default: the repository\'s default branch)')
+    .option('--git-path <dir>', 'Repo-relative directory the report is pushed under (default: the repository root)')
+    .option('--format <json>', "Report export format for every configured delivery target (default and only accepted value: json)")
     .option('--at <HH:MM>', 'Daily run time, 24-hour local time (default: 03:00)')
     .option('--lookback-days <n>', 'Session window looked back on each run, 1-30 (default: 7)')
     .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
@@ -115,7 +125,9 @@ function createSyncStatusCommand(): Command {
  * `run` without it. */
 function createSyncRunCommand(): Command {
   return new Command('run')
-    .description('Developer or the daily scheduled job: send the pending analytics report to the webhook now')
+    .description(
+      'Developer or the daily scheduled job: send the pending analytics report to the configured webhook and/or team git repository now'
+    )
     .addOption(new Option('--scheduled').hideHelp())
     .action(async () => {
       const { runSync, realSyncDeps } = await import('./sync/run-sync.js');
@@ -124,7 +136,8 @@ function createSyncRunCommand(): Command {
 }
 
 /** `codemie analytics sync uninstall` — removes the OS job and the settings holding the
- * webhook. The last-sent marker and the run log are kept. */
+ * webhook and/or team git repository target. The last-sent marker(s), the run log and the
+ * git target's working copy are kept. */
 function createSyncUninstallCommand(): Command {
   return new Command('uninstall')
     .description('Developer: remove the delivery job and its settings from this machine')

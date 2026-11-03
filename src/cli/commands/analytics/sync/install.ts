@@ -2,10 +2,16 @@
  * Install runner for `codemie analytics sync install`.
  *
  * Fixed order (spec §Install): validate options -> platform preflight -> resolve email ->
- * detect the standalone collector -> unregister any existing job (collector's or a previous
- * CLI install's — same job identities, see `./scheduler/generators.ts`) -> write settings ->
- * register the job -> print the summary. Every side effect is injected via {@link InstallDeps}
- * so tests run without touching the real scheduler, filesystem or a terminal.
+ * detect the standalone collector -> test-push the git target (if configured) -> unregister
+ * any existing job (collector's or a previous CLI install's — same job identities, see
+ * `./scheduler/generators.ts`) -> write settings -> register the job -> print the summary.
+ * Every side effect is injected via {@link InstallDeps} so tests run without touching the
+ * real scheduler, filesystem or a terminal.
+ *
+ * The git test push proves push access to the configured repository BEFORE anything else is
+ * touched: on failure nothing is unregistered, written or registered, and the git target's
+ * working copy is removed so a bad clone never lingers. It never requests or stores a token;
+ * every printed URL goes through `redactSecrets`.
  *
  * `runInstall` never throws and never calls `process.exit`; every failure path prints a
  * redacted message via `deps.print` and returns a non-zero exit code. It never reads or
@@ -14,8 +20,10 @@
  */
 
 import { existsSync } from 'fs';
+import { rm } from 'fs/promises';
 
 import { ConfigLoader } from '@/utils/config.js';
+import { SyncGitError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
 import { deleteSyncSettings, validateInstallOptions, writeSyncSettings } from './config-store.js';
@@ -24,7 +32,9 @@ import { EMAIL_REGEX, realIdentityDeps, resolveSyncIdentity } from './identity.j
 import { errorMessage, redactSecrets } from './redact.js';
 import { createRealSchedulerDeps, createScheduler, resolveJobCommand } from './scheduler/index.js';
 import type { JobCommand, RegisterResult, Scheduler } from './scheduler/index.js';
-import type { InstallOptions, SyncSettings } from './types.js';
+import { createGitRunner, gitHint } from './targets/git-client.js';
+import { GitTarget, gitWorkingCopyPath } from './targets/git-target.js';
+import type { GitSettings, InstallOptions, SyncSettings } from './types.js';
 
 /** Every side effect `runInstall` needs, injected so tests run without a real scheduler, fs
  * or terminal. `createRealInstallDeps()` below wires the real ones. */
@@ -42,6 +52,13 @@ export interface InstallDeps {
   /** Whether the standalone collector's clone is still present (`~/.codemie/codemie-onboarding`). */
   collectorDirExists(): boolean;
   resolveJobCommand(): Promise<JobCommand>;
+  /** Prompt-free test push of a placeholder file into the configured git target, proving
+   * push access BEFORE anything is unregistered/written/registered. Only called when
+   * `settings.git` is set. Real deps: `new GitTarget(git, email, createGitRunner()).testPush()`. */
+  testGitPush(git: GitSettings, email: string): Promise<void>;
+  /** Removes the git target's working copy; called when `testGitPush` fails, so a bad clone
+   * never lingers. Real deps: `rm(gitWorkingCopyPath(), { recursive: true, force: true })`. */
+  removeWorkingCopy(): Promise<void>;
   print(line: string): void;
 }
 
@@ -58,6 +75,15 @@ function printSummary(
   deps.print(`  Include external: ${settings.includeExternal}`);
   if (settings.webhookUrl !== undefined) {
     deps.print(`  Webhook:          ${webhookHost(settings.webhookUrl)}`);
+  }
+  if (settings.git !== undefined) {
+    deps.print(`  Repository:       ${redactSecrets(settings.git.repoUrl)}`);
+    if (settings.git.branch !== undefined) {
+      deps.print(`  Branch:           ${settings.git.branch}`);
+    }
+    if (settings.git.path !== undefined) {
+      deps.print(`  Path:             ${settings.git.path}`);
+    }
   }
   deps.print(`  Email:            ${email}`);
   deps.print('');
@@ -102,6 +128,15 @@ function printFailure(deps: InstallDeps, err: unknown): void {
   deps.print(`Install failed: ${errorMessage(err)}`);
 }
 
+/** Same as {@link printFailure}, plus `gitHint(err.gitCause)` naming the likely cause when
+ * `err` is a `SyncGitError` (a failed test push). */
+function printGitFailure(deps: InstallDeps, err: unknown): void {
+  printFailure(deps, err);
+  if (err instanceof SyncGitError) {
+    deps.print(gitHint(err.gitCause));
+  }
+}
+
 /** Validate the options and run the platform preflight; `null` (after printing why) on failure. */
 async function prepareSettings(opts: InstallOptions, deps: InstallDeps): Promise<SyncSettings | null> {
   try {
@@ -130,6 +165,28 @@ async function resolveEmailOrReport(deps: InstallDeps): Promise<string | null> {
   } catch (err) {
     printFailure(deps, err);
     return null;
+  }
+}
+
+/**
+ * When `settings.git` is configured, proves push access with a prompt-free test push before
+ * anything else is touched (spec AC2). Returns `true` (no-op) for a webhook-only install.
+ * On failure: prints the redacted message plus `gitHint(err.gitCause)` when the test push
+ * threw a `SyncGitError`, removes the working copy (its own failure never masks the test
+ * push's), and returns `false` — the caller stops before unregister/write/register.
+ */
+async function testGitTarget(deps: InstallDeps, settings: SyncSettings, email: string): Promise<boolean> {
+  if (settings.git === undefined) {
+    return true;
+  }
+
+  try {
+    await deps.testGitPush(settings.git, email);
+    return true;
+  } catch (err) {
+    printGitFailure(deps, err);
+    await deps.removeWorkingCopy().catch(() => undefined);
+    return false;
   }
 }
 
@@ -173,6 +230,11 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
   }
 
   const collectorPresent = deps.collectorDirExists();
+
+  if (!(await testGitTarget(deps, settings, email))) {
+    return 1;
+  }
+
   const registerResult = await replaceJob(deps, settings);
   if (registerResult === null) {
     return 1;
@@ -207,6 +269,8 @@ export function createRealInstallDeps(): InstallDeps {
     saveUserEmail: (email: string) => ConfigLoader.saveUserEmail(email),
     collectorDirExists: () => existsSync(getCodemiePath('codemie-onboarding')),
     resolveJobCommand,
+    testGitPush: (git: GitSettings, email: string) => new GitTarget(git, email, createGitRunner()).testPush(),
+    removeWorkingCopy: () => rm(gitWorkingCopyPath(), { recursive: true, force: true }),
     print: (line: string): void => {
       console.log(line);
     }
