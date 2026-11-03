@@ -51,6 +51,16 @@ export function buildCookieHeader(cookies: Record<string, string>): string {
 }
 
 /**
+ * Names of the entries buildCookieHeader leaves out (an empty name shows as `<empty>`).
+ * Names only: the values are credentials.
+ */
+export function droppedCookieKeys(cookies: Record<string, string>): string[] {
+  return Object.entries(cookies)
+    .filter(([key, value]) => buildCookieHeader({ [key]: value }) === '')
+    .map(([key]) => String(key).trim() || '<empty>');
+}
+
+/**
  * Debug-logs a failure by message only, run through the log sanitizer. The sanitizer is loaded on
  * demand: it pulls in credential-storage modules that resolve filesystem paths at import time,
  * which this module (imported by every sync path) must not do.
@@ -103,29 +113,40 @@ export function readWithDeadline<T>(
 }
 
 /**
- * True only when the store now holds usable credentials that differ from the
- * header that was sent. Assumes the store changes only at sign-in, so a
+ * The Cookie header the store now holds when it differs from the one that was
+ * sent, otherwise null. Assumes the store changes only at sign-in, so a
  * difference means a newer login replaced the credentials the request used.
- * Anything unreadable or unknown is "not superseded".
+ * Anything unreadable, empty or unknown yields null.
+ */
+export async function supersedingCookieHeader(
+  sentCookieHeader: string | undefined,
+  source?: CookieSource
+): Promise<string | null> {
+  if (!source || !sentCookieHeader) {
+    return null;
+  }
+  try {
+    const fresh = await source.refreshNow();
+    if (!fresh) {
+      return null;
+    }
+    const freshHeader = buildCookieHeader(fresh.cookies);
+    return freshHeader !== '' && freshHeader !== sentCookieHeader ? freshHeader : null;
+  } catch (error) {
+    await logFailure('[cookie-auth] supersede check failed', error);
+    return null;
+  }
+}
+
+/**
+ * True only when the store now holds usable credentials that differ from the
+ * header that was sent. Anything unreadable or unknown is "not superseded".
  */
 export async function sentCredentialsSuperseded(
   sentCookieHeader: string | undefined,
   source?: CookieSource
 ): Promise<boolean> {
-  if (!source || !sentCookieHeader) {
-    return false;
-  }
-  try {
-    const fresh = await source.refreshNow();
-    if (!fresh) {
-      return false;
-    }
-    const freshHeader = buildCookieHeader(fresh.cookies);
-    return freshHeader !== '' && freshHeader !== sentCookieHeader;
-  } catch (error) {
-    await logFailure('[cookie-auth] supersede check failed', error);
-    return false;
-  }
+  return (await supersedingCookieHeader(sentCookieHeader, source)) !== null;
 }
 
 /**

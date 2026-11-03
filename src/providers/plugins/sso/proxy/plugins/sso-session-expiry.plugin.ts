@@ -15,6 +15,12 @@
  * Nothing else has ever been observed to produce this exact redirect, so
  * no secondary confirming signal is needed before acting on it.
  *
+ * A redirect on a request that was sent with credentials a finished sign-in has since replaced is not
+ * an expiry: the request is replayed once with the stored cookies and that response is returned. If
+ * the replay is itself the redirect the session really is gone and the expiry path below runs; if
+ * the request cannot be replayed (no buffered body, or the retry throws) the client gets a 401 asking
+ * it to re-send. No marker is written and no sign-in is started for a superseded request.
+ *
  * KNOWN GAP: detection relies ONLY on this exact 302/303-to-/oauth2/start signature. Two other
  * gateway rejection shapes bypass it silently (no marker written, no re-login triggered, no
  * failing test): a plain 401, and an HTML 200 (the latter is already handled on the metrics
@@ -41,7 +47,7 @@ import { ProxyContext } from '../proxy-types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 import { logger } from '../../../../../utils/logger.js';
 import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
-import { sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import { supersedingCookieHeader } from '../../session/cookie-auth.js';
 import type { CredentialRefresher } from './credential-refresh.js';
 import type { SSOCredentials } from '../../../../core/types.js';
 
@@ -68,6 +74,15 @@ function syntheticUnauthorized(
   synthetic.statusMessage = 'Unauthorized';
   synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
   return synthetic;
+}
+
+function isOauthRedirect(response: IncomingMessage): boolean {
+  const location = response.headers['location'];
+  return (
+    (response.statusCode === 302 || response.statusCode === 303) &&
+    typeof location === 'string' &&
+    location.includes(OAUTH2_START_MARKER)
+  );
 }
 
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
@@ -109,21 +124,24 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     response: IncomingMessage,
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage> {
-    const location = response.headers['location'];
-    const isOauthRedirect =
-      (response.statusCode === 302 || response.statusCode === 303) &&
-      typeof location === 'string' &&
-      location.includes(OAUTH2_START_MARKER);
-    if (!isOauthRedirect) return response;
+    if (!isOauthRedirect(response)) return response;
 
-    if (await sentCredentialsSuperseded(context.headers['cookie'], this.credentialRefresher)) {
+    const freshCookies = await supersedingCookieHeader(context.headers['cookie'], this.credentialRefresher);
+    if (freshCookies !== null) {
       logger.debug(`[${this.name}] request carried superseded credentials; not treating the redirect as an expiry`);
       try {
         await tools.readBody(response); // keep-alive socket: the 302 body must be consumed
       } catch (error) {
         logger.debug(`[${this.name}] draining the redirect body failed`, error);
       }
-      return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
+      const replayed = await this.replayWithFreshCookies(context, tools, freshCookies);
+      if (!replayed) {
+        return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
+      }
+      if (!isOauthRedirect(replayed)) return replayed;
+      // The fresh credentials were rejected too, so the session really is gone: handle the replayed
+      // redirect as an expiry below. The replay is never repeated.
+      response = replayed;
     }
 
     let outcome: DetachedLoginOutcome | undefined;
@@ -157,5 +175,25 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     synthetic.statusMessage = 'Unauthorized';
     synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
     return synthetic;
+  }
+
+  /**
+   * Sends the request once more with the cookies a finished sign-in stored. `tools.retry` reuses
+   * `context.headers` as they are rather than re-running the request interceptors, so the fresh
+   * cookie header is put there first. Resolves null when the request cannot be replayed.
+   */
+  private async replayWithFreshCookies(
+    context: ProxyContext,
+    tools: UpstreamResponseTools,
+    freshCookies: string
+  ): Promise<IncomingMessage | null> {
+    if (!context.requestBody) return null;
+    try {
+      context.headers['cookie'] = freshCookies;
+      return await tools.retry(context.requestBody);
+    } catch (error) {
+      logger.debug(`[${this.name}] replaying the request with the renewed credentials failed`, error);
+      return null;
+    }
   }
 }

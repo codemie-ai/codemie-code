@@ -14,8 +14,10 @@ vi.mock('../../../../core/codemie-auth-helpers.js', () => ({
 const {
   STORE_READ_DEADLINE_MS,
   buildCookieHeader,
+  droppedCookieKeys,
   readWithDeadline,
   sentCredentialsSuperseded,
+  supersedingCookieHeader,
   readCookieAuth,
   readAnalyticsCookieAuth,
 } = await import('../cookie-auth.js');
@@ -43,6 +45,21 @@ describe('buildCookieHeader', () => {
   it('returns an empty string when nothing is usable', () => {
     expect(buildCookieHeader({})).toBe('');
     expect(buildCookieHeader({ '': 'x' })).toBe('');
+  });
+});
+
+describe('droppedCookieKeys', () => {
+  it('lists the names buildCookieHeader leaves out, an empty name as <empty>, and never a value', () => {
+    expect(droppedCookieKeys({ a: '1', '': 'x', ' ': 'y', bad: 'l\nb', 'n\nm': 'v' })).toEqual([
+      '<empty>',
+      '<empty>',
+      'bad',
+      'n\nm',
+    ]);
+  });
+
+  it('is empty when every entry is usable', () => {
+    expect(droppedCookieKeys({ a: '1', b: '2' })).toEqual([]);
   });
 });
 
@@ -80,6 +97,28 @@ describe('sentCredentialsSuperseded', () => {
   it('is false when the re-read builds an empty header', async () => {
     const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { '': 'x' } }) };
     expect(await sentCredentialsSuperseded('s=old', source)).toBe(false);
+  });
+});
+
+describe('supersedingCookieHeader', () => {
+  it('returns the stored header when it differs from the sent one', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { s: 'new' } }) };
+    expect(await supersedingCookieHeader('s=old', source)).toBe('s=new');
+  });
+
+  it.each([
+    ['equal headers', 's=same', { cookies: { s: 'same' } }],
+    ['an empty store', 's=old', null],
+    ['an unusable stored header', 's=old', { cookies: { '': 'x' } }],
+  ])('returns null for %s', async (_label, sent, stored) => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(stored) };
+    expect(await supersedingCookieHeader(sent, source)).toBeNull();
+  });
+
+  it('returns null when the re-read throws, without a source or when nothing was sent', async () => {
+    expect(await supersedingCookieHeader('s=old', { refreshNow: vi.fn().mockRejectedValue(new Error('boom')) })).toBeNull();
+    expect(await supersedingCookieHeader('s=old')).toBeNull();
+    expect(await supersedingCookieHeader('', { refreshNow: vi.fn() })).toBeNull();
   });
 });
 

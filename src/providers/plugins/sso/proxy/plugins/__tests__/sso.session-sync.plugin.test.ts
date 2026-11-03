@@ -276,6 +276,55 @@ describe('SSOSessionSyncPlugin', () => {
     });
   });
 
+  describe('dropped cookie entries', () => {
+    function droppedLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+      return spy.mock.calls
+        .map((call) => call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+        .filter((line) => line.includes('Ignoring invalid cookie entries'));
+    }
+
+    it('debug-logs the key names, never the values, when entries were dropped from the sync cookie header', async () => {
+      vi.useFakeTimers();
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+      const ctx = buildContext({
+        credentials: {
+          cookies: { auth: 'good-secret', '': 'orphan-secret', bad: 'line\r\nbreak-secret', other: 'ok' }
+        } as never
+      });
+      const interceptor = await plugin.createInterceptor(ctx);
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      const lines = droppedLines(debugSpy);
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.every((line) => line.includes('bad') && line.includes('<empty>'))).toBe(true);
+      const all = lines.join('\n');
+      expect(all).not.toContain('good-secret');
+      expect(all).not.toContain('orphan-secret');
+      expect(all).not.toContain('break-secret');
+      expect(all).not.toContain('auth');
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=good-secret; other=ok' });
+
+      await interceptor.onProxyStop?.();
+      debugSpy.mockRestore();
+    });
+
+    it('logs nothing about dropped entries when every cookie is usable', async () => {
+      vi.useFakeTimers();
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+      const interceptor = await plugin.createInterceptor(buildContext());
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      expect(droppedLines(debugSpy)).toHaveLength(0);
+
+      await interceptor.onProxyStop?.();
+      debugSpy.mockRestore();
+    });
+  });
+
   describe('credential refresh (PR #655 review: picks up a re-login, not just the LLM-request path)', () => {
     it('rebuilds the cookie header from a freshly re-read credential before each sync tick', async () => {
       vi.useFakeTimers();
