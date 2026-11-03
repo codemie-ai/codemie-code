@@ -141,11 +141,12 @@ export function flagValue(allArgs: string[], flags: string[]): string | undefine
 }
 
 /**
- * Whether one of `flags` appears among `args` before a bare `--`; everything after it is the
- * prompt or other positional text, never a flag.
+ * Whether one of the boolean `flags` is set among `args` before a bare `--` (as `<flag>` or
+ * `<flag>=true`; `<flag>=false` is not); everything after it is the prompt or other positional
+ * text, never a flag.
  */
 export function hasFlagBeforeSeparator(args: string[], flags: string[]): boolean {
-  return argsBeforeSeparator(args).some((arg) => flags.includes(arg));
+  return argsBeforeSeparator(args).some((arg) => flags.some((flag) => arg === flag || arg === `${flag}=true`));
 }
 
 /** The arguments before a bare `--`: everything after it is positional text, never a flag. */

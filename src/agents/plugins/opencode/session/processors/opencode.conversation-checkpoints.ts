@@ -13,7 +13,8 @@ export function getPriorRunsCheckpoint(
   if (startTime === undefined) return { sourceIndex, historyIndex };
 
   for (const event of events) {
-    if (Date.parse(event.date) >= startTime) continue;
+    // An event whose date does not parse is no earlier run's
+    if (!(Date.parse(event.date) < startTime)) continue;
     sourceIndex = Math.max(sourceIndex, event.sourceIndex);
     if (event.kind === 'user_prompt') historyIndex += 1;
   }

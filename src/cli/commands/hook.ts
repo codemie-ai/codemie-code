@@ -27,7 +27,7 @@ import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { existsSync } from 'fs';
-import { recordLocatedTranscript, recordStartMetricSessionId } from './hook/session-record-updates.js';
+import { isCompletedRecord, loadSessionRecord, recordLocatedTranscript, recordStartMetricSessionId } from './hook/session-record-updates.js';
 import { isSharedTranscriptStore } from '@/agents/core/session/session-origin-audit.js';
 
 /**
@@ -291,19 +291,17 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   }
 
   try {
-    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
-    const store = new SessionStore();
-    let record = await store.loadSession(sessionId);
+    let record = await loadSessionRecord(sessionId);
     if (record && isOtherGeneration(record, event.session_id)) {
       if (!(await establishOwnGenerationLocked(event, sessionId, record, config, options))) {
         return;
       }
-      record = await store.loadSession(sessionId);
+      record = await loadSessionRecord(sessionId);
     }
 
     // Re-checked under the lock: a record another process already completed is only delivered
     if (record?.status !== 'completed') {
-      if (record) await recordLocatedTranscript(store, record, event.transcript_path);
+      if (record) await recordLocatedTranscript(record, event.transcript_path);
       if (!(await finalizeSession(event, sessionId, config, options))) {
         return;
       }
@@ -702,7 +700,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
  */
 async function handleStop(event: BaseHookEvent, sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<void> {
   const generation = await ensureOwnGeneration(event, sessionId, config, options);
-  if (generation === 'deferred' || generation === 'closed') {
+  if (generation === 'deferred' || generation === 'closed' || (await isCompletedRecord(sessionId, 'Stop'))) {
     return;
   }
   // Accumulate active duration FIRST (marks end of active period)
@@ -1443,9 +1441,8 @@ async function closeGenerationLocked(
       logger.info(`[hook] New generation: delivering the undelivered previous generation of ${sessionId}`);
       await deliverSessionRecord(sessionId, nativeSessionId(live), live.reason, config, bounded);
     }
-    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     // A close whose status write failed completed nothing and left the record live: closed locally before any move
-    const after = await new SessionStore().loadSession(sessionId);
+    const after = await loadSessionRecord(sessionId);
     previousEnd = after && after.status !== 'completed' ? await closeUnclosedLocally(after, config) : after?.endTime;
     if (after && after.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
     if (Date.now() >= deadlineMs) {

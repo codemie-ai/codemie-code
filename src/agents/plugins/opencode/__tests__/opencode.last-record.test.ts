@@ -1,7 +1,7 @@
 /**
  * OpenCodeSessionAdapter.processSession reports `lastRecordAt` as the latest row of the session —
  * the session, its messages and its parts — in both storages: a run killed during a running tool
- * ends at that part's time, not at its message's.
+ * ends at that part's time, not at its message's. The file-storage parse carries a child session's parent.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
@@ -16,6 +16,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 const { OpenCodeSessionAdapter } = await import('../opencode.session.js');
 const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
+const { OpenCodeConversationsProcessor } = await import('../session/processors/opencode.conversations-processor.js');
 
 const MINUTE = 60_000;
 const SESSION_ID = '00000000-0000-4000-8000-0000000000aa';
@@ -54,10 +55,10 @@ describe('opencode lastRecordAt', () => {
     const t0 = Date.now() - 30 * MINUTE;
     const dbPath = join(root, 'opencode.db');
     await writeDb(dbPath, `
-      CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, parent_id TEXT);
       CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
       CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
-      INSERT INTO session VALUES ('ses_running', 'p', 's', '${root}', 't', '1.0.0', ${t0}, ${t0 + MINUTE});
+      INSERT INTO session VALUES ('ses_running', 'p', 's', '${root}', 't', '1.0.0', ${t0}, ${t0 + MINUTE}, NULL);
       INSERT INTO message VALUES ('msg_1', 'ses_running', ${t0 + 2 * MINUTE}, ${t0 + 3 * MINUTE},
         ${sqlText({ role: 'assistant', time: { created: t0 + 2 * MINUTE } })});
       INSERT INTO part VALUES ('prt_1', 'msg_1', 'ses_running', ${t0 + 4 * MINUTE}, ${t0 + 9 * MINUTE},
@@ -88,5 +89,23 @@ describe('opencode lastRecordAt', () => {
     const result = await new OpenCodeSessionAdapter(OpenCodePluginMetadata).processSession(sessionFile, SESSION_ID, context());
 
     expect(result.lastRecordAt).toBe(t0 + 7 * MINUTE);
+  });
+});
+
+describe('opencode file-storage parse', () => {
+  it('carries a child session\'s parentID as metadata.parentId, so it is no conversation', async () => {
+    const storage = join(root, 'storage');
+    mkdirSync(join(storage, 'session', 'project-1'), { recursive: true });
+    mkdirSync(join(storage, 'message', 'ses_child'), { recursive: true });
+    const sessionFile = join(storage, 'session', 'project-1', 'ses_child.json');
+    writeFileSync(sessionFile, JSON.stringify({ id: 'ses_child', parentID: 'ses_parent', directory: root, time: { created: Date.now() - MINUTE, updated: Date.now() } }));
+    writeFileSync(join(storage, 'message', 'ses_child', 'msg_1.json'), JSON.stringify({
+      id: 'msg_1', sessionID: 'ses_child', role: 'user', time: { created: Date.now() - MINUTE },
+    }));
+
+    const parsed = await new OpenCodeSessionAdapter(OpenCodePluginMetadata).parseSessionFile(sessionFile, SESSION_ID);
+
+    expect(parsed.metadata).toMatchObject({ parentId: 'ses_parent' });
+    expect(new OpenCodeConversationsProcessor().shouldProcess(parsed)).toBe(false);
   });
 });

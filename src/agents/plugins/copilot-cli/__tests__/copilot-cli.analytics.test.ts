@@ -5,11 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
 import { CopilotCliPluginMetadata } from '../copilot-cli.plugin.js';
+import { CopilotCliMetricsProcessor } from '../session/processors/copilot-cli.metrics-processor.js';
 import type { AgentConfig } from '../../../core/types.js';
 
 const processEventMock = vi.fn();
@@ -222,7 +223,7 @@ describe('copilot-cli SessionEnd correlation', () => {
     expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: resumed, transcript_path: file });
   });
 
-  it('a run resumed by a full native id with no transcript of it is not correlated', async () => {
+  it('a run resumed by a full native id with no transcript of it is not correlated and ends under its CodeMie id', async () => {
     const id = 'dededede-dede-4ede-8ede-dededededede';
     const resumed = 'acacacac-acac-4cac-8cac-acacacacacac';
     writeNative('other-1', [start('other-1', 10), user(20), assistant(30)]);
@@ -234,7 +235,7 @@ describe('copilot-cli SessionEnd correlation', () => {
     expect(readRecord(id).correlation.status).toBe('failed');
     expect(readRecord(id).correlation.agentSessionFile).toBeUndefined();
     expect(readRecord(id).correlation.agentSessionId).toBe(id);
-    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: resumed, transcript_path: '' });
+    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
   });
 
   it.each([[['--continue']], [['--resume', 'abababab']]])(
@@ -279,6 +280,7 @@ describe('CopilotCliMetricsProcessor', () => {
   const sessionsDir = () => join(codemieHome, 'sessions');
   const read = (name: string) =>
     readFileSync(join(sessionsDir(), name), 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { recordId: string; tools?: Record<string, number> });
+  const written = () => (existsSync(join(sessionsDir(), `${sid}_metrics.jsonl`)) ? read(`${sid}_metrics.jsonl`) : []);
   const toolTotal = (rows: Array<{ tools?: Record<string, number> }>) => rows.reduce((n, r) => n + (r.tools?.view ?? 0), 0);
 
   // The live record: a metrics file is created only while it exists
@@ -340,6 +342,21 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(read(`${sid}_metrics.jsonl`).map((r) => r.recordId)).toEqual([`${sid}-turn-0`]);
   });
 
+  it('an untimed assistant turn: no delta in a bounded window; one across two passes in the whole-session window', async () => {
+    const untimed: Ev = { type: 'assistant.message', data: { model: 'gpt-5.4', outputTokens: 5 } };
+    const file = writeNative('n1', [start('n1'), user(10), untimed]);
+    const metricsFiles = () => readdirSync(sessionsDir()).filter((f) => f.endsWith('_metrics.jsonl'));
+
+    await run(file);
+    expect(metricsFiles()).toEqual([]);
+
+    const adapter = new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
+    const parsed = { ...(await adapter.parseSessionFile(file, sid)), runWindow: { startTime: -Infinity } };
+    await new CopilotCliMetricsProcessor().process(parsed, ctx);
+    await new CopilotCliMetricsProcessor().process(parsed, ctx);
+    expect(read(`${sid}_metrics.jsonl`).map((r) => r.recordId)).toEqual([`${sid}-turn-0`]);
+  });
+
   it('keeps a late tool result with no new turn as one identified supplement delta', async () => {
     const base = [start('n1'), user(10), assistant(20), toolStart('c1', 30)];
     const file = writeNative('n1', base);
@@ -350,6 +367,24 @@ describe('CopilotCliMetricsProcessor', () => {
     const rows = read(`${sid}_metrics.jsonl`);
     expect(rows.map((r) => r.recordId)).toEqual([`${sid}-turn-0`, `${sid}-supplement-1`]);
     expect(toolTotal(rows)).toBe(1);
+  });
+
+  it('stamps a supplement delta with the window start when no transcript record lies before the window end', async () => {
+    const file = writeNative('n1', [start('n1', 100), user(110), assistant(120), toolStart('c1', 130), toolDone('c1', 140)]);
+    const parsed = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).parseSessionFile(file, sid);
+
+    await new CopilotCliMetricsProcessor().process({ ...parsed, runWindow: { startTime: T0, upperBound: T0 + 50 } }, ctx);
+
+    expect(written()).toMatchObject([{ recordId: `${sid}-supplement-0`, timestamp: T0, tools: { view: 1 } }]);
+  });
+
+  it('stamps a supplement delta with the window start, not an earlier run\'s last record', async () => {
+    const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40)]);
+    const parsed = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).parseSessionFile(file, sid);
+
+    await new CopilotCliMetricsProcessor().process({ ...parsed, runWindow: { startTime: T0 + 1000, upperBound: T0 + 2000 } }, ctx);
+
+    expect(written()).toMatchObject([{ recordId: `${sid}-supplement-0`, timestamp: T0 + 1000, tools: { view: 1 } }]);
   });
 });
 
@@ -451,13 +486,17 @@ describe('copilot-cli runs over one resumed native session', () => {
     ]);
   });
 
-  it('a run with no live and no completed_ record still runs the conversation; only the metrics processor fails', async () => {
+  it('a run with no live and no completed_ record queues no conversation; only the metrics processor fails', async () => {
     const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210)]);
+    // A spool left behind by an earlier pass: a write to it needs no record
+    const spool = join(codemieHome, 'sessions', `${runA}_conversation.jsonl`);
+    mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
+    writeFileSync(spool, '');
 
     const result = await adapter().processSession(file, runA, ctx(runA));
 
     expect(result.failedProcessors).toEqual(['copilot-cli-metrics']);
-    expect(Object.keys(result.processors)).toContain('copilot-cli-conversations');
+    expect(readFileSync(spool, 'utf-8')).toBe('');
   });
 
   it('a create call whose telemetry names only filePaths is a write', async () => {
@@ -482,6 +521,19 @@ describe('copilot-cli runs over one resumed native session', () => {
     const parsed = await adapter().parseSessionFile(file, runA);
 
     expect(parsed.metrics?.fileOperations).toEqual([{ type: 'write', path: x, linesAdded: 1, linesRemoved: 0 }]);
+  });
+
+  it('a relative apply_patch path after a resume in another directory joins the resumed directory', async () => {
+    const other = join(cwd, 'other');
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'session.resume', timestamp: iso(1000), data: { resumeTime: iso(1000), context: { cwd: other, gitRoot: other } } },
+      prompt(1100, 'q'), reply(1210),
+      { type: 'tool.execution_start', timestamp: iso(1220), data: { toolCallId: 'r1', toolName: 'apply_patch', arguments: '*** Begin Patch\n*** Add File: x.txt\n+a\n*** End Patch\n' } },
+      { type: 'tool.execution_complete', timestamp: iso(1230), data: { toolCallId: 'r1', success: true } }]);
+
+    const parsed = await adapter().parseSessionFile(file, runC);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'write', path: join(other, 'x.txt') }]);
   });
 
   const deletePatch = '*** Begin Patch\n*** Delete File: x.txt\n*** End Patch\n';

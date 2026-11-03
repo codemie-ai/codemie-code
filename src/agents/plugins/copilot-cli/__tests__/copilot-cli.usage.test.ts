@@ -244,6 +244,69 @@ describe('an untimed event in a bounded run window', () => {
     expect(runShutdownShare([shutdown(4, 20)], run)).toBeUndefined();
   });
 
+  it('a resume after the base with no shutdown of its own (a killed run) leaves this run\'s share unknown', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(5) },
+      { type: 'session.resume', timestamp: at(11) }, shutdown(9, 20),
+    ];
+
+    expect(runShutdownShare(events, run)).toBeUndefined();
+  });
+
+  it('a base shutdown, then this run and its shutdown, gives the difference', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(11) }, shutdown(9, 20),
+    ];
+
+    expect(runShutdownShare(events, run)?.premiumRequests).toBe(7);
+  });
+
+  it('usage records with no model and no model in effect fall through to the fallbacks, never an empty result without a reason', () => {
+    const modelless: CopilotEvent = { type: 'session.usage_record', timestamp: at(13), data: { usage: { inputTokens: 100, outputTokens: 10 } } };
+    const fresh: CopilotEvent[] = [{ type: 'session.start', timestamp: at(11) }, modelless, { ...turn('gpt-5.2', 10), timestamp: at(14) }];
+    const resumed: CopilotEvent[] = [{ type: 'session.resume', timestamp: at(11) }, modelless];
+
+    expect(extractCopilotRunUsage(fresh, run).messages).toEqual([
+      { model: 'gpt-5.2', usage: { outputTokens: 10 }, requests: 1, partial: true },
+    ]);
+    expect(extractCopilotRunUsage(resumed, run).unavailableReason).toBeTruthy();
+  });
+
+  it('a base shutdown, then this run\'s start and no shutdown of its own (a kill), leaves the share unknown', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(11) },
+    ];
+
+    expect(runShutdownShare(events, run)).toBeUndefined();
+  });
+
+  it('a usage record with no model goes under the model in effect, the latest model event of either kind; with none in effect it is dropped and the result partial', () => {
+    const modelled: CopilotEvent = { type: 'session.usage_record', timestamp: at(12), data: { usage: { model: 'gpt-5.2', inputTokens: 100, outputTokens: 10 } } };
+    const modelless: CopilotEvent = { type: 'session.usage_record', timestamp: at(13), data: { usage: { inputTokens: 40, outputTokens: 4 } } };
+    const change: CopilotEvent = { type: 'session.model_change', timestamp: at(11), data: { newModel: 'claude-sonnet-4.5' } };
+    const zero = { cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+
+    expect(extractCopilotRunUsage([change, modelled, modelless], run)).toMatchObject({
+      messages: [
+        { model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, ...zero }, requests: 1 },
+        { model: 'claude-sonnet-4.5', usage: { inputTokens: 40, outputTokens: 4, ...zero }, requests: 1 },
+      ],
+      partial: false,
+    });
+    expect(extractCopilotRunUsage([modelled, modelless], run)).toMatchObject({
+      messages: [{ model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, ...zero }, requests: 1 }],
+      partial: true,
+    });
+    const answered: CopilotEvent = { type: 'assistant.message', timestamp: at(12), data: { model: 'gpt-5.2' } };
+    expect(extractCopilotRunUsage([change, answered, modelless], run)).toMatchObject({
+      messages: [{ model: 'gpt-5.2', usage: { inputTokens: 40, outputTokens: 4, ...zero }, requests: 1 }],
+      partial: false,
+    });
+  });
+
   it('the fresh branch drops an untimed event under a bounded window', () => {
     const events: CopilotEvent[] = [
       { type: 'session.start', timestamp: at(11) },

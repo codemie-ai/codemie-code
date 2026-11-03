@@ -2,8 +2,9 @@
  * The OpenCode sessions of a record's run, read from a real opencode.db through
  * OpenCodeSessionAdapter.processSession and locateTranscript: the session the launch named;
  * else every one created inside the run window, plus for a continued run the one it continued —
- * in the record's directory by realpath, never a session created at or after a later record's start.
- * The selected sessions are read off the conversation payloads' ids.
+ * in the record's directory by realpath, never a session created at or after a later record's start —
+ * except in a `codemie hook` process (a live run's own hook), which scans for no later record, so its
+ * creation window has no upper bound. The selected sessions are read off the conversation payloads' ids.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync, symlinkSync } from 'fs';
@@ -37,20 +38,25 @@ interface DbSession {
   directory?: string;
   /** Times of the session's user prompts; each gets an assistant reply one second later */
   prompts: number[];
+  /** The parent session of a subagent's child session */
+  parentId?: string;
+  /** A completed call of this tool on each assistant reply */
+  tool?: string;
 }
 
 async function writeSessions(sessions: DbSession[]): Promise<void> {
   const rows = sessions.flatMap((s) => [
-    `INSERT INTO session VALUES ('${s.id}', 'p', 's', '${s.directory ?? project}', 't', '1.0.0', ${s.created}, ${s.updated});`,
+    `INSERT INTO session VALUES ('${s.id}', 'p', 's', '${s.directory ?? project}', 't', '1.0.0', ${s.created}, ${s.updated}, ${s.parentId ? `'${s.parentId}'` : 'NULL'});`,
     ...s.prompts.flatMap((at, i) => [
       `INSERT INTO message VALUES ('msg_${s.id}_u${i}', '${s.id}', ${at}, ${at}, ${sqlText({ role: 'user', time: { created: at } })});`,
       `INSERT INTO part VALUES ('prt_${s.id}_u${i}', 'msg_${s.id}_u${i}', '${s.id}', ${at}, ${at}, ${sqlText({ type: 'text', text: `prompt ${s.id} ${i}` })});`,
       `INSERT INTO message VALUES ('msg_${s.id}_a${i}', '${s.id}', ${at + SECOND}, ${at + SECOND}, ${sqlText({ role: 'assistant', modelID: 'm', time: { created: at + SECOND } })});`,
       `INSERT INTO part VALUES ('prt_${s.id}_a${i}', 'msg_${s.id}_a${i}', '${s.id}', ${at + SECOND}, ${at + SECOND}, ${sqlText({ type: 'text', text: `reply ${s.id} ${i}` })});`,
+      ...(s.tool ? [`INSERT INTO part VALUES ('prt_${s.id}_t${i}', 'msg_${s.id}_a${i}', '${s.id}', ${at + SECOND}, ${at + SECOND}, ${sqlText({ type: 'tool', tool: s.tool, callID: `call_${s.id}_${i}`, state: { status: 'completed', input: {} } })});`] : []),
     ]),
   ]);
   await writeDb(dbPath, `
-    CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER);
+    CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, parent_id TEXT);
     CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
     CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
     ${rows.join('\n')}
@@ -94,6 +100,13 @@ function conversationIds(record: Session): string[] {
   const path = join(root, 'codemie', 'sessions', `${record.sessionId}_conversation.jsonl`);
   if (!existsSync(path)) return [];
   return readFileSync(path, 'utf-8').split('\n').filter(Boolean).map((line) => JSON.parse(line).payload.conversationId);
+}
+
+/** The run's metrics deltas: record id, OpenCode session, user prompts, tools. */
+function deltas(record: Session): Array<{ recordId: string; agentSessionId: string; userPrompts?: unknown[]; tools?: Record<string, number> }> {
+  const path = join(root, 'codemie', 'sessions', `${record.sessionId}_metrics.jsonl`);
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf-8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
 /** The run's queued conversation payloads: conversation id, history indices, payload id. */
@@ -140,18 +153,19 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
     expect(conversationIds(a)).toEqual(['ses_a_own']);
   });
 
-  it('a run that named a session (`--session X`) selects it exactly', async () => {
+  it('a run that named a session (`--session X`) selects it first, plus a session it opened (`/new`) in its directory; one in another directory is not its', async () => {
     writeRecord({ startTime: T0 + 10 * SECOND });
     const b = writeRecord({ startTime: T0 + 60 * SECOND, resumeSessionId: 'ses_x' });
     await writeSessions([
       { id: 'ses_x', created: T0, updated: T0 + 90 * SECOND, prompts: [T0 + SECOND, T0 + 70 * SECOND] },
       { id: 'ses_a_own', created: T0 + 15 * SECOND, updated: T0 + 30 * SECOND, prompts: [T0 + 20 * SECOND] },
       { id: 'ses_newer', created: T0 + 65 * SECOND, updated: T0 + 95 * SECOND, prompts: [T0 + 66 * SECOND] },
+      { id: 'ses_elsewhere', created: T0 + 66 * SECOND, updated: T0 + 96 * SECOND, directory: root, prompts: [T0 + 67 * SECOND] },
     ]);
 
     await adapter().processSession(dbPath, b.sessionId, context(b));
 
-    expect(conversationIds(b)).toEqual(['ses_x']);
+    expect(conversationIds(b)).toEqual(['ses_x', 'ses_newer']);
   });
 
   it('a run that created no session selects the older one it continued (`--continue`)', async () => {
@@ -164,6 +178,58 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
     await adapter().processSession(dbPath, c.sessionId, context(c));
 
     expect(conversationIds(c)).toEqual(['ses_continued']);
+  });
+
+  it('a continued run picks, of two older sessions updated inside its window, the one with a message there', async () => {
+    const c = writeRecord({ startTime: T0 + 50 * SECOND, continuesPriorSession: true });
+    await writeSessions([
+      // Updated last, but its only message is before the run
+      { id: 'ses_touched', created: T0, updated: T0 + 90 * SECOND, prompts: [T0 + SECOND] },
+      { id: 'ses_continued', created: T0 + 2 * SECOND, updated: T0 + 80 * SECOND, prompts: [T0 + 3 * SECOND, T0 + 60 * SECOND] },
+    ]);
+
+    await adapter().processSession(dbPath, c.sessionId, context(c));
+
+    expect(conversationIds(c)).toEqual(['ses_continued']);
+  });
+
+  it('a continued run whose older sessions have no message inside its window picks the newest-updated one', async () => {
+    // A codemie-code record reads its private storage under CODEMIE_HOME
+    dbPath = join(root, 'codemie', 'opencode-storage', 'opencode', 'opencode.db');
+    mkdirSync(join(root, 'codemie', 'opencode-storage', 'opencode', 'storage'), { recursive: true });
+    const c = writeRecord({ agentName: 'codemie-code', startTime: T0 + 50 * SECOND, continuesPriorSession: true });
+    await writeSessions([
+      { id: 'ses_touched', created: T0, updated: T0 + 90 * SECOND, prompts: [T0 + SECOND] },
+      { id: 'ses_older', created: T0 + 2 * SECOND, updated: T0 + 80 * SECOND, prompts: [T0 + 3 * SECOND] },
+    ]);
+
+    expect((await adapter().locateSessionTranscript(c.sessionId))?.sessionIds).toEqual(['ses_touched']);
+  });
+
+  it('a continued run continues the parent, never a subagent\'s child updated later with a message in the window', async () => {
+    dbPath = join(root, 'codemie', 'opencode-storage', 'opencode', 'opencode.db');
+    mkdirSync(join(root, 'codemie', 'opencode-storage', 'opencode', 'storage'), { recursive: true });
+    const c = writeRecord({ agentName: 'codemie-code', startTime: T0 + 50 * SECOND, continuesPriorSession: true });
+    await writeSessions([
+      { id: 'ses_parent', created: T0, updated: T0 + 80 * SECOND, prompts: [T0 + SECOND, T0 + 60 * SECOND] },
+      { id: 'ses_child', created: T0 + 2 * SECOND, updated: T0 + 90 * SECOND, parentId: 'ses_parent', prompts: [T0 + 3 * SECOND, T0 + 65 * SECOND] },
+    ]);
+
+    expect((await adapter().locateSessionTranscript(c.sessionId))?.sessionIds).toEqual(['ses_parent']);
+  });
+
+  it('a subagent\'s child session counts in the run\'s metrics, but is no conversation and no user prompt', async () => {
+    const a = writeRecord({ startTime: T0 + 10 * SECOND });
+    await writeSessions([
+      { id: 'ses_parent', created: T0 + 15 * SECOND, updated: T0 + 40 * SECOND, prompts: [T0 + 20 * SECOND] },
+      { id: 'ses_child', created: T0 + 25 * SECOND, updated: T0 + 30 * SECOND, parentId: 'ses_parent', prompts: [T0 + 26 * SECOND], tool: 'read' },
+    ]);
+
+    await adapter().processSession(dbPath, a.sessionId, context(a));
+
+    expect(conversationIds(a)).toEqual(['ses_parent']);
+    expect(deltas(a).filter((d) => d.userPrompts).map((d) => d.agentSessionId)).toEqual(['ses_parent']);
+    expect(deltas(a).filter((d) => d.tools).map((d) => [d.agentSessionId, d.tools])).toEqual([['ses_child', { read: 1 }]]);
   });
 
   it('a fresh run that created no session selects none, though an older session was updated inside its window', async () => {
@@ -187,6 +253,23 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
     ]);
 
     expect(await adapter().locateSessionTranscript(fresh.sessionId)).toBeUndefined();
+  });
+
+  it('the SessionEnd lookup of a run with two sessions names the db, both sessions and the later record\'s start', async () => {
+    dbPath = join(root, 'codemie', 'opencode-storage', 'opencode', 'opencode.db');
+    mkdirSync(join(root, 'codemie', 'opencode-storage', 'opencode', 'storage'), { recursive: true });
+    const a = writeRecord({ agentName: 'codemie-code', startTime: T0 + 10 * SECOND });
+    writeRecord({ agentName: 'codemie-code', startTime: T0 + 60 * SECOND });
+    await writeSessions([
+      { id: 'ses_first', created: T0 + 15 * SECOND, updated: T0 + 30 * SECOND, prompts: [T0 + 20 * SECOND] },
+      { id: 'ses_after_new', created: T0 + 40 * SECOND, updated: T0 + 50 * SECOND, prompts: [T0 + 45 * SECOND] },
+    ]);
+
+    expect(await adapter().locateSessionTranscript(a.sessionId)).toEqual({
+      transcript: dbPath,
+      sessionIds: ['ses_after_new', 'ses_first'],
+      recordsBeforeMs: T0 + 60 * SECOND,
+    });
   });
 
   it('parses a discovered descriptor by its own `ses_` id; a CodeMie id names no session in the db', async () => {
@@ -289,6 +372,22 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
     ]);
   });
 
+  it('a run over two sessions: the later record time, the summed records, both sessions\' payloads and deltas in order', async () => {
+    const a = writeRecord({ startTime: T0 + 10 * SECOND });
+    await writeSessions([
+      { id: 'ses_first', created: T0 + 15 * SECOND, updated: T0 + 30 * SECOND, prompts: [T0 + 20 * SECOND] },
+      { id: 'ses_after_new', created: T0 + 40 * SECOND, updated: T0 + 50 * SECOND, prompts: [T0 + 45 * SECOND] },
+    ]);
+
+    const result = await adapter().processSession(dbPath, a.sessionId, context(a));
+
+    expect(result.lastRecordAt).toBe(T0 + 50 * SECOND);
+    // Each session: its 2 messages through the metrics processor, its 2 history entries through the conversation one
+    expect(result.totalRecords).toBe(8);
+    expect(queued(a).map((q) => q.payloadId)).toEqual(['ses_after_new@1', 'ses_first@1']);
+    expect(deltas(a).map((d) => d.recordId)).toEqual(['msg_ses_after_new_u0:prompt', 'msg_ses_first_u0:prompt']);
+  });
+
   it.each([
     ['per conversation', { historyIndexByConversation: { ses_first: 0 } }],
     ['a single value written before the per-conversation map', {}],
@@ -333,5 +432,14 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
 
     expect(conversationIds(a)).toEqual(['ses_ok']);
     expect(result?.success).toBe(false);
+  });
+});
+
+describe('selectRunSessions', () => {
+  it('a record with no directory selects nothing, not the sessions of the current directory', async () => {
+    const { selectRunSessions } = await import('../opencode.run-session.js');
+    const here = { sessionId: 'ses_here', filePath: 'opencode.db', projectPath: process.cwd(), createdAt: T0 + 20 * SECOND, updatedAt: T0 + 30 * SECOND };
+
+    expect(selectRunSessions([here], { startTime: T0, workingDirectory: '' }, undefined)).toEqual([]);
   });
 });

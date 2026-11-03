@@ -16,6 +16,7 @@ import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
+import { recordNoTranscript } from '../../core/session/no-transcript-correlation.js';
 import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
 import {
   assertExplicitCopilotModelAllowed,
@@ -57,6 +58,7 @@ function runSessionIdOf(sessionId: string, env: NodeJS.ProcessEnv): string {
 /**
  * The run's native transcript: a pinned or resumed run's own session exactly (none when it is missing);
  * a session the wrapper could not name (`--continue`, an id prefix, a name) by the run window.
+ * With no native transcript the run goes under the CodeMie id, the one its stored correlation names.
  */
 async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: string; native?: string }> {
   const { SessionStore } = await import('../../core/session/SessionStore.js');
@@ -65,24 +67,10 @@ async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: s
   const pinned = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId;
   if (pinned || runSessionId !== sessionId || !record) {
     const eventsFile = join(getCopilotSessionStateRoot(), runSessionId, 'events.jsonl');
-    return { runSessionId, native: existsSync(eventsFile) ? eventsFile : undefined };
+    return existsSync(eventsFile) ? { runSessionId, native: eventsFile } : { runSessionId: sessionId };
   }
   const [native] = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).locateTranscript(record);
   return { runSessionId, native };
-}
-
-/**
- * A run with no native transcript is not correlated: nothing of it is read, and the correlation names
- * the CodeMie record instead of a native session that does not exist.
- */
-async function recordNoTranscript(sessionId: string): Promise<void> {
-  const { SessionStore } = await import('../../core/session/SessionStore.js');
-  const store = new SessionStore();
-  const record = await store.loadSession(sessionId);
-  if (!record) return;
-  const { agentSessionFile: _none, ...correlation } = record.correlation;
-  record.correlation = { ...correlation, agentSessionId: record.sessionId, status: 'failed' };
-  await store.saveSession(record);
 }
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {

@@ -96,18 +96,26 @@ export interface ShutdownShare {
 /**
  * A cumulative counter's share of the run: its last value before the run's end minus its last value
  * before the run's start. With no shutdown before the start the base is 0 when the copilot session
- * started inside the run, else the counters are not carried (a resumed session after a kill).
+ * started inside the run, else the counters are not carried (a resumed session after a kill). A start
+ * or resume after the base with no shutdown of its own before the run is a killed run whose work the
+ * counters include: the run's share is unknown. So is a run with no shutdown inside it (a kill): its
+ * last value is the base.
  */
 export function runShutdownShare(events: CopilotEvent[], run: RunBounds): ShutdownShare | undefined {
   let base: CopilotShutdownData | undefined;
   let last: CopilotShutdownData | undefined;
+  let unclosedBefore = false;
   for (const event of events) {
-    if (event.type !== 'session.shutdown' || !event.data) continue;
     const time = eventTime(event);
-    if (time < run.startTime) base = event.data as CopilotShutdownData;
+    if ((event.type === 'session.start' || event.type === 'session.resume') && time < run.startTime) unclosedBefore = true;
+    if (event.type !== 'session.shutdown' || !event.data) continue;
+    if (time < run.startTime) {
+      base = event.data as CopilotShutdownData;
+      unclosedBefore = false;
+    }
     if (beforeRunEnd(time, run)) last = event.data as CopilotShutdownData;
   }
-  if (!last || (!base && !startedInRun(events, run))) return undefined;
+  if (!last || last === base || unclosedBefore || (!base && !startedInRun(events, run))) return undefined;
   // Copilot's counters are cumulative across resumed processes: the clamp is a defence, not a path
   const minus = (value: number | undefined, prior: number | undefined) =>
     value === undefined ? undefined : Math.max(0, value - (prior ?? 0));
@@ -120,20 +128,35 @@ export function runShutdownShare(events: CopilotEvent[], run: RunBounds): Shutdo
   };
 }
 
-/** Per-model usage summed over `session.usage_record` events, one request each. */
-function fromUsageRecords(records: CopilotEvent[]): CopilotUsageMessage[] {
+/**
+ * Per-model usage summed over the run's `session.usage_record` events, one request each. A record without
+ * its own model goes under the model in effect at its time: the latest model event at or before it, either a
+ * `session.model_change` (`newModel`) or an `assistant.message` (`model`), whichever came last. One with no
+ * model in effect is not counted and makes the result partial.
+ */
+function fromUsageRecords(events: CopilotEvent[], run: RunBounds): { messages: CopilotUsageMessage[]; partial: boolean } {
   const byModel = new Map<string, CopilotUsageMessage & { requests: number }>();
-  for (const record of records) {
-    const usage = (record.data as CopilotUsageRecordData | undefined)?.usage;
-    if (!usage?.model) continue;
-    const entry = byModel.get(usage.model) ?? { model: usage.model, usage: {}, requests: 0 };
+  let inEffect: string | undefined;
+  let partial = false;
+  for (const event of events) {
+    if (event.type === 'session.model_change') inEffect = (event.data as { newModel?: string } | undefined)?.newModel ?? inEffect;
+    if (event.type === 'assistant.message') inEffect = (event.data as CopilotAssistantMessageData | undefined)?.model ?? inEffect;
+    if (event.type !== 'session.usage_record' || !inRun(event, run)) continue;
+    const usage = (event.data as CopilotUsageRecordData | undefined)?.usage;
+    if (!usage) continue;
+    const model = usage.model ?? inEffect;
+    if (!model) {
+      partial = true;
+      continue;
+    }
+    const entry = byModel.get(model) ?? { model, usage: {}, requests: 0 };
     for (const bucket of USAGE_BUCKETS) {
       entry.usage[bucket] = (entry.usage[bucket] ?? 0) + (usage[bucket] ?? 0);
     }
     entry.requests += 1;
-    byModel.set(usage.model, entry);
+    byModel.set(model, entry);
   }
-  return [...byModel.values()];
+  return { messages: [...byModel.values()], partial };
 }
 
 /** Last shutdown wins: a resumed session can record more than one. */
@@ -231,9 +254,9 @@ export function extractCopilotUsage(events: CopilotEvent[]): CopilotUsageExtract
  */
 export function extractCopilotRunUsage(events: CopilotEvent[], run: RunBounds): CopilotUsageExtract {
   const premiumRequests = runShutdownShare(events, run)?.premiumRequests;
-  const records = events.filter((event) => event.type === 'session.usage_record' && inRun(event, run));
-  if (records.length > 0) {
-    return { messages: fromUsageRecords(records), premiumRequests, partial: false };
+  const { messages, partial } = fromUsageRecords(events, run);
+  if (messages.length > 0) {
+    return { messages, premiumRequests, partial };
   }
   if (startedInRun(events, run)) {
     return extractCopilotUsage(events.filter((event) => beforeRunEnd(eventTime(event), run)));

@@ -152,6 +152,7 @@ async function queryDb<T>(dbPath: string, sql: string, params: SqlParam[] = []):
 interface SessionRow {
   id: string;
   project_id: string;
+  parent_id: string | null;
   slug: string;
   directory: string;
   title: string;
@@ -217,7 +218,7 @@ export async function readSessionsFromDb(
   }
 
   let sql =
-    `SELECT id, project_id, slug, directory, title, version, time_created, time_updated ` +
+    `SELECT id, project_id, parent_id, slug, directory, title, version, time_created, time_updated ` +
     `FROM session WHERE ${conditions.join(' AND ')} ORDER BY time_created DESC`;
 
   if (options?.limit && options.limit > 0) {
@@ -236,9 +237,26 @@ export async function readSessionsFromDb(
       updated: row.time_updated ?? 0,
     },
     projectID: row.project_id,
+    ...(row.parent_id && { parentID: row.parent_id }),
     slug: row.slug,
     version: row.version,
   }));
+}
+
+/** Of `sessionIds`, those with a message created in `[since, until)` (no upper bound when `until` is undefined). */
+export async function readSessionIdsWithMessages(
+  dbPath: string,
+  sessionIds: string[],
+  window: { since: number; until?: number }
+): Promise<Set<string>> {
+  if (sessionIds.length === 0) return new Set();
+  const until = window.until === undefined ? '' : ' AND time_created < ?';
+  const rows = await queryDb<{ session_id: string }>(
+    dbPath,
+    `SELECT DISTINCT session_id FROM message WHERE session_id IN (${sessionIds.map(() => '?').join(', ')}) AND time_created >= ?${until}`,
+    [...sessionIds, window.since, ...(window.until === undefined ? [] : [window.until])]
+  );
+  return new Set(rows.map((row) => row.session_id));
 }
 
 /**

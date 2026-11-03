@@ -4,7 +4,7 @@
 
 import { isAbsolute, join } from 'path';
 import type { ParsedSession } from '../../core/session/BaseSessionAdapter.js';
-import type { CopilotToolCompleteData } from './copilot-cli-event-types.js';
+import type { CopilotEvent, CopilotSessionStartData, CopilotToolCompleteData } from './copilot-cli-event-types.js';
 import type { ShutdownShare } from './copilot-cli.usage.js';
 
 /**
@@ -17,6 +17,27 @@ const PATCH_HEADER = /^\*\*\* (Add|Update|Delete) File: (.+)$/gm;
 const PATCH_OPERATION = { Add: 'write', Update: 'edit', Delete: 'delete' } as const;
 
 type FileOperation = NonNullable<NonNullable<ParsedSession['metrics']>['fileOperations']>[number];
+
+/**
+ * The directory a relative path of a call joins: the `cwd` (else `gitRoot`) of the latest `session.start` /
+ * `session.resume` at or before the event asked about; a start or resume without one keeps the one before.
+ * Asked in event order, it walks the events once.
+ */
+export function directoryCursor(events: CopilotEvent[]): (at: CopilotEvent) => string | undefined {
+  let next = 0;
+  let cwd: string | undefined;
+  return (at) => {
+    while (next < events.length) {
+      const event = events[next++];
+      if (event.type === 'session.start' || event.type === 'session.resume') {
+        const context = (event.data as CopilotSessionStartData | undefined)?.context;
+        cwd = context?.cwd ?? context?.gitRoot ?? cwd;
+      }
+      if (event === at) break;
+    }
+    return cwd;
+  };
+}
 
 /** A file-writing tool call as its start event names it. */
 export interface ToolCall {

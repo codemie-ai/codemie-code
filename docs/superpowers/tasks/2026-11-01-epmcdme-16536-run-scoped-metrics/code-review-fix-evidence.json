@@ -1,29 +1,185 @@
 {
   "schema": 1,
-  "reviewed_head": "92d8593eb06c64855f851db41d0ed6119e35b841",
+  "reviewed_head": "85d18123b629cee42b1081080de2ea680490ddf6",
   "findings": {
     "CR-001": {
-      "decision": {
-        "outcome": "Fixed by tests: src/agents/plugins/copilot-cli/__tests__/copilot-cli.analytics.test.ts — 'a call whose telemetry lists a path as deleted is a delete' (deletedPaths telemetry → [{ type: 'delete', path }]) and 'an apply_patch with no telemetry and a Delete File header is a delete of the absolute path' (patch header → delete of <cwd>/x.txt).",
-        "rationale": "Both delete paths of callFileOperations (copilot-cli.file-operations.ts:52, the deleted.has(path) branch and PATCH_OPERATION.Delete) are now asserted; each test was shown red against the branch flipped to 'edit' and green on the fix-up commit."
-      }
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
     },
     "CR-002": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-005": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-007": {
       "decision": {
-        "outcome": "Fixed by a test: copilot-cli.analytics.test.ts — 'each bounded run counts only the skills invoked inside its window': skill.invoked events inside run A's and run C's windows of one resumed native session; A counts only skill-a, C only skill-c.",
-        "rationale": "The inRun(event, bounds) guard on skill.invoked (copilot-cli.session.ts:266) is now covered; the test was shown red with the guard dropped (C counts both skills)."
-      }
+        "outcome": "Decided and applied: a copilot run with no native transcript ends under the CodeMie id in both end paths; the end metric pairs with the start metric through startMetricSessionId, which is unaffected.",
+        "rationale": "The plugin path read the resumed UUID before recordNoTranscript rewrote the correlation, so its own SessionEnd then looked like another generation to isOtherGeneration (session_id equal to neither the record id nor its native id). Sending the CodeMie id matches the synthetic path, the stored correlation and the PR wording; the metric pairing never depended on the event id: the end metric takes session.startMetricSessionId first (hook/end-metric.ts), so the start and end of a --resume <uuid> run stay under the id the server accepted the start under. The conversation of such a run is not synced at all (no transcript), so no conversation id is affected."
+      },
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-008": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-009": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-010": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-012": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-013": {
+      "decision": {
+        "outcome": "Kept the rule, fixed the test header and closed its edge: a live run's codemie hook process scans for no later record (its window has no upper bound); a Stop hook that runs after the wrapper's SessionEnd completed the record now syncs nothing.",
+        "rationale": "Inside a hook process the record belongs to a live run, so a later record of the same directory can exist only for a second concurrent run \u2014 the documented limit of the selection (two concurrent runs in one directory are indistinguishable) \u2014 or for a detached Stop hook outliving the wrapper; the latter is closed by the status re-check handleStop now makes, the same one handleSessionEnd makes. Scanning the sessions directory for later records on every prompt inside the hook's time budget is what the rule avoids. The test file's header now states the hook-process exception the test at :296 pins."
+      },
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-014": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-015": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-018": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-019": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
+    },
+    "CR-023": {
+      "commands": [
+        {
+          "command": "npm run ci",
+          "exit_code": 0
+        }
+      ]
     },
     "CR-003": {
       "decision": {
-        "outcome": "Fixed by a test: copilot-cli.analytics.test.ts — 'a resumed run with no per-call lines takes the shutdown lines and files beyond the prior shutdown': shutdown {linesAdded 2, files [x]} before the resume, shutdown {linesAdded 5, files [x, y]} inside run C → C's fileOperations [{ type: 'edit', path: y, linesAdded: 3, linesRemoved: 0 }].",
-        "rationale": "runShutdownShare / applyShutdownShare (copilot-cli.usage.ts:101) base subtraction is now asserted; the test was shown red with the subtraction removed (linesAdded 5, both files)."
+        "outcome": "Kept: recordNoTranscript destructures record.correlation without a guard.",
+        "rationale": "Session.correlation is a required field of the type (types.ts) and every writer of a record sets it: ensure-session.ts:77-81, createSessionRecord at hook.ts:1010-1014, DesktopTelemetryRuntime.ts:251; the hook.ts re-entry at :940 rewrites it. The optional reads elsewhere are defensive reads of parsed JSON; a record without the field is not produced by any version, and the plugin's own onSessionEnd made the same destructure before this change. A default here would invent a correlation for a record that cannot exist."
       }
     },
     "CR-004": {
       "decision": {
-        "outcome": "Fixed in code: src/cli/commands/analytics/cost/copilot-runs.ts copilotRunWindows asks deps.nextRecordStarts (one batch call) for every copilot run with a start time and sets each run's upper bound to the earlier of the loaded sibling's start and the on-disk next record's start (either absent → the other). Test: cost-enricher.test.ts 'a run is bounded by a filtered-out record on disk that starts before its loaded sibling' (A 1000, filtered-out X 2000, loaded C 3000 → A's upperBound 2000; the batch is called once with ['A','C']).",
-        "rationale": "The window no longer depends on the report's filter, as the function's docstring states; the disk lookup stays one directory pass per report. The test was shown red on the reviewed head (A's bound = C's 3000)."
+        "outcome": "Kept: every reader of ownership markers accepts both sidecar names and the in-band line; resolveResumeOwnership reads no marker.",
+        "rationale": "resolveResumeOwnership (claude.plugin.ts:638-651) calls scanSessionsForClaudeId (session-ownership.ts:6-34), which matches records by correlation.agentSessionId and never reads a marker \u2014 unchanged from main. The marker readers \u2014 native-loader.ts buildOwnershipIndex (:112-150, any *-codemie-marker.json, old or new name) and hasOwnershipMarker (:198-231, the index plus the in-band codemie_session_start head scan), data-loader.ts:146 and codex.correlation.ts:130 (suffix match, any name), stale-session-reconciliation.ts:57-60 (exact <uuid>.json, so markers are never records) \u2014 accept every form. Nothing consumes the retired forms by their exact old name."
+      }
+    },
+    "CR-006": {
+      "decision": {
+        "outcome": "Kept: the plugin's onSessionEnd writes the no-transcript correlation without the reconcile lock.",
+        "rationale": "At that moment the record's owner is the live wrapper itself (ensure-session.ts:64-65 stores ownerPid / ownerStartedAt; endSessionAndCleanup runs settleStartPass \u2192 onSessionEnd \u2192 finalizeOwnRecord in-process), and the CLI-start reconcile of another process skips a record whose owner is alive (stale-session-reconciliation.ts:222-225, :233). The start-id write (recordStartMetricSessionId) runs in the same process at launch, awaited before the agent starts, so it cannot race the end; copilot-cli registers no codemie hook process. The SessionEnd processed right after takes the reconcile lock (hook.ts:279-286). The sibling write on the same path, recordRolloutCorrelation, is unlocked on main for the same reason."
+      }
+    },
+    "CR-011": {
+      "decision": {
+        "outcome": "Kept: a turn is dated by its user prompt.",
+        "rationale": "buildTurns (copilot-cli.conversations-processor.ts:220-280) creates a turn only at a user message and attaches the following assistant message to it; an assistant message with no preceding user message is skipped, so an assistant-only turn cannot reach selectRunTurns. A prompt typed before the run's start belongs to the run that received it: its reply is written by that process, and the watermark rule gives every run the turns from the last one before its start, so no exchange is unowned."
+      }
+    },
+    "CR-016": {
+      "decision": {
+        "outcome": "Kept: parseSessionFromDb requires a ses_ id; no stored record names opencode.db as its transcript.",
+        "rationale": "On main the opencode SessionEnd stored agentSessionFile as an empty string for every opencode record, and the SessionStart creation path stores it only for a non-shared store; the only build that stored the .db path was an intermediate state of this branch, never released. The branch guards every record site against a shared sqlite store (isSharedTranscriptStore at createSessionRecord, the re-entry and recordLocatedTranscript), and realDeps.parseNative reaches the record's run sessions through locateRun; a .db path cannot be stored by any version a user ran."
+      }
+    },
+    "CR-017": {
+      "decision": {
+        "outcome": "Kept: readSessionsFromDb selects parent_id without a column check.",
+        "rationale": "OpenCode's sqlite storage was born with the column: the first migration of its schema (timestamp 1769552633000, visible in the bundled codemie-opencode binary) creates `session` with `parent_id text` and the index session_parent_idx; the later migrations add project.commands and control_account and touch nothing in session. Every opencode.db a user can have was created by that first migration, so a db without the column does not exist; a PRAGMA probe per read would guard against a schema OpenCode never shipped."
+      }
+    },
+    "CR-020": {
+      "decision": {
+        "outcome": "Kept: lastSyncedMessageUuid stays a single value; historyIndexByConversation is per conversation.",
+        "rationale": "The index that gates re-queuing is kept per conversation id, so session A's checkpoint is never overwritten by B's; the uuid is a secondary cursor used only for the current session. The spool keeps every sent payload as `success` (it is not pruned), so parseLastSyncedSourceIndex always sees A's uploaded payloads and never falls back to the lower history count in the scenario the finding describes; the existing second-pass test keeps the file for that reason."
+      }
+    },
+    "CR-021": {
+      "decision": {
+        "outcome": "Kept, no code change: the PR description opens its Impact section with the CRITICAL paragraph on the session-attribution derivation and asks for the security-review sign-off before merge.",
+        "rationale": "What changes is the session_id of the /v1/metrics payloads (the deltas and the end metric prefer startMetricSessionId; a Copilot run resumed by a full UUID sends start, deltas and end under that native id). The X-CodeMie-Session-ID header and every other X-CodeMie-* attribution header are set only in header-injection.plugin.ts from the proxy's own CodeMie session id; that file, the proxy layer, the Responses `user` field and the JWT overrides are not in the diff; X-CodeMie-Repository / -Branch / -Project on /v1/metrics requests are untouched. The repository has no sign-off mechanism beyond the PR-description convention (no CODEOWNERS, CI check or template item): the sign-off is the reviewer's act on the pull request, which the description requests; the diff cannot carry it."
+      }
+    },
+    "CR-022": {
+      "decision": {
+        "outcome": "Kept: recordLocatedTranscript stores a SessionEnd's located transcript without an isExternalOrigin check.",
+        "rationale": "The ownership index that the finding says would re-adopt the transcript skips external-resume records outright (native-loader.ts:154 in buildOwnershipIndex), so a path stored on such a record never marks the transcript as CodeMie-owned; the isExternalOrigin guards at hook.ts:952 and :1033 cover the ownership marker and the audit entry, not agentSessionFile, which creation stores unconditionally whenever the event names a transcript (hook.ts:1013). On main the SessionEnd path stored no path at all, which is the unpriced-session defect EPMCDME-16475 fixes; the end metric of an external-resume record is skipped on its own branch (end-metric.ts:108-111)."
+      }
+    },
+    "DF-001": {
+      "decision": {
+        "outcome": "Deferred as the verdict lists it: the files over the size guideline are over it on main; this change adds in-place edits to pre-existing functions and thin delegations only, and puts its new functions in new modules.",
+        "rationale": "Splitting hook.ts, opencode.session.ts, cost-enricher.ts or the conversations processor is a refactor of main's code outside the three tickets; the guideline is a guideline (code-quality.md), and the branch's own additions sit in opencode.run-session.ts, copilot-cli.file-operations.ts, hook/session-record-updates.ts, analytics/cost/copilot-runs.ts and the checkpoint module."
       }
     }
   }

@@ -1,8 +1,8 @@
 // src/agents/plugins/opencode/opencode.run-session.ts
 /**
- * Which OpenCode sessions a CodeMie record's run owns: the session the launch named, else every
- * session created inside the run window in the record's directory, plus (a continued run) the one it
- * continued. Shared by processing, the incremental-sync tick and the SessionEnd lookup; each selected
+ * Which OpenCode sessions a CodeMie record's run owns: every session created inside the run window in
+ * the record's directory (subagent children included), plus the session the launch named or (a continued
+ * run) the one it continued. Shared by processing, the incremental-sync tick and the SessionEnd lookup; each selected
  * session is then processed here through the adapter's processors.
  */
 import { latestRecordTime, type AggregatedResult, type ParsedSession, type SessionDescriptor, type SessionDiscoveryOptions } from '../../core/session/BaseSessionAdapter.js';
@@ -10,7 +10,7 @@ import type { ProcessingContext, SessionProcessor } from '../../core/session/Bas
 import type { Session } from '../../core/session/types.js';
 import type { OpenCodeSession } from './opencode-message-types.js';
 import { getOpenCodeDbPath, getAgentOpenCodeStoragePath } from './opencode.paths.js';
-import { isSqliteAvailable, readSessionsFromDb } from './opencode.sqlite-reader.js';
+import { isSqliteAvailable, readSessionIdsWithMessages, readSessionsFromDb } from './opencode.sqlite-reader.js';
 import { SessionStore } from '../../core/session/SessionStore.js';
 import { nextRecordStart, safeRealpath } from '../../core/session/next-record-start.js';
 import { logger } from '../../../utils/logger.js';
@@ -142,7 +142,7 @@ export async function runSessionIds(filePath: string, sessionId: string, context
 async function recordSessionIds(dbPath: string, record: Session, context: ProcessingContext): Promise<string[]> {
   // A `codemie hook` process never scans for later records: its window has no upper bound
   const until = context.recordsBeforeMs ?? (context.hookProcess ? undefined : await nextRecordStart(record));
-  return selectRunSessions(await dbCandidates(dbPath, record), record, until).map((c) => c.sessionId);
+  return (await dbRunSessions(dbPath, record, until)).map((c) => c.sessionId);
 }
 
 /**
@@ -155,12 +155,12 @@ export async function locateRun(
 ): Promise<{ sessions: SessionDescriptor[]; recordsBeforeMs: number | undefined }> {
   const storagePath = getAgentOpenCodeStoragePath(record.agentName);
   const dbPath = getOpenCodeDbPath(storagePath);
-  const candidates = dbPath && await isSqliteAvailable()
-    ? await dbCandidates(dbPath, record)
-    // ponytail: legacy file storage lists the sessions created in the last 30 days only
-    : await discover({ maxAgeDays: 30 }, storagePath);
   const recordsBeforeMs = await nextRecordStart(record);
-  return { sessions: selectRunSessions(candidates, record, recordsBeforeMs), recordsBeforeMs };
+  const sessions = dbPath && await isSqliteAvailable()
+    ? await dbRunSessions(dbPath, record, recordsBeforeMs)
+    // ponytail: legacy file storage lists the sessions created in the last 30 days only
+    : selectRunSessions(await discover({ maxAgeDays: 30 }, storagePath), record, recordsBeforeMs);
+  return { sessions, recordsBeforeMs };
 }
 
 /**
@@ -177,15 +177,26 @@ export function locatedRun(sessions: SessionDescriptor[], recordsBeforeMs: numbe
 }
 
 /**
- * The candidate sessions of a record's run in `dbPath`: the session the launch named, else those
- * updated since the record's start (any age, so a continued older session qualifies).
+ * The record's run sessions in `dbPath` by the shared selection; for a continued run, which of the older
+ * sessions has a message inside the window comes from one query.
+ */
+async function dbRunSessions(dbPath: string, record: Session, until: number | undefined): Promise<SessionDescriptor[]> {
+  const candidates = await dbCandidates(dbPath, record);
+  const older = record.continuesPriorSession ? candidates.filter((c) => c.createdAt < record.startTime).map((c) => c.sessionId) : [];
+  const withRecord = await readSessionIdsWithMessages(dbPath, older, { since: record.startTime, until });
+  return selectRunSessions(candidates, record, until, withRecord);
+}
+
+/**
+ * The candidate sessions of a record's run in `dbPath`: those updated since the record's start (any age,
+ * so a continued older session qualifies), plus the session the launch named.
  */
 async function dbCandidates(dbPath: string, record: Session): Promise<SessionDescriptor[]> {
-  const sessions = await readSessionsFromDb(
-    dbPath,
-    record.resumeSessionId ? { id: record.resumeSessionId } : { updatedSince: record.startTime }
-  );
-  return sessions.map((session) => dbSessionDescriptor(session, dbPath));
+  const sessions = await readSessionsFromDb(dbPath, { updatedSince: record.startTime });
+  const named = record.resumeSessionId && !sessions.some((s) => s.id === record.resumeSessionId)
+    ? await readSessionsFromDb(dbPath, { id: record.resumeSessionId })
+    : [];
+  return [...named, ...sessions].map((session) => dbSessionDescriptor(session, dbPath));
 }
 
 /** A session row of `dbPath` as a descriptor; its path is the db file, which routes parsing to it. */
@@ -197,15 +208,18 @@ export function dbSessionDescriptor(session: OpenCodeSession, dbPath: string): S
     createdAt: session.time?.created ?? 0,
     updatedAt: typeof session.time?.updated === 'number' ? session.time.updated : undefined,
     agentName: 'opencode',
+    ...(session.parentID && { parentId: session.parentID }),
   };
 }
 
 /**
- * The OpenCode sessions of a record's run, newest-updated first: the session the launch named, exactly;
- * else, in the record's directory (by realpath) and created before `until` (the next record's start,
- * which owns later sessions), every session created at or after the record's start (`/new` opens
- * another inside one run), plus for a continued run the newest session created before the start and
- * updated at or after it (the one it continued).
+ * The OpenCode sessions of a record's run: in the record's directory (by realpath) and created before
+ * `until` (the next record's start, which owns later sessions), every session created at or after the
+ * record's start (`/new` opens another inside one run; a subagent's child session too), newest-updated
+ * first; the session the launch named goes first. A continued run adds the session it continued: of the
+ * sessions created before the start and updated at or after it, not a subagent's child, the newest-updated
+ * one with a message in the window (`withRecord`), else the newest-updated one. A record with no directory
+ * selects only the session it named.
  *
  * ponytail: two concurrent runs in one directory are indistinguishable; a session only read (not
  * updated) is not selected; an earlier run's never-synced turn is sent by no later run.
@@ -213,15 +227,18 @@ export function dbSessionDescriptor(session: OpenCodeSession, dbPath: string): S
 export function selectRunSessions(
   candidates: SessionDescriptor[],
   record: Pick<Session, 'resumeSessionId' | 'continuesPriorSession' | 'startTime' | 'workingDirectory'>,
-  until: number | undefined
+  until: number | undefined,
+  withRecord?: ReadonlySet<string>
 ): SessionDescriptor[] {
-  if (record.resumeSessionId) return candidates.filter((c) => c.sessionId === record.resumeSessionId).slice(0, 1);
-  const directory = safeRealpath(record.workingDirectory || process.cwd());
+  const named = record.resumeSessionId ? candidates.find((c) => c.sessionId === record.resumeSessionId) : undefined;
+  if (!record.workingDirectory) return named ? [named] : [];
+  const directory = safeRealpath(record.workingDirectory);
   const byUpdate = candidates
-    .filter((c) => !!c.projectPath && safeRealpath(c.projectPath) === directory && (until === undefined || c.createdAt < until))
+    .filter((c) => c !== named && !!c.projectPath && safeRealpath(c.projectPath) === directory && (until === undefined || c.createdAt < until))
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-  const continued = record.continuesPriorSession
-    ? byUpdate.find((c) => c.createdAt < record.startTime && (c.updatedAt ?? 0) >= record.startTime)
-    : undefined;
-  return byUpdate.filter((c) => c.createdAt >= record.startTime || c === continued);
+  const older = record.continuesPriorSession && !record.resumeSessionId
+    ? byUpdate.filter((c) => !c.parentId && c.createdAt < record.startTime && (c.updatedAt ?? 0) >= record.startTime)
+    : [];
+  const continued = older.find((c) => withRecord?.has(c.sessionId)) ?? older[0];
+  return [...(named ? [named] : []), ...byUpdate.filter((c) => c.createdAt >= record.startTime || c === continued)];
 }

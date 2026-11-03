@@ -90,7 +90,8 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
 
   shouldProcess(session: ParsedSession): boolean {
     if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
-    return session.messages.length > 0;
+    // A subagent's child session is the parent agent's work, not a conversation of the user's
+    return session.messages.length > 0 && !(session.metadata as { parentId?: string } | undefined)?.parentId;
   }
 
   // The context bounds the file lock wait and the run's events (`recordsBeforeMs`):

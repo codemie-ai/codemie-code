@@ -17,20 +17,36 @@ import { isOtherGeneration } from './own-generation.js';
  */
 const START_ID_LOCK_WAIT_MS = 2_000;
 
+async function sessionStore(): Promise<SessionStore> {
+  const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
+  return new SessionStore();
+}
+
+/** The session record as the store loads it; none when there is no record. */
+export async function loadSessionRecord(sessionId: string): Promise<Session | null> {
+  return (await sessionStore()).loadSession(sessionId);
+}
+
+/**
+ * Whether the record is already completed: its SessionEnd flushed the run, and a Stop hook that
+ * outlives it syncs nothing (with no later-record bound it would select a later run's session).
+ */
+export async function isCompletedRecord(sessionId: string, hookName: string): Promise<boolean> {
+  if ((await loadSessionRecord(sessionId))?.status !== 'completed') return false;
+  logger.debug(`[hook:${hookName}] Session ${sessionId} is already completed; nothing synced`);
+  return true;
+}
+
 /**
  * Store the transcript a SessionEnd names on a record that has none, before the flush: a run killed
  * before its plugin's own session end never wrote the path, and pricing and the next-record bound
  * read it from the record. A record that already carries a path keeps it. Called by SessionEnd under the
  * record's reconcile lock (the handler holds it), so its save needs none of its own.
  */
-export async function recordLocatedTranscript(
-  store: SessionStore,
-  record: Session,
-  transcriptPath: string | undefined
-): Promise<void> {
+export async function recordLocatedTranscript(record: Session, transcriptPath: string | undefined): Promise<void> {
   if (!transcriptPath || record.correlation?.agentSessionFile || isSharedTranscriptStore(transcriptPath)) return;
   record.correlation = { ...record.correlation, status: 'matched', agentSessionFile: transcriptPath };
-  await store.saveSession(record);
+  await (await sessionStore()).saveSession(record);
 }
 
 /**
@@ -50,7 +66,7 @@ export async function recordStartMetricSessionId(
   lockDeadlineMs: number
 ): Promise<void> {
   try {
-    const { acquirePidLock } = await import('../../../utils/pid-lock.js');
+    const { acquirePidLock } = await import('@/utils/pid-lock.js');
     const deadlineMs = Math.min(lockDeadlineMs, Date.now() + START_ID_LOCK_WAIT_MS);
     const lockOptions = { pidOnlyLiveness: options.hookProcess === true, signal: options.abortSignal };
     const lock = await acquirePidLock(
@@ -62,7 +78,7 @@ export async function recordStartMetricSessionId(
       return;
     }
     try {
-      const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
+      const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
       const store = new SessionStore();
       const latest = await store.loadSession(sessionId);
       if (latest?.status === 'active' && !isOtherGeneration(latest, startMetricSessionId)) await store.saveSession({ ...latest, startMetricSessionId });

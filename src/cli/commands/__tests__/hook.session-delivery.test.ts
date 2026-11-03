@@ -402,13 +402,13 @@ describe('SessionEnd with endTimeFromActivity (the synthetic end)', () => {
     const rows = ['ses_first', 'ses_after_new'].flatMap((id, i) => {
       const at = t0 + (i + 1) * 60 * SECOND;
       return [
-        `INSERT INTO session VALUES ('${id}', 'p', 's', '${project}', 't', '1.0.0', ${at}, ${at + 2 * SECOND});`,
+        `INSERT INTO session VALUES ('${id}', 'p', 's', '${project}', 't', '1.0.0', ${at}, ${at + 2 * SECOND}, NULL);`,
         `INSERT INTO message VALUES ('msg_${id}_u', '${id}', ${at}, ${at}, ${sqlText({ role: 'user', time: { created: at } })});`,
         `INSERT INTO part VALUES ('prt_${id}_u', 'msg_${id}_u', '${id}', ${at}, ${at}, ${sqlText({ type: 'text', text: `prompt ${id}` })});`,
       ];
     });
     await writeDb(dbPath, `
-      CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, parent_id TEXT);
       CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
       CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
       ${rows.join('\n')}
@@ -3089,5 +3089,24 @@ describe('the launch\'s resume id on the record', () => {
     await processEvent(startEvent(session.sessionId));
 
     expect(readRecord(session.sessionId).resumeSessionId).toBeUndefined();
+  });
+});
+
+describe('a Stop hook on a completed record', () => {
+  it('syncs nothing: no delta, no payload queued, the record byte-identical', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:01:00Z', '2026-10-01T10:02:00Z']);
+    const session = baseRecord({
+      status: 'completed',
+      endTime: Date.parse('2026-10-01T10:03:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    const before = readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8');
+
+    await processEvent({ hook_event_name: 'Stop', session_id: 'claude-native-1', transcript_path: transcript, permission_mode: 'default', cwd: home }, config(session));
+
+    expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(false);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`))).toBe(false);
+    expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(before);
   });
 });

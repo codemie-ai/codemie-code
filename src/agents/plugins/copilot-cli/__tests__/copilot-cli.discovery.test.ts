@@ -229,6 +229,37 @@ describe('CopilotCliSessionAdapter.locateTranscript', () => {
     expect([before, elsewhere, first]).not.toContain(located[0]);
   });
 
+  it('a --resume <id prefix> run takes the session the prefix names, not a later standalone one in its directory', async () => {
+    const prefixed = writeEvents('abcd1234-5678-4abc-8def-000000000001', [
+      { type: 'session.start', timestamp: '2026-09-01T10:00:00Z', data: { context: { cwd: home } } },
+      { type: 'session.resume', timestamp: '2026-10-01T10:00:02Z', data: { context: { cwd: home } } },
+    ]);
+    writeEvents('ffff0000-5678-4abc-8def-000000000002', [
+      { type: 'session.start', timestamp: '2026-10-01T10:00:09Z', data: { context: { cwd: home } } },
+    ]);
+
+    expect(await newAdapter().locateTranscript(record({ resumeSessionId: 'ABCD1234' }))).toEqual([prefixed]);
+  });
+
+  it('a --resume <prefix> that names no session is located by the window, as a session name', async () => {
+    const windowed = writeEvents('ffff0000-5678-4abc-8def-000000000003', [
+      { type: 'session.start', timestamp: '2026-10-01T10:00:05Z', data: { context: { cwd: home } } },
+    ]);
+
+    expect(await newAdapter().locateTranscript(record({ resumeSessionId: 'cafe' }))).toEqual([windowed]);
+  });
+
+  it('a --resume <prefix> whose prefixed sessions are all outside the window is located by the window over every session', async () => {
+    writeEvents('cafe1234-5678-4abc-8def-000000000004', [
+      { type: 'session.start', timestamp: '2026-09-01T10:00:00Z', data: { context: { cwd: home } } },
+    ]);
+    const windowed = writeEvents('ffff0000-5678-4abc-8def-000000000005', [
+      { type: 'session.start', timestamp: '2026-10-01T10:00:05Z', data: { context: { cwd: home } } },
+    ]);
+
+    expect(await newAdapter().locateTranscript(record({ resumeSessionId: 'cafe' }))).toEqual([windowed]);
+  });
+
   it('never picks a session started at or after the start of a later copilot record in the same directory', async () => {
     const killed = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'unknown' } });
     const later = record({

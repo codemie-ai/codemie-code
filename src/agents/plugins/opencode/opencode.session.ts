@@ -172,6 +172,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         openCodeSessionId: session.id,
         openCodeVersion: session.version,
         storageType: 'file',
+        parentId: session.parentID,
       };
 
       return {
@@ -243,6 +244,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         openCodeVersion: session.version,
         partsMap,
         storageType: 'sqlite',
+        parentId: session.parentID,
         // gitBranch is overlaid by processSession from ProcessingContext when
         // available; the metrics processor falls back to detecting it from
         // projectPath.
@@ -535,7 +537,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
               projectPath: session.directory,
               createdAt: createdAt ?? 0,
               updatedAt: typeof updatedAt === 'number' ? updatedAt : undefined,
-              agentName: 'opencode'
+              agentName: 'opencode',
+              ...(session.parentID && { parentId: session.parentID }),
             });
 
           } catch (error) {
