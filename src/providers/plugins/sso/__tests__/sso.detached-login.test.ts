@@ -540,3 +540,127 @@ describe('last sign-in surviving a newer attempt', () => {
     expect(await startDetachedSsoLogin(URL_)).toBe('signed-in-recently');
   });
 });
+
+describe('last sign-in per CodeMie URL', () => {
+  const URL_A = 'https://a.example.com';
+  const URL_B = 'https://b.example.com';
+  const sourceFor = (url: string): { provider: string; baseUrl: string } => ({ provider: 'ai-run-sso', baseUrl: url });
+  const readLockFile = async (): Promise<Record<string, unknown>> => JSON.parse(await readFile(lockPath(), 'utf-8'));
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+    vi.clearAllMocks();
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(spawnDetached).mockReturnValue(4242);
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('does not return the stamp of a sign-in on URL A for a source on URL B', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000, url: URL_A });
+
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+  });
+
+  it('returns the stamp for a source that resolves to the same URL', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000, url: URL_A });
+
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(5_000);
+  });
+
+  it('compares URLs normalised: case, trailing slash and path do not matter', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000, url: 'https://A.Example.com/' });
+
+    expect(await getLastSignInAt(sourceFor('https://a.example.com/code-assistant-api'))).toBe(5_000);
+    expect(await getLastSignInAt({ codeMieUrl: URL_A })).toBe(5_000);
+  });
+
+  it('resolves the source URL the way the stored credentials do: workspace URL for a non-CodeMie provider', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000, url: URL_A });
+
+    expect(await getLastSignInAt({ provider: 'litellm', baseUrl: URL_B, codeMieUrl: URL_A })).toBe(5_000);
+    expect(await getLastSignInAt({ provider: 'litellm', baseUrl: URL_A, codeMieUrl: URL_B })).toBeNull();
+  });
+
+  it('keeps matching a lock without a URL (written by an older version)', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000 });
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBe(5_000);
+
+    await writeLock({ pid: 1, startedAt: Date.now(), lastSucceededAt: 6_000 });
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBe(6_000);
+  });
+
+  it('keeps matching when the source resolves to no URL', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000, url: URL_A });
+
+    expect(await getLastSignInAt({})).toBe(5_000);
+  });
+
+  it('checks a carried-forward stamp against the URL it was made for, not the newer attempt\'s', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now(), url: URL_B, lastSucceededAt: 5_000, lastSucceededUrl: URL_A });
+
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(5_000);
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+  });
+
+  it('records the URL of the sign-in it starts, and keeps it when that sign-in succeeds', async () => {
+    vi.mocked(spawnDetached).mockReturnValue(process.pid);
+
+    expect(await startDetachedSsoLogin(URL_A)).toBe('started');
+    expect(await readLockFile()).toMatchObject({ url: URL_A });
+
+    await releaseLoginLockOnSuccess();
+
+    expect(await readLockFile()).toMatchObject({ url: URL_A, succeededAt: expect.any(Number) });
+    expect(await getLastSignInAt(sourceFor(URL_A))).not.toBeNull();
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+  });
+
+  it('carries an earlier sign-in together with its URL across a newer attempt on another URL', async () => {
+    const succeededAt = Date.now() - 60_000;
+    await writeLock({ pid: 1, startedAt: Date.now() - 90_000, succeededAt, url: URL_A });
+
+    expect(await startDetachedSsoLogin(URL_B)).toBe('started');
+
+    expect(await readLockFile()).toMatchObject({ url: URL_B, lastSucceededAt: succeededAt, lastSucceededUrl: URL_A });
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(succeededAt);
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+  });
+
+  it('keeps the carried URL across two consecutive attempts, a failed attempt and a spawn failure', async () => {
+    const succeededAt = Date.now() - 60_000;
+    await writeLock({ pid: 1, startedAt: Date.now() - 90_000, succeededAt, url: URL_A });
+    await startDetachedSsoLogin(URL_B);
+    await writeLock({ ...(await readLockFile()), startedAt: Date.now() - 40_000 });
+    expect(await startDetachedSsoLogin(URL_B)).toBe('started');
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(succeededAt);
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+
+    vi.mocked(spawnDetached).mockReturnValue(process.pid);
+    await writeLock({ ...(await readLockFile()), startedAt: Date.now() - 40_000 });
+    await startDetachedSsoLogin(URL_B);
+    await releaseLoginLockOnFailure('cancelled');
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(succeededAt);
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+
+    vi.mocked(spawnDetached).mockReturnValue(-1);
+    await writeLock({ ...(await readLockFile()), startedAt: Date.now() - 40_000 });
+    expect(await startDetachedSsoLogin(URL_B)).toBe('failed');
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(succeededAt);
+    expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
+  });
+
+  it('does not change the cooldown or in-progress decisions across URLs', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000, url: URL_A });
+    expect(await startDetachedSsoLogin(URL_B)).toBe('signed-in-recently');
+
+    await writeLock({ pid: 1, startedAt: Date.now() - 5_000, url: URL_A });
+    expect(await startDetachedSsoLogin(URL_B)).toBe('cooldown');
+
+    vi.mocked(isProcessAlive).mockReturnValue(true);
+    expect(await startDetachedSsoLogin(URL_B)).toBe('in-progress');
+  });
+});

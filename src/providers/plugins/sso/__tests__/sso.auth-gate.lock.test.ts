@@ -75,5 +75,54 @@ describe('ensureCodeMieSsoAuth with the real sign-in lock', () => {
     expect(result).toMatchObject({ ok: false, loginOutcome: 'in-progress' });
     expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(true);
   });
-});
 
+  describe('a sign-in on another CodeMie URL', () => {
+    const OTHER_URL = 'https://other.example.com';
+
+    it('does not clear this profile\'s stale marker', async () => {
+      await markAnalyticsAuthInvalid('HTTP 401', BASE_URL);
+      const marker = await getAnalyticsAuthStatus();
+      writeFileSync(
+        join(home, 'sso-login.lock'),
+        JSON.stringify({ pid: process.pid, startedAt: Date.now(), succeededAt: marker!.detectedAt + 1, url: OTHER_URL })
+      );
+
+      const result = await ensureCodeMieSsoAuth(configured);
+
+      expect(result.ok).toBe(false);
+      expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(true);
+    });
+
+    it('still clears the marker for a sign-in on this profile\'s own URL', async () => {
+      await markAnalyticsAuthInvalid('HTTP 401', BASE_URL);
+      const marker = await getAnalyticsAuthStatus();
+      writeFileSync(
+        join(home, 'sso-login.lock'),
+        JSON.stringify({ pid: process.pid, startedAt: Date.now(), succeededAt: marker!.detectedAt + 1, url: `${BASE_URL}/` })
+      );
+
+      expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
+      expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(false);
+    });
+
+    it('does not clear it through a carried-forward stamp made for the other URL', async () => {
+      await markAnalyticsAuthInvalid('HTTP 401', BASE_URL);
+      const marker = await getAnalyticsAuthStatus();
+      writeFileSync(
+        join(home, 'sso-login.lock'),
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: Date.now(),
+          url: BASE_URL,
+          lastSucceededAt: marker!.detectedAt + 1,
+          lastSucceededUrl: OTHER_URL,
+        })
+      );
+
+      const result = await ensureCodeMieSsoAuth(configured);
+
+      expect(result.ok).toBe(false);
+      expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(true);
+    });
+  });
+});

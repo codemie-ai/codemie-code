@@ -6,6 +6,7 @@ import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
 import type { PlatformUrlSource } from '@/providers/core/codemie-auth-helpers.js';
+import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 
 export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'signed-in-recently' | 'failed';
 
@@ -23,6 +24,8 @@ const ORPHANED_TMP_MAX_AGE_MS = 60_000;
 interface LoginLock {
   pid: number;
   startedAt: number;
+  /** CodeMie URL this lock's own sign-in was started for; absent in locks written by older versions. */
+  url?: string;
   /** Epoch millis when this lock's own sign-in succeeded, if it has (see releaseLoginLockOnSuccess). */
   succeededAt?: number;
   /**
@@ -31,6 +34,8 @@ interface LoginLock {
    * neither trigger nor extend them.
    */
   lastSucceededAt?: number;
+  /** CodeMie URL of the sign-in `lastSucceededAt` belongs to; absent when that lock had none. */
+  lastSucceededUrl?: string;
   /** Epoch millis when this lock's own sign-in failed, if it has (see releaseLoginLockOnFailure). */
   failedAt?: number;
   /** The sign-in child's failure reason, stamped with failedAt. */
@@ -56,8 +61,10 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
     return {
       pid: lock.pid,
       startedAt: lock.startedAt,
+      ...(typeof lock.url === 'string' && { url: lock.url }),
       ...(typeof lock.succeededAt === 'number' && { succeededAt: lock.succeededAt }),
       ...(typeof lock.lastSucceededAt === 'number' && { lastSucceededAt: lock.lastSucceededAt }),
+      ...(typeof lock.lastSucceededUrl === 'string' && { lastSucceededUrl: lock.lastSucceededUrl }),
       ...(typeof lock.failedAt === 'number' && { failedAt: lock.failedAt }),
       ...(typeof lock.error === 'string' && { error: lock.error }),
     };
@@ -66,21 +73,64 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
   }
 }
 
+interface CompletedSignIn {
+  at: number;
+  /** URL the sign-in was for; undefined when the lock that recorded it predates URL tracking. */
+  url?: string;
+}
+
 /** The most recent completed sign-in a lock knows about: its own, else the one it replaced. */
-function lastSignInOf(lock: LoginLock | null): number | undefined {
-  return lock?.succeededAt ?? lock?.lastSucceededAt;
+function lastSignInOf(lock: LoginLock | null): CompletedSignIn | undefined {
+  if (lock?.succeededAt !== undefined) {
+    return { at: lock.succeededAt, ...(lock.url !== undefined && { url: lock.url }) };
+  }
+  if (lock?.lastSucceededAt !== undefined) {
+    return { at: lock.lastSucceededAt, ...(lock.lastSucceededUrl !== undefined && { url: lock.lastSucceededUrl }) };
+  }
+  return undefined;
+}
+
+/** The lock fields that carry a replaced sign-in over to the next lock. */
+function carriedFields(signIn: CompletedSignIn | undefined): Pick<LoginLock, 'lastSucceededAt' | 'lastSucceededUrl'> {
+  return signIn
+    ? { lastSucceededAt: signIn.at, ...(signIn.url !== undefined && { lastSucceededUrl: signIn.url }) }
+    : {};
 }
 
 /**
- * Time of the last completed sign-in, which survives a newer in-progress or failed attempt
- * taking over the lock; null when none is known. The lock is global, so `source` does not
- * select anything.
+ * Time of the last completed sign-in for the CodeMie URL `source` resolves to, which survives a
+ * newer in-progress or failed attempt taking over the lock; null when none is known. The lock
+ * holds one sign-in, so a sign-in recorded for another URL is not returned. A sign-in without a
+ * recorded URL, or a source that resolves to no URL, always matches.
  */
-export async function getLastSignInAt(_source: PlatformUrlSource): Promise<number | null> {
+export async function getLastSignInAt(source: PlatformUrlSource): Promise<number | null> {
   try {
-    return lastSignInOf(await readLock(getLockPath())) ?? null;
+    const signIn = lastSignInOf(await readLock(getLockPath()));
+    if (!signIn) {
+      return null;
+    }
+    if (signIn.url !== undefined && !(await resolvesToUrl(source, signIn.url))) {
+      return null;
+    }
+    return signIn.at;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether the CodeMie URL `source` resolves to is `url`. Anything that cannot be told counts as a
+ * match, so a sign-in is never hidden by a failure here. The resolver is loaded on demand: its
+ * module pulls in the HTTP client, which this module (used by every hook) must not load up front.
+ */
+async function resolvesToUrl(source: PlatformUrlSource, url: string): Promise<boolean> {
+  try {
+    const { getPlatformUrl } = await import('@/providers/core/codemie-auth-helpers.js');
+    const wanted = getPlatformUrl(source);
+    return wanted === undefined || normalizeUrlForKey(wanted) === normalizeUrlForKey(url);
+  } catch (error) {
+    logger.debug('[sso-detached-login] Failed to resolve the sign-in URL of a source:', error);
+    return true;
   }
 }
 
@@ -145,11 +195,11 @@ async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
  * is the only consequence this race can have. Simplified back to `wx` rather than keep machinery
  * guarding a race that grace period already covers.
  */
-async function tryCreateLock(lockPath: string, lastSucceededAt?: number): Promise<boolean> {
+async function tryCreateLock(lockPath: string, replacedSignIn?: CompletedSignIn): Promise<boolean> {
   const lock: LoginLock = {
     pid: process.pid,
     startedAt: Date.now(),
-    ...(lastSucceededAt !== undefined && { lastSucceededAt }),
+    ...carriedFields(replacedSignIn),
   };
   try {
     await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
@@ -243,7 +293,12 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
-      await writeLockAtomically(lockPath, { pid: lock.pid, startedAt: lock.startedAt, succeededAt: Date.now() });
+      await writeLockAtomically(lockPath, {
+        pid: lock.pid,
+        startedAt: lock.startedAt,
+        ...(lock.url !== undefined && { url: lock.url }),
+        succeededAt: Date.now(),
+      });
     }
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to release lock:', error);
@@ -305,8 +360,8 @@ export async function waitForDetachedSsoLogin(
  * is kept as a failed attempt with no process behind it (an old `startedAt` makes `acquireLock`
  * replace it at once), so that sign-in time is not lost with the file.
  */
-async function discardAttempt(lockPath: string, lastSucceededAt: number | undefined): Promise<void> {
-  if (lastSucceededAt === undefined) {
+async function discardAttempt(lockPath: string, replacedSignIn: CompletedSignIn | undefined): Promise<void> {
+  if (replacedSignIn === undefined) {
     await removeLock(lockPath);
     return;
   }
@@ -316,7 +371,7 @@ async function discardAttempt(lockPath: string, lastSucceededAt: number | undefi
       startedAt: 0,
       failedAt: Date.now(),
       error: 'the sign-in process could not be started',
-      lastSucceededAt,
+      ...carriedFields(replacedSignIn),
     });
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to keep the earlier sign-in time:', error);
@@ -338,8 +393,7 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
     return blocked;
   }
 
-  const lastSucceededAt = lastSignInOf(await readLock(lockPath));
-  const carriedSignIn = lastSucceededAt !== undefined ? { lastSucceededAt } : {};
+  const replacedSignIn = lastSignInOf(await readLock(lockPath));
 
   try {
     const script = join(getDirname(import.meta.url), '../../../bin/sso-login.js');
@@ -352,11 +406,11 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
       throw new Error('Failed to spawn sign-in process');
     }
 
-    await writeLockAtomically(lockPath, { pid, startedAt: Date.now(), ...carriedSignIn });
+    await writeLockAtomically(lockPath, { pid, startedAt: Date.now(), url: codeMieUrl, ...carriedFields(replacedSignIn) });
     return 'started';
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to start sign-in:', error);
-    await discardAttempt(lockPath, carriedSignIn.lastSucceededAt);
+    await discardAttempt(lockPath, replacedSignIn);
     return 'failed';
   }
 }

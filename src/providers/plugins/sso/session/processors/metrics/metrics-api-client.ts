@@ -34,6 +34,25 @@ import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core
 import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
+/**
+ * How long an answer of the superseded-credentials check is reused. At most the credential
+ * refresher's re-read window, so a caller never works from an answer older than one store re-read.
+ */
+const SUPERSEDED_CHECK_TTL_MS = 5000;
+
+interface SupersededAnswer {
+  answer: Promise<boolean>;
+  /** Infinity while the check is still running; the TTL counts from when it answered. */
+  expiresAt: number;
+}
+
+/**
+ * Answers per check callback and sent cookie header. Keyed by the callback so clients that share one
+ * (a sender per sync pass, rebuilt over the same context) share its answers too, and the entries are
+ * released with the callback.
+ */
+const supersededAnswers = new WeakMap<CredentialsSupersededCheck, Map<string, SupersededAnswer>>();
+
 interface MetricsRequestError extends Error {
   statusCode?: number;
   response?: unknown;
@@ -122,11 +141,42 @@ class MetricsApiClient {
     throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`);
   }
 
-  /** True when a newer sign-in replaced the cookies this client sent; never throws. */
+  /**
+   * True when a newer sign-in replaced the cookies this client sent; never throws. The check reads
+   * the credential store, and a sync pass sends one metric per branch, so the answer is shared by
+   * the failures of a pass (including ones in flight together) and dropped after a short TTL: a
+   * client may live across many passes, and a later sign-in must be noticed.
+   */
   private async wasSuperseded(): Promise<boolean> {
     if (this.config.apiKey || !this.config.cookies) return false;
+    const check = this.config.credentialsSuperseded;
+    const sent = this.config.cookies;
+
+    let byHeader = supersededAnswers.get(check);
+    if (!byHeader) {
+      byHeader = new Map();
+      supersededAnswers.set(check, byHeader);
+    }
+    const now = Date.now();
+    for (const [header, entry] of byHeader) {
+      if (entry.expiresAt <= now) byHeader.delete(header);
+    }
+
+    let entry = byHeader.get(sent);
+    if (!entry) {
+      const created: SupersededAnswer = { answer: this.askSuperseded(check, sent), expiresAt: Infinity };
+      void created.answer.then(() => {
+        created.expiresAt = Date.now() + SUPERSEDED_CHECK_TTL_MS;
+      });
+      byHeader.set(sent, created);
+      entry = created;
+    }
+    return entry.answer;
+  }
+
+  private async askSuperseded(check: CredentialsSupersededCheck, sent: string): Promise<boolean> {
     try {
-      return await this.config.credentialsSuperseded(this.config.cookies);
+      return await check(sent);
     } catch (error) {
       logger.debug('[MetricsApiClient] Superseded-credentials check failed', error);
       return false;

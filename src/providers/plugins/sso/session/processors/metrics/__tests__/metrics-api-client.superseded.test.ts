@@ -176,4 +176,113 @@ describe('MetricsSender with a superseded-credentials check', () => {
     await expect(send(sender)).resolves.toEqual({ success: true, message: 'ok' });
     expect(credentialsSuperseded).not.toHaveBeenCalled();
   });
+
+  describe('memoised check', () => {
+    const TTL_MS = 5_000;
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      fetchMock.mockImplementation(async () => unauthorized());
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const senderWith = (
+      credentialsSuperseded: (sent: string) => Promise<boolean>,
+      cookies: string = SENT_COOKIES
+    ): MetricsSender =>
+      new MetricsSender({ baseUrl: 'http://api.test', cookies, retryAttempts: 0, credentialsSuperseded });
+
+    it('asks the check once for many failing sends of one pass', async () => {
+      const credentialsSuperseded = vi.fn(async () => true);
+      const sender = senderWith(credentialsSuperseded);
+
+      for (let i = 0; i < 5; i++) {
+        await expect(send(sender)).rejects.toThrow(/401/);
+      }
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('lets concurrent failures share one in-flight check', async () => {
+      let release!: (value: boolean) => void;
+      const credentialsSuperseded = vi.fn(() => new Promise<boolean>((resolve) => { release = resolve; }));
+      const sender = senderWith(credentialsSuperseded);
+
+      const sends = [send(sender), send(sender), send(sender)].map((p) => expect(p).rejects.toThrow(/401/));
+      await vi.waitFor(() => expect(credentialsSuperseded).toHaveBeenCalledTimes(1));
+      release(true);
+      await Promise.all(sends);
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('asks again once the answer is older than the TTL', async () => {
+      const credentialsSuperseded = vi.fn(async () => true);
+      const sender = senderWith(credentialsSuperseded);
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+      vi.advanceTimersByTime(TTL_MS - 1);
+      await expect(send(sender)).rejects.toThrow(/401/);
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2);
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(2);
+    });
+
+    it('counts the TTL from the moment the check answered, not from when it was asked', async () => {
+      let release!: (value: boolean) => void;
+      const credentialsSuperseded = vi.fn(() => new Promise<boolean>((resolve) => { release = resolve; }));
+      const sender = senderWith(credentialsSuperseded);
+
+      const first = expect(send(sender)).rejects.toThrow(/401/);
+      await vi.waitFor(() => expect(credentialsSuperseded).toHaveBeenCalledTimes(1));
+      vi.advanceTimersByTime(TTL_MS * 2);
+      release(true);
+      await first;
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks again for a different cookie header', async () => {
+      const credentialsSuperseded = vi.fn(async () => true);
+
+      await expect(send(senderWith(credentialsSuperseded, 'session=first'))).rejects.toThrow(/401/);
+      await expect(send(senderWith(credentialsSuperseded, 'session=second'))).rejects.toThrow(/401/);
+      await expect(send(senderWith(credentialsSuperseded, 'session=first'))).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded.mock.calls.map(([sent]) => sent)).toEqual(['session=first', 'session=second']);
+    });
+
+    it('keeps writing the marker, once per failure, when the cached answer is "not superseded"', async () => {
+      const credentialsSuperseded = vi.fn(async () => false);
+      const sender = senderWith(credentialsSuperseded);
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+      expect(existsSync(markerPath)).toBe(true);
+      rmSync(markerPath);
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+      expect(existsSync(markerPath)).toBe(true);
+    });
+
+    it('caches a throwing check as "not superseded"', async () => {
+      const credentialsSuperseded = vi.fn(async (): Promise<boolean> => { throw new Error('store unreadable'); });
+      const sender = senderWith(credentialsSuperseded);
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).toHaveBeenCalledTimes(1);
+      expect(existsSync(markerPath)).toBe(true);
+    });
+  });
 });
