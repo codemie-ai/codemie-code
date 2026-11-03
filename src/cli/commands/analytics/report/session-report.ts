@@ -36,7 +36,10 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
     return { written: null, sessions: 0 };
   }
 
-  const { index, summary } = await enrichCosts(rawSessions);
+  // Sessions resumed onto the same native log share it; their start times bound this session's window.
+  const { rawSessions: all } = await new SessionsSource().load({ filter: {} });
+  const siblings = all.filter((r) => r.sessionId !== options.sessionId);
+  const { index, summary } = await enrichCosts(rawSessions, undefined, siblings);
   const keepSessionIds = new Set(
     [...index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
   );

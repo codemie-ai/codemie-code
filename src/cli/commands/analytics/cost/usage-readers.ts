@@ -165,10 +165,15 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
  * an OTel-synced one the latest event time (otel-loader.ts) — three different clocks, not all
  * of them already equal to a message's own ts, but the inclusive bound is harmless either way
  * (it only ever widens, never narrows, what a session's own window admits).
- * `windowEnd` undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
-function withinWindow(records: UsageRecord[], windowEnd: number | undefined): UsageRecord[] {
-  if (windowEnd === undefined) return records;
-  return records.filter((r) => r.ts === null || r.ts <= windowEnd);
+ * `windowEnd` undefined ⇒ no upper bound.
+ * `windowStart` (a resumed session sharing its log with an earlier sibling) is the lower bound: the
+ * session owns only records at-or-after its own start, and untimed records stay with the earlier
+ * session. Both undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
+function withinWindow(records: UsageRecord[], windowEnd: number | undefined, windowStart?: number): UsageRecord[] {
+  if (windowEnd === undefined && windowStart === undefined) return records;
+  return records.filter((r) => r.ts === null
+    ? windowStart === undefined
+    : (windowStart === undefined || r.ts >= windowStart) && (windowEnd === undefined || r.ts <= windowEnd));
 }
 
 /**
@@ -895,7 +900,8 @@ export function gatherUsageDeduped(
   parsed: ParsedSession,
   seen: Set<string>,
   windowEnd?: number,
-  allowRollup = true
+  allowRollup = true,
+  windowStart?: number
 ): UsageMap {
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
@@ -917,7 +923,7 @@ export function gatherUsageDeduped(
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd, windowStart), seen)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
@@ -932,7 +938,7 @@ export function gatherUsageDeduped(
       return sdkRollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd, windowStart), seen)) {
       accumulate(out, r.model, r.usage);
     }
     // A shared-file session whose only usage signal is the (now-distrusted) rollup, with no
@@ -963,7 +969,8 @@ export function gatherDedupedUsageRecords(
   parsed: ParsedSession,
   seen: Set<string>,
   windowEnd?: number,
-  allowRollup = true
+  allowRollup = true,
+  windowStart?: number
 ): UsageRecord[] {
   const a = agentName.toLowerCase();
   if (a === 'kimi') {
@@ -971,10 +978,10 @@ export function gatherDedupedUsageRecords(
     return extractKimiUsageRecords(parsed);
   }
   if (isCodexFamilyAgent(a)) {
-    return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd), seen);
+    return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd, windowStart), seen);
   }
   if (a === 'pi') {
-    return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen);
+    return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd, windowStart), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
@@ -982,7 +989,7 @@ export function gatherDedupedUsageRecords(
   if (allowRollup && readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
-  return takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen);
+  return takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd, windowStart), seen);
 }
 
 /** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */

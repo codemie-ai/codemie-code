@@ -70,7 +70,7 @@ function resolveSessionAdapter(agentName: string): SessionAdapter | null {
 }
 
 export const realDeps: EnricherDeps = {
-  resolveAgentName: (raw) => raw.startEvent?.agentName ?? '',
+  resolveAgentName: (raw) => raw.startEvent?.agentName ?? raw.agentName ?? '',
   async loadAgentSessionFile(raw) {
     // Native-discovered sessions carry their log path directly (no CodeMie correlation file).
     if (raw.agentSessionFile) {
@@ -154,36 +154,6 @@ function computeReportedObservedEnd(groups: Map<string, ParsedEntry[]>): Map<str
 }
 
 /**
- * Dedup-safe forward bound (CR-001, EPMCDME-15316 Root Cause A — open/crashed-earlier-sibling
- * case) for an OPEN session (no own `observedEnd`) that shares its native log file with other
- * sessions. Unlike {@link computeReportedObservedEnd} (display-only), this bound IS fed into the
- * dedup `windowEnd` — a crashed session (terminal closed, SessionEnd never fired) or one still
- * genuinely open was otherwise unbounded here, so being processed first (ascending `startTime`)
- * let it greedily claim every later, cleanly-closed sibling's own turns from the same shared file
- * — reproducing this PR's own headline bug for the open-earlier-sibling case.
- *
- * Only bounded to the immediate next sibling's `startTime` when that next sibling has its OWN
- * confirmed `observedEnd` — i.e. we know it genuinely completed, so letting this (open/crashed)
- * session consume past that point would wrongly swallow the next session's turns. When the next
- * sibling is itself open too (genuinely ambiguous — e.g. two concurrently-running sessions
- * sharing a file), or there is no next sibling, the window stays unbounded (absent from the map),
- * preserving the existing earliest-wins dedup semantics for that case.
- */
-function computeDedupWindowEnd(groups: Map<string, ParsedEntry[]>): Map<string, number> {
-  const dedupWindowEnd = new Map<string, number>();
-  for (const group of groups.values()) {
-    group.forEach((entry, i) => {
-      if (entry.observedEnd !== undefined) return;
-      const next = group[i + 1];
-      if (next && next.observedEnd !== undefined) {
-        dedupWindowEnd.set(entry.sessionId, next.startTime);
-      }
-    });
-  }
-  return dedupWindowEnd;
-}
-
-/**
  * Max `ts` among a session's own timed usage records, below `upperBoundExclusive` when given —
  * used as a floor for `observedEnd` so the dedup window can never exclude the session's own
  * usage. `upperBoundExclusive` is the next sibling's `startTime` when this session shares its
@@ -252,6 +222,10 @@ function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefin
   return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
 }
 
+function rawStartTime(raw: RawSessionData): number {
+  return raw.startEvent?.data?.startTime ?? raw.startTime ?? 0;
+}
+
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
@@ -261,7 +235,7 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const parsed = capture?.parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
-    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: rawStartTime(raw),
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
@@ -548,7 +522,8 @@ function enrichDispatchCosts(
 
 export async function enrichCosts(
   sessions: RawSessionData[],
-  deps: EnricherDeps = realDeps
+  deps: EnricherDeps = realDeps,
+  extraSiblings: RawSessionData[] = []
 ): Promise<{ index: SessionCostIndex; summary: CostSummary }> {
   // Phase 1: parse every native log concurrently.
   const parsedEntries = await mapWithConcurrency(sessions, 16, (raw) => parseOne(raw, deps));
@@ -556,12 +531,22 @@ export async function enrichCosts(
   // Phase 2+3: gather usage in startTime order so the EARLIEST session owns a shared API
   // response, deduping by (message.id, requestId) across sessions — Claude replays prior
   // turns into resumed/forked logs, so the same response appears in many files. Then price.
-  const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
+  const byStart = (a: ParsedEntry, b: ParsedEntry): number =>
+    a.startTime - b.startTime || (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0);
+  const ordered = [...parsedEntries].sort(byStart);
   const seen = new Set<string>();
-  const sharedFileGroups = groupSharedFileSiblings(ordered);
+  // `extraSiblings` (sessions outside a filtered run, or the exit-time report's other sessions) are
+  // never priced; they only join the shared-file groups so their start times bound this run's sessions.
+  const ownIds = new Set(ordered.map((e) => e.sessionId));
+  const extras: ParsedEntry[] = await Promise.all(
+    extraSiblings.filter((raw) => !ownIds.has(raw.sessionId)).map(async (raw) => ({
+      sessionId: raw.sessionId, agentName: deps.resolveAgentName(raw), hadLog: false,
+      filePath: await deps.loadAgentSessionFile(raw), parsed: null, startTime: rawStartTime(raw),
+    }))
+  );
+  const sharedFileGroups = groupSharedFileSiblings([...ordered, ...extras].sort(byStart));
   const reportedObservedEnd = computeReportedObservedEnd(sharedFileGroups);
   const nextSiblingStart = computeNextSiblingStart(sharedFileGroups);
-  const dedupWindowEnd = computeDedupWindowEnd(sharedFileGroups);
   // CR-002: a Claude SDK modelUsage rollup is a whole-file aggregate, not a per-session one —
   // trusting it for a session sharing its native log file would let every sharing session
   // report the same combined total. Disallow the rollup shortcut for any session in a group.
@@ -581,11 +566,16 @@ export async function enrichCosts(
     let usageByModel: Map<string, TokenUsage>;
     let series: CostSeriesPoint[] = [];
     let records: UsageRecord[] = [];
-    // Dedup window bound: this session's own observedEnd, floored at its own latest usage-record
-    // timestamp (clamped before any shared-file sibling's startTime) when it has one — see
-    // floorObservedEnd; otherwise (CR-001) the next sibling's startTime, but only when that
-    // sibling itself confirms its own end — see computeDedupWindowEnd.
-    const windowEnd = floorObservedEnd(entry, nextSiblingStart.get(entry.sessionId)) ?? dedupWindowEnd.get(entry.sessionId);
+    // Dedup window on a shared log: a session owns `[its start, next sibling's start)`; the first
+    // session in the group also keeps untimed records (no lower bound). The upper bound is the
+    // earlier of the next sibling's start and this session's own observedEnd floored at its own
+    // latest record (floorObservedEnd), so one rule decides each record whether or not either
+    // session has an end event. `endTime` alone is unreliable for resumed sessions.
+    const sibStart = nextSiblingStart.get(entry.sessionId);
+    const group = entry.filePath ? sharedFileGroups.get(entry.filePath) : undefined;
+    const windowStart = group && group[0].sessionId !== entry.sessionId ? entry.startTime : undefined;
+    const ownEnd = floorObservedEnd(entry, sibStart);
+    const windowEnd = sibStart === undefined ? ownEnd : Math.min(ownEnd ?? Infinity, sibStart - 1);
     const allowRollup = !sharesFile.has(entry.sessionId);
     try {
       // Gather ordered, deduped records ONCE per session (consumes keys in `seen`). When there
@@ -594,7 +584,7 @@ export async function enrichCosts(
       // fallback runs only when there are no records (SDK rollup / gemini / no-reader), paths
       // that never touch `seen`, so there is no double-dedup. The same `records` are reused
       // below to attribute cost to `skill` dispatches within their time window.
-      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, windowEnd, allowRollup) : [];
+      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, windowEnd, allowRollup, windowStart) : [];
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
@@ -607,7 +597,7 @@ export async function enrichCosts(
           }
         }
       } else {
-        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, windowEnd, allowRollup) : new Map<string, TokenUsage>();
+        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, windowEnd, allowRollup, windowStart) : new Map<string, TokenUsage>();
       }
     } catch (e) {
       // One malformed log must not abort the whole report — degrade to "no usage" for this
@@ -682,7 +672,11 @@ export async function enrichCosts(
       }
 
       try {
-        const { events: dispatches, complete } = extractDispatchResult(entry.parsed, entry.agentName);
+        const extracted = extractDispatchResult(entry.parsed, entry.agentName);
+        const { complete } = extracted;
+        const dispatches = windowStart === undefined && sibStart === undefined
+          ? extracted.events
+          : extracted.events.filter((d) => (windowStart === undefined || d.start >= windowStart) && (sibStart === undefined || d.start < sibStart));
         if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
           enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
           cost.dispatchesComplete = complete;
