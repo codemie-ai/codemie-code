@@ -7,8 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -21,13 +20,13 @@ import {
   type IsolatedRunResult,
 } from '../../helpers/isolated-cli.js';
 
-const ROOT = resolve('.');
-const DIST_ENTRY = resolve('./dist/utils/logger.js');
-const SRC_DIR = resolve('./src');
+// bin/codemie.js imports ../dist. Like the other `cli` integration tests this suite runs against
+// a prebuilt dist (CI downloads the build artifact; locally run `npm run build` first) and never
+// builds it itself: a build here would rewrite dist under other test files running in parallel.
+const DIST_ENTRY = resolve('./dist/cli/index.js');
 
 // Each test chains several CLI processes, so it can outlive the `cli` project's 30s default.
 const TEST_TIMEOUT_MS = 120_000;
-const BUILD_TIMEOUT_MS = 300_000;
 
 interface StatusJson {
   hooksInstalled: boolean;
@@ -57,22 +56,6 @@ function status(cwd: string): StatusJson {
   const result = runCli(['proxy', 'analytics', 'status', '--json'], { cwd });
   expectExit(result, 0);
   return JSON.parse(result.stdout) as StatusJson;
-}
-
-/** Newest modification time of any source file under `dir`. */
-function newestSourceMtime(dir: string): number {
-  let newest = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) newest = Math.max(newest, newestSourceMtime(full));
-    else if (entry.name.endsWith('.ts')) newest = Math.max(newest, statSync(full).mtimeMs);
-  }
-  return newest;
-}
-
-/** True when dist is missing or older than the newest source file, so tests would run stale code. */
-function distIsStale(): boolean {
-  return !existsSync(DIST_ENTRY) || statSync(DIST_ENTRY).mtimeMs < newestSourceMtime(SRC_DIR);
 }
 
 function prefsPath(): string {
@@ -157,10 +140,8 @@ function createClaudeShim(dir: string): string {
 
 describe('Claude Code analytics opt-out', () => {
   beforeAll(() => {
-    // bin/codemie.js imports ../dist, and the `cli` project has no build step of its own.
-    if (distIsStale()) {
-      const build = spawnSync('npm', ['run', 'build'], { cwd: ROOT, encoding: 'utf-8', shell: true });
-      if (build.status !== 0) throw new Error(`npm run build failed:\n${build.stdout}\n${build.stderr}`);
+    if (!existsSync(DIST_ENTRY)) {
+      throw new Error(`${DIST_ENTRY} not found: run \`npm run build\` before the cli integration tests.`);
     }
     sandbox = realDir(mkdtempSync(join(tmpdir(), 'codemie-analytics-')));
     claudeShimDir = createClaudeShim(join(sandbox, 'claude-shim'));
@@ -176,7 +157,7 @@ describe('Claude Code analytics opt-out', () => {
       { cwd: sandbox }
     );
     expectExit(primed, 0);
-  }, BUILD_TIMEOUT_MS);
+  }, TEST_TIMEOUT_MS);
 
   afterAll(() => {
     rmSync(sandbox, { recursive: true, force: true });
@@ -341,6 +322,12 @@ describe('Claude Code analytics opt-out', () => {
     freshHome('tc004');
     installHooks();
     const project = realDir(join(sandbox, 'tc004', 'project'));
+
+    // Positive control: the same hook forwards while the preferences are readable.
+    const tracked = runPromptHook(project, 'sess-corrupt-control');
+    expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined();
+    expect(tracked.forwarded).toBe(true);
+
     writeFileSync(prefsPath(), '{ "enabled": tru', 'utf-8');
     const before = readFileSync(prefsPath());
 
@@ -348,6 +335,14 @@ describe('Claude Code analytics opt-out', () => {
     expect(report.preferencesCorrupt).toBe(true);
     expect(report.current.tracked).toBe(false);
     expect(report.current.reason).toBe('preferences-corrupt');
+
+    // The installed hook fails closed too: nothing forwarded, nothing written, file untouched.
+    const hook = runPromptHook(project, 'sess-corrupt');
+    expectExit(hook.run, 0);
+    expect(hook.run.stdout.trim()).toBe('');
+    expect(hook.forwarded).toBe(false);
+    expect(hook.wroteState).toBe(false);
+    expect(readFileSync(prefsPath()).equals(before), 'the hook rewrote the preferences file').toBe(true);
 
     // Every command that writes preferences must refuse and leave the file untouched.
     const writers: string[][] = [['disable'], ['enable'], ['exclude', project], ['include', project]];
