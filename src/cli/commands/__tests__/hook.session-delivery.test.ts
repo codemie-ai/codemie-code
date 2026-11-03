@@ -1309,6 +1309,41 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(endMetrics()).toHaveLength(1);
   });
 
+  it('a synthetic SessionEnd (end at the last activity) whose final pass meets a metrics lock held past the budget stays active, sends nothing; the next start finalizes it with the line it missed', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:05:00Z', '2026-10-01T10:06:00Z']);
+    const missedRecordId = (JSON.parse(readFileSync(transcript, 'utf-8').split('\n')[1]) as { uuid: string }).uuid;
+    const session = baseRecord({
+      ownerPid: 999_999,
+      ownerStartedAt: Date.now() - 3600 * SECOND,
+      activeDurationMs: 60_000,
+      activityStartedAt: Date.parse('2026-10-01T10:05:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    delete process.env.CODEMIE_WRAPPER_PID;
+    // A live writer (this test's parent) holds the metrics lock past the SessionEnd's budget
+    const lockPath = join(sessionsDir, `${session.sessionId}.metrics.lock`);
+    writeFileSync(lockPath, JSON.stringify({ pid: process.ppid }));
+
+    await runHook(syntheticEnd(transcript), session, { CODEMIE_SESSION_END_SYNC_BUDGET_MS: '300' });
+
+    expect(process.exitCode).toBe(0);
+    const kept = readRecord(session.sessionId);
+    expect(kept.status).toBe('active');
+    expect(kept.activeDurationMs).toBe(60_000);
+    expect(kept.activityStartedAt).toBe(Date.parse('2026-10-01T10:05:00Z'));
+    expect(endMetrics()).toEqual([]);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith(`completed_${session.sessionId}`))).toEqual([]);
+
+    rmSync(lockPath);
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(readRecord(session.sessionId, 'completed_').status).toBe('completed');
+    expect(readDeltas(session.sessionId, 'completed_').map((d) => d.recordId)).toContain(missedRecordId);
+    expect(endMetrics()).toHaveLength(1);
+  });
+
   it('a SessionEnd that met a failing server is delivered by the next start: once, then nothing more', async () => {
     const session = baseRecord();
     writeRecord(session);
