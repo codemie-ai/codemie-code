@@ -176,10 +176,10 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       );
 
       // Agent step: the first agent offered (claude) was persisted with its own models
-      const agentModels = profile!.agentModels as Record<string, { models: string[]; model: string }> | undefined;
+      const agentModels = profile!.agentModels as Record<string, { models: string[]; activeModel: string }> | undefined;
       expect(Object.keys(agentModels ?? {}), 'agentModels must record the selected agent').toEqual(['claude']);
       expect(agentModels?.claude.models, 'claude must have the checked model').toHaveLength(1);
-      expect(profile!.model, 'top-level model mirrors claude active model').toBe(agentModels?.claude.model);
+      expect(profile!.model, 'top-level model mirrors claude active model').toBe(agentModels?.claude.activeModel);
 
       // Step 9 verification: profile was activated
       expect(cfg.activeProfile, 'activeProfile must be set to the new profile').toBe(

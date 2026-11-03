@@ -6,6 +6,7 @@ import { logger } from '../../../utils/logger.js';
 import type { ModelPrice } from '../../../utils/pricing.js';
 import { lookupPrice } from '../../../utils/pricing.js';
 import { getPiAgentDir, getPiModelsPath } from './pi.paths.js';
+import { filterToProfileModels } from '../../core/profile-model-filter.js';
 
 export interface PiModelClassification {
   provider: 'codemie-proxy' | 'codemie-anthropic';
@@ -402,38 +403,16 @@ function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: stri
 }
 
 /**
- * Narrow live model entries to the active profile's own models
- * (CODEMIE_PROFILE_MODELS, comma-separated — set for the agent's own list on a
- * per-agent profile), keeping the configured CODEMIE_MODEL even when it is missing
- * from the allowed list. Falls back to the unfiltered list (with a warning)
- * when the env var is unset or the allowed-CSV intersection matches none of
- * `entries` at all — never leaving models.json empty (AC22).
+ * Narrow live model entries to the active profile's own models, keeping the configured
+ * CODEMIE_MODEL (see `filterToProfileModels`). Never leaves models.json empty (AC22).
  */
 export function filterEntriesToProfile(entries: PiModelEntry[], env: NodeJS.ProcessEnv): PiModelEntry[] {
-  if (!env.CODEMIE_PROFILE_MODELS) {
-    return entries;
-  }
-
-  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(',').map(id => id.trim()).filter(Boolean));
-  const matched = entries.filter(entry => allowed.has(entry.id));
-
-  if (matched.length === 0) {
-    // AC22: the user must see that the menu could not be limited, not just the log file.
-    logger.notice(
-      '[pi-models] None of this agent\'s profile models are in the live catalog — the model menu shows the full catalog'
-    );
-    return entries;
-  }
-
-  const configuredModel = env.CODEMIE_MODEL;
-  if (configuredModel && !matched.some(entry => entry.id === configuredModel)) {
-    const configuredEntry = entries.find(entry => entry.id === configuredModel);
-    if (configuredEntry) {
-      return [...matched, configuredEntry];
-    }
-  }
-
-  return matched;
+  return filterToProfileModels(entries, env.CODEMIE_PROFILE_MODELS, {
+    getId: entry => entry.id,
+    activeModel: env.CODEMIE_MODEL,
+    noMatchMessage:
+      '[pi-models] None of this agent\'s profile models are in the live catalog — the model menu shows the full catalog',
+  });
 }
 
 export async function fetchAndBuildPiModels(

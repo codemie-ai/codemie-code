@@ -23,11 +23,11 @@ const model = (id: string): ModelInfo => ({ id, name: id, description: 'desc' })
 const stripTags = (s: string): string => s.replace(/<\/?[gcd]>/g, '');
 
 const agentModels = {
-  claude: { models: ['shared'], model: 'claude-x' },
-  codex: { models: ['shared'], model: 'shared' },
-  gemini: { models: ['gemini-x'], model: 'gemini-x' },
-  opencode: { models: ['shared'], model: 'shared' },
-  pi: { models: ['shared'], model: 'pi-x' },
+  claude: { models: ['shared'], activeModel: 'claude-x' },
+  codex: { models: ['shared'], activeModel: 'shared' },
+  gemini: { models: ['gemini-x'], activeModel: 'gemini-x' },
+  opencode: { models: ['shared'], activeModel: 'shared' },
+  pi: { models: ['shared'], activeModel: 'pi-x' },
 };
 
 describe('formatTable — AGENTS column colors', () => {
@@ -64,7 +64,7 @@ describe('formatTable — AGENTS column colors', () => {
 
   it('wraps a list longer than the column, keeping each line padded and colored', () => {
     const long = Object.fromEntries(
-      ['agent-one', 'agent-two', 'agent-three', 'agent-four', 'agent-five'].map(name => [name, { models: ['m'], model: 'other' }])
+      ['agent-one', 'agent-two', 'agent-three', 'agent-four', 'agent-five'].map(name => [name, { models: ['m'], activeModel: 'other' }])
     );
     formatTable([model('m')], [], undefined, long);
 

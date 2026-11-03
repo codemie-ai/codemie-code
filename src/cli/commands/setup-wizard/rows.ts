@@ -130,12 +130,12 @@ export function createDraft(agent: string, input: AgentModelsWizardInput): Agent
   const existing = input.existing?.agentModels?.[agent];
   if (existing) {
     // An agent that always runs on its active model keeps only that model.
-    const models = isActiveModelOnly(agent) && existing.models.includes(existing.model)
-      ? [existing.model]
+    const models = isActiveModelOnly(agent) && existing.models.includes(existing.activeModel)
+      ? [existing.activeModel]
       : [...existing.models];
     return {
       models,
-      model: existing.model,
+      activeModel: existing.activeModel,
       extra: models.filter(id => !input.models.includes(id)),
       confirmed: new Set((existing.confirmedModels ?? []).filter(id => models.includes(id))),
     };
@@ -144,7 +144,7 @@ export function createDraft(agent: string, input: AgentModelsWizardInput): Agent
   const legacy = input.existing?.model;
   const usable = legacy && input.models.includes(legacy)
     && classifyModelForAgent(agent, legacy, { provider: input.provider, isRouter: input.isRouter }) !== 'incompatible';
-  return { models: usable ? [legacy] : [], model: usable ? legacy : undefined, extra: [], confirmed: new Set() };
+  return { models: usable ? [legacy] : [], activeModel: usable ? legacy : undefined, extra: [], confirmed: new Set() };
 }
 
 /**
@@ -153,10 +153,10 @@ export function createDraft(agent: string, input: AgentModelsWizardInput): Agent
  */
 export function finalizeDraft(agent: string, input: AgentModelsWizardInput, draft: AgentDraft): AgentModelSet {
   const models = [...draft.models];
-  const model = draft.model && models.includes(draft.model) ? draft.model : models[0];
+  const activeModel = draft.activeModel && models.includes(draft.activeModel) ? draft.activeModel : models[0];
   const routerAccepted = routerAcceptedModels([agent], models, { provider: input.provider, isRouter: input.isRouter });
   const confirmed = [...new Set([...draft.confirmed, ...routerAccepted])].filter(id => models.includes(id));
-  return confirmed.length > 0 ? { models, model, confirmedModels: confirmed } : { models, model };
+  return confirmed.length > 0 ? { models, activeModel, confirmedModels: confirmed } : { models, activeModel };
 }
 
 /** Review lines: one per agent, its active model first. */
@@ -166,7 +166,7 @@ export function buildReviewLines(agents: string[], drafts: Map<string, AgentDraf
   return agents.map((agent, index) => {
     const draft = drafts.get(agent);
     const models = draft?.models ?? [];
-    const active = draft?.model && models.includes(draft.model) ? draft.model : models[0];
+    const active = draft?.activeModel && models.includes(draft.activeModel) ? draft.activeModel : models[0];
     const others = models.filter(id => id !== active);
     return chalk.white(names[index].padEnd(width)) +
       [chalk.green(`${active} ${WIZARD_TEXT.ACTIVE_TAG}`), ...others].join(chalk.dim(', '));

@@ -6,7 +6,7 @@ import type {
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import { classifyWithPredicate } from '../../core/model-classify.js';
-import { isClaudeCompatibleModelName, resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
+import { isClaudeCompatibleModelName, resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, stripOneMillionSuffix, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
@@ -23,6 +23,7 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { resolveHomeDir } from '../../../utils/paths.js';
+import { filterToProfileModels } from '../../core/profile-model-filter.js';
 import {
   detectInstallationMethod,
   type InstallationMethod,
@@ -483,46 +484,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          // CODEMIE_PROFILE_MODELS (set for the agent's own list on a per-agent profile)
-          // narrows the menu to this profile's own list. Its absence is the
-          // fallback signal to show the full catalog, same as an empty
-          // intersection with a live catalog that dropped every one of those
-          // ids — never leave the picker empty (AC22).
-          let menuOptions = options;
-          if (env.CODEMIE_PROFILE_MODELS) {
-            const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
-            // The AC22 fallback is judged on the allowed-CSV intersection alone
-            // (before the active-model keep-case below), mirroring OpenCode/Pi's
-            // equivalents: when the profile's own list matches nothing in the
-            // live catalog at all, the whole unfiltered catalog is returned
-            // rather than silently narrowing it down to just the active model.
-            const matched = options.filter((option) => allowed.has(option.model.replace(/\[1m\]$/, '')));
-            if (matched.length > 0) {
-              // CR-002: never exclude the model this session is actually
-              // running, even when it falls outside the stored
-              // CODEMIE_PROFILE_MODELS (e.g. the tier-resolution loop above just
-              // retirement-healed it to a model not yet reflected there). Both
-              // sides are stripped of the `[1m]` opt-in suffix before comparing,
-              // since env.CODEMIE_MODEL may carry it too (applyContextWindow).
-              const activeBareId = env.CODEMIE_MODEL?.replace(/\[1m\]$/, '');
-              const alreadyIncludesActive = activeBareId
-                ? matched.some((option) => option.model.replace(/\[1m\]$/, '') === activeBareId)
-                : true;
-              if (alreadyIncludesActive) {
-                menuOptions = matched;
-              } else {
-                const activeOption = options.find(
-                  (option) => option.model.replace(/\[1m\]$/, '') === activeBareId
-                );
-                menuOptions = activeOption ? [...matched, activeOption] : matched;
-              }
-            } else {
-              // AC22: the user must see that the menu could not be limited, not just the log file.
-              logger.notice(
-                '[Claude] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog'
-              );
-            }
-          }
+          // Narrow the menu to this profile's own models (see filterToProfileModels). CR-002:
+          // the model this session is actually running stays in the menu even when it falls
+          // outside the stored list (e.g. the tier-resolution loop above just retirement-healed
+          // it). Ids are compared without the `[1m]` opt-in suffix, which both the picker
+          // options and env.CODEMIE_MODEL may carry (applyContextWindow).
+          const menuOptions = filterToProfileModels(options, env.CODEMIE_PROFILE_MODELS, {
+            getId: (option) => stripOneMillionSuffix(option.model),
+            activeModel: env.CODEMIE_MODEL ? stripOneMillionSuffix(env.CODEMIE_MODEL) : undefined,
+            noMatchMessage:
+              '[Claude] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog',
+          });
           if (menuOptions.length > 0) {
             const settingsJson = JSON.stringify({
               modelPicker: { options: menuOptions, replaceBuiltInOptions: true },

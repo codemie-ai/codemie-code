@@ -68,13 +68,13 @@ describe('runModelsSwitch', () => {
     return spy.mock.calls.map(call => call.join(' ')).join('\n');
   }
 
-  const oneAgent = { provider: 'openai', model: 'a', agentModels: { claude: { models: ['a', 'b'], model: 'a' } } };
+  const oneAgent = { provider: 'openai', model: 'a', agentModels: { claude: { models: ['a', 'b'], activeModel: 'a' } } };
   const twoAgents = {
     provider: 'litellm',
     model: 'a',
     agentModels: {
-      claude: { models: ['a', 'b'], model: 'a' },
-      codex: { models: ['b', 'c'], model: 'c' },
+      claude: { models: ['a', 'b'], activeModel: 'a' },
+      codex: { models: ['b', 'c'], activeModel: 'c' },
     },
   };
 
@@ -199,7 +199,7 @@ describe('runModelsSwitch', () => {
     configMock.getProfileForModelSwitch.mockResolvedValue({
       provider: 'openai',
       model: 'a',
-      agentModels: { claude: { models: ['a'], model: 'a' } },
+      agentModels: { claude: { models: ['a'], activeModel: 'a' } },
     });
 
     await runModelsSwitch(undefined, '/work');
@@ -280,8 +280,8 @@ describe('runModelsSwitch — agents that always run on their active model', () 
     provider: 'litellm',
     model: 'a',
     agentModels: {
-      claude: { models: ['a', 'b'], model: 'a' },
-      gemini: { models: ['gemini-3'], model: 'gemini-3' },
+      claude: { models: ['a', 'b'], activeModel: 'a' },
+      gemini: { models: ['gemini-3'], activeModel: 'gemini-3' },
     },
   };
 

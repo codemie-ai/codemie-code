@@ -115,10 +115,10 @@ export async function runAgentModelsWizard(
         }
         continue;
       }
-      if (draft.model && !draft.models.includes(draft.model)) draft.model = undefined;
-      if (draft.models.length === 1) draft.model = draft.models[0];
+      if (draft.activeModel && !draft.models.includes(draft.activeModel)) draft.activeModel = undefined;
+      if (draft.models.length === 1) draft.activeModel = draft.models[0];
     } else if (step.kind === 'active') {
-      draftFor(step.agent).model = result.selected[0];
+      draftFor(step.agent).activeModel = result.selected[0];
     } else if (step.kind === 'single') {
       const draft = draftFor(step.agent);
       addExtraModels(step.agent, input, draft, result.added);
@@ -129,7 +129,7 @@ export async function runAgentModelsWizard(
         chosen = found ?? chosen;
       }
       draft.models = chosen ? [chosen] : [];
-      draft.model = chosen;
+      draft.activeModel = chosen;
       if (result.action === 'row') continue;
     } else {
       return Object.fromEntries(agents.map(agent => [agent, finalizeDraft(agent, input, draftFor(agent))]));
@@ -204,7 +204,7 @@ function specFor(step: WizardStep, ctx: SpecContext): ListScreenSpec {
       ],
       mode: 'single',
       rows: buildModelRows(step.agent, input, draft),
-      selected: draft.model ? [draft.model] : [],
+      selected: draft.activeModel ? [draft.activeModel] : [],
       searchable: true,
       customRow: query => buildCustomRow(step.agent, input, query),
       validate: selected => (selected.length > 0 ? undefined : WIZARD_TEXT.ACTIVE_REQUIRED(name)),
@@ -221,7 +221,7 @@ function specFor(step: WizardStep, ctx: SpecContext): ListScreenSpec {
       notes: [WIZARD_TEXT.ACTIVE_NOTE(name)],
       mode: 'single',
       rows: buildActiveRows(step.agent, input, draft),
-      selected: [draft.model ?? draft.models[0]],
+      selected: [draft.activeModel ?? draft.models[0]],
     };
   }
 

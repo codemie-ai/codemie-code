@@ -107,9 +107,9 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "provider": "ai-run-sso",
       "model": "claude-sonnet-5",
       "agentModels": {
-        "claude": { "models": ["claude-sonnet-5", "claude-haiku-4-5"], "model": "claude-sonnet-5" },
-        "codex": { "models": ["gpt-5.6-terra"], "model": "gpt-5.6-terra" },
-        "opencode": { "models": ["claude-sonnet-5", "gemini-3-pro"], "model": "gemini-3-pro" }
+        "claude": { "models": ["claude-sonnet-5", "claude-haiku-4-5"], "activeModel": "claude-sonnet-5" },
+        "codex": { "models": ["gpt-5.6-terra"], "activeModel": "gpt-5.6-terra" },
+        "opencode": { "models": ["claude-sonnet-5", "gemini-3-pro"], "activeModel": "gemini-3-pro" }
       }
     }
   }
@@ -124,7 +124,7 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
 them in `agentModels`, keyed by base agent name (as on `enterprise-sso` above):
 
 - `models` - the models that agent may use (at least one).
-- `model` - that agent's active model; it launches with it.
+- `activeModel` - that agent's active model; it launches with it.
 - `confirmedModels` (optional) - ids accepted despite the agent's model-name
   rule: typed names the rule rejects, and catalog routers/aliases. Launch
   reports them as unverified instead of incompatible. Always a subset of `models`.
@@ -174,7 +174,7 @@ for providers that auto-pick their single model (`anthropic-subscription`,
 #### Switching and listing
 
 - `codemie models switch [model-id] [--agent <name>]` changes one agent's active
-  model in place, writing only that agent's `model` (plus the top-level `model`
+  model in place, writing only that agent's `activeModel` (plus the top-level `model`
   when it is the first agent, and Claude's `haikuModel`/`sonnetModel`/`opusModel`
   tiers when the agent is Claude). Without `--agent`, the model id picks the agent
   when only one agent has it; otherwise you choose the agent, then its model, from

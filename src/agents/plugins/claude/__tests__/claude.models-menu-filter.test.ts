@@ -47,7 +47,8 @@ vi.mock('../../../../utils/security.js', () => ({
 
 const buildModelPickerOptionsMock = vi.fn<(env: NodeJS.ProcessEnv) => Promise<ModelPickerOption[]>>();
 
-vi.mock('../claude.models.js', () => ({
+vi.mock('../claude.models.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../claude.models.js')>()),
   resolveClaudeModel: vi.fn(async () => null),
   listRouterModelIds: vi.fn(async () => []),
   buildModelLabelMap: vi.fn(async () => ({})),

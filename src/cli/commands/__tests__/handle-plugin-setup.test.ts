@@ -109,7 +109,7 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
       getRecommendedModels: vi.fn().mockResolvedValue(['a']),
       searchModel
     });
-    wizardMock.mockResolvedValue({ opencode: { models: ['a'], model: 'a' } });
+    wizardMock.mockResolvedValue({ opencode: { models: ['a'], activeModel: 'a' } });
 
     await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
 
@@ -125,9 +125,9 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
   });
 
   it('passes the existing profile on an update so the wizard can preselect it', async () => {
-    const existing = { provider: 'test', model: 'a', agentModels: { claude: { models: ['a'], model: 'a' } } };
+    const existing = { provider: 'test', model: 'a', agentModels: { claude: { models: ['a'], activeModel: 'a' } } };
     configMock.getProfile.mockResolvedValue(existing);
-    wizardMock.mockResolvedValue({ claude: { models: ['a'], model: 'a' } });
+    wizardMock.mockResolvedValue({ claude: { models: ['a'], activeModel: 'a' } });
 
     await handlePluginSetup('test-provider', steps(['a']), 'test-profile', true, 'global');
 
@@ -139,19 +139,19 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
       fetchRouterModels: vi.fn().mockRejectedValue(new Error('boom')),
       getRecommendedModels: vi.fn().mockRejectedValue(new Error('boom'))
     });
-    wizardMock.mockResolvedValue({ opencode: { models: ['a'], model: 'a' } });
+    wizardMock.mockResolvedValue({ opencode: { models: ['a'], activeModel: 'a' } });
 
     await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
 
     expect(wizardMock.mock.calls[0][0].isRouter).toBeUndefined();
     expect(wizardMock.mock.calls[0][0].recommendedIds).toBeUndefined();
-    expect(savedConfig().agentModels).toEqual({ opencode: { models: ['a'], model: 'a' } });
+    expect(savedConfig().agentModels).toEqual({ opencode: { models: ['a'], activeModel: 'a' } });
   });
 
   it('saves agentModels and mirrors the first agent active model at the top level', async () => {
     const agentModels = {
-      claude: { models: ['claude-x', 'claude-y'], model: 'claude-y' },
-      codex: { models: ['gpt-5.4'], model: 'gpt-5.4', confirmedModels: ['gpt-5.4'] }
+      claude: { models: ['claude-x', 'claude-y'], activeModel: 'claude-y' },
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4', confirmedModels: ['gpt-5.4'] }
     };
     wizardMock.mockResolvedValue(agentModels);
 
@@ -193,8 +193,8 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
       name === 'claude' ? { metadata: { supportedProviders: ['test-provider'] } } : undefined
     );
     wizardMock.mockResolvedValue({
-      codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
-      claude: { models: ['claude-sonnet-4-5'], model: 'claude-sonnet-4-5' }
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
+      claude: { models: ['claude-sonnet-4-5'], activeModel: 'claude-sonnet-4-5' }
     });
 
     await handlePluginSetup(
@@ -213,8 +213,8 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
     providerRegistryMock.getProvider.mockReturnValue({ supportsModelInstallation: true });
     const installModel = vi.fn().mockResolvedValue(undefined);
     wizardMock.mockResolvedValue({
-      claude: { models: ['a', 'b'], model: 'a' },
-      opencode: { models: ['b', 'c'], model: 'c' }
+      claude: { models: ['a', 'b'], activeModel: 'a' },
+      opencode: { models: ['b', 'c'], activeModel: 'c' }
     });
 
     await handlePluginSetup('test-provider', steps(['a', 'b', 'c'], { installModel }), 'test-profile', true, 'global');
@@ -228,16 +228,16 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
       id === 'b' ? Promise.reject(new Error('pull failed')) : Promise.resolve()
     );
     wizardMock.mockResolvedValue({
-      claude: { models: ['a', 'b'], model: 'b' },
-      opencode: { models: ['b', 'c'], model: 'c' }
+      claude: { models: ['a', 'b'], activeModel: 'b' },
+      opencode: { models: ['b', 'c'], activeModel: 'c' }
     });
 
     await handlePluginSetup('test-provider', steps(['a', 'b', 'c'], { installModel }), 'test-profile', true, 'global');
 
     const saved = savedConfig();
     expect(saved.agentModels).toEqual({
-      claude: { models: ['a'], model: 'a' },
-      opencode: { models: ['c'], model: 'c' }
+      claude: { models: ['a'], activeModel: 'a' },
+      opencode: { models: ['c'], activeModel: 'c' }
     });
     expect(saved.model).toBe('a');
   });
@@ -248,8 +248,8 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
       id === 'b' ? Promise.reject(new Error('pull failed')) : Promise.resolve()
     );
     wizardMock.mockResolvedValue({
-      claude: { models: ['a'], model: 'a' },
-      codex: { models: ['b'], model: 'b' }
+      claude: { models: ['a'], activeModel: 'a' },
+      codex: { models: ['b'], activeModel: 'b' }
     });
 
     await expect(
@@ -262,12 +262,12 @@ describe('handlePluginSetup (per-agent models, EPMCDME-15641)', () => {
 describe('withoutModels', () => {
   it('keeps confirmed ids only for models that remain', () => {
     expect(withoutModels(
-      { codex: { models: ['x', 'y'], model: 'x', confirmedModels: ['x', 'y'] } },
+      { codex: { models: ['x', 'y'], activeModel: 'x', confirmedModels: ['x', 'y'] } },
       ['x']
-    )).toEqual({ codex: { models: ['y'], model: 'y', confirmedModels: ['y'] } });
+    )).toEqual({ codex: { models: ['y'], activeModel: 'y', confirmedModels: ['y'] } });
   });
 
   it('throws a ConfigurationError when an agent loses every model', () => {
-    expect(() => withoutModels({ codex: { models: ['x'], model: 'x' } }, ['x'])).toThrow(ConfigurationError);
+    expect(() => withoutModels({ codex: { models: ['x'], activeModel: 'x' } }, ['x'])).toThrow(ConfigurationError);
   });
 });

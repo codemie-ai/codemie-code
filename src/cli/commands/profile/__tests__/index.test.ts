@@ -118,8 +118,8 @@ describe('ProfileDisplay — per-agent models (EPMCDME-15641)', () => {
     provider: 'ai-run-sso',
     model: 'claude-sonnet-4-5',
     agentModels: {
-      claude: { models: ['claude-sonnet-4-5', 'claude-haiku-4-5'], model: 'claude-sonnet-4-5' },
-      codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
+      claude: { models: ['claude-sonnet-4-5', 'claude-haiku-4-5'], activeModel: 'claude-sonnet-4-5' },
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
     },
   };
 

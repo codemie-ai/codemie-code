@@ -379,7 +379,7 @@ path entirely.
 ### Per-agent models (profile `agentModels`)
 
 `codemie setup` records each selected agent's models in `agentModels`
-(`{ <agent>: { models, model, confirmedModels? } }`, keyed by base agent name);
+(`{ <agent>: { models, activeModel, confirmedModels? } }`, keyed by base agent name);
 the top-level `model` mirrors the first agent's active model. `confirmedModels`
 holds ids accepted despite the agent's name rule. None of it is exported as its
 own env var: the agent view above maps it onto `CODEMIE_MODEL` and

@@ -135,8 +135,8 @@ interface ConfigWithSources {
     "work":    {
       "provider": "sso", "codeMieProject": "work-project", "model": "claude-sonnet-5",
       "agentModels": {
-        "claude": { "models": ["claude-sonnet-5", "claude-haiku-5"], "model": "claude-sonnet-5" },
-        "codex":  { "models": ["gpt-5.6-terra"], "model": "gpt-5.6-terra" }
+        "claude": { "models": ["claude-sonnet-5", "claude-haiku-5"], "activeModel": "claude-sonnet-5" },
+        "codex":  { "models": ["gpt-5.6-terra"], "activeModel": "gpt-5.6-terra" }
       }
     }
   }
@@ -145,7 +145,7 @@ interface ConfigWithSources {
 
 `agentModels` is optional and additive. `codemie setup` fills it from a per-agent
 wizard (agents, then each agent's models and active model), keyed by base agent
-name (ACP variants share it): `models` is what the agent may use, `model` its
+name (ACP variants share it): `models` is what the agent may use, `activeModel` its
 active model, and optional `confirmedModels` the ids accepted despite the agent's
 model-name rule. Agents with no in-session model menu (`activeModelOnly`: gemini,
 kimi, copilot-cli, openwiki) hold only their active model. The top-level `model`

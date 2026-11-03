@@ -1,16 +1,20 @@
 /**
  * Full-screen raw-mode list screen for the per-agent model setup wizard.
  *
- * Built on the shared selection UI primitives the `codemie setup assistants` wizard uses (purple
- * top line, search box, ◉/◯ rows, buttons), but filters in memory and supports single choice,
- * typed custom entries and action rows. Key handling (`applyKey`) and rendering
+ * Built on the shared selection UI the `codemie setup assistants`/`skills` prompts use (raw-mode
+ * input, purple top line, search box, ◉/◯ rows, buttons). That prompt's state machine is not reused:
+ * it is bound to fixed Registered/Project/Marketplace panels with server-side search and paging,
+ * and is multi-select only, while this screen filters in memory and supports single choice, typed
+ * custom entries, action rows and going back a stage. Key handling (`applyKey`) and rendering
  * (`renderListScreen`) are pure so they can be tested without a TTY.
  */
 
 import chalk from 'chalk';
 import { COLOR } from '@/cli/commands/shared/constants.js';
-import { KEY, ANSI, SHARED_TEXT } from '@/cli/commands/shared/selection/constants.js';
+import { KEY, ANSI } from '@/cli/commands/shared/selection/constants.js';
+import { startRawInput } from '@/cli/commands/shared/selection/raw-input.js';
 import {
+  buildButtons,
   buildTopLine,
   buildSearchInput,
   buildSelectionRow,
@@ -18,7 +22,7 @@ import {
   buildSelectionDetailLine,
 } from '@/cli/commands/shared/selection/ui.js';
 import type { ListRow, ListScreenResult, ListScreenSpec } from './types.js';
-import { KEEP_ALIVE_INTERVAL_MS, VISIBLE_ROWS, WIZARD_TEXT } from './constants.js';
+import { VISIBLE_ROWS, WIZARD_TEXT } from './constants.js';
 
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
@@ -242,17 +246,6 @@ function buildRow(state: ListScreenState, row: ListRow, isCursor: boolean): stri
   return row.detail ? `${line}\n${buildSelectionDetailLine(row.detail)}` : line;
 }
 
-function buildButtons(state: ListScreenState): string {
-  const active = (text: string): string => chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${text} `);
-  const label = state.spec.continueLabel ?? SHARED_TEXT.CONTINUE_BUTTON;
-  const focused = state.focus === 'buttons';
-  const continueButton = focused && state.button === 'continue' ? active(label) : chalk.dim(`[${label}]`);
-  const cancelButton = focused && state.button === 'cancel'
-    ? active(SHARED_TEXT.CANCEL_BUTTON)
-    : chalk.dim(`[${SHARED_TEXT.CANCEL_BUTTON}]`);
-  return `  ${continueButton}  ${cancelButton}\n\n`;
-}
-
 /** Keeps the cursor inside the scroll window. */
 function syncScroll(state: ListScreenState, count: number): void {
   if (state.cursor < state.scroll) state.scroll = state.cursor;
@@ -297,7 +290,15 @@ export function renderListScreen(state: ListScreenState): string {
     output += (state.error ? status : chalk.dim(status)) + '\n\n';
   }
 
-  output += buildButtons(state);
+  output += buildButtons(
+    {
+      areNavigationButtonsFocused: state.focus === 'buttons',
+      focusedButton: state.button,
+      isSearchFocused: false,
+      isPaginationFocused: null,
+    },
+    spec.continueLabel
+  );
   const instructions = rows.length === 0
     ? WIZARD_TEXT.INSTRUCTIONS_REVIEW
     : spec.mode === 'single'
@@ -313,38 +314,20 @@ export function runListScreen(spec: ListScreenSpec): Promise<ListScreenResult> {
   const state = createListScreenState(spec);
 
   return new Promise(resolve => {
-    const keepAlive = setInterval(() => {}, KEEP_ALIVE_INTERVAL_MS);
-
     const render = (): void => {
       process.stdout.write(HIDE_CURSOR + renderListScreen(state));
     };
 
-    const onData = (data: Buffer | string): void => {
-      const outcome = applyKey(state, data.toString());
+    const stopRawInput = startRawInput(key => {
+      const outcome = applyKey(state, key);
       if (outcome.type === 'render') {
         render();
       } else if (outcome.type === 'done') {
-        cleanup();
+        stopRawInput();
+        process.stdout.write(ANSI.CURSOR_HOME_CLEAR + SHOW_CURSOR);
         resolve(outcome.result);
       }
-    };
-
-    function cleanup(): void {
-      clearInterval(keepAlive);
-      process.stdin.removeListener('data', onData);
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
-      process.stdin.pause();
-      process.stdout.write(ANSI.CURSOR_HOME_CLEAR + SHOW_CURSOR);
-    }
-
-    process.stdin.resume();
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', onData);
+    });
     render();
   });
 }

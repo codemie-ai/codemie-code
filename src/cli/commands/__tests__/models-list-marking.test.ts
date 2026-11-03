@@ -63,9 +63,9 @@ describe('formatTable — profile model marking', () => {
 
   describe('AGENTS column', () => {
     const agentModels = {
-      claude: { models: ['claude-x', 'shared'], model: 'claude-x' },
-      codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
-      opencode: { models: ['shared', 'gpt-5.4'], model: 'shared' },
+      claude: { models: ['claude-x', 'shared'], activeModel: 'claude-x' },
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
+      opencode: { models: ['shared', 'gpt-5.4'], activeModel: 'shared' },
     };
 
     it('lists the agents of each model in one column, starring active agents', () => {
@@ -90,7 +90,7 @@ describe('formatTable — profile model marking', () => {
 
     it('wraps a list that does not fit onto further lines under the AGENTS column', () => {
       const many = Object.fromEntries(
-        ['claude', 'codex', 'gemini', 'opencode', 'pi', 'codemie-code'].map(a => [a, { models: ['shared'], model: 'x' }])
+        ['claude', 'codex', 'gemini', 'opencode', 'pi', 'codemie-code'].map(a => [a, { models: ['shared'], activeModel: 'x' }])
       );
       formatTable([model('shared'), model('next')], [], undefined, many);
 
@@ -126,8 +126,8 @@ describe('formatAgentModelsBlock', () => {
   it('lists each agent with its active model first', () => {
     const lines = formatAgentModelsBlock({
       agentModels: {
-        claude: { models: ['claude-y', 'claude-x'], model: 'claude-x' },
-        codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
+        claude: { models: ['claude-y', 'claude-x'], activeModel: 'claude-x' },
+        codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
       },
     });
 
@@ -166,8 +166,8 @@ describe('runModelsList', () => {
   const perAgent = {
     model: 'claude-x',
     agentModels: {
-      claude: { models: ['claude-x'], model: 'claude-x' },
-      codex: { models: ['gpt-5.4', 'claude-x'], model: 'gpt-5.4' },
+      claude: { models: ['claude-x'], activeModel: 'claude-x' },
+      codex: { models: ['gpt-5.4', 'claude-x'], activeModel: 'gpt-5.4' },
     },
   };
 

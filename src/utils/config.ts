@@ -67,7 +67,7 @@ export function withAgentModelView<T extends ProfileModelFields>(config: T, agen
   if (!config.agentModels) return config;
   const set = resolveAgentModelSet(config, agent);
   return set
-    ? { ...config, model: set.model, agentModels: { [baseAgentName(agent)]: set } }
+    ? { ...config, model: set.activeModel, agentModels: { [baseAgentName(agent)]: set } }
     : { ...config, agentModels: {} };
 }
 
@@ -842,7 +842,7 @@ export class ConfigLoader {
           agentSet.models = [modelId];
           delete agentSet.confirmedModels;
         }
-        agentSet.model = modelId;
+        agentSet.activeModel = modelId;
         // The top-level model mirrors the first agent's active model.
         if (Object.values(profile.agentModels ?? {})[0] === agentSet) {
           profile.model = modelId;
