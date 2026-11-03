@@ -12,7 +12,7 @@ import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
 import { CredentialRefresher } from './credential-refresh.js';
-import { buildCookieHeader } from '../../session/cookie-auth.js';
+import { buildCookieHeader, droppedCookieKeys } from '../../session/cookie-auth.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -50,9 +50,7 @@ class SSOAuthInterceptor implements ProxyInterceptor {
 
     const cookieHeader = buildCookieHeader(current.cookies);
 
-    const invalidCookieKeys = Object.entries(current.cookies)
-      .filter(([key, value]) => buildCookieHeader({ [key]: value }) === '')
-      .map(([key]) => String(key).trim() || '<empty>');
+    const invalidCookieKeys = droppedCookieKeys(current.cookies);
     if (invalidCookieKeys.length > 0) {
       logger.warn(`[${this.name}] Ignoring invalid cookie entries`, {
         invalidCookieCount: invalidCookieKeys.length,

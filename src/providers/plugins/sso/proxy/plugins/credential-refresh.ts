@@ -104,8 +104,7 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
       return this.current; // JWT — static, nothing to refresh
     }
 
-    const markerInvalid = await this.readMarkerInvalid();
-    const stamp = await getLastSignInAt(this.params);
+    const [markerInvalid, stamp] = await Promise.all([this.readMarkerInvalid(), getLastSignInAt(this.params)]);
 
     // From here to publishing the pending read there is no await, so two calls can never both
     // start a bypass read or let one slip past the other.

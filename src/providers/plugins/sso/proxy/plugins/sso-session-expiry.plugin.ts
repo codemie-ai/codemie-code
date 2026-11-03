@@ -18,8 +18,8 @@
  * A redirect on a request that was sent with credentials a finished sign-in has since replaced is not
  * an expiry: the request is replayed once with the stored cookies and that response is returned. If
  * the replay is itself the redirect the session really is gone and the expiry path below runs; if
- * the request cannot be replayed (no buffered body, or the retry throws) the client gets a 401 asking
- * it to re-send. No marker is written and no sign-in is started for a superseded request.
+ * the replay throws the client gets a 401 asking it to re-send. No marker is written and no sign-in
+ * is started for a superseded request.
  *
  * KNOWN GAP: detection relies ONLY on this exact 302/303-to-/oauth2/start signature. Two other
  * gateway rejection shapes bypass it silently (no marker written, no re-login triggered, no
@@ -49,7 +49,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
 import { supersedingCookieHeader } from '../../session/cookie-auth.js';
 import type { CredentialRefresher } from './credential-refresh.js';
-import type { SSOCredentials } from '../../../../core/types.js';
+import type { SSOCredentials } from '@/providers/core/types.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
@@ -166,28 +166,22 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       );
     }
 
-    const body = Buffer.from(JSON.stringify({
-      type: 'error',
-      error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome ?? 'failed')}` },
-    }), 'utf-8');
-    const synthetic = tools.fromBuffer(response, body);
-    synthetic.statusCode = 401;
-    synthetic.statusMessage = 'Unauthorized';
-    synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
-    return synthetic;
+    const login = describeLogin(outcome ?? 'failed');
+    // After a sign-in that just finished the text already says so; "session expired" would contradict it.
+    return syntheticUnauthorized(response, tools, outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`);
   }
 
   /**
    * Sends the request once more with the cookies a finished sign-in stored. `tools.retry` reuses
    * `context.headers` as they are rather than re-running the request interceptors, so the fresh
-   * cookie header is put there first. Resolves null when the request cannot be replayed.
+   * cookie header is put there first. A request without a buffered body (GET, HEAD, DELETE) is
+   * replayed with that null body. Resolves null when the replay throws.
    */
   private async replayWithFreshCookies(
     context: ProxyContext,
     tools: UpstreamResponseTools,
     freshCookies: string
   ): Promise<IncomingMessage | null> {
-    if (!context.requestBody) return null;
     try {
       context.headers['cookie'] = freshCookies;
       return await tools.retry(context.requestBody);

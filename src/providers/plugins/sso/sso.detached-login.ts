@@ -236,7 +236,7 @@ async function writeLockAtomically(lockPath: string, lock: LoginLock): Promise<v
 }
 
 /** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
-async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | null> {
+async function acquireLock(lockPath: string, url: string): Promise<DetachedLoginOutcome | null> {
   await sweepOrphanedTmpFiles(lockPath);
   try {
     if (await tryCreateLock(lockPath)) {
@@ -252,10 +252,13 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
       // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
       // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
       // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
-      if (Date.now() - existing.succeededAt < COOLDOWN_MS) {
+      // The cooldown damps repeated sign-ins for the URL that just signed in; a sign-in for another
+      // URL is not a repeat. A lock without a URL (older versions) damps every URL.
+      const sameUrl = existing.url === undefined || normalizeUrlForKey(existing.url) === normalizeUrlForKey(url);
+      if (sameUrl && Date.now() - existing.succeededAt < COOLDOWN_MS) {
         return 'signed-in-recently';
       }
-      // Cooldown elapsed: fall through to the stale/corrupt replace path below.
+      // Cooldown elapsed, or the success was for another URL: fall through to the replace path below.
     } else if (existing) {
       const age = Date.now() - existing.startedAt;
       if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
@@ -285,7 +288,7 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
  * sign-in immediately, so a burst of still-ongoing redirects (e.g. the other proxied-request
  * consumers that don't yet pick up fresh credentials, or any other misconfiguration) opened the
  * browser again after every single one of them (PR #655 review). `acquireLock` damps repeated
- * sign-ins for `COOLDOWN_MS` after `succeededAt`; after that window the lock is treated as stale
+ * sign-ins for the same URL for `COOLDOWN_MS` after `succeededAt`; after that window the lock is treated as stale
  * and replaced, so a genuinely NEW expiry later is never blocked for longer than one cooldown.
  */
 export async function releaseLoginLockOnSuccess(): Promise<void> {
@@ -388,7 +391,7 @@ async function discardAttempt(lockPath: string, replacedSignIn: CompletedSignIn 
 export async function startDetachedSsoLogin(codeMieUrl: string): Promise<DetachedLoginOutcome> {
   const lockPath = getLockPath();
 
-  const blocked = await acquireLock(lockPath);
+  const blocked = await acquireLock(lockPath, codeMieUrl);
   if (blocked) {
     return blocked;
   }

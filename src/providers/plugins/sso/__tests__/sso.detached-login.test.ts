@@ -246,6 +246,7 @@ describe('describeLogin', () => {
     const text = describeLogin('signed-in-recently');
     expect(text).toContain('re-send your prompt');
     expect(text).toContain('wait about 30 seconds');
+    expect(text).not.toContain('expired');
     expect(text).not.toContain('did not complete');
     expect(text).not.toContain('codemie profile login');
   });
@@ -653,14 +654,45 @@ describe('last sign-in per CodeMie URL', () => {
     expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
   });
 
-  it('does not change the cooldown or in-progress decisions across URLs', async () => {
-    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000, url: URL_A });
-    expect(await startDetachedSsoLogin(URL_B)).toBe('signed-in-recently');
+  describe('post-success cooldown per URL', () => {
+    it('starts a sign-in for URL B within the cooldown of a success on URL A, carrying A\'s stamp', async () => {
+      const succeededAt = Date.now() - 5_000;
+      await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt, url: URL_A });
 
+      expect(await startDetachedSsoLogin(URL_B)).toBe('started');
+
+      expect(spawnDetached).toHaveBeenCalledTimes(1);
+      expect(await readLockFile()).toMatchObject({ url: URL_B, lastSucceededAt: succeededAt, lastSucceededUrl: URL_A });
+    });
+
+    it('still reports signed-in-recently for URL A within the cooldown of a success on URL A', async () => {
+      await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000, url: URL_A });
+
+      expect(await startDetachedSsoLogin(URL_A)).toBe('signed-in-recently');
+      expect(spawnDetached).not.toHaveBeenCalled();
+    });
+
+    it('compares the URLs normalised: case, trailing slash and path do not make them differ', async () => {
+      await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000, url: 'https://A.Example.com/' });
+
+      expect(await startDetachedSsoLogin('https://a.example.com/code-assistant-api')).toBe('signed-in-recently');
+      expect(spawnDetached).not.toHaveBeenCalled();
+    });
+
+    it('keeps blocking on a success recorded without a URL (written by an older version)', async () => {
+      await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000 });
+
+      expect(await startDetachedSsoLogin(URL_B)).toBe('signed-in-recently');
+      expect(spawnDetached).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not change the in-progress or post-failure decisions across URLs', async () => {
     await writeLock({ pid: 1, startedAt: Date.now() - 5_000, url: URL_A });
     expect(await startDetachedSsoLogin(URL_B)).toBe('cooldown');
 
     vi.mocked(isProcessAlive).mockReturnValue(true);
     expect(await startDetachedSsoLogin(URL_B)).toBe('in-progress');
+    expect(spawnDetached).not.toHaveBeenCalled();
   });
 });

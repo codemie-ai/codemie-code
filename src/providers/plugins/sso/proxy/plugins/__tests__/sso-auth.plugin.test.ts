@@ -170,6 +170,44 @@ describe('SSOAuthPlugin', () => {
     expect(interceptor.onRequest).toBeUndefined();
   });
 
+  it('warns with the names of dropped cookie entries only, and leaves them out of the header it sends', async () => {
+    vi.mocked(getStoredPlatformCredentials).mockResolvedValue(null);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({
+        cookies: { session: 'kept-value', ' ': 'blank-name-secret', 'bad\nname': 'newline-name-secret', broken: 'line\nbreak-secret' },
+        apiUrl: TARGET_API_URL,
+        expiresAt: Date.now() + 60_000,
+      })
+    );
+    const context = createProxyContext();
+
+    await interceptor.onRequest!(context);
+
+    expect(context.headers['cookie']).toBe('session=kept-value');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const [message, details] = warnSpy.mock.calls[0];
+    expect(message).toContain('Ignoring invalid cookie entries');
+    expect(details).toEqual({ invalidCookieCount: 3, invalidCookieNames: ['<empty>', 'bad\nname', 'broken'] });
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/secret/);
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when every cookie entry is usable', async () => {
+    vi.mocked(getStoredPlatformCredentials).mockResolvedValue(null);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: { a: '1', b: '2' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000 })
+    );
+    const context = createProxyContext();
+
+    await interceptor.onRequest!(context);
+
+    expect(context.headers['cookie']).toBe('a=1; b=2');
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it('throws when neither a fresh nor a last-known-good credential has any usable cookies', async () => {
     vi.mocked(getStoredPlatformCredentials).mockResolvedValue(null);
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(

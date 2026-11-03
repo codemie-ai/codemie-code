@@ -61,16 +61,25 @@ Root causes, all in the SSO provider plugin:
 
 ## Non-goals
 
-- No replay of the failed request through `tools.retry`; the client re-sends.
 - No clearing of the marker on proxied success (ticket item 3, weakened by the user). The only clearing added is the gate removing a marker it has just proven older than the latest sign-in.
 - No change to `markAnalyticsAuthInvalid`'s keep-the-first-`detectedAt` rule or to the marker util (it must not depend on a provider module).
-- No profile or URL keying of `sso-login.lock` or the marker; both stay global.
 - No change to `COOLDOWN_MS`, `LOCK_MAX_AGE_MS`, `CREDENTIAL_REFRESH_INTERVAL_MS`, or to the marker-edge bypass (it is the only signal for `codemie profile login`, which clears the marker but never stamps the lock; making it stamp is a separate behavior decision, no follow-up planned here).
 - No change to the OTLP forwarder (`otlp-spool/auth-state.ts`, `forwarder.ts`): it never writes the marker, and its in-memory stale flag and resume path stay as they are.
 - No default `credentialsSuperseded` inside `MetricsApiClient` or `MetricsSender`, and no supersession check for cookies a caller passed in instead of reading from the store.
 - No retry of a superseded metrics send with fresh cookies in the same pass; the next pass does it.
 - No change to `codemie profile login` or the Anthropic-shaped 401 body (known gap, separate); no client-specific 401 shape or retry header.
 - No docs rewrite; no commit or push.
+
+## Changes after approval
+
+Follow-ups approved after the spec above was signed off. Where they conflict with the sections above, these hold.
+
+- Replay through `tools.retry`: a redirect on a superseded request is replayed once with the fresh cookies, including requests without a body (GET, HEAD, DELETE), for which `retry` takes a null body. A replay that throws falls back to the "just renewed" 401; a replay that is itself the redirect runs the expiry path.
+- URL-scoped sign-in stamp: `sso-login.lock` records the `url` of its own sign-in. A newer attempt carries the earlier success over as `lastSucceededAt` and `lastSucceededUrl`, and `getLastSignInAt(source)` returns a stamp only for the URL `source` resolves to (a lock without a URL matches every source). An attempt that could not be started is kept as a `discardAttempt` tombstone (a failed lock with no process and an old `startedAt`) so the earlier stamp is not lost with the file. The marker stays global.
+- URL-scoped post-success cooldown: `acquireLock` blocks with `signed-in-recently` only when the success was for the same URL (compared normalised) or the lock records no URL (older versions). A request for another URL within the cooldown starts its own sign-in. The in-progress and post-failure decisions are unchanged and ignore the URL.
+- Shared "mark unless superseded" helper (`markAuthInvalidUnlessSuperseded`, `session/analytics-auth-marker.ts`): used by the metrics client and the conversation client.
+- Marker writers are three: the expiry plugin, the metrics client and the conversation client.
+- With the `signed-in-recently` outcome the expiry 401 carries the sign-in text alone, without the "CodeMie SSO session expired." lead.
 
 ## Constraints
 

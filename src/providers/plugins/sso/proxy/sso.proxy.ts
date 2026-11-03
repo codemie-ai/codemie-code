@@ -621,7 +621,7 @@ export class CodeMieProxy {
       retry: (requestBody) => this.httpClient.forward(targetUrl, {
         method,
         headers: context.headers,
-        body: requestBody,
+        body: requestBody || undefined,
       }),
       fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
     };
