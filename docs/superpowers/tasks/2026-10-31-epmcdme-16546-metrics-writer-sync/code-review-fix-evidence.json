@@ -1,30 +1,156 @@
 {
-  "schema": 1,
-  "reviewed_head": "b22458f16732479d31d3761783ef8bdb1a170aed",
-  "findings": {
-    "CR-001": {
-      "decision": {
-        "outcome": "Kept as is, named in the PR description: a kimi step or an opencode message with no time of its own keeps the processing time as its delta time, as before this branch, and the run window judges it at that time.",
-        "rationale": "The Date.now() fallback predates the branch (kimi.metrics-processor.ts:217 and opencode.metrics-processor.ts:392-393 are identical on the base); only the window's judgement of that value is new. The recommended NaN is not safe end to end: metrics-sync-processor.ts:96-98 does `new Date(d.timestamp).toISOString()` for a number, which throws RangeError on NaN, and metrics-aggregator.ts:325-332 takes Math.min/Math.max over the timestamps, so one NaN makes the batch duration NaN. Reachability, opencode: resolveTimestamp (:374-395) falls to Date.now() only when msg.time.created is falsy AND the session has no updatedAt; on the sqlite path updatedAt comes from session.time_updated, which OpenCode's own schema declares NOT NULL (CREATE TABLE session ... time_updated integer NOT NULL; message.time_created integer NOT NULL as well), and in 16 captured copies of real OpenCode databases (4 sessions, 35 messages) every message JSON carries time.created and no session lacks time_updated — so the branch is reachable only through the legacy JSON-file storage with both fields absent. kimi: the step time is optional in its wire type and the kimi plugin is tracked in its own ticket, outside EPMCDME-16546 / 16538. A hook process applies no upper bound (run-window.ts:22), so only a wrapper or daemon pass over a transcript shared with a later record could drop such a delta from the earlier record, and that later record's own lower bound admits it. The delta timestamp never reaches the wire: POST /v1/metrics carries {name, attributes} and the only time-derived attribute is session_duration_ms (metrics-aggregator.ts:319-345), so the backend's day buckets and prices do not depend on it. The PR description's Impact section states the limit."
-      }
-    },
-    "CR-002": {
-      "decision": {
-        "outcome": "Fixed: the processor context of every hook path (Stop, SessionEnd, SubagentStop) carries hookProcess, abortSignal and syncDeadlineMs through the one mapping delivery.ts already applied to the sync context.",
-        "rationale": "src/cli/commands/hook/session-end-options.ts: applySessionEndOptions(context, options) holds the former inline block of delivery.ts (callerBounded, syncDeadlineMs = callerBounded ? deadlineMs : min(now + budget, deadlineMs ?? now + budget), abortSignal, hookProcess === true), with DEFAULT_SESSION_END_SYNC_BUDGET_MS and resolveSessionEndSyncBudgetMs moved beside it; delivery.ts syncPendingDataToAPI calls the helper (same semantics, same moment). hook.ts performIncrementalSync(event, hookName, sessionId, config?, options?, recordsBeforeMs?) applies the options right after buildProcessingContext; finalizeSession passes its options on both calls, handleStop and handleSubagentStop take options and the router passes sessionEndOptions(config, abortSignal, hookProcess) to all three. Effect in a codemie hook process: resolveRunWindow sees hookProcess and keeps the lower bound alone (no nextRecordStart scan), and lockBoundsOf gives every session-file lock wait the hook's deadline, abort and pid-only liveness. Tests: hook-routing-contract.test.ts, describe 'the processor context carries the hook bounds' — Stop, SessionEnd and SubagentStop driven through createHookCommand().parseAsync with CODEMIE_SESSION_END_SYNC_BUDGET_MS=700 assert hookProcess true, an AbortSignal and syncDeadlineMs within [start+700, end+700]; Stop and SessionEnd in process with { abortSignal, deadlineMs } assert hookProcess false, the same signal and syncDeadlineMs === deadlineMs. With the reviewed head's hook.ts swapped in, the five tests fail ('expected undefined to be true' / 'to be false'); 22/22 on the fix. Gate: lint, tsc, build green; unit 6776/6776; cli 301 passed, 1 failed (self-update TC-030, fails on the base too)."
-      }
-    },
-    "CR-003": {
-      "decision": {
-        "outcome": "Fixed: the 20 000-line writer test allows 1 000 ms instead of 100 ms.",
-        "rationale": "MetricsWriter.test.ts 'appends one delta to a 20 000-line file quickly (a guard, not a benchmark)': the bound is 1000 with the comment that it guards against a full-file rewrite or a quadratic scan (seconds at 20 000 lines), not against a slow runner. The measured cost here is <= 44 ms; a regression to a rewrite or an O(n^2) scan at 20 000 lines still fails the test."
-      }
-    },
-    "CR-004": {
-      "decision": {
-        "outcome": "Fixed: the branch is one commit, b22458f1, whose header is 100 characters; the two over-length headers (07cc00e0, 997f8856) are no longer in the branch's history.",
-        "rationale": "git log 1ca84cf8..HEAD shows one commit: 'fix(analytics): dedupe metric deltas in a shared run window; merge the sync rewrite, never overwrite' (100 characters, type fix, scope analytics, imperative, keys only in the footer 'Closes EPMCDME-16546, EPMCDME-16538'); npx commitlint --from 1ca84cf8 --to HEAD reports no problem. The commit went through the repository's pre-commit (lint-staged, typecheck, Gitleaks) and commit-msg (commitlint) hooks."
-      }
-    }
+ "schema": 1,
+ "reviewed_head": "7d196889f27c8c913198472e915e396e68fcb830",
+ "findings": {
+  "CR-001": {
+   "decision": {
+    "outcome": "Deferred to a follow-up (EPMCDME-16536, the run-scope change stacked on this PR): there the next-record bound of opencode and codemie-code records is keyed by the native session id, falling back to the directory.",
+    "rationale": "The directory-only key is the base's behaviour for these two agents; this PR adds the shared writer and the bound's plumbing, the per-agent keys change in the run-scope PR that is stacked on this one."
+   }
+  },
+  "CR-002": {
+   "decision": {
+    "outcome": "Out of scope: Kimi's run scope is not part of EPMCDME-16546 / EPMCDME-16538; the Kimi window test passes recordsBeforeMs explicitly, which is the hook path, the only Kimi pass today.",
+    "rationale": "Kimi's run scope is not part of EPMCDME-16546 / EPMCDME-16538; the Kimi window test passes recordsBeforeMs explicitly, which is the hook path, the only Kimi pass today."
+   }
+  },
+  "CR-003": {
+   "decision": {
+    "outcome": "Kept as is: the import direction already exists at the base (six agent plugins import appendSessionFile and the lock helpers from the SSO plugin); moving locked-jsonl.ts and the RunWindow / LockBounds types to a lower layer is a refactor for its own change.",
+    "rationale": "The architecture note names an extension of an existing pattern, not a new dependency; a layer move touches every call site and is reviewed on its own."
+   }
+  },
+  "CR-010": {
+   "decision": {
+    "outcome": "Out of scope: Kimi (see CR-002).",
+    "rationale": "The Kimi call site is untouched by this PR beyond the shared writer; an empty batch costs one record lookup and one lock take there."
+   }
+  },
+  "CR-016": {
+   "decision": {
+    "outcome": "Refuted: every production record starts at or before its own transcript lines. The window's lower bound equals the record's baselineCutoffMs (hook.ts createSessionRecord writes baselineCutoffMs: startTime; run-window.ts:22), so a line before it is baselined by the base's own cutoff and never becomes a delta; a generation created over a foreign record starts at the previous generation's last activity, not at Date.now(); Desktop records start at baselineCutoffMs ?? createdAt; for the other agents the hook creates the record at its SessionStart, before any line of that native session, and a resumed native session's earlier lines belong to the earlier record by the window rule. Kimi's event.time is epoch milliseconds (13-digit fixtures; parseDeltaTime takes a number as ms).",
+    "rationale": "The moved fixtures described records no path creates; a live capture of a Stop-created generation shows its deltas 20-29 s after startTime."
+   }
+  },
+  "CR-017": {
+   "decision": {
+    "outcome": "Kept as is, named in the PR description (Impact: 'Not changed by this PR'): a kimi step or an opencode message with no time of its own keeps the processing time as its delta time and the run window judges it at that time; only a wrapper or daemon pass over a transcript shared with a later record can drop such a delta from the earlier record, and the delta time never reaches the backend.",
+    "rationale": "Exempting synthesized times from the window would let a late pass credit a later record's lines to an earlier one; the documented behaviour is the safer side."
+   }
+  },
+  "DF-001": {
+   "decision": {
+    "outcome": "Deferred to a follow-up (EPMCDME-16536): conversation payloads get a run window in the run-scope change stacked on this PR.",
+    "rationale": "Out of EPMCDME-16546 / 16538."
+   }
+  },
+  "DF-002": {
+   "decision": {
+    "outcome": "Deferred: the codex lower bound is enabled once every codex call carries its own line time (the comment at codex.metrics-processor.ts names the condition); the resumed-rollout double count is handled in the run-scope change stacked on this PR (EPMCDME-16536).",
+    "rationale": "Out of EPMCDME-16546 / 16538; the behaviour is the base's."
+   }
+  },
+  "CR-004": {
+   "decision": {
+    "outcome": "Fixed: a processor-level test holds the metrics and conversation locks and runs the claude processor with syncDeadlineMs 200 ms \u2014 success:false near the deadline, nothing written; resolveRunWindow's passthrough of deadlineMs / signal / pidOnlyLiveness asserted (claude.metrics-processor.window.test.ts).",
+    "rationale": "Regression guard on the lock bounds a real processor hands to the lock wait."
+   }
+  },
+  "CR-005": {
+   "decision": {
+    "outcome": "Fixed: moveSetToGeneration takes the metrics and conversation locks for the live prefix before moving anything (session-generation.ts withSetLocks / moveSetToGeneration with bounds), as renameLiveSet does; a lock not taken moves nothing and both callers (hook.ts moveUnclosedGeneration, bounded by the close budget; closeGenerationLocked) fall back on their existing failed-close path. Test: a held metrics lock leaves the live set in place (hook.session-delivery.test.ts).",
+    "rationale": "The one rename of a live set outside the lock rule."
+   }
+  },
+  "CR-006": {
+   "decision": {
+    "outcome": "Fixed: renameSessionFiles returns whether the whole set moved; the reconciler's exhausted, undelivered-exhausted and unqueued paths log 'closed locally' / 'renamed' only when it did, else a warn names the record as kept live (stale-session-reconciliation.ts). Pending lines under the cap are re-sent by a later start, as intended; droppedAt is informational.",
+    "rationale": ""
+   }
+  },
+  "CR-007": {
+   "decision": {
+    "outcome": "Fixed for claude, gemini, codex, copilot-cli, pi and opencode: AppendResult carries written and gone; each logs and returns deltasWritten from written (claude's totalDeltas too) and a gone live file is success:false. Kimi is out of scope and unchanged. recordsProcessed keeps its meaning (records processed) where a processor counts messages, not deltas.",
+    "rationale": "Kimi is not part of EPMCDME-16546 / EPMCDME-16538."
+   }
+  },
+  "CR-008": {
+   "decision": {
+    "outcome": "Fixed: codex, copilot-cli and pi tests over the real MetricsWriter assert a delta at or after recordsBeforeMs absent and an earlier one present.",
+    "rationale": ""
+   }
+  },
+  "CR-009": {
+   "decision": {
+    "outcome": "Fixed: gemini.metrics-processor.window.test.ts gained the upper-bound and hook-process cases the claude and opencode window tests have.",
+    "rationale": ""
+   }
+  },
+  "CR-011": {
+   "decision": {
+    "outcome": "Fixed: a SessionEnd whose final write pass fails on a session-file lock timeout does not complete the record \u2014 no completed, no end metric, no rename; it stays active and the next CodeMie start finalizes it as stranded with the tail re-processed first (hook.ts performIncrementalSync returns lockTimedOut, finalizeSession / handleSessionEnd return keptActive). Test: a held metrics lock past the budget \u2192 active, no end-metric request, the set live; the stranded pass then writes the missed line (hook.session-delivery.test.ts).",
+    "rationale": "The lock timeout is recognised from the writer's message because the adapters hand the hook only { success, message }; no other error text matches today."
+   }
+  },
+  "CR-012": {
+   "decision": {
+    "outcome": "Fixed: hook.session-delivery.test.ts (deliverSessionRecord in a hook process with a held lock) and stale-session-reconciliation.test.ts (exhausted, legacy, unqueued paths) assert the return near the deadline with the set still live.",
+    "rationale": ""
+   }
+  },
+  "CR-013": {
+   "decision": {
+    "outcome": "Fixed: in a hook process the rename after delivery is bounded by the SessionEnd close budget (session-end-options.ts sessionEndDeadlineMs; delivery.ts), not the 10 s per-lock wait; outside a hook process unchanged. Test: a held metrics lock \u2192 deliverSessionRecord returns within the budget, the set still live. The rename takes its own budget after the sync's, the pattern the base's final pass and sync already follow; Claude's SessionEnd hook timeout is 60 s.",
+    "rationale": ""
+   }
+  },
+  "CR-014": {
+   "decision": {
+    "outcome": "Fixed: a false from rewriteSessionFile on the conversation path is logged at warn with the session id and stops the run as deferred, as the metrics sync does (syncProcessor.ts). Test: the live file removed between two payloads \u2192 one warn, the second payload not sent, the run deferred.",
+    "rationale": ""
+   }
+  },
+  "CR-015": {
+   "decision": {
+    "outcome": "Fixed: a per-payload rewrite applies only the outcomes not yet persisted (unpersistedOutcomes, cleared after a rewrite lands), so a FAILED send adds exactly 1 to syncAttempts however many rewrites follow it. Test: one FAILED payload followed by two more \u2192 syncAttempts 1 (syncProcessor-merge.test.ts).",
+    "rationale": ""
+   }
+  },
+  "CR-018": {
+   "decision": {
+    "outcome": "Fixed in the PR description: the writer test asserts the 1 s bound it enforces; the 100 ms claim is gone.",
+    "rationale": "The PR description is not in the repository; the posted description reads 'one delta at 20 000 lines within the test's 1 s bound'. The test's 1000 ms bound was set in round 1 (CR-003) to keep the wall-clock assertion reliable on CI."
+   }
+  },
+  "CR-019": {
+   "decision": {
+    "outcome": "Fixed in part, the rest kept as is: the lock timeout after an accepted upload is caught and reported as not persisted; the deltas stay pending and are re-sent by a later pass. The resend is kept: the window needs a live holder past the 10 s lock wait, and the backend is to deduplicate deltas by recordId (it keeps no identity for a delta today).",
+    "rationale": "Persisting the outcomes outside the lock would add a side file for a rare window; the double count is tracked as a backend change."
+   }
+  },
+  "CR-020": {
+   "decision": {
+    "outcome": "Fixed: metrics-sync-processor.merge.test.ts \u2014 (a) the live file removed during the request: no live file re-created, the returned totals; (b) the lock held past the wait: CR-019's test.",
+    "rationale": ""
+   }
+  },
+  "CR-021": {
+   "decision": {
+    "outcome": "Fixed: locked-jsonl.ts and run-window.ts import through the @/ alias.",
+    "rationale": ""
+   }
+  },
+  "CR-022": {
+   "decision": {
+    "outcome": "Fixed: @throws {SessionFileLockTimeoutError} on withSessionFile, appendSessionFile, rewriteSessionFile (and on MetricsWriter.appendDeltas, moveSetToGeneration).",
+    "rationale": ""
+   }
+  },
+  "DF-003": {
+   "decision": {
+    "outcome": "Fixed: an append first terminates a torn last line (appendJsonlLines), so the new line is readable; and the sidecar readers on the sync, rewrite and readAll paths skip a line that is not valid JSON with one warn, as every transcript reader already does \u2014 a torn line no longer keeps a set from being synced, rewritten or filed.",
+    "rationale": ""
+   }
   }
+ }
 }
