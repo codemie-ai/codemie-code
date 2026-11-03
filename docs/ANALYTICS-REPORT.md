@@ -314,7 +314,7 @@ Finding a native log is not the same as counting it. Every discovered session is
 
 | Provenance | Meaning | In the report by default? |
 |---|---|---|
-| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its transcript carries a `codemie_session_start` ownership marker. | ✅ Yes |
+| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its ownership marker — a sidecar in `~/.codemie/sessions`, one per session and transcript — says so; transcripts written by earlier versions carry a `codemie_session_start` line instead. | ✅ Yes |
 | `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
 | `native-unmanaged` | Reserved for agents CodeMie can only ever read analytics for and never launches. No agent currently carries this tag. | ✅ Yes |
 

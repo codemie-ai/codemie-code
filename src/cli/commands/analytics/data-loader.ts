@@ -142,7 +142,7 @@ export function matchesSessionIdFilter(sessionId: string, filterId: string): boo
   return sessionId === filterId || (UUID_PATTERN.test(filterId) && sessionId.startsWith(`${filterId}-`));
 }
 
-/** Suffix of the ownership sidecars written by `appendTranscriptMarker` (session-origin-audit.ts). */
+/** Suffix of the ownership sidecars written by `writeOwnershipMarker` (session-origin-audit.ts). */
 const MARKER_FILE_SUFFIX = '-codemie-marker.json';
 
 /**

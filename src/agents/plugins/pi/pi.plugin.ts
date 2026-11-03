@@ -14,7 +14,7 @@ import {
 } from './pi.extension.js';
 import { resolve } from 'path';
 import { detectGitBranch, detectGitRemoteRepo, wrapperOwnerFromEnv } from '@/utils/processes.js';
-import { appendTranscriptMarker } from '../../core/session/session-origin-audit.js';
+import { writeOwnershipMarker } from '../../core/session/session-origin-audit.js';
 import { startPiIncrementalSync, stopPiIncrementalSync } from './pi.incremental-sync.js';
 import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
@@ -155,7 +155,7 @@ async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Pr
     // Ownership sidecars, so analytics can tell a CodeMie-managed transcript from a
     // bare `pi` one.
     for (const transcript of ledger.transcripts) {
-      appendTranscriptMarker(transcript, sessionId, 'pi');
+      writeOwnershipMarker(transcript, sessionId, 'pi');
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

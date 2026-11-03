@@ -28,6 +28,7 @@ import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { existsSync } from 'fs';
 import { recordLocatedTranscript, recordStartMetricSessionId } from './hook/session-record-updates.js';
+import { isSharedTranscriptStore } from '@/agents/core/session/session-origin-audit.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -228,7 +229,7 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
   // Create session record with correlation information
   await createSessionRecordOverUnclosed(event, sessionId, config, endOptions, lockDeadlineMs);
   // Send session start metrics when CodeMie analytics auth is configured
-  await sendSessionStartMetrics(event, sessionId, event.session_id, config);
+  await sendSessionStartMetrics(event, sessionId, event.session_id, config, endOptions, lockDeadlineMs);
   // Sync CodeMie skills to Claude Code (.claude/skills/)
   await syncSkillsToClaude(event.cwd || process.cwd());
 }
@@ -832,13 +833,13 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     }
 
     // Deferred ownership marker: covers sessions where transcript_path was empty at
-    // SessionStart (transcript file not yet created). appendTranscriptMarker is idempotent —
-    // it skips if the per-Claude-session sidecar already exists.
+    // SessionStart (transcript file not yet created). writeOwnershipMarker is idempotent —
+    // it skips if the sidecar for this session and transcript already exists.
     if (
       event.transcript_path &&
       (normalizedEventName === 'UserPromptSubmit' || normalizedEventName === 'Stop')
     ) {
-      const { appendTranscriptMarker, isExternalOrigin } = await import(
+      const { writeOwnershipMarker, isExternalOrigin } = await import(
         '../../agents/core/session/session-origin-audit.js'
       );
       const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -846,7 +847,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
       // Never (re-)stamp a transcript that's flagged external-resume — doing so would
       // re-adopt it into the local analytics ownership index (native-loader.ts).
       if (!isExternalOrigin(session)) {
-        appendTranscriptMarker(event.transcript_path, sessionId, agentName);
+        writeOwnershipMarker(event.transcript_path, sessionId, agentName);
       }
     }
 
@@ -926,7 +927,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const existing = await sessionStore.loadSession(sessionId);
     if (existing && existing.status === 'active' && existing.endTime === undefined) {
       const {
-        appendTranscriptMarker: writeMarker,
+        writeOwnershipMarker: writeMarker,
         appendAuditEvent: writeAudit,
         isExternalOrigin,
       } = await import('../../agents/core/session/session-origin-audit.js');
@@ -942,7 +943,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         ...existing.correlation,
         status: 'matched',
         ...(event.session_id && { agentSessionId: event.session_id }),
-        ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
+        ...(event.transcript_path && !isSharedTranscriptStore(event.transcript_path) && { agentSessionFile: event.transcript_path }),
       };
       // Preserve an already-set origin; only derive from env for pre-existing records that
       // predate this field. An established origin must never flip on re-entry.
@@ -965,7 +966,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       return;
     }
 
-    const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
+    const { writeOwnershipMarker, appendAuditEvent, isExternalOrigin } = await import(
       '../../agents/core/session/session-origin-audit.js'
     );
     const origin =
@@ -1011,7 +1012,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
-        agentSessionFile: event.transcript_path,
+        agentSessionFile: isSharedTranscriptStore(event.transcript_path) ? undefined : event.transcript_path,
         retryCount: 0
       },
       // A resumed Claude transcript already holds earlier records: the first processing run
@@ -1032,7 +1033,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // Never stamp a transcript that's flagged external-resume — doing so would re-adopt it
     // into the local analytics ownership index (native-loader.ts) and undo the exclusion.
     if (session.correlation.agentSessionFile && !isExternalOrigin(session)) {
-      appendTranscriptMarker(
+      writeOwnershipMarker(
         session.correlation.agentSessionFile,
         sessionId,
         agentName,
@@ -1193,8 +1194,10 @@ async function moveUnclosedGeneration(sessionId: string, options: SessionEndOpti
  * @param sessionId - The CodeMie session ID (for file operations)
  * @param agentSessionId - The agent's session ID (for API)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param options - The hook's mode and abort signal; the start-id lock wait stops on the abort
+ * @param lockDeadlineMs - The SessionStart's lock budget: the start-id write waits for the lock no later than this
  */
-async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions, lockDeadlineMs: number): Promise<void> {
   try {
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
@@ -1332,7 +1335,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       mcpSummary,         // MCP configuration summary
       extensionsSummary   // Extensions scan summary
     );
-    await recordStartMetricSessionId(sessionId, agentSessionId);
+    await recordStartMetricSessionId(sessionId, agentSessionId, options, lockDeadlineMs);
 
     logger.info('[hook:SessionStart] Session start metrics sent successfully');
   } catch (error) {
