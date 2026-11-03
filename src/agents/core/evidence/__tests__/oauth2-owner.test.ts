@@ -85,7 +85,7 @@ describe('oauth2-proxy login (stored without email, e.g. a pre-fix login)', () =
 
     const stamped = await stamp();
     expect(stamped.ok).toBe(true);
-    expect(m.userInfo).toHaveBeenCalledWith(API, { _oauth2_proxy: 'cookie-A' }, expect.objectContaining({ maxRetries: 1 }));
+    expect(m.userInfo).toHaveBeenCalledWith(API, { _oauth2_proxy: 'cookie-A' }, expect.objectContaining({ followRedirects: false, emailOnly: true }));
 
     // the daemon loads the same stored login independently and decorates it the same way
     const daemonCreds = await withVerifiedOwner(m.stored.get(SYNC) as ReturnType<typeof proxyCreds>);

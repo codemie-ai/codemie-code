@@ -84,7 +84,8 @@ export async function withVerifiedOwner<T extends SSOCredentials | JWTCredential
     try {
       const info = await fetchCodeMieUserInfo(credentials.apiUrl, credentials.cookies, {
         timeout: OWNER_LOOKUP_TIMEOUT_MS,
-        maxRetries: 1,
+        followRedirects: false, // an expired session redirects to the IdP: never forward the cookies there
+        emailOnly: true,
       });
       const email = normalizeOwnerEmail(info.email);
       if (!email) throw new Error('no email in /v1/user response');

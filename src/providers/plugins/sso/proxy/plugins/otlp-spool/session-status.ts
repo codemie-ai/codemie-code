@@ -77,7 +77,7 @@ export interface SessionStatus {
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
   evidenceMarked?: true;
   /**
-   * Original first-failure age of bytes handed over from the owner-pending queue (AC9: one finite window that a
+   * Original first-failure age of bytes handed over from the owner-pending queue (one finite retention window that a
    * handover does not reset). Hooks byte ranges of the CURRENT file, ascending, always the head of the pending range;
    * each expires on its own clock (`expireCarriedAgeLocked`), whatever else holds or fails the session.
    */

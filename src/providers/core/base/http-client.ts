@@ -15,6 +15,7 @@ export interface HTTPClientConfig {
   timeout?: number;                  // Timeout in milliseconds (default: 5000)
   headers?: Record<string, string>;  // Additional headers
   maxRedirects?: number;             // Maximum redirects to follow (default: 5)
+  followRedirects?: boolean;         // false: a 3xx is returned as-is, never followed (credentials stay on the first origin; default: true)
   maxRetries?: number;               // Maximum retries on failure (default: 3)
   rejectUnauthorized?: boolean;      // Verify TLS certificates (default: true)
 }
@@ -36,6 +37,7 @@ export class HTTPClient {
     this.config = {
       timeout: 5000,
       maxRedirects: 5,
+      followRedirects: true,
       maxRetries: 3,
       rejectUnauthorized: isTlsVerificationEnabled(),
       headers: {},
@@ -215,6 +217,10 @@ export class HTTPClient {
 
           // Handle redirects (301, 302, 303, 307, 308)
           if (statusCode >= 300 && statusCode < 400) {
+            if (!this.config.followRedirects) {
+              resolve({ statusCode, statusMessage: res.statusMessage, headers: res.headers, data });
+              return;
+            }
             const location = res.headers['location'];
 
             if (!location) {

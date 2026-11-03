@@ -79,7 +79,10 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
   }
   if (
     entry.v !== 1 || entry.fp !== fp || entry.api_identity !== api || !isSafeSessionId(entry.session_id) ||
-    !Array.isArray(entry.events) || entry.events.length === 0
+    !Array.isArray(entry.events) || entry.events.length === 0 ||
+    // The normal hook path rejects these before the spool (a blank or foreign session id would hold the session's hooks stream until retention).
+    typeof entry.agentName !== 'string' || !entry.agentName ||
+    !entry.events.every((event) => event !== null && typeof event === 'object' && event['session_id'] === entry.session_id)
   ) {
     return false; // not this login/environment, or malformed: never replayed, left to expire
   }

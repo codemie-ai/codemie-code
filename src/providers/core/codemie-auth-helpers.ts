@@ -272,7 +272,10 @@ export async function getStoredAnalyticsCredentials(
 /* eslint-disable no-redeclare */
 export interface UserInfoRequestOptions {
   timeout?: number;
-  maxRetries?: number;
+  /** false: a 3xx answer fails the lookup instead of being followed (the cookies never leave the first origin). */
+  followRedirects?: boolean;
+  /** Unattended callers only need `email`; skip the interactive login's `applications*` shape check. */
+  emailOnly?: boolean;
 }
 
 export function fetchCodeMieUserInfo(
@@ -296,7 +299,7 @@ export async function fetchCodeMieUserInfo(
 
   const client = new HTTPClient({
     timeout: options.timeout ?? 10000,
-    maxRetries: options.maxRetries ?? 3,
+    followRedirects: options.followRedirects ?? true,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
   });
@@ -311,6 +314,10 @@ export async function fetchCodeMieUserInfo(
   }
 
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
+
+  if (options.emailOnly && userInfo && typeof userInfo === 'object') {
+    return { ...userInfo, applications: userInfo.applications ?? [], applications_admin: userInfo.applications_admin ?? [] };
+  }
 
   if (!Array.isArray(userInfo.applications_admin) && Array.isArray(userInfo.applicationsAdmin)) {
     userInfo.applications_admin = userInfo.applicationsAdmin;

@@ -8,7 +8,7 @@ import type { EvidenceFields } from './record-store.js';
 /*
  * Hook events whose owner could not be resolved yet (transient `/v1/user` failure). Kept on disk, bound to the exact
  * login by fingerprint, until the daemon can replay them under a verified owner or the held-retention window ends.
- * Nothing here is sent anywhere. See .work design: owner-pending queue.
+ * Nothing here is sent anywhere. Replay and expiry live in `otlp-spool/owner-pending-replay.ts`.
  */
 
 /** Total bytes the queue may hold; past it a hook falls back to the evidence-loss report. */

@@ -218,6 +218,22 @@ describe('isolation', () => {
     expect(await readRecord(recordKey(apiIdentity(API), ownerHash('b@example.com'), SESSION))).toBeUndefined();
   });
 
+  it('an entry whose event carries a foreign session id is never replayed (same guard as the normal hook path)', async () => {
+    m.stored = login('cookie-A');
+    m.userInfo.mockRejectedValueOnce(new Error('down'));
+    await hook(new HookAdapter());
+    const file = pendingFiles()[0];
+    const entry = JSON.parse(readFileSync(file, 'utf8'));
+    entry.events[0].session_id = 'some-other-session';
+    writeFileSync(file, JSON.stringify(entry));
+
+    m.userInfo.mockResolvedValue(user('a@example.com'));
+    later(OWNER_LOOKUP_COOLDOWN_MS + 1);
+    await daemon().tick();
+    expect(spooled()).toHaveLength(0);
+    expect(pendingFiles()).toHaveLength(1); // left to expire, never spooled
+  });
+
   it('another environment\'s login cannot replay it', async () => {
     m.stored = login('cookie-A');
     m.userInfo.mockRejectedValueOnce(new Error('down'));
