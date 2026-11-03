@@ -104,6 +104,18 @@ describe('oauth2-proxy login (stored without email, e.g. a pre-fix login)', () =
   });
 });
 
+describe('adapters without evidence (e.g. Copilot) share the verified owner', () => {
+  it('identity fields carry the backend-reported email instead of the git/os tiers (accepted behaviour change)', async () => {
+    const { resolveIdentityFields } = await import('../../event-fields/identity-fields.js');
+    m.stored.set(SYNC, proxyCreds('cookie-A'));
+    m.userInfo.mockResolvedValue(userOf('Dev.A@example.com', 'dev_a'));
+
+    const fields = await resolveIdentityFields({ cwd: m.home, sessionId: 'sess-copilot' });
+    expect(fields.user_email).toBe('Dev.A@example.com');
+    expect(fields.identity_source).toBe('jwt');
+  });
+});
+
 describe('fresh login', () => {
   it('login-time lookup means hooks make no request at all', async () => {
     const creds = proxyCreds('cookie-A');
