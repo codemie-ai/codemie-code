@@ -4,6 +4,7 @@ import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
+import { parseProjectBinding, type ProjectBindingState } from '@/utils/project-binding.js';
 import {
   evidenceRecordIdleDays,
   evidenceRecordMaxFiles,
@@ -31,6 +32,8 @@ export interface EvidenceFields {
   api_identity: string;
   owner_hash: string;
   profile?: string;
+  /** Local-only: how the launcher bound `project` (CODEMIE_PROJECT_BINDING); never sent to the backend. */
+  projectBinding?: ProjectBindingState;
 }
 
 export interface EvidenceRecord extends EvidenceFields {
@@ -115,6 +118,7 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (typeof r.routed_via_codemie !== 'boolean') return undefined;
   if (r.routing_proof !== 'proven' && r.routing_proof !== 'unproven') return undefined;
   if (!['linked_folder', 'profile', 'none'].includes(r.project_source as string)) return undefined;
+  if (r.projectBinding !== undefined && !parseProjectBinding(r.projectBinding)) return undefined;
   if (typeof r.created !== 'number' || typeof r.last_used !== 'number') return undefined;
   if (limitViolation(r, raw)) return undefined;
   return r as unknown as EvidenceRecord;

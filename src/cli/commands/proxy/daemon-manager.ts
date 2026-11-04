@@ -1,4 +1,5 @@
 import { writeFile, readFile, unlink, rename } from 'node:fs/promises';
+import type { ProjectBindingState } from '../../../utils/project-binding.js';
 import { join } from 'node:path';
 import { getCodemieHome, getDirname } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
@@ -17,6 +18,8 @@ export interface DaemonState {
   targetUrl?: string;
   provider?: string;
   project?: string;
+  /** Binding state `project` was resolved with at start (absent in state files from older CLIs). */
+  projectBinding?: ProjectBindingState;
   model?: string;
   clientType?: string;
   syncApiUrl?: string;
@@ -124,6 +127,7 @@ export interface SpawnOptions {
   gatewayKey?: string;
   model?: string;
   project?: string;
+  projectBinding?: ProjectBindingState;
   clientType?: string;
   telemetryMode?: 'none' | 'claude-desktop';
   syncApiUrl?: string;
@@ -146,6 +150,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
     '--gateway-key', gatewayKey,
     ...(opts.model ? ['--model', opts.model] : []),
     ...(opts.project ? ['--project', opts.project] : []),
+    ...(opts.projectBinding ? ['--project-binding', opts.projectBinding] : []),
     ...(opts.clientType ? ['--client-type', opts.clientType] : []),
     '--state-file', stateFile,
     ...(opts.port ? ['--port', String(opts.port)] : []),

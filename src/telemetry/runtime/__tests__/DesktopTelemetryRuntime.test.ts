@@ -1984,6 +1984,16 @@ describe('DesktopTelemetryRuntime', () => {
     });
   });
 
+  describe('daemon profile project (EPMCDME-15411, AC12)', () => {
+    it('resolves the project of the daemon\'s own profile by name, not the active profile', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      vi.mocked(ConfigLoader.load).mockClear();
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter(), { ...config, profile: 'daemon-profile' });
+      expect(vi.mocked(ConfigLoader.load)).toHaveBeenCalledWith(expect.any(String), { name: 'daemon-profile' });
+    });
+  });
+
   describe('folder switch', () => {
     it('takes over the switched transcript and folder with its repository and project, keeping the start', async () => {
       openDesktopChat('ext-1', 2, T0);
