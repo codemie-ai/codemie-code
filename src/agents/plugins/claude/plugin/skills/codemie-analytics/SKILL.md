@@ -315,49 +315,21 @@ reports/2026-05-07-leaderboard/leaderboard.html
 reports/2026-05-07-spending/spending.html
 ```
 
-### Step 3a — Write the HTML
+### Step 3a — Hand off to codemie-html-report
 
 Invoke the **`codemie-html-report`** skill. Pass:
 
 1. **The schemas** inspected in Step 2.5 — field names and structure.
 2. **The user's intent** — e.g. "leaderboard dashboard with tier distribution".
 3. **Timestamp context** — `_envelope` lines in schemas include `data_as_of`.
-4. **Output path** — e.g. `$REPORT_DIR/leaderboard.html`.
+4. **The data folder** — `$OUT`, holding the JSON files saved in Step 2.
+5. **Output path** — e.g. `$REPORT_DIR/leaderboard.html`.
 
-The HTML skill writes the file using `/*__CSS__*/` for styles and
-**`/*__DATA:name__*/` placeholders for all embedded JS data arrays**:
+Ask it to build the page per codemie-html-report's `references/analytics.md`, which owns the
+data placeholders, the style placeholder and the order of the build scripts.
 
-```html
-<script>
-  const LEADERBOARD = /*__DATA:leaderboard__*/;
-  const SUMMARIES   = /*__DATA:summaries__*/;
-</script>
-```
-
-Each placeholder name maps to a saved file in `$OUT` (without the `.json` extension).
-
-### Step 3b — Inject data
-
-**After the HTML file exists**, run the shared `inject-data.js` from the `codemie-html-report`
-skill. It matches each JSON file in `$OUT` to a `/*__DATA:name__*/` placeholder by filename
-(without `.json`) and replaces it in-place.
-
-**Do not run inject-data.js before the HTML file is written.**
-
-```bash
-node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-data.js \
-  "$REPORT_DIR/<report>.html" "$OUT"
-```
-
-Placeholder names must exactly match the JSON filenames — `/*__DATA:leaderboard-top__*/`
-is only replaced when `leaderboard-top.json` exists in `$OUT`.
-
-Expected output:
-```
-  ✓ injected leaderboard-top
-  ✓ injected summaries
-✓ 2 data block(s) injected into reports/2026-05-07-<name>/<report>.html
-```
+The layout references below give structure and data only. CSS, fonts and Chart.js come from the
+codemie-html-report build, which overrides any instruction in them to inline CSS or load a CDN.
 
 ---
 
