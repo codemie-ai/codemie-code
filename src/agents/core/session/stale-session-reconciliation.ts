@@ -205,8 +205,8 @@ async function hasCredentials(record: Session, env: NodeJS.ProcessEnv): Promise<
     logger.info(`[reconcile] Analytics auth for ${marker.baseUrl} marked invalid (${marker.reason}); its records wait for a re-login`);
     return false;
   }
-  const { endMetricCookieHeader } = await import('@/cli/commands/hook/end-metric.js');
-  return (await endMetricCookieHeader(env.CODEMIE_URL ?? '', recordHookConfig(record, env, { deliver: true }))) !== undefined;
+  const { endMetricCookieAuth } = await import('@/cli/commands/hook/end-metric.js');
+  return (await endMetricCookieAuth(env.CODEMIE_URL ?? '', recordHookConfig(record, env, { deliver: true }))) !== undefined;
 }
 
 /** This launch's env, and its credential answer looked up once per provider for the pass that holds it. */

@@ -14,10 +14,14 @@ vi.mock('@/utils/analytics-auth-status.js', () => ({ markAnalyticsAuthInvalid: v
 import { SSOSessionExpiryPlugin } from '../sso-session-expiry.plugin.js';
 import { startDetachedSsoLogin, describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import { markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
+import { buildCookieHeader } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 const TARGET_API_URL = 'https://api.example.com';
 
-function createPluginContext(credentials?: PluginContext['credentials']): PluginContext {
+function createPluginContext(
+  credentials?: PluginContext['credentials'],
+  credentialRefresher?: { refreshNow: () => Promise<unknown> }
+): PluginContext {
   return {
     config: {
       targetApiUrl: TARGET_API_URL,
@@ -26,18 +30,19 @@ function createPluginContext(credentials?: PluginContext['credentials']): Plugin
     },
     logger,
     credentials,
+    credentialRefresher: credentialRefresher as PluginContext['credentialRefresher'],
   };
 }
 
-function createProxyContext(): ProxyContext {
+function createProxyContext(cookie?: string, requestBody: Buffer | null = null): ProxyContext {
   return {
     requestId: 'test-req',
     sessionId: 'test-session',
     agentName: 'claude',
     method: 'POST',
     url: '/v1/messages',
-    headers: {},
-    requestBody: null,
+    headers: cookie === undefined ? {} : { cookie },
+    requestBody,
     requestStartTime: Date.now(),
     metadata: {},
   };
@@ -53,7 +58,7 @@ function response(statusCode: number, headers: Record<string, string> = {}): Inc
 
 function createTools(): UpstreamResponseTools & {
   readBody: ReturnType<typeof vi.fn<[IncomingMessage], Promise<Buffer>>>;
-  retry: ReturnType<typeof vi.fn<[Buffer], Promise<IncomingMessage>>>;
+  retry: ReturnType<typeof vi.fn<[Buffer | null | undefined], Promise<IncomingMessage>>>;
   fromBuffer: ReturnType<typeof vi.fn<[IncomingMessage, Buffer], IncomingMessage>>;
 } {
   return {
@@ -235,5 +240,288 @@ describe('SSOSessionExpiryPlugin', () => {
     expect(message).toContain('startDetachedSsoLogin');
 
     errorSpy.mockRestore();
+  });
+
+  it('does not open the message with the session-expired lead when a sign-in just finished', async () => {
+    vi.mocked(startDetachedSsoLogin).mockResolvedValueOnce('signed-in-recently');
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: { session: 'abc' }, apiUrl: TARGET_API_URL })
+    );
+
+    const result = await interceptor.onUpstreamResponse!(
+      createProxyContext(),
+      response(302, { location: 'https://x/oauth2/start?rd=%2F' }),
+      createTools()
+    );
+
+    expect(result.statusCode).toBe(401);
+    const { message } = JSON.parse(
+      ((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toString('utf-8')
+    ).error;
+    expect(message).toBe(describeLogin('signed-in-recently'));
+    expect(message).not.toContain('expired');
+    expect(message).toContain('re-send your prompt');
+  });
+
+  describe('superseded credentials', () => {
+    const REDIRECT = { location: 'https://x/oauth2/start?rd=%2F' };
+    const SSO_CREDENTIALS = { cookies: { session: 'old' }, apiUrl: TARGET_API_URL };
+
+    async function interceptorWith(
+      refreshNow: () => Promise<unknown>
+    ): Promise<ProxyInterceptor> {
+      return plugin.createInterceptor(createPluginContext(SSO_CREDENTIALS, { refreshNow }));
+    }
+
+    function bodyOf(result: IncomingMessage): { error: { message: string } } {
+      return JSON.parse(
+        ((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toString('utf-8')
+      );
+    }
+
+    const REQUEST_BODY = Buffer.from('{"model":"m","messages":[]}', 'utf-8');
+
+    function supersededContext(): ProxyContext {
+      return createProxyContext(buildCookieHeader({ session: 'old' }), REQUEST_BODY);
+    }
+
+    it('replays a request with superseded cookies once, with the original body and the fresh cookies, and returns the retried response', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      const retried = response(200, { 'content-type': 'application/json' });
+      let cookieAtRetry: string | undefined;
+      const context = supersededContext();
+      tools.retry.mockImplementation(async () => {
+        cookieAtRetry = context.headers['cookie'];
+        return retried;
+      });
+      const original = response(302, REDIRECT);
+
+      const result = await interceptor.onUpstreamResponse!(context, original, tools);
+
+      expect(result).toBe(retried);
+      expect(tools.readBody).toHaveBeenCalledTimes(1);
+      expect(tools.readBody).toHaveBeenCalledWith(original);
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(tools.retry).toHaveBeenCalledWith(REQUEST_BODY);
+      expect(cookieAtRetry).toBe(buildCookieHeader({ session: 'new' }));
+      expect(tools.fromBuffer).not.toHaveBeenCalled();
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('treats a retried oauth2 redirect as a real revoke: one marker, one sign-in, a session-expired 401, never a second retry', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      const original = response(302, REDIRECT);
+      const retriedRedirect = response(302, REDIRECT);
+      tools.retry.mockResolvedValueOnce(retriedRedirect);
+
+      const result = await interceptor.onUpstreamResponse!(supersededContext(), original, tools);
+
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(tools.readBody).toHaveBeenCalledTimes(2);
+      expect(tools.readBody).toHaveBeenNthCalledWith(1, original);
+      expect(tools.readBody).toHaveBeenNthCalledWith(2, retriedRedirect);
+      expect(result).not.toBe(retriedRedirect);
+      expect(result.statusCode).toBe(401);
+      expect(bodyOf(result).error.message).toBe(
+        `CodeMie SSO session expired. ${describeLogin('started')}`
+      );
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers the "just renewed" 401 without a marker or sign-in when the retry throws', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      tools.retry.mockRejectedValueOnce(new Error('upstream down'));
+      const original = response(302, REDIRECT);
+
+      const result = await interceptor.onUpstreamResponse!(supersededContext(), original, tools);
+
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(result).not.toBe(original);
+      expect(result.statusCode).toBe(401);
+      expect(result.statusMessage).toBe('Unauthorized');
+      expect(Object.keys(result.headers).sort()).toEqual(['content-length', 'content-type']);
+      const { error } = bodyOf(result) as { error: { type?: string; message: string } };
+      expect(error.type).toBe('authentication_error');
+      expect(error.message).toContain('just renewed');
+      expect(error.message).toContain('re-send');
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('replays a request without a body (GET) once with the fresh cookie, passing the null body to retry unchanged', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      const retried = response(200);
+      const context = createProxyContext(buildCookieHeader({ session: 'old' }));
+      let cookieAtRetry: string | undefined;
+      tools.retry.mockImplementation(async () => {
+        cookieAtRetry = context.headers['cookie'];
+        return retried;
+      });
+      const original = response(302, REDIRECT);
+
+      const result = await interceptor.onUpstreamResponse!(context, original, tools);
+
+      expect(result).toBe(retried);
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(tools.retry.mock.calls[0][0]).toBeNull();
+      expect(cookieAtRetry).toBe(buildCookieHeader({ session: 'new' }));
+      expect(tools.readBody).toHaveBeenCalledTimes(1);
+      expect(tools.fromBuffer).not.toHaveBeenCalled();
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('treats a retried redirect of a body-less request as a real revoke, without a second retry', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      tools.retry.mockResolvedValueOnce(response(302, REDIRECT));
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'old' })),
+        response(302, REDIRECT),
+        tools
+      );
+
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(result.statusCode).toBe(401);
+      expect(bodyOf(result).error.message).toBe(`CodeMie SSO session expired. ${describeLogin('started')}`);
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('still replays without a marker or sign-in when draining the redirect body rejects', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const tools = createTools();
+      tools.readBody.mockRejectedValueOnce(new Error('socket hang up'));
+      const retried = response(200);
+      tools.retry.mockResolvedValueOnce(retried);
+
+      const result = await interceptor.onUpstreamResponse!(supersededContext(), response(302, REDIRECT), tools);
+
+      expect(tools.readBody).toHaveBeenCalledTimes(1);
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(result).toBe(retried);
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('logs one debug line without cookie content when the request carried superseded credentials', async () => {
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new-secret' } }));
+
+      await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'old-secret' })),
+        response(302, REDIRECT),
+        createTools()
+      );
+
+      const lines = debugSpy.mock.calls.map((call) => call.map(String).join(' '));
+      expect(lines.filter((line) => line.includes('superseded credentials'))).toHaveLength(1);
+      expect(lines.join('\n')).not.toContain('old-secret');
+      expect(lines.join('\n')).not.toContain('new-secret');
+      debugSpy.mockRestore();
+    });
+
+    it('treats a redirect as a real revoke when the sent header equals the freshly built one', async () => {
+      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'same' } }));
+      const tools = createTools();
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'same' }), REQUEST_BODY),
+        response(302, REDIRECT),
+        tools
+      );
+
+      expect(tools.readBody).toHaveBeenCalledTimes(1);
+      expect(tools.retry).not.toHaveBeenCalled();
+
+      expect(result.statusCode).toBe(401);
+      expect(bodyOf(result).error.message).toBe(
+        `CodeMie SSO session expired. ${describeLogin('started')}`
+      );
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a redirect as a real revoke when the store holds an entry the header builder drops', async () => {
+      const stored = { session: 'same', '': 'orphan' };
+      const interceptor = await interceptorWith(async () => ({ cookies: stored }));
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'same' })),
+        response(302, REDIRECT),
+        createTools()
+      );
+
+      expect(result.statusCode).toBe(401);
+      expect(bodyOf(result).error.message).toContain('session expired');
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['returns null', async () => null],
+      ['throws', async () => { throw new Error('store unreadable'); }],
+    ])('falls back to the sign-in path when refreshNow %s', async (_label, refreshNow) => {
+      const interceptor = await interceptorWith(refreshNow);
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'old' })),
+        response(302, REDIRECT),
+        createTools()
+      );
+
+      expect(result.statusCode).toBe(401);
+      expect(bodyOf(result).error.message).toBe(
+        `CodeMie SSO session expired. ${describeLogin('started')}`
+      );
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the sign-in path when no credentialRefresher is provided', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext(SSO_CREDENTIALS));
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(buildCookieHeader({ session: 'old' })),
+        response(302, REDIRECT),
+        createTools()
+      );
+
+      expect(result.statusCode).toBe(401);
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the sign-in path when the request carried no cookie header', async () => {
+      const refreshNow = vi.fn(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(refreshNow);
+
+      const result = await interceptor.onUpstreamResponse!(
+        createProxyContext(),
+        response(302, REDIRECT),
+        createTools()
+      );
+
+      expect(result.statusCode).toBe(401);
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays a no-op for JWT credentials even with a credentialRefresher', async () => {
+      const refreshNow = vi.fn();
+      const interceptor = await plugin.createInterceptor(
+        createPluginContext({ token: 'jwt-token', apiUrl: TARGET_API_URL }, { refreshNow })
+      );
+
+      expect(interceptor.onUpstreamResponse).toBeUndefined();
+      expect(refreshNow).not.toHaveBeenCalled();
+    });
   });
 });

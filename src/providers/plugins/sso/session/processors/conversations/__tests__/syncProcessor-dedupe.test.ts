@@ -111,6 +111,35 @@ describe('createSyncProcessor — duplicate payload ids', () => {
     return processor.process(SESSION, makeContext(context) as never) as never;
   }
 
+  describe('credential check forwarding', () => {
+    beforeEach(() => {
+      upsertConversation.mockResolvedValue(okResponse);
+    });
+
+    it('hands the context check to the conversation client', async () => {
+      const { createApiClient } = await import('../apiClient.js');
+      vi.mocked(createApiClient).mockClear();
+      const credentialsSuperseded = async (): Promise<boolean> => true;
+      writeRecords([makeRecord()]);
+
+      await runSync({ credentialsSuperseded });
+
+      expect(createApiClient).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(createApiClient).mock.calls[0][0]).toMatchObject({ credentialsSuperseded });
+    });
+
+    it('leaves the client check absent when the context has none', async () => {
+      const { createApiClient } = await import('../apiClient.js');
+      vi.mocked(createApiClient).mockClear();
+      writeRecords([makeRecord()]);
+
+      await runSync();
+
+      expect(createApiClient).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(createApiClient).mock.calls[0][0].credentialsSuperseded).toBeUndefined();
+    });
+  });
+
   describe('outcome marking (AC1)', () => {
     // A rewound pointer re-queues the same turn (same payloadId) under a new history
     // index, so the duplicate is not fully covered and collapse leaves it alone.

@@ -224,6 +224,9 @@ function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] }
 }
 
 beforeEach(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('CODEMIE_')) vi.stubEnv(key, undefined);
+  }
   home = mkdtempSync(join(tmpdir(), 'codemie-delivery-'));
   process.env.CODEMIE_HOME = home;
   sessionsDir = join(home, 'sessions');
@@ -242,6 +245,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.mocked(rename).mockReset();
   for (const key of Object.keys(process.env)) {
     if (!(key in envBefore)) delete process.env[key];
