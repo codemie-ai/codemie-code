@@ -13,6 +13,8 @@ export interface CodeMieUserInfo {
   userId: string;
   name: string;
   username: string;
+  /** Authenticated email as the backend reports it; `username` is a different value. */
+  email?: string;
   isAdmin: boolean;
   applications: string[];
   applications_admin: string[];
@@ -268,25 +270,36 @@ export async function getStoredAnalyticsCredentials(
 }
 
 /* eslint-disable no-redeclare */
+export interface UserInfoRequestOptions {
+  timeout?: number;
+  /** false: a 3xx answer fails the lookup instead of being followed (the cookies never leave the first origin). */
+  followRedirects?: boolean;
+  /** Unattended callers only need `email`; skip the interactive login's `applications*` shape check. */
+  emailOnly?: boolean;
+}
+
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  jwtToken: string
+  jwtToken: string,
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  options: UserInfoRequestOptions = {}
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
   const url = `${apiUrl}/v1/user`;
 
   const client = new HTTPClient({
-    timeout: 10000,
-    maxRetries: 3,
+    timeout: options.timeout ?? 10000,
+    followRedirects: options.followRedirects ?? true,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
   });
@@ -301,6 +314,10 @@ export async function fetchCodeMieUserInfo(
   }
 
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
+
+  if (options.emailOnly && userInfo && typeof userInfo === 'object') {
+    return { ...userInfo, applications: userInfo.applications ?? [], applications_admin: userInfo.applications_admin ?? [] };
+  }
 
   if (!Array.isArray(userInfo.applications_admin) && Array.isArray(userInfo.applicationsAdmin)) {
     userInfo.applications_admin = userInfo.applicationsAdmin;

@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { createStatus, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { MAX_AGE_SEGMENTS, createStatus, pendingIsCarriedOnly, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
 import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
@@ -280,8 +280,15 @@ export async function appendSpool(
   sessionId: string,
   stream: SpoolStream,
   data: string | Buffer,
-  projectNames?: string[]
-): Promise<void> {
+  projectNames?: string[],
+  /**
+   * Hooks only: these bytes were first held at this time (owner-pending handover); the age is carried, not reset. They are
+   * appended only when the pending hooks range is empty or entirely carried (so they stay its head) and fewer than
+   * `MAX_AGE_SEGMENTS` ranges are tracked; otherwise nothing is written and `false` is returned (the caller keeps the data).
+   */
+  carriedSince?: number
+): Promise<boolean> {
+  let appended = true;
   await withSessionLock(sessionId, async () => {
     // The epoch exists before this version writes any session status: a new session is never pre-epoch.
     await readOrCreateEpoch();
@@ -298,6 +305,22 @@ export async function appendSpool(
       const status = (await readStatus(sessionId)) ?? createStatus();
       // The exact end of everything written so far: the end of the sealed prefix if this batch conflicts.
       const sizeBefore = exists ? (await stat(path)).size : 0;
+      // Age ranges describe offsets of the current incarnation, and only bytes that exist: a crashed append leaves a range
+      // past EOF, which must never age bytes written later.
+      const cursor = recreated ? 0 : status.cursors.hooks;
+      const live = (recreated ? [] : status.carriedAge?.hooks ?? [])
+        .map((seg) => ({ ...seg, end: Math.min(seg.end, sizeBefore) }))
+        .filter((seg) => seg.end > seg.start && seg.end > cursor);
+      if (carriedSince !== undefined) {
+        if (live.length >= MAX_AGE_SEGMENTS || !pendingIsCarriedOnly({ ...status, cursors: { ...status.cursors, hooks: cursor }, carriedAge: { hooks: live } }, sizeBefore)) {
+          appended = false;
+          return;
+        }
+        live.push({ start: sizeBefore, end: sizeBefore + Buffer.byteLength(data), since: Math.min(carriedSince, Date.now()) });
+      }
+      if (live.length > 0) status.carriedAge = { ...status.carriedAge, hooks: live };
+      else if (status.carriedAge) delete status.carriedAge.hooks;
+      if (status.carriedAge && Object.keys(status.carriedAge).length === 0) delete status.carriedAge;
       if (!status.projectScanned) {
         if (exists) {
           await resolveLegacyProjectLocked(sessionId, status);
@@ -332,6 +355,7 @@ export async function appendSpool(
       await writeStatus(sessionId, status);
     }
   });
+  return appended;
 }
 
 /* --------------------------------------------------------------- consumers --- */

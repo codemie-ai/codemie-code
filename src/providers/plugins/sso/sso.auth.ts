@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
 import { CredentialStore } from '../../../utils/security.js';
 import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.js';
+import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -144,6 +145,8 @@ export class CodeMieSSO {
         const store = CredentialStore.getInstance();
         // Key must match getStoredCredentials() lookup, which normalizes to protocol+host
         await store.storeSSOCredentials(credentials, this.codeMieUrl);
+        // Establish the signed-in email for these cookies now (best-effort; a failed lookup is retried at most every 30 s by the hook/daemon)
+        await withVerifiedOwner(credentials);
         // Fresh credentials — analytics auth is healthy again
         await clearAnalyticsAuthStatus();
       }

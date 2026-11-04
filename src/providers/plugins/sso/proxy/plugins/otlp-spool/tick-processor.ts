@@ -13,6 +13,7 @@ import {
   pendingHooksMarkedLocked,
   recordLossLocked,
 } from './spool-io.js';
+import { expireCarriedAgeLocked } from './delivery-state.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 import { areCredentialsStale } from './auth-state.js';
@@ -71,6 +72,7 @@ async function applySessionEvidenceLocked(
   now: number = Date.now()
 ): Promise<{ decision: TickEvidenceDecision; result?: ClassResult }> {
   const before = JSON.stringify(status);
+  await expireCarriedAgeLocked(sessionId, status, now); // handed-over bytes expire on their original clock, held or not
   if (!status.evidenceMarked && (await pendingHooksMarkedLocked(sessionId, status))) {
     status.evidenceMarked = true;
   }
@@ -94,7 +96,10 @@ async function applySessionEvidenceLocked(
   let result: ClassResult | undefined;
   if (decision.action === 'send_evidence' && key) {
     const cls = await classifySession(key, decision.record, policy ?? { policy: null, capability: 'unknown' });
-    if (cls.action === 'suppress') return { decision: cls };
+    if (cls.action === 'suppress') {
+      if (JSON.stringify(status) !== before) await writeStatus(sessionId, status); // e.g. a carried range that just expired
+      return { decision: cls };
+    }
     if (cls.action === 'hold') decision = holdOrLose(cls.reason, heldSince, now, heldRetentionMs());
     else result = cls.result;
   }
@@ -132,7 +137,12 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
     if (!status) return;
-    if (!hasPendingData(await readSpoolState(sessionId, status))) return;
+    const before = JSON.stringify(status);
+    await expireCarriedAgeLocked(sessionId, status, now);
+    if (!hasPendingData(await readSpoolState(sessionId, status))) {
+      if (JSON.stringify(status) !== before) await writeStatus(sessionId, status);
+      return;
+    }
     const heldSince = status.holds?.session?.since;
     const decision = holdOrLose('analytics_endpoint_mismatch', heldSince, now, heldRetentionMs());
     if (decision.action === 'lose') {
@@ -144,7 +154,7 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
       }
       status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
     }
-    await writeStatus(sessionId, status);
+    if (JSON.stringify(status) !== before) await writeStatus(sessionId, status);
   });
 }
 
@@ -177,6 +187,8 @@ export async function processSessionTick(
       return;
     }
     if (areCredentialsStale()) {
+      // Nothing is sent while the login is stale, but a handed-over range still expires on its original clock.
+      if (await expireCarriedAgeLocked(sessionId, status)) await writeStatus(sessionId, status);
       return;
     }
 
