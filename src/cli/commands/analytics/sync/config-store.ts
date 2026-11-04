@@ -8,13 +8,14 @@
  * different shape), so there is no merge-with-existing-file path here.
  */
 
-import { chmod, mkdir, readFile, unlink, writeFile } from 'fs/promises';
-import { dirname, posix as posixPath } from 'path';
+import { readFile, unlink } from 'fs/promises';
+import { posix as posixPath } from 'path';
 
 import { getCodemiePath } from '@/utils/paths.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { assertPrintableValue } from './install-command.js';
+import { writePrivateJson } from './private-file.js';
 import { redactSecrets } from './redact.js';
 import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
 
@@ -22,7 +23,6 @@ export const DEFAULT_LOOKBACK_DAYS = 7;
 export const DEFAULT_AT = '03:00';
 const DEFAULT_INCLUDE_EXTERNAL: IncludeExternalPolicy = 'windows';
 
-const SETTINGS_FILE_MODE = 0o600;
 const MIN_LOOKBACK_DAYS = 1;
 const MAX_LOOKBACK_DAYS = 30;
 
@@ -500,9 +500,7 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
  * the standalone collector, with a different shape — is replaced entirely.
  */
 export async function writeSyncSettings(settings: SyncSettings, path: string = getSyncSettingsPath()): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(settings, null, 2), { mode: SETTINGS_FILE_MODE });
-  await chmod(path, SETTINGS_FILE_MODE);
+  await writePrivateJson(path, settings);
 }
 
 /**
