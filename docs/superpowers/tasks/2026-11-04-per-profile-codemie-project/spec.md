@@ -16,7 +16,7 @@ Each global profile stores and resolves its own CodeMie project and integration.
 - `own`: a string `codeMieProject`. Project and integration come from the profile only; an absent integration means none, and the shared integration is never mixed in.
 - `none`: `codeMieProject: null`. No project, integration or URL is resolved. No prompt, no warning.
 - `unowned`: any other profile of a project-carrying provider. It resolves the shared project and integration. This includes every profile after an upgrade, and the only profile that has a project.
-- Providers without the project property (litellm, bedrock, ollama) resolve as today: shared project for tagging, no prompt, no warning, no Project line.
+- Providers without the project property (litellm, bedrock, ollama) carry no CodeMie identity of their own: they use a legacy shared (`workspace`) identity when the config has one, and on a new config they get none (setup no longer writes the shared identity). No prompt, no warning, no Project line.
 
 URL: the profile's own `codeMieUrl`, else the shared one, except `none`, which has none. The same rule applies in the standalone statusline (`statusline.ts:705-735`), inline.
 
@@ -104,7 +104,7 @@ The derivation source of `X-CodeMie-Project` / `X-CodeMie-Integration` changes (
 - A failed or empty project list takes the warning path over aborting; answers "list unavailable"
 - Prompt/warn check is `--task`, non-TTY stdin/stdout, `CODEMIE_NO_PROMPTS=1`, with silent mode and resume rules unchanged, over merging all predicates; answers "when may anything prompt"
 - A same-named global `own`/`none` profile supplies identity to a repo-local profile with no local project over the shared fallback; answers "same-name local profile"
-- Providers without the project property resolve as today over a new gate; answers "litellm/bedrock/ollama behavior"
+- Providers without the project property use only a legacy shared identity, none on new configs, over a new gate; answers "litellm/bedrock/ollama behavior"
 - Proxy connect/start warn, restart re-reads, Desktop telemetry loads the daemon's profile over launcher-only handling; answers "daemon-routed sessions"
 - `saveProfile()` stops writing `workspace` identity but leaves it on disk over stripping it; answers "legacy shared identity"
 - Migration id 010 over reusing 008; answers "migration numbering" (008/009 taken)
@@ -113,7 +113,7 @@ The derivation source of `X-CodeMie-Project` / `X-CodeMie-Integration` changes (
 
 - Open PRs #753, #667, #575 overlap `config.ts`, `setup.ts`, `profile/index.ts`, `env/types.ts`.
 - Because nothing is assigned at upgrade, every existing project-carrying profile warns (or prompts once). Users who only launch non-interactively keep billing the shared project, visible only via the stderr warning, until they run setup or launch once in a terminal.
-- A litellm/bedrock/ollama profile still tags hook and analytics events with the shared project while the banner shows none (behavior preserved; no follow-up named).
+- A litellm/bedrock/ollama profile tags hook and analytics events with the legacy shared project when the config has one, while the banner shows none. On a new config it tags them with no project, because setup no longer writes a shared identity (decided in the PR #758 review, finding 5).
 - Before 010 runs, shortcut launchers treat #701 residue as own. Only unreleased-main configs are affected.
 - The frozen `workspace` identity keeps gaining readers until a later release retires it; downgrade reads and rewrites it.
 - Needs the backend owner: whether a missing `X-CodeMie-Integration` changes billing or the LiteLLM key, whether fallback sessions may send `project_source` `none`, and whether the backend verifies project membership.

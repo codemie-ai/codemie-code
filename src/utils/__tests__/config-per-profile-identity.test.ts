@@ -250,6 +250,23 @@ describe('ConfigLoader — per-profile CodeMie identity (EPMCDME-15411)', () => 
     });
   });
 
+  describe('providers without the project property on a new config (PR #758 review, finding 5)', () => {
+    it('a litellm profile set up after an SSO profile carries no CodeMie identity', async () => {
+      await fs.rm(GLOBAL_CONFIG_PATH, { force: true });
+      await ConfigLoader.saveProfile('work', sso({ codeMieUrl: 'https://h.example.com', codeMieProject: 'team-a' }));
+      await ConfigLoader.saveProfile('lite', { provider: 'litellm', baseUrl: 'https://litellm.example.com', model: 'gpt-4o', apiKey: 'k' });
+
+      const stored = await readGlobal();
+      expect(stored.workspace?.codeMieProject).toBeUndefined();
+      const lite = await ConfigLoader.load(WORKING_DIR, { name: 'lite' });
+      expect(lite.codeMieUrl).toBeUndefined();
+      expect(lite.codeMieProject).toBeUndefined();
+      expect((await ConfigLoader.resolveProfileIdentity(WORKING_DIR, 'lite')).state).toBe('not-applicable');
+      const work = await ConfigLoader.load(WORKING_DIR, { name: 'work' });
+      expect(work).toMatchObject({ codeMieUrl: 'https://h.example.com', codeMieProject: 'team-a' });
+    });
+  });
+
   describe('AC9 — local profiles and repo-local workspace are unchanged', () => {
     it('a local profile with a local workspace project keeps the repository identity', async () => {
       await writeGlobal('g', { g: sso({ codeMieProject: 'global-own' }), h: sso() });

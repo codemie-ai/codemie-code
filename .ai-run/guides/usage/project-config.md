@@ -159,7 +159,7 @@ returns a binding state:
 | `none` | global profile with `codeMieProject: null` ("off CodeMie") | no URL, project or integration; no CodeMie call |
 | `unowned` | any other global profile of a project-carrying provider (`customProperties.carriesCodeMieProject`: ai-run-sso, bearer-auth, anthropic/moonshot-subscription) | shared (global `workspace`, last setup) project + integration |
 | `local` | repo-local profile | local workspace, else global — unchanged; a same-named global `own`/`none` profile supplies identity when the local scope has no project |
-| `not-applicable` | litellm, bedrock, ollama | shared trio as before; no Project line, prompt or warning |
+| `not-applicable` | litellm, bedrock, ollama | legacy shared trio if the config has one, none on new configs (setup no longer writes it); no Project line, prompt or warning |
 
 Rules:
 
