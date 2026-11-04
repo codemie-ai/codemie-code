@@ -9,6 +9,7 @@
 
 import { readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { join } from 'path';
+import { isSafeSessionId } from '../../core/session-id.js';
 import { assertSessionStateListable, transcriptExists, unlessAbsent } from '../../core/session/no-transcript-correlation.js';
 import type { Session } from '../../core/session/types.js';
 import type { CopilotSessionStartData } from './copilot-cli-event-types.js';
@@ -17,6 +18,14 @@ import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { parseCopilotEvents } from './copilot-cli.storage-utils.js';
 
 const SESSION_ID_SHAPE = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Whether a stored native session id can name its own directory under the session-state root: `unknown` is the
+ * placeholder of no id, and `.` stays in the root, which the shared id check lets through.
+ */
+export function isNativeIdSegment(id: string | undefined): id is string {
+  return !!id && id !== 'unknown' && id !== '.' && isSafeSessionId(id);
+}
 
 /**
  * A `--resume` value that is a strict prefix of a session id (hex digits and dashes in the id's shape), lower-cased.
@@ -105,7 +114,7 @@ export async function locateCopilotTranscript(record: Session): Promise<string[]
     return [eventsOf(record.sessionId)];
   }
   const resumedId = record.correlation?.agentSessionId;
-  if (resumedId && resumedId !== 'unknown' && !/[\\/]/.test(resumedId) && transcriptExists(eventsOf(resumedId))) {
+  if (isNativeIdSegment(resumedId) && transcriptExists(eventsOf(resumedId))) {
     return [eventsOf(resumedId)];
   }
 

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
 import { CopilotCliPluginMetadata } from '../copilot-cli.plugin.js';
+import { isNativeIdSegment } from '../copilot-cli.transcript-lookup.js';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -210,6 +211,30 @@ describe('CopilotCliSessionAdapter.locateTranscript', () => {
     expect(await newAdapter().locateTranscript(record({
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'resumed-native-id' },
     }))).toEqual([path]);
+  });
+
+  it.each(['abcdef01-2345-4678-89ab-cdef01234567', 'abcdef012345'])('finds a run by the stored native id %s', async (stored) => {
+    const path = writeEvents(stored, [{ type: 'session.start', timestamp: '2026-09-30T08:00:00Z' }]);
+
+    expect(await newAdapter().locateTranscript(record({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: stored },
+    }))).toEqual([path]);
+  });
+
+  it.each(['..', '../x', '.'])('does not return the file outside the session-state root that the stored id %s resolves to', async (stored) => {
+    writeEvents(stored, [{ type: 'session.start', timestamp: '2026-10-01T10:00:02Z', data: { context: { cwd: home } } }]);
+
+    expect(await newAdapter().locateTranscript(record({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: stored },
+    }))).toEqual([]);
+  });
+
+  it.each([undefined, '', 'unknown', '.', '..', '../x', '..\\x', 'a/b', 'a\\b'])('the stored id %j cannot name a session directory', (stored) => {
+    expect(isNativeIdSegment(stored)).toBe(false);
+  });
+
+  it.each(['abcdef01-2345-4678-89ab-cdef01234567', 'abcdef012345', 'resumed-native-id'])('the stored id %s can name a session directory', (stored) => {
+    expect(isNativeIdSegment(stored)).toBe(true);
   });
 
   it('otherwise picks the latest session started or resumed after the run start in its directory', async () => {

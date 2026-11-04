@@ -277,6 +277,41 @@ describe('copilot-cli SessionEnd correlation', () => {
     });
   });
 
+  describe.each([
+    ['a pinned run', [], '13131313-1313-4313-8313-131313131313'],
+    ['an unpinned run', ['--continue'], 'located-by-window'],
+  ])('%s whose stored native id cannot name a session directory', (_form, args, ownDir) => {
+    const id = '13131313-1313-4313-8313-131313131313';
+
+    /** An `events.jsonl` where the stored id resolves, older than the run so that only the id can reach it. */
+    function launchWithStored(stored: string): void {
+      writeNative(stored, [start('elsewhere', -60_000)]);
+      writeRecord(id, stored);
+      launch(id, args);
+    }
+
+    it.each(['../x', '..', '.', 'unknown'])('%s: not read, not correlated, ends under the CodeMie id', async (stored) => {
+      launchWithStored(stored);
+
+      await endSession(id);
+
+      const { correlation } = readRecord(id);
+      expect(correlation).toMatchObject({ status: 'failed', agentSessionId: id });
+      expect(correlation.agentSessionFile).toBeUndefined();
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
+    });
+
+    it.each(['../x', '..', '.', 'unknown'])('%s: its own transcript is correlated and the record names the CodeMie id', async (stored) => {
+      launchWithStored(stored);
+      const own = writeNative(ownDir, [start(ownDir, 100)]);
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toMatchObject({ status: 'matched', agentSessionId: id, agentSessionFile: own });
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: own });
+    });
+  });
+
   it('gives two concurrent managed sessions in one cwd their own native session, ignoring a newer standalone one', async () => {
     const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

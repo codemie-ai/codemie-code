@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path';
 import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
 import { assertSessionStateListable, recordNoTranscript, recordTranscriptCorrelation, transcriptExists } from '../../core/session/no-transcript-correlation.js';
 import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
+import { isNativeIdSegment } from './copilot-cli.transcript-lookup.js';
 import {
   assertExplicitCopilotModelAllowed,
   resolveCopilotModel,
@@ -58,12 +59,20 @@ function runSessionIdOf(sessionId: string, env: NodeJS.ProcessEnv): string {
  * The run's native transcript: a pinned or resumed run's own session exactly (none when it is missing);
  * a session the wrapper could not name (`--continue`, an id prefix, a name) by the run window.
  * With no native transcript the run goes under the CodeMie id, the one its stored correlation names.
+ * A stored id that cannot name a session directory is no native id: the record is rewritten to the CodeMie id,
+ * since a SessionEnd under that id would read the id left on the record as another generation.
  * Throws when the lookup could not conclude.
  */
 async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: string; native?: string }> {
   const { SessionStore } = await import('../../core/session/SessionStore.js');
-  const record = await new SessionStore().loadSession(sessionId);
-  const runSessionId = record?.correlation?.agentSessionId || sessionId;
+  const store = new SessionStore();
+  const record = await store.loadSession(sessionId);
+  const storedId = record?.correlation?.agentSessionId;
+  if (record && storedId && !isNativeIdSegment(storedId)) {
+    record.correlation = { ...record.correlation, agentSessionId: sessionId };
+    await store.saveSession(record);
+  }
+  const runSessionId = isNativeIdSegment(storedId) ? storedId : sessionId;
   const pinned = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId;
   if (pinned || runSessionId !== sessionId || !record) {
     if (record) assertSessionStateListable(record);
