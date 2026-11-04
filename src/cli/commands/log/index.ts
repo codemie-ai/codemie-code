@@ -11,7 +11,7 @@ import { LogFollower } from './follower.js';
 import { LogCleaner } from './cleaner.js';
 import type { LogOptions, LogFilter, SessionListEntry } from './types.js';
 import { logger } from '../../../utils/logger.js';
-import { isDateOnly, parseDateOnly } from '@/utils/date-filter.js';
+import { parseFilterDate } from '@/utils/date-filter.js';
 
 export function createLogCommand(): Command {
   const command = new Command('log');
@@ -398,29 +398,6 @@ function parseFilterOptions(options: LogOptions): LogFilter {
   }
 
   return filter;
-}
-
-/**
- * Parse a filter date. Date-only values (YYYY-MM-DD) use the shared UTC policy (inclusive `to`);
- * other inputs (e.g. full ISO timestamps) keep the loose parse.
- */
-function parseFilterDate(value: string, bound: 'from' | 'to'): Date | null {
-  return isDateOnly(value) ? parseDateOnly(value, bound) : parseDate(value);
-}
-
-/**
- * Parse a non-date-only date string to Date object
- */
-function parseDate(dateStr: string): Date | null {
-  try {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
-      return null;
-    }
-    return date;
-  } catch {
-    return null;
-  }
 }
 
 /**

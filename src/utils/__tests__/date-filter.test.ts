@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isDateOnly, parseDateOnly } from '../date-filter.js';
+import { isDateOnly, parseDateOnly, parseFilterDate } from '../date-filter.js';
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
@@ -46,4 +46,41 @@ describe('isDateOnly', () => {
     expect(isDateOnly('2026-02-30')).toBe(true);
     expect(isDateOnly('2026-10-25T10:00:00Z')).toBe(false);
   });
+});
+
+describe.each(['UTC', 'America/New_York'])('parseFilterDate under TZ=%s', (tz) => {
+  let savedTz: string | undefined;
+
+  beforeEach(() => {
+    savedTz = process.env.TZ;
+    process.env.TZ = tz;
+  });
+
+  afterEach(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  });
+
+  it('date-only uses the UTC day bounds', () => {
+    expect(iso(parseFilterDate('2026-10-25', 'from'))).toBe('2026-10-25T00:00:00.000Z');
+    expect(iso(parseFilterDate('2026-10-25', 'to'))).toBe('2026-10-25T23:59:59.999Z');
+  });
+
+  it('a timestamp with Z or an offset is an exact instant, not widened to end of day', () => {
+    expect(iso(parseFilterDate('2026-10-25T10:00:00Z', 'to'))).toBe('2026-10-25T10:00:00.000Z');
+    expect(iso(parseFilterDate('2026-10-25T10:00:00+02:00', 'to'))).toBe('2026-10-25T08:00:00.000Z');
+  });
+
+  it('a timestamp without a timezone is local time', () => {
+    const expected = new Date(2026, 9, 25, 10, 0, 0).toISOString();
+    expect(iso(parseFilterDate('2026-10-25T10:00', 'from'))).toBe(expected);
+  });
+
+  it.each(['10/25/2026', 'Oct 25 2026', '2026-02-30', '2026-10-25T99:00', '2026-10-25T10:00 junk', ''])(
+    'rejects %s',
+    (value) => {
+      expect(parseFilterDate(value, 'from')).toBeNull();
+      expect(parseFilterDate(value, 'to')).toBeNull();
+    }
+  );
 });

@@ -1432,8 +1432,8 @@ codemie log <subcommand> [options] # Execute subcommand
 - `--agent <name>` - Filter by agent (claude, gemini, etc.)
 - `--profile <name>` - Filter by profile name
 - `--level <level>` - Filter by log level (debug, info, warn, error)
-- `--from <date>` - Filter from date (YYYY-MM-DD)
-- `--to <date>` - Filter to date (YYYY-MM-DD)
+- `--from <date>` - Filter from date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
+- `--to <date>` - Filter to date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
 - `--last <duration>` - Filter last duration (e.g., 7d, 24h, 30m)
 - `--grep <pattern>` - Search pattern (supports regex)
 - `-n, --lines <number>` - Number of lines to show (default: 50)
