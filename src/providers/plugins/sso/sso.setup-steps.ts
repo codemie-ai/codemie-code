@@ -9,6 +9,7 @@
  * - Model fetching from SSO API
  */
 
+import { CodeMieError } from '../../../utils/errors.js';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -36,6 +37,87 @@ import {
 /**
  * SSO setup steps implementation
  */
+/** Thrown by selectIntegrationForProject() when `onFetchError: 'throw'` and the list cannot be fetched. */
+export class IntegrationFetchError extends CodeMieError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IntegrationFetchError';
+  }
+}
+
+/**
+ * LiteLLM integration step for a picked project, shared by `codemie setup` and the
+ * launch-time project prompt: one integration is auto-selected, several are
+ * offered in a list, none means no integration.
+ *
+ * @param options.onFetchError - `none` (setup): warn and continue without an
+ *   integration; `throw`: raise IntegrationFetchError so the caller saves nothing
+ */
+export async function selectIntegrationForProject(
+  apiUrl: string,
+  cookies: Record<string, string>,
+  project: string | undefined,
+  options: { onFetchError?: 'none' | 'throw' } = {}
+): Promise<CodeMieIntegrationInfo | undefined> {
+  let integrations;
+  let integrationsFetchError: string | undefined;
+
+  const integrationsSpinner = ora('Fetching user integrations...').start();
+  try {
+    // Use the caller's cookies directly (same as the userInfo fetch) instead of retrieving from storage
+    const allIntegrations = await fetchCodeMieIntegrations(apiUrl, cookies);
+
+    integrationsSpinner.stop();
+
+    // Filter by project if specified
+    integrations = project
+      ? allIntegrations.filter(integration => integration.project_name === project)
+      : allIntegrations;
+  } catch (error) {
+    integrationsSpinner.stop();
+    integrationsFetchError = error instanceof Error ? error.message : String(error);
+    if (options.onFetchError === 'throw') {
+      throw new IntegrationFetchError(integrationsFetchError);
+    }
+    // Don't fail setup - integrations are optional. Nothing is returned, so saving the profile
+    // keeps an integration already stored for the same project (preserve existing on failure).
+    console.log(chalk.yellow(
+      `⚠️  Could not fetch integrations: ${integrationsFetchError}. An integration already saved for this project is kept.\n`
+    ));
+    integrations = [];
+  }
+
+  const projectLabel = project ? ` for project "${project}"` : '';
+
+  if (integrations.length === 1) {
+    // Auto-select the only available integration
+    const single = integrations[0];
+    return { id: single.id, alias: single.alias };
+  }
+  if (integrations.length > 1) {
+    console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
+    const integrationAnswers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'integration',
+        message: 'Select LiteLLM integration:',
+        choices: integrations.map(i => ({
+          name: `${i.alias} (${i.project_name || 'Default'})`,
+          value: { id: i.id, alias: i.alias }
+        }))
+      }
+    ]);
+    return integrationAnswers.integration;
+  }
+
+  if (integrationsFetchError) {
+    logger.debug(`Proceeding without LiteLLM integration (fetch failed): ${integrationsFetchError}`);
+  } else {
+    logger.debug(`No LiteLLM integrations configured${projectLabel}`);
+  }
+  return undefined;
+}
+
 export const SSOSetupSteps: ProviderSetupSteps = {
   name: 'ai-run-sso',
 
@@ -78,68 +160,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       throw new Error(`Project selection required: ${errorMsg}`);
     }
 
-    // Check for LiteLLM integrations
-    let integrations;
-    let integrationsFetchError: string | undefined;
-
-    const integrationsSpinner = ora('Fetching user integrations...').start();
-    try {
-      // Use authResult.cookies directly (same as userInfo fetch) instead of retrieving from storage
-      // This ensures we use the same authenticated session for all API calls during setup
-      const allIntegrations = await fetchCodeMieIntegrations(
-        authResult.apiUrl,
-        authResult.cookies
-      );
-
-      integrationsSpinner.stop();
-
-      // Filter by project if specified
-      if (selectedProject) {
-        integrations = allIntegrations.filter(
-          integration => integration.project_name === selectedProject
-        );
-      } else {
-        integrations = allIntegrations;
-      }
-    } catch (error) {
-      // Log error but don't fail setup - integrations are optional
-      integrationsSpinner.stop();
-      integrationsFetchError = error instanceof Error ? error.message : String(error);
-      console.log(chalk.yellow(`⚠️  Could not fetch integrations: ${integrationsFetchError}\n`));
-      integrations = [];
-    }
-
-    // Resolve integration: auto-select if single, prompt if multiple, preserve existing on failure
-    let integrationInfo: CodeMieIntegrationInfo | undefined;
-
-    const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
-
-    if (integrations.length === 1) {
-      // Auto-select the only available integration
-      const single = integrations[0];
-      integrationInfo = { id: single.id, alias: single.alias };
-    } else if (integrations.length > 1) {
-      console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
-      const integrationAnswers = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'integration',
-          message: 'Select LiteLLM integration:',
-          choices: integrations.map(i => ({
-            name: `${i.alias} (${i.project_name || 'Default'})`,
-            value: { id: i.id, alias: i.alias }
-          }))
-        }
-      ]);
-      integrationInfo = integrationAnswers.integration;
-    } else {
-      // No integrations found
-      if (integrationsFetchError) {
-        logger.debug(`Proceeding without LiteLLM integration (fetch failed): ${integrationsFetchError}`);
-      } else {
-        logger.debug(`No LiteLLM integrations configured${projectLabel}`);
-      }
-    }
+    const integrationInfo = await selectIntegrationForProject(authResult.apiUrl, authResult.cookies, selectedProject);
 
     return {
       baseUrl: authResult.apiUrl,

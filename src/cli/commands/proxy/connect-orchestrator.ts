@@ -27,6 +27,8 @@ import {
   stopDaemon,
   type DaemonState,
 } from './daemon-manager.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
+import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState } from '../../../utils/project-binding.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
@@ -159,6 +161,8 @@ export interface RequestedDaemonConfig {
   profile: string;
   port: number;
   project?: string;
+  /** Binding state of `project`, recorded in the daemon state (not part of matching). */
+  projectBinding?: ProjectBindingState;
   clientType: string;
   provider?: string;
   targetUrl?: string;
@@ -436,6 +440,7 @@ async function ensureDaemon(
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
+      ...(requested.projectBinding ? { projectBinding: requested.projectBinding } : {}),
       ...identity.spawnOptions,
       syncApiUrl: config.ssoConfig?.apiUrl,
       syncCodeMieUrl: config.codeMieUrl,
@@ -469,12 +474,15 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
   if (!config.baseUrl?.trim()) {
     return;
   }
+  // Hook cold start: an unowned profile is only logged, never printed or prompted.
+  const projectBinding = await reportDaemonProfileIdentity(config, 'hook', cwd);
 
   const daemonConfig = {
     clientType: agentName,
     port: DEFAULT_DAEMON_PORT,
     profile: config.name ?? 'default',
     project: config.codeMieProject,
+    projectBinding,
     provider: config.provider ?? 'ai-run-sso',
     syncApiUrl: config.ssoConfig?.apiUrl,
     syncCodeMieUrl: config.codeMieUrl,
@@ -568,11 +576,17 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
   }
 }
 
+/** `Project:` text for connect output: the project with its binding (shared fallback marked). */
+function projectDisplay(binding: ProjectBindingState | undefined, project: string | undefined): string {
+  return describeProjectBinding(binding, project) ?? (project ? sanitizeDisplayText(project) : '(not configured)');
+}
+
 async function runVscodeByok(
   state: DaemonState,
   insiders: boolean,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  verbose: boolean
+  verbose: boolean,
+  projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
     const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
@@ -593,7 +607,7 @@ async function runVscodeByok(
       console.log(`  Config:  ${result.configPath}`);
       console.log(`  Gateway: ${state.url}`);
       console.log(`  Models:  ${result.modelCount}`);
-      console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
+      console.log(`  Project: ${projectDisplay(projectBinding, config.codeMieProject)}`);
     }
 
     if (result.requiresSecretConfiguration) {
@@ -802,6 +816,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let state: DaemonState;
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let projectBinding: ProjectBindingState | undefined;
   try {
     // Without a TTY the confirmation cannot be shown; --silent is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
@@ -826,6 +841,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     }
 
     const profile = config.name ?? 'default';
+    projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
     // Resolved once so the confirmation header and the post-start table show the same URL.
     otlpDisplay = targets.claudeCodeOtlp
       ? {
@@ -880,6 +896,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       profile,
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
+      projectBinding,
       clientType: identity.clientType,
       provider: config.provider ?? 'ai-run-sso',
       targetUrl: config.baseUrl,
@@ -906,7 +923,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     results.push(await runClaudeDesktop(state, verbose));
   }
   if (activeTargets.vscode) {
-    results.push(await runVscodeByok(state, insiders, config, verbose));
+    results.push(await runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
     results.push(await runVscodeClaudeCode(state, insiders));

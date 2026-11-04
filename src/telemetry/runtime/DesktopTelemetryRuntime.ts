@@ -469,7 +469,8 @@ export class DesktopTelemetryRuntime {
     return Promise.all([
       detectGitBranch(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
-      ConfigLoader.load(workingDirectory)
+      // The daemon's own profile, by name: the active profile may have changed since it started.
+      ConfigLoader.load(workingDirectory, this.config.profile ? { name: this.config.profile } : undefined)
         .then(c => c.codeMieProject ?? undefined)
         .catch(() => undefined)
     ]);

@@ -331,6 +331,19 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      // Per-profile CodeMie project (EPMCDME-15411): a global profile without a project
+      // of its own is asked once in a terminal; otherwise it warns once and continues
+      // with the shared project. Runs after authentication, before the environment export.
+      const { resolveLaunchIdentity, finalizeLaunchIdentity } = await import('./launch-identity.js');
+      const { canPromptForProject } = await import('../../utils/interactive.js');
+      const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
+      const launchIdentity = await resolveLaunchIdentity(config, {
+        workingDir: process.cwd(),
+        canPrompt: canPromptForProject({ task: options.task }),
+        surface: 'agent',
+        jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
+      });
+
       // Analytics auth validation for providers where CodeMie auth is analytics-only
       // (e.g. anthropic-subscription, moonshot-subscription). ai-run-sso already
       // validated these same credentials via its own validateAuth above.
@@ -391,6 +404,9 @@ export class AgentCLI {
 
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
+      // Binding state next to the profile name; clears inherited identity for own/none
+      // and writes the one unowned warning (stderr) when no prompt was possible.
+      finalizeLaunchIdentity(launchIdentity, providerEnv);
       providerEnv.CODEMIE_CLI_VERSION = this.version;
 
       // Record where the model came from. Plugin-side model resolution (e.g. the Claude

@@ -16,6 +16,7 @@ import { DesktopTelemetryRuntime } from '../telemetry/runtime/DesktopTelemetryRu
 import { DesktopRepositoryResolver } from '../telemetry/runtime/DesktopRepositoryResolver.js';
 import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
+import { parseProjectBinding } from '../utils/project-binding.js';
 import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 import { daemonStartedAt } from '../cli/commands/proxy/daemon-manager.js';
@@ -37,6 +38,7 @@ const { values } = parseArgs({
     'profile':      { type: 'string' },
     'model':        { type: 'string' },
     'project':      { type: 'string' },
+    'project-binding': { type: 'string' },
     'client-type':  { type: 'string' },
     'port':         { type: 'string' },
     'gateway-key':  { type: 'string' },
@@ -69,6 +71,7 @@ const profile    = (values['profile'] as string | undefined) ?? 'default';
 const provider   = (values['provider'] as string | undefined) ?? 'ai-run-sso';
 const model = values['model'] as string | undefined;
 const project = values['project'] as string | undefined;
+const projectBinding = parseProjectBinding(values['project-binding'] as string | undefined);
 const clientType = values['client-type'] as string | undefined;
 const authMethod = ((values['auth-method'] as string | undefined) ?? 'sso') as 'sso' | 'jwt';
 const telemetryMode = ((values['telemetry-mode'] as string | undefined) ?? 'none') as 'none' | 'claude-desktop';
@@ -185,6 +188,7 @@ try {
     targetUrl: config.targetApiUrl,
     provider: config.provider,
     project: config.project,
+    ...(projectBinding ? { projectBinding } : {}),
     clientType: config.clientType,
     telemetryMode,
     syncApiUrl: config.syncApiUrl,
