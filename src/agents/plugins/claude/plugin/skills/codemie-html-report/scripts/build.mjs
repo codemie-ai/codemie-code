@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * build.js — finish a page in one call:
- *   1. inject-css.js       inlines the design system at the __CODEMIE_CSS__ placeholder, with the
+ * build.mjs — finish a page in one call:
+ *   1. inject-css.mjs       inlines the design system at the __CODEMIE_CSS__ placeholder, with the
  *                          fonts the page needs embedded
- *   2. inject-charts.js    embeds Chart.js and the CodeMieCharts helper, if the page draws charts
- *   3. inject-controls.js  adds the light/dark switch and the presenting controls
+ *   2. inject-charts.mjs    embeds Chart.js and the CodeMieCharts helper, if the page draws charts
+ *   3. inject-controls.mjs  adds the light/dark switch and the presenting controls
  *   4. slop-scan.mjs       checks the page's own words, speaker notes included, and styles: it fails
  *                          on any high finding, and on a medium look finding, because every look
  *                          rule it grades medium (gradients, glass, glow, eyebrows, accent rails,
@@ -16,7 +16,7 @@
  *      runs out of its box or off the slide, a body that overflows, and text too small to read
  *   7. a self-containment check: the one line that says whether the page opens offline
  *
- *   node build.js <path-to-html> [--out <built.html>] [--cdn] [--no-presenter] [--position bottom] [--no-layout]
+ *   node build.mjs <path-to-html> [--out <built.html>] [--cdn] [--no-presenter] [--position bottom] [--no-layout]
  *
  * --out builds into another file and leaves the page as written, small enough to edit and build
  * again; the slop scan then reads the page as written, so its line numbers point into it.
@@ -29,17 +29,19 @@
  * finding) or a deck problem from step 5 or 6, each named with its line or slide.
  */
 
-const { spawn, spawnSync } = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const [page, ...args] = process.argv.slice(2);
 const outAt = args.indexOf('--out');
 const out = outAt === -1 ? '' : args[outAt + 1] || '';
 if (!page || page.startsWith('--') || (outAt !== -1 && (!out || out.startsWith('--')))) {
-  console.error('Usage: node build.js <path-to-html> [--out <built.html>] [--cdn] [--no-presenter] [--position bottom] [--no-layout]');
+  console.error('Usage: node build.mjs <path-to-html> [--out <built.html>] [--cdn] [--no-presenter] [--position bottom] [--no-layout]');
   process.exit(1);
 }
 const flags = args.filter((_, i) => outAt === -1 || (i !== outAt && i !== outAt + 1));
@@ -399,9 +401,9 @@ function layoutCheck(file, offline) {
 
 (async () => {
   if (out && path.resolve(out) !== path.resolve(page)) fs.copyFileSync(page, out);
-  if (run('inject-css.js', [target, ...cdn]) !== 0) process.exit(1);
-  if (run('inject-charts.js', [target, ...cdn]) !== 0) process.exit(1);
-  if (run('inject-controls.js', [target, ...flags.filter((f) => !['--cdn', '--no-layout'].includes(f))]) !== 0) process.exit(1);
+  if (run('inject-css.mjs', [target, ...cdn]) !== 0) process.exit(1);
+  if (run('inject-charts.mjs', [target, ...cdn]) !== 0) process.exit(1);
+  if (run('inject-controls.mjs', [target, ...flags.filter((f) => !['--cdn', '--no-layout'].includes(f))]) !== 0) process.exit(1);
   // The design system and the controls are never scanned, so the page as written gives the same
   // findings, at the lines you edit.
   const scan = run('slop-scan.mjs', [page, '--fail-on', 'high', '--fail-on-look', 'medium']);

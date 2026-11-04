@@ -1,5 +1,5 @@
 /**
- * CodeMie chart theming for Chart.js, embedded by scripts/inject-charts.js.
+ * CodeMie chart theming for Chart.js, embedded by scripts/inject-charts.mjs.
  *
  * Chart.js resolves colours once and paints them onto a canvas, so a chart drawn in the light theme
  * keeps light-theme series, grid lines and labels after the switch. CodeMieCharts reads every colour
@@ -122,7 +122,7 @@ window.CodeMieCharts = (function () {
     var canvas = typeof target === 'string' ? document.getElementById(target) : target;
     if (!canvas) throw new Error('CodeMieCharts: no canvas "' + target + '"');
     if (typeof window.Chart === 'undefined') {
-      throw new Error('CodeMieCharts: Chart.js is missing; put <script>/* __CODEMIE_CHARTS__ */</script> before this script and run scripts/build.js');
+      throw new Error('CodeMieCharts: Chart.js is missing; put <script>/* __CODEMIE_CHARTS__ */</script> before this script and run scripts/build.mjs');
     }
     if (!canvas.hasAttribute('role')) canvas.setAttribute('role', 'img');
     var datasets = (config.data && config.data.datasets) || [];

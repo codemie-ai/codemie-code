@@ -1,7 +1,7 @@
 /* ============================================================
    DECK
    A 1600 × 900 stage that style-guide/js/deck.js scales to the window, one slide at a time.
-   scripts/inject-css.js inlines this file, with Geist and Geist Mono, only into pages with slides.
+   scripts/inject-css.mjs inlines this file, with Geist and Geist Mono, only into pages with slides.
    Sizes are stage pixels; inside .slide-body they are em, so deck.js can grow a sparse body and
    shrink a crowded one. references/deck.md is the catalogue of what follows: keep the two in step.
    ============================================================ */

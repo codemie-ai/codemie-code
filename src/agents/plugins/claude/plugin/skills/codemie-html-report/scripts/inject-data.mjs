@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * inject-data.js — put the codemie-analytics skill's JSON files into a page's data placeholders.
+ * inject-data.mjs — put the codemie-analytics skill's JSON files into a page's data placeholders.
  *
- *   node inject-data.js <page.html> <json-file-or-dir> [...]
+ *   node inject-data.mjs <page.html> <json-file-or-dir> [...]
  *
  * Each NAME.json replaces every /*__DATA:NAME__*\/ in the page. The file must parse as JSON. It
  * goes in as written, with "<", U+2028 and U+2029 escaped: they can only stand inside a JSON
  * string, and unescaped, a value holding "</script>" would end the <script> it is written into
  * and run as markup. A file with no placeholder is skipped and a placeholder with no file is
- * named; both are warnings. Run it on the page before scripts/build.js, so the build checks the
+ * named; both are warnings. Run it on the page before scripts/build.mjs, so the build checks the
  * finished page.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
 
 const [page, ...sources] = process.argv.slice(2);
 if (!page || !sources.length) {
-  console.error('Usage: node inject-data.js <page.html> <json-file-or-dir> [...]');
+  console.error('Usage: node inject-data.mjs <page.html> <json-file-or-dir> [...]');
   process.exit(1);
 }
 const target = path.resolve(page);

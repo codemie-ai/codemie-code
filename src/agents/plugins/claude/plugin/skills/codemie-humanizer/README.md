@@ -101,4 +101,4 @@ codemie humanizer" or give its path when you want this one.
 
 For maintainers: `codemie-html-report` carries byte-identical copies of `scripts/slop-scan.mjs`
 and `references/glossary.md`, so it works without this skill installed. Edit them here, copy them
-over, and run `npm test`: `evals/humanizer-shared-files.test.ts` fails when they drift.
+over, and run `npm test`: `src/agents/plugins/claude/__tests__/skills-shared-files.test.ts` fails when they drift.

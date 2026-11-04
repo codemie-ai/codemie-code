@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * inject-css.js — inline the CodeMie design system and its fonts into a page.
+ * inject-css.mjs — inline the CodeMie design system and its fonts into a page.
  *
- *   node inject-css.js <path-to-html> [--cdn]
+ *   node inject-css.mjs <path-to-html> [--cdn]
  *
  * Replaces the placeholder comment __CODEMIE_CSS__ (written as a CSS comment inside a <style>
  * element) with the eight style-guide files in order: tokens, base, typography, buttons, forms,
@@ -19,19 +19,22 @@
  * Idempotent: a page without the placeholder is left as it is.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FILES = ['tokens', 'base', 'typography', 'buttons', 'forms', 'components', 'layout', 'utilities'];
 const PLACEHOLDER = '/* __CODEMIE_CSS__ */';
-const START = '/* slop:ignore-start — CodeMie design system, inlined by scripts/inject-css.js */';
+const START = '/* slop:ignore-start — CodeMie design system, inlined by scripts/inject-css.mjs */';
 const GOOGLE_FONTS_IMPORT = /^@import url\(['"]?https:\/\/fonts\.googleapis\.com[^)]*\)\s*;[ \t]*\r?\n?/m;
 
 const args = process.argv.slice(2);
 const htmlArg = args.find((a) => !a.startsWith('--'));
 const cdn = args.includes('--cdn');
 if (!htmlArg) {
-  console.error('Usage: node inject-css.js <path-to-html> [--cdn]');
+  console.error('Usage: node inject-css.mjs <path-to-html> [--cdn]');
   process.exit(1);
 }
 const target = path.resolve(htmlArg);

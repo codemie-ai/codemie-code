@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * inject-charts.js — give a page that draws charts the Chart.js runtime and the CodeMieCharts helper.
+ * inject-charts.mjs — give a page that draws charts the Chart.js runtime and the CodeMieCharts helper.
  *
- *   node inject-charts.js <path-to-html> [--cdn]
+ *   node inject-charts.mjs <path-to-html> [--cdn]
  *
  * Puts them where the page asks: at the placeholder <script>/* __CODEMIE_CHARTS__ *\/</script>; else
  * in place of a Chart.js <script src> from a CDN; else just before the first script that calls
@@ -13,8 +13,11 @@
  * links the same pinned version instead. Idempotent: a page that already has them is left as it is.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Keep both in step with scripts/vendor-assets.mjs. The hash is the file jsDelivr serves, which is
 // also style-guide/js/chart.umd.min.js below its banner line; a browser refuses any other bytes.
@@ -28,7 +31,7 @@ const args = process.argv.slice(2);
 const htmlArg = args.find((a) => !a.startsWith('--'));
 const cdn = args.includes('--cdn');
 if (!htmlArg) {
-  console.error('Usage: node inject-charts.js <path-to-html> [--cdn]');
+  console.error('Usage: node inject-charts.mjs <path-to-html> [--cdn]');
   process.exit(1);
 }
 const target = path.resolve(htmlArg);

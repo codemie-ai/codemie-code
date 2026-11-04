@@ -8,7 +8,7 @@
  * Writes:
  *   style-guide/fonts/fonts.css        Inter and JetBrains Mono for pages, Geist and Geist Mono for
  *                                      decks, in every subset Google Fonts serves, as base64
- *                                      @font-face; scripts/inject-css.js embeds only the faces a
+ *                                      @font-face; scripts/inject-css.mjs embeds only the faces a
  *                                      page's kind, characters, italics and code actually use
  *   style-guide/fonts/LICENSE-OFL.txt  all four families are SIL OFL 1.1, which permits embedding
  *   style-guide/js/chart.umd.min.js    Chart.js, MIT, at the version pinned below
@@ -22,7 +22,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 // Inter and JetBrains Mono for pages; Geist and Geist Mono for decks.
 const FAMILIES = 'family=Inter:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400..500&family=Geist:wght@400..800&family=Geist+Mono:wght@400..600&display=swap';
-// Keep both in step with scripts/inject-charts.js. A new version needs its new hash: jsDelivr shows
+// Keep both in step with scripts/inject-charts.mjs. A new version needs its new hash: jsDelivr shows
 // it on the file's page, and the download below is refused unless it matches.
 const CHARTJS_VERSION = '4.5.1';
 const CHARTJS_SRI = 'sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ';
@@ -58,7 +58,7 @@ for (const [, subset, block] of blocks) {
 
 mkdirSync(out('fonts'), { recursive: true });
 writeFileSync(out('fonts/fonts.css'), `/* Inter, JetBrains Mono, Geist and Geist Mono from Google Fonts, embedded by scripts/vendor-assets.mjs on ${today}.
-   SIL Open Font License 1.1, see LICENSE-OFL.txt. Keep each face's subset comment: inject-css.js reads it. */
+   SIL Open Font License 1.1, see LICENSE-OFL.txt. Keep each face's subset comment: inject-css.mjs reads it. */
 ${faces.join('\n')}\n`);
 
 const licences = [];

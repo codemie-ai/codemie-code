@@ -1,6 +1,6 @@
 /*!
  * CodeMie page controls — theme switch + presenter toolbar.
- * Injected by scripts/inject-controls.js. No dependencies.
+ * Injected by scripts/inject-controls.mjs. No dependencies.
  *
  * Adapts to the page it lands on:
  *   deck  — the page has .slide / [data-slide] elements: Nav switches slides

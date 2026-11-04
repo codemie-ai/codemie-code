@@ -9,10 +9,10 @@ holds; this adds the contract its scripts depend on.
 - Never mix a placeholder and inline values in one declaration. Lookup tables you write yourself
   (tier colours, dimension labels) stay ordinary JS.
 - The style placeholder is still `/* __CODEMIE_CSS__ */`, whatever the calling skill calls it.
-- Order: write the page source; fill it with `scripts/inject-data.js` in this skill's folder (the
-  folder SKILL.md gives), as `node <this skill's folder>/scripts/inject-data.js page.src.html
+- Order: write the page source; fill it with `scripts/inject-data.mjs` in this skill's folder (the
+  folder SKILL.md gives), as `node <this skill's folder>/scripts/inject-data.mjs page.src.html
   <data-dir>`, where `<data-dir>` is the
-  folder of JSON files codemie-analytics saved; then build it with `scripts/build.js`, so the
+  folder of JSON files codemie-analytics saved; then build it with `scripts/build.mjs`, so the
   build and its checks see the finished page. A value that holds `</script>` cannot break out of
   its script: the injection escapes it.
 - Text that a script writes at run time is invisible to the slop scan. Keep the title, headings,

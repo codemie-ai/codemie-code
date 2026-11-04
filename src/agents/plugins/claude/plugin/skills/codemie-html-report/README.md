@@ -25,7 +25,7 @@ Examples:
 
 - The content or data to present.
 - Any preferred title, sections, or output path.
-- Node 18 or later, for the build script (`scripts/build.js`). Chrome, Chromium or Edge, if
+- Node 18 or later, for the build script (`scripts/build.mjs`). Chrome, Chromium or Edge, if
   present, lets the build measure a deck's layout.
 
 Without Node, a page can be assembled by hand, with no slop scan or layout check: paste the
@@ -59,7 +59,7 @@ self-contained.
   number. As a slide opens its parts rise in turn and the connectors flow; `?static`, reduced
   motion and print show it still. The layouts are ready-made, so no deck writes its own CSS, and a token-coloured SVG kit
   covers any other drawing. `style-guide/deck-gallery.src.html` shows
-  every visual once; build it with `node scripts/build.js style-guide/deck-gallery.src.html --out
+  every visual once; build it with `node scripts/build.mjs style-guide/deck-gallery.src.html --out
   deck-gallery.html` to browse them.
 - **Decks checked before you see them.** The build lists each slide's visual and fails a deck with
   a stock slide (Agenda, Thank you, Summary), a title that asks a question, titles that end two
@@ -88,7 +88,7 @@ self-contained.
   internal names such as Flywheel stay off client pages, and no client name, codename or price
   appears unless you supply it for the page.
 
-The controls are added by `scripts/inject-controls.js` as a build step, so no page needs bespoke
+The controls are added by `scripts/inject-controls.mjs` as a build step, so no page needs bespoke
 theme code. The build runs the `codemie-humanizer` skill's slop scan on the page as written. The build
 fails on any high finding and on any medium look finding (gradients, glass, glow, eyebrows,
 accent rails, uppercase labels, decorative icons or motion) in the page's own markup and styles,
@@ -109,7 +109,7 @@ and keep its own design, use `codemie-humanizer`; this skill rebuilds the conten
 | `style-guide/deck-gallery.src.html` | Every deck visual once, on the evidence it is for; the tests build it |
 | `evals/contact-sheet.mjs`, `evals/visual-review.md` | Light and dark contact sheets of a built deck, and the checklist to review them by |
 | `scripts/slop-scan.mjs` | The scanner the build runs, with a self-test (`--self-test`) |
-| `scripts/inject-data.js` | Fills a page's `/*__DATA:name__*/` placeholders from the codemie-analytics skill's JSON files, escaped so no value can break out of its script |
+| `scripts/inject-data.mjs` | Fills a page's `/*__DATA:name__*/` placeholders from the codemie-analytics skill's JSON files, escaped so no value can break out of its script |
 | `style-guide/js/charts.js` | `CodeMieCharts`, the chart theming helper the build embeds |
 
 For maintainers:
@@ -119,12 +119,16 @@ For maintainers:
   sheets against `evals/visual-review.md`. Eval 17 in `evals/evals.json` checks that a deck picks
   its visuals by the shape of the evidence.
 - `scripts/slop-scan.mjs` and `references/glossary.md` are byte-identical copies of the files in
-  `skills/common/humanizer/`, which is their source of truth. Edit them there and copy them over;
-  `evals/humanizer-shared-files.test.ts` fails when they drift.
+  the `codemie-humanizer` skill, which is their source of truth. Edit them there and copy them over;
+  `src/agents/plugins/claude/__tests__/skills-shared-files.test.ts` fails when they drift.
+- This copy differs from its codemie-public-skills source on purpose: the build and inject scripts
+  are ES modules (`.mjs`, `import`, the script folder from `import.meta.url`) rather than
+  CommonJS `.js`, so they run under this repository's `"type": "module"` with no nested
+  `package.json`. Keep that when you copy a newer source over.
 - `style-guide/fonts/fonts.css` (Inter and JetBrains Mono for pages, Geist and Geist Mono for decks,
   every subset, base64) and
   `style-guide/js/chart.umd.min.js` (Chart.js 4.5.1) are vendored. Refresh them with
   `node scripts/vendor-assets.mjs`, and keep its Chart.js version and hash in step with
-  `scripts/inject-charts.js`: the script refuses a download whose hash differs, and `--cdn` pages
+  `scripts/inject-charts.mjs`: the script refuses a download whose hash differs, and `--cdn` pages
   load Chart.js with that hash as their `integrity`. All four fonts are SIL OFL 1.1 (`style-guide/fonts/LICENSE-OFL.txt`);
   Chart.js is MIT, its licence in the file's banner. Both permit embedding.

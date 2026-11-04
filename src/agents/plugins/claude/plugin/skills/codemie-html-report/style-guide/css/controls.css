@@ -1,6 +1,6 @@
 /* ==========================================================================
    CodeMie page controls — theme switch + presenter toolbar
-   Injected by scripts/inject-controls.js. Every colour is a design-system
+   Injected by scripts/inject-controls.mjs. Every colour is a design-system
    variable, so the bar looks native in both themes.
    ========================================================================== */
 

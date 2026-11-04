@@ -180,7 +180,8 @@ path — save it, you will reference it in every subsequent step.
 **Do not `cat`, `Read`, or print the saved JSON files into the conversation.**
 Raw API responses can be hundreds of KB. Use Step 2.5 to inspect structure instead.
 
-Temp files are not cleaned up automatically.
+Temp files are not cleaned up automatically; Step 3b asks the user whether to delete them once
+the report is built.
 
 ### Common filter flags
 
@@ -330,6 +331,28 @@ data placeholders, the style placeholder and the order of the build scripts.
 
 The layout references below give structure and data only. CSS, fonts and Chart.js come from the
 codemie-html-report build, which overrides any instruction in them to inline CSS or load a CDN.
+
+### Step 3b — Temp file cleanup
+
+After codemie-html-report has built the report, **always ask the user**:
+
+> The report is ready at `<path>`. The `temp/` directory (`$OUT`) contains the raw
+> API response files used to build it (~N files). Would you like to delete it?
+
+These files can hold per-user spending and leaderboard data. If the user says **yes**,
+delete the temp directory:
+
+```bash
+rm -rf "$OUT"
+# e.g. rm -rf "reports/2026-05-07-executive-spending/temp"
+```
+
+Confirm deletion:
+```
+✓ Temp files deleted → reports/2026-05-07-executive-spending/temp
+```
+
+If the user says **no**, leave the files in place and tell them the path.
 
 ---
 

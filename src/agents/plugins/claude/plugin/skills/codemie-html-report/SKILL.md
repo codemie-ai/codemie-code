@@ -166,7 +166,7 @@ is inline SVG with no library.
 Write the page to `<name>.src.html` and build it into `<name>.html`:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/build.js page.src.html --out page.html [--cdn] [--no-presenter] [--position bottom] [--no-layout]
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/build.mjs page.src.html --out page.html [--cdn] [--no-presenter] [--position bottom] [--no-layout]
 ```
 
 One call inlines the design system at the placeholder with the fonts the page uses embedded,

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * inject-controls.js — add the CodeMie theme switch and presenter controls to a
+ * inject-controls.mjs — add the CodeMie theme switch and presenter controls to a
  * rendered HTML page.
  *
- *   node inject-controls.js <path-to-html> [--no-presenter] [--position bottom]
+ *   node inject-controls.mjs <path-to-html> [--no-presenter] [--position bottom]
  *
  * Four idempotent edits:
  *   1. forces <html class="light"> so light is the default theme
@@ -17,14 +17,17 @@
  * Laser, Timer, Fullscreen and the theme switch are always present.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const argv = process.argv.slice(2);
 const htmlArg = argv.find((a) => !a.startsWith('--'));
 
 if (!htmlArg) {
-  console.error('Usage: node inject-controls.js <path-to-html> [--no-presenter] [--position bottom]');
+  console.error('Usage: node inject-controls.mjs <path-to-html> [--no-presenter] [--position bottom]');
   process.exit(1);
 }
 

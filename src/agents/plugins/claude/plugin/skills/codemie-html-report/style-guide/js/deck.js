@@ -1,6 +1,6 @@
 /*!
  * CodeMie deck runtime: puts the slides on a 1600 × 900 stage scaled to the window.
- * Injected after controls.js by scripts/inject-controls.js, only on pages with slides; the controls
+ * Injected after controls.js by scripts/inject-controls.mjs, only on pages with slides; the controls
  * switch slides, deck.js frames them.
  *
  *   <body data-deck="Deck name">                    left side of every footer, and the close's marker (else <title>)
@@ -70,7 +70,7 @@
 
   /* ---------------- icons ---------------- */
   // <i class="ico" data-i="server"></i> becomes that line drawing. Each names a real thing; there
-  // is deliberately no sparkle, rocket or bulb. scripts/build.js reads these names to check a deck.
+  // is deliberately no sparkle, rocket or bulb. scripts/build.mjs reads these names to check a deck.
   var ICONS = {
     alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.5v.01"/>',
     bot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4.5V8M3 13v3M21 13v3M9.5 13v1M14.5 13v1"/>',
