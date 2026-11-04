@@ -31,11 +31,25 @@ Additional outcomes required by the spec (Security section):
   an `own` profile billed its own project with `CODEMIE_PROJECT=wrong-inherited` exported.
 - **`CODEMIE_PROJECT_BINDING` is output-only**: written by the launcher (inherited value cleared first),
   read by banner/evidence; never read by `load()`.
-- **No credential sent to a foreign host**: `resolveProjectListAuth()` — ai-run-sso uses only the cookie
-  stored for the profile's own `baseUrl` (no shared-URL fallback); bearer-auth sends the token only to
-  `ensureApiBase(baseUrl)`; subscription profiles use the analytics login for the resolved CodeMie URL and
-  send it only to the host it was issued for. Tests in `codemie-auth-helpers.test.ts` (AC11 case: JWT on
-  host A with shared URL on host B makes no request to B).
+- **No credential sent to a foreign host**:
+  - *Which credentials, to which API:* `resolveProjectListAuth()` decides this.
+    - ai-run-sso uses only the cookie stored for the profile's own `baseUrl`, with no fallback to the
+      shared URL.
+    - bearer-auth sends the token only to `ensureApiBase(baseUrl)`.
+    - Subscription profiles look up the analytics login stored under the profile's resolved CodeMie
+      URL, and send it to the API it was issued with: its stored `apiUrl`, else that URL. The lookup
+      by URL is the only control here. A compare-with-itself origin check that could never reject
+      was removed (PR #758 review, finding 4).
+    - Tests: `codemie-auth-helpers.test.ts`. The AC11 case, a JWT on host A with the shared URL on
+      host B, makes no request to B.
+  - *Redirects:* `HTTPClient` drops `Cookie`, `Authorization` and `Proxy-Authorization`, and ignores
+    `Set-Cookie`, on any redirect hop to a different origin (scheme, host or port). This covers every
+    `getRaw` caller: the launch project list, the JWT setup lookup and the integrations fetch
+    (PR #758 review, finding 1).
+    - Tests: `http-client.redirect.test.ts`. A real server returns 302 to a second server, which
+      receives no credentials.
+    - Change in behaviour: a deployment that redirects authenticated API calls to another origin now
+      gets 401 instead of forwarding the credentials.
 - **JWT token at setup**: taken from the chosen env var or pasted once (hidden `password` prompt), sent
   only to the URL typed in the same setup run, never stored or logged (`selectJwtProfileProject()`).
 

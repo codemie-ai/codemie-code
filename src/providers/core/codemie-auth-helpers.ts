@@ -432,9 +432,9 @@ export async function resolveProjectListAuth(config: {
   const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
   const credentials = await new CodeMieSSO().getStoredCredentials(config.codeMieUrl);
   if (!credentials?.cookies) return undefined;
-  const apiUrl = credentials.apiUrl ? ensureApiBase(credentials.apiUrl) : ensureApiBase(config.codeMieUrl);
-  // Cookies go only to the host they were issued for (their apiUrl, else the URL they are stored under).
-  const issuedFor = originOf(credentials.apiUrl || config.codeMieUrl);
-  if (originOf(apiUrl) !== issuedFor) return undefined;
+  // The credentials are looked up by this profile's own resolved CodeMie URL, and are sent to the
+  // API they were issued with (their apiUrl, else that URL). HTTPClient drops them on a
+  // cross-origin redirect.
+  const apiUrl = ensureApiBase(credentials.apiUrl || config.codeMieUrl);
   return { apiUrl, cookies: credentials.cookies };
 }
