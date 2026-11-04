@@ -20,7 +20,7 @@ import { realpath as fsRealpath } from 'fs/promises';
 import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { CodexSessionAdapter } from './codex.session.js';
-import { recordRolloutCorrelation } from './codex.correlation.js';
+import { recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
 
 export interface StartCodexIncrementalSyncOptions {
@@ -94,7 +94,7 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
         // The first matching tick names the rollout on the record, so a run killed later can
         // still be finalized over its own rollout
         if (!linkedSessions.has(options.sessionId)
-          && await recordRolloutCorrelation(options.sessionId, descriptor.filePath)) {
+          && await recordTranscriptCorrelation(options.sessionId, descriptor.filePath)) {
           linkedSessions.add(options.sessionId);
         }
 

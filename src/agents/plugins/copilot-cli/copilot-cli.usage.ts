@@ -50,6 +50,8 @@ const NO_USAGE_REASON =
 const RESUMED_NO_RECORD_REASON =
   'No usage record in this run\'s window of a resumed Copilot session — its share of the session rollup is unknown';
 
+const RESUMED_NO_TOKENS_REASON = 'No tokens in this run of a resumed Copilot session';
+
 const USAGE_BUCKETS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const;
 
 const eventTime = (event: CopilotEvent): number => Date.parse(event.timestamp ?? '');
@@ -93,15 +95,18 @@ export interface ShutdownShare {
   filesModified: string[];
 }
 
+/** A shutdown counter's growth; Copilot's counters are cumulative across resumed processes, so the clamp is a defence, not a path. */
+const minus = (value: number | undefined, prior: number | undefined) =>
+  value === undefined ? undefined : Math.max(0, value - (prior ?? 0));
+
 /**
- * A cumulative counter's share of the run: its last value before the run's end minus its last value
- * before the run's start. With no shutdown before the start the base is 0 when the copilot session
- * started inside the run, else the counters are not carried (a resumed session after a kill). A start
- * or resume after the base with no shutdown of its own before the run is a killed run whose work the
- * counters include: the run's share is unknown. So is a run with no shutdown inside it (a kill): its
- * last value is the base.
+ * The two shutdowns a run's share of a cumulative counter lies between: the last before the run's end and
+ * the last before its start. With no shutdown before the start the base is 0 when the copilot session
+ * started inside the run, else the share is unknown (a resumed session after a kill). A start or resume
+ * after the base with no shutdown of its own before the run is a killed run whose work the counters
+ * include: the share is unknown. So is a run with no shutdown inside it (a kill): its last value is the base.
  */
-export function runShutdownShare(events: CopilotEvent[], run: RunBounds): ShutdownShare | undefined {
+function runShutdowns(events: CopilotEvent[], run: RunBounds): { base?: CopilotShutdownData; last: CopilotShutdownData } | undefined {
   let base: CopilotShutdownData | undefined;
   let last: CopilotShutdownData | undefined;
   let unclosedBefore = false;
@@ -116,9 +121,14 @@ export function runShutdownShare(events: CopilotEvent[], run: RunBounds): Shutdo
     if (beforeRunEnd(time, run)) last = event.data as CopilotShutdownData;
   }
   if (!last || last === base || unclosedBefore || (!base && !startedInRun(events, run))) return undefined;
-  // Copilot's counters are cumulative across resumed processes: the clamp is a defence, not a path
-  const minus = (value: number | undefined, prior: number | undefined) =>
-    value === undefined ? undefined : Math.max(0, value - (prior ?? 0));
+  return { base, last };
+}
+
+/** A cumulative counter's share of the run: its last value before the run's end minus its last before the run's start. */
+export function runShutdownShare(events: CopilotEvent[], run: RunBounds): ShutdownShare | undefined {
+  const shutdowns = runShutdowns(events, run);
+  if (!shutdowns) return undefined;
+  const { base, last } = shutdowns;
   const priorFiles = new Set(base?.codeChanges?.filesModified ?? []);
   return {
     premiumRequests: minus(last.totalPremiumRequests, base?.totalPremiumRequests),
@@ -179,6 +189,41 @@ function fromShutdown(data: CopilotShutdownData): CopilotUsageMessage[] {
     messages.push({ model, usage: entry.usage, requests: entry.requests?.count });
   }
   return messages;
+}
+
+/** Whether any counter of the base stands above `last`'s; a counter or model `last` no longer carries reads as 0. */
+function isBelowBase(base: CopilotUsageMessage[], last: CopilotUsageMessage[]): boolean {
+  const current = new Map(last.map((message) => [message.model, message]));
+  return base.some(({ model, usage, requests }) => {
+    const now = current.get(model);
+    return (requests ?? 0) > (now?.requests ?? 0)
+      || USAGE_BUCKETS.some((bucket) => (usage[bucket] ?? 0) > (now?.usage[bucket] ?? 0));
+  });
+}
+
+/**
+ * Per-model usage between two shutdowns; a model that did not move yields nothing. Undefined when either
+ * shutdown carries no `modelMetrics`, or an entry with no `usage`, which `fromShutdown` would drop: a figure with
+ * no base would hand the run its earlier runs' tokens, and a model dropped from `last` would leave its share out.
+ * Undefined too when `last` is below the base: the counters are cumulative, so going down means this rollup is
+ * not comparable with the base (a build that resets them) and the run's share is unknown, not zero.
+ */
+function fromShutdownDelta({ base, last }: { base?: CopilotShutdownData; last: CopilotShutdownData }): CopilotUsageMessage[] | undefined {
+  if (!base?.modelMetrics || !last.modelMetrics) return undefined;
+  if ([base.modelMetrics, last.modelMetrics].some((metrics) => Object.values(metrics).some((entry) => !entry?.usage))) return undefined;
+  const baseMessages = fromShutdown(base);
+  const lastMessages = fromShutdown(last);
+  if (isBelowBase(baseMessages, lastMessages)) return undefined;
+  const prior = new Map(baseMessages.map((message) => [message.model, message]));
+  return lastMessages.flatMap(({ model, usage, requests }) => {
+    const before = prior.get(model);
+    const delta: CopilotUsageBuckets = {};
+    for (const bucket of USAGE_BUCKETS) {
+      if (usage[bucket] !== undefined) delta[bucket] = minus(usage[bucket], before?.usage[bucket]);
+    }
+    const requestDelta = minus(requests, before?.requests);
+    return USAGE_BUCKETS.some((bucket) => delta[bucket]) || requestDelta ? [{ model, usage: delta, requests: requestDelta }] : [];
+  });
 }
 
 function fromPerTurn(events: CopilotEvent[]): CopilotUsageMessage[] {
@@ -248,9 +293,11 @@ export function extractCopilotUsage(events: CopilotEvent[]): CopilotUsageExtract
 }
 
 /**
- * The run's own usage: tokens and requests from the `session.usage_record` events inside its window;
- * a window with none carries the session rollup only for a fresh session, nothing for a resumed one.
- * Premium requests (no per-event source) by the shutdown subtraction.
+ * The run's own usage: tokens and requests from the `session.usage_record` events inside its window.
+ * A window with none (builds up to 1.0.83 write no such event) carries the session rollup for a fresh
+ * session; for a resumed one its delta over the run's shutdowns. A delta with no growth carries its own
+ * reason, so the report reads it as not measurable rather than as an unreadable log; a share that is unknown
+ * carries another. Premium requests (no per-event source) by the shutdown subtraction.
  */
 export function extractCopilotRunUsage(events: CopilotEvent[], run: RunBounds): CopilotUsageExtract {
   const premiumRequests = runShutdownShare(events, run)?.premiumRequests;
@@ -260,6 +307,16 @@ export function extractCopilotRunUsage(events: CopilotEvent[], run: RunBounds): 
   }
   if (startedInRun(events, run)) {
     return extractCopilotUsage(events.filter((event) => beforeRunEnd(eventTime(event), run)));
+  }
+  const shutdowns = runShutdowns(events, run);
+  const delta = shutdowns && fromShutdownDelta(shutdowns);
+  if (delta) {
+    return {
+      messages: delta,
+      premiumRequests,
+      partial: false,
+      ...(delta.length === 0 && { unavailableReason: RESUMED_NO_TOKENS_REASON }),
+    };
   }
   return { messages: [], premiumRequests, partial: false, unavailableReason: RESUMED_NO_RECORD_REASON };
 }

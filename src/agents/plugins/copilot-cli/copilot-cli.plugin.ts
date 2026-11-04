@@ -11,12 +11,11 @@ import {
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
-import { recordRolloutCorrelation } from '../codex/codex.correlation.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
-import { recordNoTranscript } from '../../core/session/no-transcript-correlation.js';
+import { recordNoTranscript, recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
 import {
   assertExplicitCopilotModelAllowed,
@@ -298,7 +297,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         const { runSessionId, native } = await locateRunTranscript(sessionId);
         // Must land before SessionEnd renames the record to completed_{id}.json.
         if (native) {
-          await recordRolloutCorrelation(sessionId, native);
+          await recordTranscriptCorrelation(sessionId, native);
         } else {
           logger.warn('[copilot-cli] No native Copilot transcript for this run; not correlated');
           await recordNoTranscript(sessionId);

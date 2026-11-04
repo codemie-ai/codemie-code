@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
 import { CopilotCliPluginMetadata } from '../copilot-cli.plugin.js';
 import { CopilotCliMetricsProcessor } from '../session/processors/copilot-cli.metrics-processor.js';
+import { enrichCosts } from '../../../../cli/commands/analytics/cost/cost-enricher.js';
 import type { AgentConfig } from '../../../core/types.js';
 
 const processEventMock = vi.fn();
@@ -452,7 +453,7 @@ describe('copilot-cli runs over one resumed native session', () => {
     expect(parsed.usageMeta?.premiumRequests).toBe(4);
   });
 
-  it('a resumed run window with no usage record carries no tokens', async () => {
+  it('a resumed run killed before its shutdown, with no usage record, carries no tokens', async () => {
     const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10),
       shutdown(500, { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } }),
       resume(1000), prompt(1100, 'q'), reply(1210, 5)]);
@@ -461,6 +462,32 @@ describe('copilot-cli runs over one resumed native session', () => {
 
     expect(usageRows(parsed.messages)).toEqual([]);
     expect(parsed.usageMeta?.usageUnavailableReason).toBeTruthy();
+  });
+
+  it('a resumed run window with no usage record and its own shutdown carries the delta of the cumulative rollup', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10),
+      shutdown(500, { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } }),
+      resume(1000), prompt(1100, 'q'), reply(1210, 5),
+      shutdown(1500, { totalPremiumRequests: 2, modelMetrics: { [MODEL]: { requests: { count: 3 }, usage: usage(400, 25) } } })]);
+
+    const parsed = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(usageRows(parsed.messages)).toEqual([{ model: MODEL, usage: usage(300, 15), requests: 2 }]);
+    expect(parsed.usageMeta).toMatchObject({ premiumRequests: 1, usagePartial: false });
+    expect(parsed.usageMeta?.usageUnavailableReason).toBeUndefined();
+  });
+
+  it('a resumed run with no growth over its shutdowns reaches the session cost with its own reason', async () => {
+    const rollup = { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } };
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10), shutdown(500, rollup), resume(1000), shutdown(1500, rollup)]);
+
+    const { index } = await enrichCosts([{ sessionId: runC, startEvent: { agentName: 'copilot-cli', data: { startTime: T0 + 900 } }, deltas: [] }] as never[], {
+      resolveAgentName: () => 'copilot-cli',
+      loadAgentSessionFile: async () => file,
+      parseNative: (_agent, filePath, sessionId, run) => adapter().parseSessionFile(filePath, sessionId, undefined, run),
+    });
+
+    expect(index.get(runC)?.usageUnavailableReason).toBe('No tokens in this run of a resumed Copilot session');
   });
 
   it('two apply_patch calls to one path are two file operations, each with its own lines', async () => {

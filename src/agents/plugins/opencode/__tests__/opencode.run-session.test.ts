@@ -180,6 +180,28 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
     expect(conversationIds(c)).toEqual(['ses_continued']);
   });
 
+  it.each([
+    ['--continue', { continuesPriorSession: true }],
+    ['--session', { resumeSessionId: 'ses_x' }],
+  ])('a continued run (`%s`) takes its own deltas and exchange, none of the earlier run\'s', async (_flag, launch) => {
+    const c = writeRecord({ startTime: T0 + 50 * SECOND, ...launch });
+    await writeSessions([
+      { id: 'ses_x', created: T0, updated: T0 + 80 * SECOND, prompts: [T0 + SECOND, T0 + 60 * SECOND], tool: 'read' },
+    ]);
+
+    await adapter().processSession(dbPath, c.sessionId, context(c));
+
+    const recordIds = deltas(c).map((d) => d.recordId);
+    expect(recordIds).toEqual(['msg_ses_x_u1:prompt', 'msg_ses_x_a1:call_ses_x_1']);
+    expect(queued(c).map(({ conversationId, historyIndices }) => ({ conversationId, historyIndices }))).toEqual([
+      { conversationId: 'ses_x', historyIndices: [1, 1] },
+    ]);
+    const conversation = readFileSync(join(root, 'codemie', 'sessions', `${c.sessionId}_conversation.jsonl`), 'utf-8');
+    expect(conversation).toContain('prompt ses_x 1');
+    expect(conversation).not.toContain('prompt ses_x 0');
+    expect(conversation).not.toContain('reply ses_x 0');
+  });
+
   it('a continued run picks, of two older sessions updated inside its window, the one with a message there', async () => {
     const c = writeRecord({ startTime: T0 + 50 * SECOND, continuesPriorSession: true });
     await writeSessions([

@@ -5,7 +5,7 @@ import { existsSync } from 'fs';
 import type { SessionEndEvent } from '@/cli/commands/hook.js';
 import type { Session } from './types.js';
 import { logger } from '@/utils/logger.js';
-import { recordNoTranscript } from './no-transcript-correlation.js';
+import { recordNoTranscript, recordTranscriptCorrelation } from './no-transcript-correlation.js';
 
 async function locateTranscript(record: Session): Promise<string[]> {
   try {
@@ -21,19 +21,25 @@ async function locateTranscript(record: Session): Promise<string[]> {
 /**
  * The SessionEnd a record never got: `interrupted`, ending at its last recorded activity,
  * `session_id` = the agent's own id, over the record's transcript (located when it names none).
- * `flush: false`, or a transcript that is gone → no transcript: the end comes from the record alone.
- * A copilot-cli record is uncorrelated only when its named transcript is not on disk and, with the
- * flush, none is located, as its own SessionEnd leaves it: the stored correlation and the end name
- * the CodeMie record. Without the flush a record whose named transcript exists keeps its correlation.
+ * `flush` decides only what the event carries: without it the event names no transcript and nothing of the
+ * transcript is sent. A copilot-cli record is located with or without the flush, since a resumed run names its transcript
+ * only at its own SessionEnd; a transcript located without the flush is stored on the record, as the
+ * SessionEnd of an event naming it would. Other agents without the flush locate nothing. A copilot-cli
+ * record is uncorrelated when its named transcript is gone, or it names none and none is located, as its
+ * own SessionEnd leaves it: the stored correlation and the end name the CodeMie record.
  * The caller holds the record's reconcile lock.
  */
 export async function syntheticSessionEnd(record: Session, options: { flush: boolean }): Promise<SessionEndEvent> {
   const named = record.correlation?.agentSessionFile;
-  const located = options.flush ? (named ? [named] : await locateTranscript(record)) : [];
-  const transcripts = located.filter((path) => existsSync(path));
-  const namedExists = named !== undefined && existsSync(named);
-  const uncorrelated = transcripts.length === 0 && !namedExists && record.agentName === 'copilot-cli';
+  const isCopilot = record.agentName === 'copilot-cli';
+  const found = named ? [named] : options.flush || isCopilot ? await locateTranscript(record) : [];
+  const onDisk = found.filter((path) => existsSync(path));
+  const uncorrelated = onDisk.length === 0 && isCopilot;
   if (uncorrelated) await recordNoTranscript(record.sessionId);
+  if (!options.flush && !named && onDisk.length > 0 && !(await recordTranscriptCorrelation(record.sessionId, onDisk[0]))) {
+    logger.warn(`[reconcile] ${record.sessionId}: located transcript not stored on the record`);
+  }
+  const transcripts = options.flush ? onDisk : [];
   const agentSessionId = uncorrelated ? record.sessionId : record.correlation?.agentSessionId;
   return {
     hook_event_name: 'SessionEnd',

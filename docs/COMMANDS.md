@@ -702,7 +702,8 @@ files, so the same API response appears in multiple logs. Cost de-duplicates by
 `(message.id, requestId)` across all sessions (the earliest session owns a shared response),
 counting each response once — without this the figure inflates ~2–3×. GitHub Copilot CLI keeps
 one native session for every run that resumed it: each run is priced from the usage records of its
-own run window (its start up to the next run's start), never added to the session it resumed. On a subscription you
+own run window (its start up to the next run's start), or, for a resumed run on a build that writes none, from the
+growth of the session's cumulative per-model counters over that run's shutdown; never added to the session it resumed. On a subscription you
 don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
 API value of your usage, not dollars billed.
 

@@ -437,6 +437,78 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: exhausted.sessionId, transcript_path: '' });
   });
 
+  it('an exhausted record of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
+    const exhausted = record({
+      agentName: 'pi', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-pi' },
+    });
+    save(exhausted);
+    const transcript = join(home, 'pi-session.jsonl');
+    writeFileSync(transcript, '{}\n');
+    writeFileSync(join(sessionsDir, `${exhausted.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: transcript })}\n`);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(exhausted.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: 'native-pi' });
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-pi', transcript_path: '' });
+  });
+
+  describe('an exhausted resumed copilot-cli record naming no transcript', () => {
+    const resumed = 'efefefef-efef-4fef-8fef-efefefefefef';
+    const exhaustedRecord = () => record({
+      agentName: 'copilot-cli', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: resumed },
+    });
+    const finalize = async () => {
+      const previousCopilotHome = process.env.COPILOT_HOME;
+      process.env.COPILOT_HOME = join(home, 'copilot');
+      const hook = { processEvent: vi.fn(processEvent) };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      try {
+        await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+        const sent = fetchSpy.mock.calls.map(([url, init]) => ({ url: String(url), body: String(init?.body ?? '') }));
+        return { event: hook.processEvent.mock.calls[0][0], sent };
+      } finally {
+        fetchSpy.mockRestore();
+        if (previousCopilotHome === undefined) delete process.env.COPILOT_HOME;
+        else process.env.COPILOT_HOME = previousCopilotHome;
+      }
+    };
+
+    it('stores the transcript it locates, ends under the resumed id, sends nothing of the transcript', async () => {
+      const killed = exhaustedRecord();
+      save(killed);
+      const transcript = join(home, 'copilot', 'session-state', resumed, 'events.jsonl');
+      mkdirSync(join(home, 'copilot', 'session-state', resumed), { recursive: true });
+      const at = new Date(killed.startTime + 1000).toISOString();
+      writeFileSync(transcript, `${JSON.stringify({ type: 'user.message', timestamp: at, data: { text: 'TRANSCRIPT_BODY' } })}\n${JSON.stringify({ type: 'assistant.message', timestamp: at, data: { model: 'gpt-5.5', outputTokens: 5 } })}\n`);
+
+      const { event, sent } = await finalize();
+
+      // The record may send its end metric; nothing of the transcript: no conversation, no metric delta
+      expect(sent.map(({ url, body }) => [url, JSON.parse(body).name])).toEqual([['http://127.0.0.1:4000/v1/metrics', 'codemie_cli_session_total']]);
+      expect(sent[0].body).not.toContain('TRANSCRIPT_BODY');
+      expect(load(killed.sessionId, 'completed_').correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: resumed, agentSessionFile: transcript });
+      expect(event).toMatchObject({ session_id: resumed, transcript_path: '' });
+      expect(event).not.toHaveProperty('transcript_paths');
+      expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
+    });
+
+    it('with no events.jsonl ends uncorrelated under its CodeMie id', async () => {
+      const killed = exhaustedRecord();
+      save(killed);
+
+      const { event } = await finalize();
+
+      const ended = load(killed.sessionId, 'completed_');
+      expect(ended.correlation).toMatchObject({ status: 'failed', agentSessionId: killed.sessionId });
+      expect(ended.correlation.agentSessionFile).toBeUndefined();
+      expect(event).toMatchObject({ session_id: killed.sessionId, transcript_path: '' });
+    });
+  });
+
   it('skips a record whose reconcile lock another live process holds', async () => {
     const locked = record();
     const path = save(locked);
