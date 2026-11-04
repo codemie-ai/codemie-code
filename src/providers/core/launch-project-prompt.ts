@@ -90,6 +90,10 @@ export async function promptProfileProject(
     exit(130);
   };
   process.on('SIGINT', onSigint);
+  // inquirer closes its readline and re-raises SIGINT asynchronously; signal handles are
+  // unref'd, so without a ref'd handle the event loop can drain first and the process
+  // exits with 13 (unsettled top-level await) instead of 130.
+  const keepAlive = setInterval(() => undefined, 1 << 30);
   try {
     console.log(chalk.yellow(`\nProfile "${profileLabel}" has no CodeMie project of its own yet.`));
     console.log(chalk.dim('Pick the project this profile bills to; it is saved to this profile only.\n'));
@@ -146,6 +150,7 @@ export async function promptProfileProject(
       }
     }
   } finally {
+    clearInterval(keepAlive);
     process.removeListener('SIGINT', onSigint);
   }
 }
