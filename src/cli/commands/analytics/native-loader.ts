@@ -81,6 +81,16 @@ function safeRealPath(p: string): string {
   }
 }
 
+/** The transcript paths a record names: `agentSessionFile` and the checkpoint's `transcriptPath` (equal once the daemon re-tracks a switched transcript; a record of an earlier build keeps the old path in the first; callers collect them in a set). */
+function recordTranscriptPaths(meta: {
+  correlation?: { agentSessionFile?: string };
+  runtimeCheckpoint?: { transcriptPath?: string };
+}): string[] {
+  return [meta.correlation?.agentSessionFile, meta.runtimeCheckpoint?.transcriptPath].filter(
+    (path): path is string => typeof path === 'string' && path !== ''
+  );
+}
+
 /** Build the set of native log paths already tracked by CodeMie (from session correlations). */
 function readTrackedLogPaths(): Set<string> {
   const out = new Set<string>();
@@ -100,10 +110,10 @@ function readTrackedLogPaths(): Set<string> {
     try {
       const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
         correlation?: { agentSessionFile?: string };
+        runtimeCheckpoint?: { transcriptPath?: string };
       };
-      const asf = meta.correlation?.agentSessionFile;
-      if (asf) {
-        out.add(safeRealPath(asf));
+      for (const path of recordTranscriptPaths(meta)) {
+        out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed metadata
@@ -114,7 +124,7 @@ function readTrackedLogPaths(): Set<string> {
 
 /**
  * Lazy-built ownership index: union of
- *   (a) agentSessionFile real-paths from correlation records (*.json, non-metrics, non-marker)
+ *   (a) the transcript paths a correlation record names (`agentSessionFile`, `runtimeCheckpoint.transcriptPath`)
  *   (b) transcriptPath values from sidecar marker files (*-codemie-marker.json)
  * Sidecars of either naming scheme are read — `<path hash>-<codemieSessionId>-codemie-marker.json`
  * and the earlier `<transcript basename>-codemie-marker.json` — since each names its transcript inside.
@@ -146,14 +156,14 @@ function buildOwnershipIndex(): Set<string> {
       } else if (!f.endsWith('_metrics.json')) {
         const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
           correlation?: { agentSessionFile?: string };
+          runtimeCheckpoint?: { transcriptPath?: string };
           origin?: string;
         };
         // A confirmed external-resume session must never re-adopt its transcript into the
         // ownership index — that would silently exclude it from `native-external` filtering
         // again, undoing the whole point of flagging it. See EPMCDME-12992.
         if (meta.origin === SESSION_ORIGIN.EXTERNAL_RESUME) continue;
-        const asf = meta.correlation?.agentSessionFile;
-        if (asf) out.add(safeRealPath(asf));
+        for (const path of recordTranscriptPaths(meta)) out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed files

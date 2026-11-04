@@ -23,7 +23,8 @@ vi.mock('../../../../utils/config.js', () => ({
 vi.mock('../../../../providers/index.js', () => ({
   ProviderRegistry: { getProvider: vi.fn() },
 }));
-vi.mock('../daemon-manager.js', () => ({
+vi.mock('../daemon-manager.js', async (importOriginal) => ({
+  isDaemonAlive: (await importOriginal<typeof import('../daemon-manager.js')>()).isDaemonAlive,
   checkStatus: vi.fn(),
   readState: vi.fn(),
   spawnDaemon: vi.fn(),
@@ -32,9 +33,13 @@ vi.mock('../daemon-manager.js', () => ({
 vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),
   spawnDetached: vi.fn(),
+  // The start comparison runs `ps`; the test that exercises it switches this to the real one with `ps` mocked
+  isOwnerAlive: vi.fn(async () => true),
 }));
 vi.mock('../health-check.js', () => ({
   checkProxyHealth: vi.fn(),
+  // No proxy answers: a daemon that fails its start check reads gone
+  fetchProxyHealth: vi.fn(async () => { throw new TypeError('fetch failed'); }),
 }));
 vi.mock('../connectors/desktop.js', () => ({
   writeDesktopConfig: vi.fn(),
@@ -1054,27 +1059,68 @@ describe('ensureOtlpProxy', () => {
     }
   });
 
-  it('starts the proxy when the state names a pid that now belongs to another user', async () => {
+  // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
+  it.skipIf(process.platform === 'win32')('starts the proxy when the state names a pid that now belongs to another process', async () => {
     const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
-    vi.mocked(readState).mockResolvedValue(daemonState({ pid: 4242 }) as Awaited<ReturnType<typeof readState>>);
+    const { isOwnerAlive } = await import('@/utils/processes.js');
+    vi.mocked(readState).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof readState>>);
+    vi.mocked(isOwnerAlive).mockResolvedValueOnce(false);
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
     await setupHappyMocks();
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
-    });
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     try {
       await ensureOtlpProxy('claude-code-otlp');
     } finally {
-      kill.mockRestore();
       consoleLog.mockRestore();
     }
 
     expect(spawnDaemon).toHaveBeenCalled();
+  });
+
+  it('starts nothing while the state\'s daemon runs', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { processStartedAt } = await import('@/utils/processes.js');
+    vi.mocked(readState).mockResolvedValue(
+      daemonState({ startedAt: new Date(processStartedAt()).toISOString() }) as Awaited<ReturnType<typeof readState>>
+    );
+    await setupHappyMocks();
+
+    await ensureOtlpProxy('claude-code-otlp');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
+  it.skipIf(process.platform === 'win32')('starts nothing for an old-format state written 10 minutes after its daemon started', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const processes = await import('@/utils/processes.js');
+    const exec = await import('@/utils/exec.js');
+    const actual = await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js');
+    const now = Date.parse('2026-10-31T12:00:00Z');
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    // `ps` reports the daemon running for 20 minutes; its state names a start 10 minutes in
+    vi.spyOn(exec, 'exec').mockResolvedValue({ code: 0, stdout: '20:00\n', stderr: '' });
+    vi.mocked(processes.isOwnerAlive).mockImplementation(actual.isOwnerAlive);
+    vi.mocked(readState).mockResolvedValue(
+      daemonState({ startedAt: new Date(now - 600_000).toISOString() }) as Awaited<ReturnType<typeof readState>>
+    );
+    await setupHappyMocks();
+
+    try {
+      await ensureOtlpProxy('claude-code-otlp');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      vi.mocked(processes.isOwnerAlive).mockImplementation(async () => true);
+      vi.restoreAllMocks();
+    }
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
   });
 });
 

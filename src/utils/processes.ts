@@ -124,17 +124,6 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** For daemon state, whose pid must be our own process: `EPERM` (another user's process) reads as dead. */
-export function isProcessAliveStrict(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Env vars a CLI wrapper exports to its agent so a session record can name the process that owns it. */
 export const WRAPPER_PID_ENV = 'CODEMIE_WRAPPER_PID';
 export const WRAPPER_STARTED_AT_ENV = 'CODEMIE_WRAPPER_STARTED_AT';
@@ -165,10 +154,13 @@ export function wrapperOwnerFromEnv(env: NodeJS.ProcessEnv): { ownerPid: number;
 }
 
 /**
- * How far a pid's start time (now − `ps etime`) may sit from the stored start and still be the same process.
- * `ps etime` has 1 s resolution; on Linux it is boot-clock elapsed, so a wall-clock step moves `now − etime`
- * while the stored start stays — 60 s absorbs such steps and the start-up gap. A false "alive" then needs an
- * owner that lived under a minute and a pid reused within it — it only delays the finalization.
+ * How far a pid's real start (now − `ps etime`) may sit after the stored start and still be the same process.
+ * Only that side is checked: every writer stores a start no earlier than the real one (`processStartedAt()`, or a
+ * daemon state written after start-up by an older daemon), and a reused pid always belongs to a process started
+ * after its owner stored its start. A stored start later than the real one is therefore always the owner — which
+ * also keeps a live owner alive across a backward wall-clock step. `ps etime` has 1 s resolution and on Linux is
+ * boot-clock elapsed, so a forward step moves `now − etime` later; 60 s absorbs such steps. A false "alive" then
+ * needs an owner that lived under a minute and a pid reused within it — it only delays the finalization.
  */
 export const OWNER_START_TOLERANCE_MS = 60_000;
 
@@ -185,7 +177,7 @@ export function parseEtime(etime: string): number | undefined {
 
 /**
  * Whether the process that owns a record is still the one running under its pid: the pid is alive AND its
- * start time matches `startedAt` within {@link OWNER_START_TOLERANCE_MS}. Without `startedAt`, on Windows,
+ * real start is no later than `startedAt` + {@link OWNER_START_TOLERANCE_MS}. Without `startedAt`, on Windows,
  * or when `ps` fails or prints nothing parsable, the answer is the pid-only check.
  *
  * ponytail: Linux procps `etime` assumed to print the same format as macOS; Windows is pid-only.
@@ -200,7 +192,7 @@ export async function isOwnerAlive(owner: ProcessIdentity): Promise<boolean> {
     // The pid may have gone between the two checks (ps prints nothing for it).
     return isProcessAlive(owner.pid);
   }
-  return Math.abs(owner.startedAt - (Date.now() - elapsed)) <= OWNER_START_TOLERANCE_MS;
+  return Date.now() - elapsed <= owner.startedAt + OWNER_START_TOLERANCE_MS;
 }
 
 /**

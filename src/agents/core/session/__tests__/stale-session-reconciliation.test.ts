@@ -189,6 +189,23 @@ describe('reconcileOtherSessions', () => {
     expect(closed).toMatchObject({ status: 'completed', reason: 'desktop-daemon-gone', endTime: start + 60_000, ownerPid: DEAD_PID });
   });
 
+  it('closes a Claude Desktop record of a dead daemon at its last activity, not its later last discovery', async () => {
+    const start = Date.now() - 5 * HOUR;
+    const desktop = record({
+      agentName: 'claude-desktop',
+      startTime: start,
+      runtimeCheckpoint: { externalSessionId: 'x', transcriptPath: '/t', lastDiscoveredAt: start + 70_000, lastSeenActivityAt: start + 60_000 },
+    });
+    save(desktop);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent).not.toHaveBeenCalled();
+    expect(hook.deliverSession).not.toHaveBeenCalled();
+    expect(load(desktop.sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-gone', endTime: start + 60_000 });
+  });
+
   it('closes a Claude Desktop record without startTime of a dead daemon with a finite endTime', async () => {
     const start = Date.now() - 5 * HOUR;
     const desktop = record({
@@ -217,6 +234,32 @@ describe('reconcileOtherSessions', () => {
 
     expect(hook.deliverSession).toHaveBeenCalledTimes(1);
     expect(attemptsSeenByDelivery).toBe(1);
+  });
+
+  it('gives back the attempt whose end metric was refused at the connection; a timed-out one is counted', async () => {
+    const refused = record({
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-refused' },
+    });
+    const timedOut = record({
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - 2 * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-timeout' },
+    });
+    save(refused);
+    save(timedOut);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      throw String(init?.body).includes('native-refused')
+        ? new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) })
+        : new DOMException('This operation was aborted', 'AbortError');
+    });
+    try {
+      await onFakeClock(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(load(refused.sessionId).deliveryAttempts).toBe(1);
+    expect(load(timedOut.sessionId).deliveryAttempts).toBe(2);
   });
 
   it('leaves a completed record of a live owner untouched; one of a dead owner is delivered once', async () => {

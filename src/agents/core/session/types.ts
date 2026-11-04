@@ -158,6 +158,8 @@ export interface Session {
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
+  /** Unix ms: the start of the stretch a reopen began */
+  stretchStartTime?: number;
   workingDirectory: string; // CWD where agent was launched
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
   repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback

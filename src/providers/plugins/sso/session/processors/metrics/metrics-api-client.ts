@@ -113,7 +113,7 @@ class MetricsApiClient {
       }
     }
 
-    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`);
+    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError });
   }
 
   private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
@@ -183,6 +183,7 @@ class MetricsApiClient {
         body,
         signal: request.signal
       });
+      request.noteOutcome();
 
       const responseText = await response.text();
       const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
@@ -230,6 +231,7 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
+      request.noteOutcome(error);
       if ((error as Error).name === 'AbortError') {
         const stopReason = request.stopReason();
         if (stopReason) {

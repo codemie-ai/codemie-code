@@ -9,7 +9,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
+import { INTERNAL_PARSED_FAMILY, recordTranscriptPath, type RawSessionData } from '../data-loader.js';
 import type { ParsedSession, RunBounds, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
@@ -89,10 +89,8 @@ export const realDeps: EnricherDeps = {
     // A live record, else its completed one (a `/clear` generation `<uuid>-<gen>` is only ever completed)
     for (const name of [`${raw.sessionId}.json`, `completed_${raw.sessionId}.json`]) {
       try {
-        const meta = JSON.parse(await readFile(getCodemiePath('sessions', name), 'utf-8')) as {
-          correlation?: { agentSessionFile?: string };
-        };
-        return meta.correlation?.agentSessionFile ?? null;
+        const meta = JSON.parse(await readFile(getCodemiePath('sessions', name), 'utf-8')) as Parameters<typeof recordTranscriptPath>[0];
+        return recordTranscriptPath(meta) ?? null;
       } catch {
         // not under this name
       }
