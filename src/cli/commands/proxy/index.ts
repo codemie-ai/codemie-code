@@ -9,6 +9,7 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
+import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
@@ -219,6 +220,9 @@ export function createProxyCommand(): Command {
         deep: Boolean(opts.deep),
       });
 
+      const otlp = await checkClaudeCodeOtlpEndpoint(state);
+      const otlpMismatch = otlp && !otlp.matches ? otlp : null;
+
       if (opts.json) {
         const payload: Record<string, unknown> = {
           status: health.healthy ? 'healthy' : 'unhealthy',
@@ -240,6 +244,9 @@ export function createProxyCommand(): Command {
         }
         if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
           payload.lastRecordedIssue = state.healthReason;
+        }
+        if (otlpMismatch) {
+          payload.otlpEndpointMismatch = { configured: otlpMismatch.configured, expected: otlpMismatch.expected };
         }
         console.log(JSON.stringify(payload, null, 2));
         return;
@@ -278,6 +285,19 @@ export function createProxyCommand(): Command {
         console.log(`  Project: ${state.project}`);
       }
       console.log(`  Uptime:  ${uptime}`);
+
+      if (otlpMismatch) {
+        const keyOnly = otlpMismatch.configured === otlpMismatch.expected;
+        console.log(chalk.yellow(
+          keyOnly
+            ? '  Warning: the gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this daemon; native OTel is rejected.'
+            : `  Warning: Claude Code OTLP endpoint ${otlpMismatch.configured} does not match this daemon (${otlpMismatch.expected}); native OTel is not reaching it.`
+        ));
+        console.log(chalk.yellow(
+          '           Repair: run `codemie proxy connect --claude-code-otlp` (same --scope as before; a tracked Claude Code ' +
+          'hook also re-points it), then start a NEW Claude Code session - running sessions keep the old setting.'
+        ));
+      }
 
       // Surface a recorded give-up reason even when a fresh ping happens to pass.
       if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
