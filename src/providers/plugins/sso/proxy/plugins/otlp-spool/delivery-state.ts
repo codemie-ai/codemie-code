@@ -5,7 +5,7 @@ import { streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus, type DeliveryFailure, type SessionStatus } from './session-status.js';
 import { deliveryBackoffMs, heldRetentionMs } from './spool-config.js';
-import type { DeliveryLossReason } from './session-project.js';
+import type { DeliveryLossReason, LossReason } from './session-project.js';
 import type { SendOutcome } from './response.js';
 
 /*
@@ -44,16 +44,65 @@ function expireDeliveryLocked(sessionId: string, status: SessionStatus, stream: 
 }
 
 /**
+ * Handed-over (owner-pending) hook bytes expire on their ORIGINAL clock, whatever else holds or fails the session: drop exactly
+ * the expired head range `[cursor, seg.end)` of the hooks stream with its reason and byte count. They are always the head run
+ * of the pending range (see `appendSpool`), so younger bytes behind them, other streams and other sessions are untouched, and a
+ * failure record of the remaining tail keeps its own first-failure clock. Mutates `status`; caller holds the lock and writes.
+ * Returns true when it changed anything.
+ */
+export async function expireCarriedAgeLocked(sessionId: string, status: SessionStatus, now: number = Date.now()): Promise<boolean> {
+  const segs = status.carriedAge?.hooks;
+  if (!segs?.length) return false;
+  let size: number;
+  try {
+    size = (await stat(streamFile(sessionId, 'hooks'))).size;
+  } catch {
+    return false;
+  }
+  const reason: LossReason = status.holds?.session
+    ? (status.holds.session.reason === 'stamp_pending' ? 'no_evidence_timeout' : status.holds.session.reason)
+    : status.delivery?.hooks?.reason ?? 'no_evidence_timeout';
+  const startCursor = status.cursors.hooks;
+  let cursor = startCursor;
+  for (const seg of [...segs].sort((a, b) => a.start - b.start)) {
+    if (seg.end <= cursor) continue;
+    if (seg.start > cursor || now - seg.since < heldRetentionMs()) break; // not the head, or still inside its window
+    cursor = Math.max(cursor, Math.min(seg.end, size));
+  }
+  const live = segs.filter((seg) => seg.end > cursor);
+  if (live.length !== segs.length) {
+    if (live.length > 0) status.carriedAge = { ...status.carriedAge, hooks: live };
+    else delete status.carriedAge;
+  }
+  if (cursor === startCursor) return live.length !== segs.length;
+  const bytes = cursor - startCursor;
+  status.cursors.hooks = cursor;
+  const rec = status.delivery?.hooks;
+  if (rec && rec.cursor === startCursor) {
+    if (rec.end > cursor) status.delivery!.hooks = { ...rec, cursor }; // the tail keeps its own first-failure clock
+    else delete status.delivery!.hooks;
+    if (Object.keys(status.delivery!).length === 0) delete status.delivery;
+  }
+  status.lastLoss = { reason, at: now, bytes };
+  logger.warn('[otlp-spool] handed-over analytics dropped at the retention bound', ...sanitizeLogArgs({ sessionId, stream: 'hooks', reason, bytes }));
+  return true;
+}
+
+/**
  * Before a stream's request: `wait` while its bounded backoff runs; at the retention bound the failing
  * range is dropped (recorded) and the stream continues with whatever arrived after it. Takes the
  * session lock: never call while holding it.
  */
 export async function deliveryGate(sessionId: string, stream: SpoolStream, now: number = Date.now()): Promise<'go' | 'wait'> {
   // Common case first, without the lock: nothing recorded for this stream.
-  if (!(await readStatus(sessionId))?.delivery?.[stream]) return 'go';
+  const peek = await readStatus(sessionId);
+  const carried = stream === 'hooks' && Boolean(peek?.carriedAge?.hooks?.length);
+  if (!peek?.delivery?.[stream] && !carried) return 'go';
   return withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
-    if (!status?.delivery?.[stream]) return 'go';
+    if (!status) return 'go';
+    if (carried && (await expireCarriedAgeLocked(sessionId, status, now))) await writeStatus(sessionId, status);
+    if (!status.delivery?.[stream]) return 'go';
     const rec = await liveDelivery(sessionId, status, stream);
     if (!rec) {
       delete status.delivery[stream];
