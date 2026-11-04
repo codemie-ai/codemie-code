@@ -744,6 +744,46 @@ codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
 
+### Team lead setup (`analytics sync bootstrap`)
+
+```bash
+# Lead: guided wizard to connect Teams/SharePoint and print install command
+codemie analytics sync bootstrap
+
+# Non-interactive mode (no TTY needed; test-send before printing install command)
+codemie analytics sync bootstrap --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
+codemie analytics sync bootstrap --webhook <url> --lookback-days 14 --include-external always
+```
+
+`bootstrap` connects a Teams channel and SharePoint folder to a Power Automate flow, then
+prints the `codemie analytics sync install` command for developers. Installs nothing on the
+lead's machine.
+
+**Guided mode** (TTY, no `--webhook`): 8-step wizard — Teams channel, SharePoint folder, time
+zone, import flow, trigger URL, external sessions policy, lookback, print command. Answers
+save after each step, so interrupts resume with saved defaults. Re-run shows masked settings
+and offers quick reuse or restart.
+
+**Non-interactive mode** (`--webhook`): no prompts, no TTY; validates options, test-sends a
+check file, prints command on success; fails with reason on any validation or network error.
+
+**Lead-to-developer workflow:** (1) Lead runs `bootstrap`. (2) Lead gets a printed install
+command containing the trigger signature. (3) Lead shares **only that command with developers
+— do not post to shared logs or tickets**; signature is a secret. (4) Each developer runs the
+command to register their daily job.
+
+**Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
+CLI), `--include-external <windows|always|never>` (default: windows).
+
+**Output:** Install command to stdout; everything else to stderr. Command contains trigger
+signature — **treat as secret**. On Windows where PowerShell script execution is blocked,
+`codemie.cmd` may split arguments at `&`; developers should run full command as single line.
+
+**If developers see "unknown command":** have them run `codemie self-update`.
+
+**State:** Lead's answers saved in `~/.codemie/analytics-sync-bootstrap.json` (mode 600) for
+resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
+
 ### Scheduled delivery (`analytics sync`)
 
 ```bash

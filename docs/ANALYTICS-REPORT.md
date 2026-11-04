@@ -390,6 +390,9 @@ standalone collector, so a developer no longer clones, updates or runs a separat
 It never reads any `ANALYTICS_*` environment variable; the settings file and CLI flags are
 the only source of configuration.
 
+For team leads setting up the Power Automate flow for the first time, see `codemie analytics
+sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
+
 ### Commands
 
 ```bash
