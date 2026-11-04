@@ -866,22 +866,32 @@ export class ConfigLoader {
   }
 
   /**
-   * Identity rules for a saved global profile. The trio is atomic: an update that
-   * supplies any identity key replaces the stored trio; an update that supplies
-   * none keeps the stored values. `codeMieProject: null` stores "off CodeMie" and
-   * drops the URL and integration. An explicit `key: undefined` counts as omitted.
+   * Identity rules for a saved global profile. An explicit `key: undefined` counts as omitted.
+   * - An update that supplies none of the trio keeps the stored values.
+   * - `codeMieProject: null` stores "off CodeMie" and drops the URL and integration.
+   * - A partial update on the same CodeMie origin (a setup step that was skipped or failed)
+   *   keeps what it omits: the stored project, and the stored integration while the project is
+   *   unchanged (an integration belongs to its project).
+   * - An update that moves the profile to another origin replaces the whole trio.
    */
   private static withCarriedIdentity(update: ProviderProfile, existing?: ProviderProfile): ProviderProfile {
     const next: Record<string, unknown> = { ...update };
     for (const key of IDENTITY_KEYS) {
       if (next[key] === undefined) delete next[key];
     }
+    const stored = (existing ?? {}) as Record<string, unknown>;
     const suppliesIdentity = IDENTITY_KEYS.some((key) => key in next);
-    if (!suppliesIdentity && existing) {
+    if (!suppliesIdentity) {
       for (const key of IDENTITY_KEYS) {
-        if ((existing as Record<string, unknown>)[key] !== undefined) {
-          next[key] = (existing as Record<string, unknown>)[key];
-        }
+        if (stored[key] !== undefined) next[key] = stored[key];
+      }
+    } else if (next.codeMieProject !== null && this.sameCodeMieOrigin(next.codeMieUrl, stored.codeMieUrl)) {
+      if (!('codeMieProject' in next) && typeof stored.codeMieProject === 'string') {
+        next.codeMieProject = stored.codeMieProject;
+      }
+      if (!('codeMieIntegration' in next) && stored.codeMieIntegration !== undefined
+        && next.codeMieProject === stored.codeMieProject) {
+        next.codeMieIntegration = stored.codeMieIntegration;
       }
     }
     if (next.codeMieProject === null) {
@@ -889,6 +899,17 @@ export class ConfigLoader {
       delete next.codeMieIntegration;
     }
     return next as ProviderProfile;
+  }
+
+  /** An update without a URL stays on the stored origin; two URLs match by origin. */
+  private static sameCodeMieOrigin(updateUrl: unknown, storedUrl: unknown): boolean {
+    if (typeof updateUrl !== 'string') return true;
+    if (typeof storedUrl !== 'string') return false;
+    try {
+      return new URL(updateUrl).origin === new URL(storedUrl).origin;
+    } catch {
+      return false;
+    }
   }
 
   /**

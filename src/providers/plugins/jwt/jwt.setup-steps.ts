@@ -29,7 +29,8 @@ export interface JwtProjectStepDeps {
  * JWT setup project step: lists the account's projects with bearer auth against
  * the URL typed in this run and returns the pick. The token comes from the chosen
  * env var, or is pasted once (hidden; never stored or logged). Skip or failure
- * returns undefined: no project is saved and the profile stays unowned.
+ * returns undefined: nothing new is saved, so a project already stored for this
+ * profile on the same CodeMie URL is kept (ConfigLoader carry-over rule).
  */
 export async function selectJwtProfileProject(
   apiUrl: string,
@@ -67,7 +68,9 @@ export async function selectJwtProfileProject(
   }
 
   if (!token) {
-    console.log(chalk.yellow('⚠️  No project selected; this profile uses the shared project until you run `codemie setup` again.\n'));
+    console.log(chalk.yellow(
+      '⚠️  No project selected. A project already saved for this profile is kept; otherwise it uses the shared project until you run `codemie setup` again.\n'
+    ));
     return undefined;
   }
   try {
@@ -75,7 +78,7 @@ export async function selectJwtProfileProject(
     return project;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.log(chalk.yellow(`⚠️  Could not list projects (${message}); no project saved.\n`));
+    console.log(chalk.yellow(`⚠️  Could not list projects (${message}). A project already saved for this profile is kept.\n`));
     return undefined;
   }
 }

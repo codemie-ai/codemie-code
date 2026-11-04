@@ -79,8 +79,11 @@ export async function selectIntegrationForProject(
     if (options.onFetchError === 'throw') {
       throw new IntegrationFetchError(integrationsFetchError);
     }
-    // Log error but don't fail setup - integrations are optional
-    console.log(chalk.yellow(`⚠️  Could not fetch integrations: ${integrationsFetchError}\n`));
+    // Don't fail setup - integrations are optional. Nothing is returned, so saving the profile
+    // keeps an integration already stored for the same project (preserve existing on failure).
+    console.log(chalk.yellow(
+      `⚠️  Could not fetch integrations: ${integrationsFetchError}. An integration already saved for this project is kept.\n`
+    ));
     integrations = [];
   }
 
