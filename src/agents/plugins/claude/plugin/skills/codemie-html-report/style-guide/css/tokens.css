@@ -1,3 +1,10 @@
+/*
+ * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
+ * EPAM intellectual property, provided under a limited license — see LICENSE.
+ * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
+ * incorporation, or cloning into any repository.
+ */
+
 /**
  * CodeMie Design Tokens
  * CSS Custom Properties for the CodeMie UI design system.
@@ -164,6 +171,14 @@
   --color-cyan-bg:           #003942;
   --color-cyan-border:       #005866;
 
+  /* --- Charts: series in the product's order (src/utils/chartColors.ts), stopping before
+     green, red and yellow, which mean status on a report; a fourth series is "other" --- */
+  --color-chart-blue:        #2297F6;
+  --color-chart-purple:      #C084FC;
+  --color-chart-cyan:        #06B6D4;
+  --color-chart-other:       #8C8C8C;
+  --color-chart-grid:        rgba(127, 127, 127, 0.18);
+
   /* --- Status Badges --- */
   --status-not-started-text: #A0A0A0;
   --status-not-started-bg:   #333333;
@@ -283,6 +298,9 @@
   --color-cyan:              #06B6D4;
   --color-cyan-bg:           #DFFAFF;
   --color-cyan-border:       #005866;
+
+  --color-chart-purple:      #8B5CF6;
+  --color-chart-grid:        rgba(51, 51, 51, 0.12);
 
   --status-not-started-text: #A0A0A0;
   --status-not-started-bg:   #EEEEEE;

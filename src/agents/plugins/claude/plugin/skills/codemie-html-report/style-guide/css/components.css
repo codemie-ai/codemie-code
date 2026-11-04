@@ -1,3 +1,10 @@
+/*
+ * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
+ * EPAM intellectual property, provided under a limited license — see LICENSE.
+ * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
+ * incorporation, or cloning into any repository.
+ */
+
 /**
  * CodeMie UI Components
  * Cards, Badges, Status badges, Alerts, Avatars, Tags, Spinner, Tooltip, Progress.
@@ -602,4 +609,38 @@
 
 .dl-grid dd {
   color: var(--color-text-primary);
+}
+
+/* ============================================================
+   CHARTS
+   ============================================================ */
+/* A Chart.js canvas has no height of its own: without a sized frame it collapses or grows on
+   every resize. */
+.chart-frame,
+.chart-frame-sm,
+.chart-frame-lg {
+  position: relative;
+  width: 100%;
+  height: 320px;
+}
+
+.chart-frame-sm { height: 220px; }
+.chart-frame-lg { height: 420px; }
+
+/* Magnitude beside a number in a table row, flat where the progress bar has a gradient:
+   <span class="chart-bar"><span style="width: 64%"></span></span> */
+.chart-bar {
+  display: inline-block;
+  width: 80px;
+  height: 6px;
+  vertical-align: middle;
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.chart-bar > span {
+  display: block;
+  height: 100%;
+  background-color: var(--color-chart-blue);
 }
