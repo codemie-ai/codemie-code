@@ -6,7 +6,7 @@ vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
     listProfiles: vi.fn(),
     hasLocalConfig: vi.fn(),
-    resolveProfileWorkspace: vi.fn(),
+    resolveProfileIdentity: vi.fn(),
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
   },
@@ -84,49 +84,67 @@ describe('profile command helpers', () => {
   });
 });
 
-describe('ProfileDisplay — workspace-resolved codeMieUrl', () => {
-  it('format() renders the workspace codeMieUrl even when the profile itself has none', () => {
+describe('ProfileDisplay — resolved identity', () => {
+  it('format() renders the resolved codeMieUrl and project even when the profile record has none', () => {
     const output = ProfileDisplay.format(
       { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
-      'https://workspace-url'
+      { codeMieUrl: 'https://workspace-url', project: 'shared-proj (shared fallback)' }
     );
 
     expect(output).toContain('https://workspace-url');
+    expect(output).toContain('Project');
+    expect(output).toContain('shared-proj (shared fallback)');
   });
 
-  it('formatStatus() renders the workspace codeMieUrl even when the profile itself has none', () => {
+  it('format() shows no Project line when the provider has no CodeMie project', () => {
+    const output = ProfileDisplay.format(
+      { name: 'local-llm', active: false, profile: { provider: 'ollama' }, source: 'global' },
+      { codeMieUrl: undefined, project: undefined }
+    );
+
+    expect(output).not.toContain('Project');
+  });
+
+  it('formatStatus() renders the resolved codeMieUrl and project', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       ProfileDisplay.formatStatus(
         { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
         undefined,
-        'https://workspace-url'
+        { codeMieUrl: 'https://workspace-url', project: 'mtlx-csd' }
       );
 
       const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
       expect(rendered).toContain('https://workspace-url');
+      expect(rendered).toContain('mtlx-csd');
     } finally {
       logSpy.mockRestore();
     }
   });
 });
 
-describe('listProfiles — workspace-resolved codeMieUrl display', () => {
+describe('listProfiles — per-profile resolved identity display (AC8)', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('displays each profile with the codeMieUrl of its own scope workspace', async () => {
+  it('resolves each profile by its own name and shows its own project and state', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     (ConfigLoader.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { name: 'team', active: true, profile: { provider: 'ai-run-sso' }, source: 'local' },
-      { name: 'personal', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { name: 'mtlx-amsd', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { name: 'mtlx-csd', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { name: 'personal', active: false, profile: { provider: 'anthropic-subscription' }, source: 'global' },
+      { name: 'legacy', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
     ]);
-    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-    (ConfigLoader.resolveProfileWorkspace as ReturnType<typeof vi.fn>).mockImplementation(
-      async (_workingDir: string, isLocalProfile: boolean) => ({
-        codeMieUrl: isLocalProfile ? 'https://local-workspace-url' : 'https://global-workspace-url',
-      })
+    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const byName: Record<string, unknown> = {
+      'mtlx-amsd': { state: 'own', identity: { codeMieUrl: 'https://same', codeMieProject: 'mtlx-amsd' } },
+      'mtlx-csd': { state: 'own', identity: { codeMieUrl: 'https://same', codeMieProject: 'mtlx-csd' } },
+      personal: { state: 'none', identity: {} },
+      legacy: { state: 'unowned', identity: { codeMieUrl: 'https://same', codeMieProject: 'mtlx-amsd' } },
+    };
+    (ConfigLoader.resolveProfileIdentity as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_workingDir: string, name: string) => byName[name]
     );
 
     const formatSpy = vi.spyOn(ProfileDisplay, 'format');
@@ -136,12 +154,20 @@ describe('listProfiles — workspace-resolved codeMieUrl display', () => {
       await command.parseAsync([], { from: 'user' });
 
       expect(formatSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'team' }),
-        'https://local-workspace-url'
+        expect.objectContaining({ name: 'mtlx-amsd' }),
+        { codeMieUrl: 'https://same', project: 'mtlx-amsd' }
+      );
+      expect(formatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'mtlx-csd' }),
+        { codeMieUrl: 'https://same', project: 'mtlx-csd' }
       );
       expect(formatSpy).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'personal' }),
-        'https://global-workspace-url'
+        { codeMieUrl: undefined, project: 'off CodeMie' }
+      );
+      expect(formatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'legacy' }),
+        { codeMieUrl: 'https://same', project: 'mtlx-amsd (shared fallback)' }
       );
     } finally {
       logSpy.mockRestore();

@@ -30,6 +30,15 @@ export interface HTTPResponse<T = unknown> {
 /**
  * Simple HTTP Client
  */
+/** Header names that carry credentials; removed before a cross-origin redirect hop. */
+const CREDENTIAL_HEADERS = new Set(['cookie', 'authorization', 'proxy-authorization']);
+
+function stripCredentialHeaders(headers: http.OutgoingHttpHeaders): void {
+  for (const name of Object.keys(headers)) {
+    if (CREDENTIAL_HEADERS.has(name.toLowerCase())) delete headers[name];
+  }
+}
+
 export class HTTPClient {
   private config: Required<HTTPClientConfig>;
 
@@ -233,31 +242,42 @@ export class HTTPClient {
 
             logger.info(`[Redirect] ${statusCode} -> ${redirectUrl}`);
 
-            // Update cookies from Set-Cookie headers if present
-            const setCookieHeaders = res.headers['set-cookie'];
-            if (setCookieHeaders && requestOptions.headers) {
-              const existingCookies = (requestOptions.headers['cookie'] as string) || '';
-              const newCookies = setCookieHeaders
-                .map(cookie => cookie.split(';')[0]) // Extract cookie name=value
-                .join('; ');
+            // Each hop gets its own copy, so the caller's headers are never mutated.
+            const nextHeaders: http.OutgoingHttpHeaders = { ...(requestOptions.headers as http.OutgoingHttpHeaders | undefined) };
+            const nextOptions: https.RequestOptions = { ...requestOptions, headers: nextHeaders };
+            const crossOrigin = new URL(redirectUrl).origin !== parsedUrl.origin;
 
-              requestOptions.headers['cookie'] = existingCookies
-                ? `${existingCookies}; ${newCookies}`
-                : newCookies;
+            if (crossOrigin) {
+              // Credentials never follow a redirect to another origin (scheme, host or port).
+              stripCredentialHeaders(nextHeaders);
+              logger.debug('[Redirect] Cross-origin redirect: credentials dropped');
+            } else {
+              // Same origin: carry cookies set on the redirect response
+              const setCookieHeaders = res.headers['set-cookie'];
+              if (setCookieHeaders) {
+                const existingCookies = (nextHeaders['cookie'] as string) || '';
+                const newCookies = setCookieHeaders
+                  .map(cookie => cookie.split(';')[0]) // Extract cookie name=value
+                  .join('; ');
+
+                nextHeaders['cookie'] = existingCookies
+                  ? `${existingCookies}; ${newCookies}`
+                  : newCookies;
+              }
             }
 
             // For 303, change POST/PUT to GET
             if (statusCode === 303 && options.method !== 'GET' && options.method !== 'HEAD') {
-              requestOptions.method = 'GET';
-              delete requestOptions.headers?.['content-length'];
-              delete requestOptions.headers?.['content-type'];
+              nextOptions.method = 'GET';
+              delete nextHeaders['content-length'];
+              delete nextHeaders['content-type'];
             }
 
             try {
               // Follow the redirect
               const redirectResponse = await this.requestWithRedirects(
                 redirectUrl,
-                requestOptions,
+                nextOptions,
                 redirectCount + 1
               );
               resolve(redirectResponse);
