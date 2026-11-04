@@ -97,6 +97,25 @@ describe('launch identity policy', () => {
       expect(config.codeMieProject).toBe('shared-proj');
     });
 
+    it('a non-interactive unowned launch warns once on stderr, continues with the shared project and rewrites no profile', async () => {
+      // @case global-profiles-share-workspace-identity_TC_005
+      await writeGlobal('a', { a: sso(), b: sso({ codeMieProject: 'pb' }) });
+      const before = await fs.readFile(GLOBAL, 'utf-8');
+      const prompt = vi.fn();
+      const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+      const launch = await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: false, surface: 'agent' }, { prompt });
+      expect(launch).toMatchObject({ state: 'unowned', needsWarning: true });
+
+      const writes: string[] = [];
+      finalizeLaunchIdentity(launch, { CODEMIE_PROJECT: config.codeMieProject ?? '' }, { writeStderr: (t) => writes.push(t) }, {});
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain('"a"');
+      expect(writes[0]).toContain('"shared-proj"');
+      expect(prompt).not.toHaveBeenCalled();
+      expect(await fs.readFile(GLOBAL, 'utf-8')).toBe(before);
+      expect((await readGlobal()).profiles.a.codeMieProject).toBeUndefined();
+    });
+
     it('an interactive pick bills the pick, saves only this profile and is never asked again (AC4)', async () => {
       await writeGlobal('a', { a: sso(), b: sso() });
       const deps: LaunchIdentityDeps = {
