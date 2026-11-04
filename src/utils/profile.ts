@@ -12,12 +12,31 @@ export interface AuthStatusDisplay {
 }
 
 /**
+ * One agent's models on a per-agent profile, for display
+ */
+export interface AgentModelsDisplay {
+  /** Agent display name, e.g. "Claude Code". */
+  agent: string;
+  /** The agent's active model. */
+  model: string;
+  /** The agent's other models. */
+  otherModels: string[];
+}
+
+/** "Claude Code: sonnet (active), haiku" */
+export function formatAgentModelsLine(entry: AgentModelsDisplay): string {
+  return `${entry.agent}: ${[`${entry.model} (active)`, ...entry.otherModels].join(', ')}`;
+}
+
+/**
  * Renders the CodeMie profile information in a unified table format
  */
 export function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   model?: string;
+  /** Per-agent models of a profile set up per agent, in profile order; omitted for legacy profiles. */
+  agentModels?: AgentModelsDisplay[];
   codeMieUrl?: string;
   authStatus?: AuthStatusDisplay;
   agent?: string;
@@ -53,6 +72,10 @@ export function renderProfileInfo(config: {
   if (config.model) {
     outputLines.push(formatRow('Model', config.model));
   }
+  // One line per agent; continuation lines keep the label column empty.
+  config.agentModels?.forEach((entry, index) => {
+    outputLines.push(formatRow(index === 0 ? 'Agent models' : '', formatAgentModelsLine(entry)));
+  });
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
   }
