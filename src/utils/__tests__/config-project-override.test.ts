@@ -771,10 +771,10 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       expect(stdoutText).not.toContain(line);
     });
 
-    describe('linked .codemie project vs global profile (AC7)', () => {
+    describe('linked .codemie project vs global profile (one policy for managed and native)', () => {
       const workingDir = path.join(TEST_DIR, 'project');
 
-      async function setup(globalProject?: string, localProject?: string) {
+      async function setup(globalProject?: string, localProject?: string, localUrl?: string) {
         await writeGlobal('g', { g: { provider: 'ai-run-sso', model: 'm', name: 'g' } });
         if (globalProject) {
           const raw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
@@ -784,32 +784,19 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         if (localProject) {
           await writeLocal('other', { other: { name: 'other' } });
           const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
-          raw.workspace = { codeMieProject: localProject };
+          raw.workspace = { codeMieProject: localProject, ...(localUrl && { codeMieUrl: localUrl }) };
           await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(raw));
         }
       }
 
-      // The launcher (AgentCLI) loads config before it creates CODEMIE_SESSION_ID, so managed-vs-native
-      // is never inferred from that variable: the linked-project preference is an explicit opt-in.
-      beforeEach(() => {
-        delete process.env.CODEMIE_SESSION_ID;
-      });
-
-      it('default (launcher / profile commands, no session id yet): keeps the profile project', async () => {
-        await setup('global-proj', 'linked-proj');
-        const ws = (await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).workspace;
-        expect(ws.codeMieProject).toBe('global-proj');
-        expect((await ConfigLoader.load(workingDir, { name: 'g' })).codeMieProject).toBe('global-proj');
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('profile');
-      });
-
-      it('native hook opt-in: linked project beats global profile project, origin linked_folder', async () => {
-        await setup('global-proj', 'linked-proj');
-        const ws = (await ConfigLoader.resolveProfileIdentity(workingDir, 'g', { preferLinkedProject: true })).workspace;
-        expect(ws.codeMieProject).toBe('linked-proj');
-        expect(ws.codeMieUrl).toBe('https://g.example.com');
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g', { preferLinkedProject: true })).projectOrigin).toBe('linked_folder');
-        expect((await ConfigLoader.load(workingDir, { name: 'g' }, { preferLinkedProject: true })).codeMieProject).toBe('linked-proj');
+      it('a global profile keeps the global workspace project even beside a linked folder (any URL)', async () => {
+        for (const url of [undefined, 'https://prod.example.com', 'https://G.example.com/']) {
+          await setup('global-proj', 'linked-proj', url);
+          const res = await ConfigLoader.resolveProfileIdentity(workingDir, 'g');
+          expect(res.workspace).toMatchObject({ codeMieProject: 'global-proj', codeMieUrl: 'https://g.example.com' });
+          expect((await ConfigLoader.load(workingDir, { name: 'g' })).codeMieProject).toBe('global-proj');
+          expect(res.projectOrigin).toBe('profile');
+        }
       });
 
       it('isLocalProfile: false for a global profile beside a linked workspace-only .codemie', async () => {
@@ -823,27 +810,21 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('profile');
       });
 
-      it('native opt-in with no genuine link: a global-scope project is no source (none); managed keeps profile', async () => {
-        await setup('global-proj');
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g', { preferLinkedProject: true })).projectOrigin).toBe('none');
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('profile');
-      });
-
-      it('a local profile without a local workspace only inherits the global project: not a link when native', async () => {
+      it('a local profile without a local workspace inherits the global project: profile origin', async () => {
         await setup('global-proj');
         await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
         expect(await ConfigLoader.isLocalProfile(workingDir, 'g')).toBe(true);
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g', { preferLinkedProject: true })).projectOrigin).toBe('none');
         expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('profile');
       });
 
-      it('a local profile beside a local workspace project is a linked folder in both modes', async () => {
+      it('a local profile beside a local workspace project is a linked folder', async () => {
         await setup('global-proj', 'linked-proj');
         await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
         const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
         await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ ...raw, workspace: { codeMieProject: 'linked-proj' } }));
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g', { preferLinkedProject: true })).projectOrigin).toBe('linked_folder');
-        expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('linked_folder');
+        const res = await ConfigLoader.resolveProfileIdentity(workingDir, 'g');
+        expect(res.workspace.codeMieProject).toBe('linked-proj');
+        expect(res.projectOrigin).toBe('linked_folder');
       });
 
       it('no project anywhere: none', async () => {

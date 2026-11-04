@@ -81,12 +81,9 @@ async function projectSource(
 ): Promise<EvidenceFields['project_source']> {
   if (!project || !hookConfig || hookConfig.config.codeMieProject !== project) return 'none';
   try {
-    const native = launchMode(process.env) === 'native';
-    const { projectOrigin: origin } = await ConfigLoader.resolveProfileIdentity(configDir, hookConfig.config.name, {
-      preferLinkedProject: native
-    });
-    // A managed launch's project may sit on the selected profile record itself, outside any workspace.
-    return origin === 'none' && !native ? 'profile' : origin;
+    const { projectOrigin: origin } = await ConfigLoader.resolveProfileIdentity(configDir, hookConfig.config.name);
+    // The project may sit on the selected profile record itself, outside any workspace.
+    return origin === 'none' ? 'profile' : origin;
   } catch {
     return 'none';
   }

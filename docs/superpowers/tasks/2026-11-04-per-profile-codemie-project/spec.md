@@ -12,7 +12,7 @@ Each global profile stores and resolves its own CodeMie project and integration.
 
 **Storage.** `ProviderProfile` (`src/env/types.ts:51`) gains optional `codeMieUrl`, `codeMieProject` (`string | null`), `codeMieIntegration`. `codeMieProject: null` means "this profile stays off CodeMie"; a `null` record holds no URL or integration. `saveProfile()` writes identity to the saved profile only; an update that supplies none of the three keeps the stored values. The global `workspace` identity is no longer written and never deleted (legacy fallback).
 
-**Resolution.** One resolver, `(workingDir, profileName, {preferLinkedProject})`, returns the identity plus a state, and replaces `resolveProfileWorkspace`, `resolveProjectOrigin` and `resolveIdentitySource` for project questions. For a global profile:
+**Resolution.** One resolver, `(workingDir, profileName)`, returns the identity plus a state, and replaces `resolveProfileWorkspace`, `resolveProjectOrigin` and `resolveIdentitySource` for project questions. For a global profile:
 - `own`: a string `codeMieProject`. Project and integration come from the profile only; an absent integration means none, and the shared integration is never mixed in.
 - `none`: `codeMieProject: null`. No project, integration or URL is resolved. No prompt, no warning.
 - `unowned`: any other profile of a project-carrying provider. It resolves the shared project and integration. This includes every profile after an upgrade, and the only profile that has a project.

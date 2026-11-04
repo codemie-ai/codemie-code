@@ -354,7 +354,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     it('stamps identity, project and version on every event, resolved for the hook cwd', async () => {
       await run({ payload: [{ a: 1 }, { a: 2 }] });
       expect(getActiveProfileNameMock).toHaveBeenCalledWith('/repo');
-      expect(configLoadMock).toHaveBeenCalledWith('/repo', { name: 'work' }, { preferLinkedProject: true });
+      expect(configLoadMock).toHaveBeenCalledWith('/repo', { name: 'work' });
       expect(resolveIdentityMock).toHaveBeenCalledWith(expect.objectContaining({ apiUrl: 'https://api' }), '/repo');
       for (const record of forwarded()) {
         expect(record).toMatchObject({
@@ -384,7 +384,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     it('omits the profile selector when there is no active profile', async () => {
       getActiveProfileNameMock.mockResolvedValue(null);
       await run();
-      expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined, { preferLinkedProject: true });
+      expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined);
     });
 
     it('prefers CODEMIE_PROJECT over the resolved config, without even loading it', async () => {
@@ -412,7 +412,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       hasLocalConfigMock.mockResolvedValue(true);
       await run({ cwd: '/workspace/project/src' });
       expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/project');
-      expect(configLoadMock).toHaveBeenCalledWith('/workspace/project', { name: 'work' }, { preferLinkedProject: true });
+      expect(configLoadMock).toHaveBeenCalledWith('/workspace/project', { name: 'work' });
     });
 
     it('walks up from CLAUDE_PROJECT_DIR to the nearest ancestor with a local .codemie config', async () => {
@@ -963,11 +963,11 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(resolveProjectOriginMock).not.toHaveBeenCalled();
     });
 
-    it('CR-005: a project equal to the config project takes the config origin, asked with the real profile locality and launch mode', async () => {
+    it('CR-005: a project equal to the config project takes the config origin, asked with the real profile locality, in every launch mode', async () => {
       resolveProjectOriginMock.mockResolvedValue('linked_folder');
       await run({ sessionId: 's2', payload: [{ session_id: 's2' }] });
       expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'linked_folder' });
-      expect(resolveProjectOriginMock).toHaveBeenCalledWith('/repo', undefined, { preferLinkedProject: true }); // native, profile in use
+      expect(resolveProjectOriginMock).toHaveBeenCalledWith('/repo', undefined); // profile in use
     });
 
     it('CR-005: an origin lookup failure degrades to none instead of failing the stamp', async () => {

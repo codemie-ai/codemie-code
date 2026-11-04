@@ -137,15 +137,10 @@ export class ConfigLoader {
   /**
    * Load configuration with proper priority:
    * CLI args > Env vars > Project config > Global config > Defaults
-   *
-   * @param opts.preferLinkedProject - Let a linked folder's `.codemie` project beat a global profile's
-   *   project. Off by default (launchers and other consumers keep the profile project); only the native
-   *   hook path, which has no launcher-exported CODEMIE_PROJECT, opts in.
    */
   static async load(
     workingDir: string = process.cwd(),
-    cliOverrides?: Partial<CodeMieConfigOptions>,
-    opts: { preferLinkedProject?: boolean } = {}
+    cliOverrides?: Partial<CodeMieConfigOptions>
   ): Promise<CodeMieConfigOptions> {
     // 5. Built-in defaults (lowest priority)
     const config: CodeMieConfigOptions = {
@@ -189,8 +184,7 @@ export class ConfigLoader {
     // `codeMieProject: null` (or a stale URL on a `none` record) never survives.
     const resolution = await this.resolveIdentityFor(
       workingDir,
-      { selectedName: selectedProfileName, localName: localProfileName, isLocalProfile: Object.keys(effectiveLocalConfig).length > 0 },
-      { preferLinkedProject: opts.preferLinkedProject }
+      { selectedName: selectedProfileName, localName: localProfileName, isLocalProfile: Object.keys(effectiveLocalConfig).length > 0 }
     );
     const identityIsAuthoritative = resolution.state === 'own' || resolution.state === 'none';
     if (!resolution.isLocalProfile || identityIsAuthoritative) {
@@ -309,29 +303,24 @@ export class ConfigLoader {
    * supplies identity when the local scope has no project.
    *
    * @param profileName - Explicit profile name (e.g. `--profile`); else the active one
-   * @param opts.preferLinkedProject - Native hook only: a linked folder's `.codemie`
-   *   project beats a global profile's project
    */
   static async resolveProfileIdentity(
     workingDir: string,
-    profileName?: string,
-    opts: { preferLinkedProject?: boolean } = {}
+    profileName?: string
   ): Promise<ProfileIdentityResolution> {
     const selectedName = await this.resolveProfileName(workingDir, profileName);
     const localName = await this.resolveLocalProfileName(workingDir, selectedName);
     const isLocalProfile = !(selectedName && localName && selectedName !== localName)
       && Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
-    return this.resolveIdentityFor(workingDir, { selectedName, localName, isLocalProfile }, opts);
+    return this.resolveIdentityFor(workingDir, { selectedName, localName, isLocalProfile });
   }
 
   /** resolveProfileIdentity() for profile names load() has already resolved (avoids re-reading the local config). */
   private static async resolveIdentityFor(
     workingDir: string,
-    names: { selectedName?: string; localName?: string; isLocalProfile: boolean },
-    opts: { preferLinkedProject?: boolean } = {}
+    names: { selectedName?: string; localName?: string; isLocalProfile: boolean }
   ): Promise<ProfileIdentityResolution> {
     const { selectedName, localName, isLocalProfile } = names;
-    const preferLinkedProject = opts.preferLinkedProject === true;
     const globalMulti = await this.loadMultiProviderConfig();
     const localMulti = await this.loadLocalMultiProviderConfig(workingDir);
     const workspace: WorkspaceConfig = localMulti.workspace != null
@@ -339,9 +328,6 @@ export class ConfigLoader {
       : (globalMulti.workspace ?? {});
     const localProject = localMulti.workspace?.codeMieProject;
     const shared = pickIdentity(globalMulti.workspace);
-    // With no genuine local link, a project that comes only from the global scope
-    // is not an authoritative source for the native hook (backend routing decides).
-    const globalOnly: ProjectOrigin = preferLinkedProject ? 'none' : 'profile';
 
     const tooling: WorkspaceConfig = { ...workspace };
     for (const key of IDENTITY_KEYS) delete tooling[key];
@@ -367,10 +353,10 @@ export class ConfigLoader {
       const globalState = sameNamedGlobal ? this.classifyGlobalProfile(sameNamedGlobal) : undefined;
       if (!localProject && (globalState === 'own' || globalState === 'none')) {
         const identity = this.globalProfileIdentity(sameNamedGlobal!, globalState, shared);
-        return finish(globalState, identity, identity.codeMieProject ? globalOnly : 'none', 'profile', localName);
+        return finish(globalState, identity, identity.codeMieProject ? 'profile' : 'none', 'profile', localName);
       }
       const identity = pickIdentity(workspace);
-      const origin: ProjectOrigin = !identity.codeMieProject ? 'none' : localProject ? 'linked_folder' : globalOnly;
+      const origin: ProjectOrigin = !identity.codeMieProject ? 'none' : localProject ? 'linked_folder' : 'profile';
       return finish('local', identity, origin, localMulti.workspace != null ? 'project' : 'global', localName);
     }
 
@@ -379,16 +365,11 @@ export class ConfigLoader {
     const state: ProjectBindingState = record ? this.classifyGlobalProfile(record) : 'not-applicable';
     const identity = record ? this.globalProfileIdentity(record, state, shared) : { ...shared };
 
-    // Opt-in (native hook): a linked `.codemie` project beats the global profile's project.
-    if (preferLinkedProject && localProject && state !== 'none') {
-      identity.codeMieProject = localProject;
-      return finish(state, identity, 'linked_folder', state === 'own' ? 'profile' : 'global', resolvedName);
-    }
     return {
       ...finish(
         state,
         identity,
-        identity.codeMieProject ? globalOnly : 'none',
+        identity.codeMieProject ? 'profile' : 'none',
         state === 'own' || state === 'none' ? 'profile' : 'global',
         resolvedName
       ),
