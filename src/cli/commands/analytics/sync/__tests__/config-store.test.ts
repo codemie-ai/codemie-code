@@ -228,6 +228,56 @@ describe('validateTriggerUrl', () => {
       expect(message.toLowerCase()).toMatch(/copy/);
     }
   });
+
+  it('names typographic quotes for a trailing non-ASCII char in option mode', () => {
+    const withTypographicQuote = `${FAKE_TRIGGER_URL}”`;
+    expect(() => validateTriggerUrl(withTypographicQuote, 'option')).toThrow(/typographic quote/i);
+  });
+
+  it('names typographic quotes for a trailing non-ASCII char in guided mode, without naming --webhook or echoing the URL', () => {
+    const withTypographicQuote = `${FAKE_TRIGGER_URL}”`;
+    let caught: unknown;
+    try {
+      validateTriggerUrl(withTypographicQuote, 'guided');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(SyncConfigError);
+    const message = (caught as Error).message;
+    expect(message).not.toMatch(/--webhook/);
+    expect(message).not.toContain(FAKE_TRIGGER_URL);
+    expect(message.toLowerCase()).toMatch(/typographic quote/);
+    expect(message.toLowerCase()).toMatch(/copy/);
+  });
+
+  it('gives a distinct reason per cause in option mode: whitespace, line break, control character', () => {
+    const withSpace = FAKE_TRIGGER_URL.replace('invoke', 'invo ke');
+    const withNewline = `${FAKE_TRIGGER_URL}\n`;
+    const withControl = `${FAKE_TRIGGER_URL}\x07`;
+
+    expect(() => validateTriggerUrl(withSpace, 'option')).toThrow(/whitespace/i);
+    expect(() => validateTriggerUrl(withNewline, 'option')).toThrow(/line break/i);
+    expect(() => validateTriggerUrl(withControl, 'option')).toThrow(/control character/i);
+  });
+
+  it('gives a distinct, non-generic reason per cause in guided mode: whitespace, line break, control character', () => {
+    const withSpace = FAKE_TRIGGER_URL.replace('invoke', 'invo ke');
+    const withNewline = `${FAKE_TRIGGER_URL}\n`;
+    const withControl = `${FAKE_TRIGGER_URL}\x07`;
+
+    const messageFor = (input: string): string => {
+      try {
+        validateTriggerUrl(input, 'guided');
+      } catch (err) {
+        return (err as Error).message;
+      }
+      throw new Error('expected validateTriggerUrl to throw');
+    };
+
+    expect(messageFor(withSpace).toLowerCase()).toMatch(/whitespace/);
+    expect(messageFor(withNewline).toLowerCase()).toMatch(/line break/);
+    expect(messageFor(withControl).toLowerCase()).toMatch(/control character/);
+  });
 });
 
 describe('sync settings file', () => {
