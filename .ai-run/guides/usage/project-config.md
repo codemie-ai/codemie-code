@@ -53,7 +53,7 @@ project context, but it cannot replace the selected provider, model, or credenti
 
 | Scenario | Source of provider/model | Source of codeMieProject |
 |---|---|---|
-| Only global config | global | global |
+| Only global config | global | the global profile's own `codeMieProject` (`own`), else the shared `workspace` one (`unowned`, warned/prompted) |
 | Same-named local profile overrides project fields | global | local |
 | Differently named local profile; selected profile defines project context | global (selected profile) | global (selected profile) |
 | Differently named local profile; selected profile lacks project context and URLs are compatible | global (selected profile) | local project overlay |
@@ -130,9 +130,11 @@ interface ConfigWithSources {
 {
   "version": 2,
   "activeProfile": "default",
+  "workspace": {},
   "profiles": {
     "default": { "provider": "bedrock", "authMethod": "sso", "model": "claude-3-5-sonnet", "awsRegion": "us-east-1" },
-    "work":    { "provider": "sso", "codeMieProject": "work-project" }
+    "work":    { "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project" },
+    "personal": { "provider": "anthropic-subscription", "codeMieProject": null }
   }
 }
 ```
@@ -147,14 +149,41 @@ Keep global config with provider/model. Each repo's local config sets only `code
 
 ### Team project context with a selected provider profile
 
-`codeMieUrl`, `codeMieProject`, and `codeMieIntegration` come from the workspace of the scope
-the profile in use belongs to. A local profile (defined in `.codemie/codemie-cli.config.json`)
-uses the local workspace, falling back to the global one when the local config has none. A
-global profile always uses the global workspace, even inside a repository with a local config.
+`codeMieUrl`, `codeMieProject`, and `codeMieIntegration` (the identity trio) resolve through one
+resolver, `ConfigLoader.resolveProfileIdentity(workingDir, profileName)` (EPMCDME-15411), which also
+returns a binding state:
+
+| State | When | Identity |
+|---|---|---|
+| `own` | global profile with a string `codeMieProject` | project + integration from the profile only (absent integration = none); URL = profile's own, else the shared one |
+| `none` | global profile with `codeMieProject: null` ("off CodeMie") | no URL, project or integration; no CodeMie call |
+| `unowned` | any other global profile of a project-carrying provider (`customProperties.carriesCodeMieProject`: ai-run-sso, bearer-auth, anthropic/moonshot-subscription) | shared (global `workspace`, last setup) project + integration |
+| `local` | repo-local profile | local workspace, else global — unchanged; a same-named global `own`/`none` profile supplies identity when the local scope has no project |
+| `not-applicable` | litellm, bedrock, ollama | legacy shared trio if the config has one, none on new configs (setup no longer writes it); no Project line, prompt or warning |
+
+Rules:
+
+- `saveProfile()` writes the trio to the saved global profile only. An update that supplies none of the
+  three keeps the stored values; one that supplies any replaces the trio; `null` drops URL and integration.
+  The global `workspace` identity is never written again and never deleted (legacy fallback).
+- For `own`/`none`, `load()` takes identity only from the resolver and ignores `CODEMIE_URL` /
+  `CODEMIE_INTEGRATION_*` from the environment; the launcher removes inherited `CODEMIE_PROJECT`,
+  `CODEMIE_URL`, `CODEMIE_INTEGRATION_*` and `CODEMIE_SYNC_API_URL` from the child environment.
+- An interactive launch of an `unowned` profile asks once (shared project preselected; picking it needs a
+  named confirmation; subscription profiles can choose "Keep this profile off CodeMie") and saves the pick
+  to that profile. A launch that cannot prompt (`--task`, non-TTY stdin/stdout, `CODEMIE_NO_PROMPTS=1`)
+  writes one stderr warning and continues with the shared project. Policy: `src/agents/core/launch-identity.ts`.
+- The launcher exports output-only `CODEMIE_PROJECT_BINDING` (the state) next to `CODEMIE_PROFILE_NAME`;
+  banner, warning and evidence read it and never re-resolve. It is never an input to `load()`.
+- The project list at launch is fetched only from the host the credentials were issued for
+  (`resolveProjectListAuth()` in `codemie-auth-helpers.ts`).
+- Migration `010-clear-cloned-profile-identity` clears trios equal to the shared trio only when the
+  reverted #701 migration (`008-isolate-global-profile-identity`) is in the ledger or the ledger was unparsable.
+- The standalone Claude statusline mirrors the URL rule inline (`sessionCodeMieUrl()`), covered by a contract test.
 
 ```bash
 codemie-claude                      # repo's local profile: repo's CodeMie URL and project
-codemie-claude --profile anthropic  # global profile: global CodeMie URL and project
+codemie-claude --profile mtlx-csd   # global profile: its own CodeMie URL and project
 ```
 
 ### Which CodeMie URL is used
@@ -164,7 +193,7 @@ Two URLs can point at the CodeMie platform, and they have different jobs:
 | URL | Field | Used for |
 |---|---|---|
 | Profile URL (P) | profile `baseUrl` | Direct platform interaction: stored-credential lookup, `codemie profile login/logout/refresh`, model lists, health/doctor |
-| Workspace URL (W) | `workspace.codeMieUrl` (`codeMieUrl`) | Analytics/metrics sync (`syncCodeMieUrl`, `CODEMIE_SYNC_API_URL`) and the fallback when a lookup under P finds nothing |
+| Workspace URL (W) | resolved `codeMieUrl` (profile's own, else `workspace.codeMieUrl`) | Analytics/metrics sync (`syncCodeMieUrl`, `CODEMIE_SYNC_API_URL`) and the fallback when a lookup under P finds nothing |
 
 For `ai-run-sso` and `bearer-auth` profiles, P is tried first and W second (a same-origin P and W is looked up once).
 Subscription providers (`anthropic-subscription`, `moonshot-subscription`) use W only, because their `baseUrl` is a vendor endpoint, not CodeMie.
@@ -179,7 +208,7 @@ export CODEMIE_MODEL=claude-3-5-sonnet
 
 Environment variables override both global and local config for the fields `ConfigLoader.loadFromEnv` reads (`CODEMIE_PROVIDER`, `CODEMIE_BASE_URL`, `CODEMIE_API_KEY`, `CODEMIE_MODEL`, `CODEMIE_TIMEOUT`, `CODEMIE_DEBUG`, `CODEMIE_ALLOWED_DIRS`, `CODEMIE_IGNORE_PATTERNS`, `CODEMIE_URL`, `CODEMIE_AUTH_METHOD`, integration id/alias). No local config file is needed in CI.
 
-`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the active profile has no `codeMieProject` of its own; a profile that sets one always re-exports its own value.
+`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the profile resolves no `codeMieProject` and is not `own`/`none`; an `own` or `none` profile never inherits it.
 
 ---
 

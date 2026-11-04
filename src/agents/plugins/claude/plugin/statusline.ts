@@ -680,6 +680,21 @@ async function gitBranch(cwd) {
   }
 }
 
+/**
+ * CodeMie URL of a global profile, inline (this file runs standalone and must not import
+ * ConfigLoader): the profile's own `codeMieUrl`, else the shared workspace one, except a
+ * profile kept off CodeMie (`codeMieProject: null`), which has none. Mirrors the URL rule
+ * of ConfigLoader.resolveProfileIdentity() (EPMCDME-15411).
+ */
+export function sessionCodeMieUrl(
+  profile: { codeMieUrl?: unknown; codeMieProject?: unknown } | undefined,
+  workspace: { codeMieUrl?: unknown } | undefined
+): string | undefined {
+  if (!profile || profile.codeMieProject === null) return undefined;
+  if (typeof profile.codeMieUrl === 'string' && profile.codeMieUrl) return profile.codeMieUrl;
+  return typeof workspace?.codeMieUrl === 'string' && workspace.codeMieUrl ? workspace.codeMieUrl : undefined;
+}
+
 // --- Budget resolution (network/filesystem; dependencies injectable for tests) ---
 
 export async function resolveBudget({
@@ -725,9 +740,9 @@ export async function resolveBudget({
 
   const profile = config.profiles?.[profileName];
   const { baseUrl } = profile ?? {};
-  // codeMieUrl now lives on the scope-level workspace object (migration 006), and
-  // userEmail is a top-level MultiProviderConfig field — neither is per-profile anymore.
-  const codeMieUrl = config.workspace?.codeMieUrl;
+  // Per-profile CodeMie URL with the same rule as ConfigLoader.resolveProfileIdentity();
+  // userEmail is a top-level MultiProviderConfig field.
+  const codeMieUrl = sessionCodeMieUrl(profile, config.workspace);
   const userEmail = config.userEmail;
   if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
