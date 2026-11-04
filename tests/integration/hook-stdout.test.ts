@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { connect, type AddressInfo } from 'node:net';
+import { type AddressInfo } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, cpSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -208,20 +208,7 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
   });
 
   describe('OTLP hook on a cold proxy daemon', () => {
-    const DAEMON_PORT = 4001;
     const daemonHomes: string[] = [];
-
-    /** True when something accepts connections on the daemon's fixed port. */
-    function portHeld(port: number): Promise<boolean> {
-      return new Promise(done => {
-        const socket = connect(port, '127.0.0.1');
-        socket.once('connect', () => {
-          socket.destroy();
-          done(true);
-        });
-        socket.once('error', () => done(false));
-      });
-    }
 
     // A daemon that came up wrote its pid to the temp state file; stop it so the case leaves nothing running.
     afterEach(() => {
@@ -238,8 +225,8 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     });
 
     // Notification is forwarded as is: the SSO gate (and its browser sign-in) runs only on UserPromptSubmit.
-    // The profile's baseUrl is a test-only URL with no stored SSO credentials, so the spawned daemon cannot start.
-    async function runColdOtlpHook(extraEnv: Record<string, string>): Promise<{ home: string; res: RunResult; portHeldBefore: boolean }> {
+    // Without credentials the daemon holds a listener and answers 401 until the user signs in.
+    async function runColdOtlpHook(extraEnv: Record<string, string>): Promise<{ home: string; res: RunResult }> {
       const home = freshHome();
       daemonHomes.push(home);
       writeFileSync(
@@ -257,7 +244,6 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
         }),
         'utf-8'
       );
-      const portHeldBefore = await portHeld(DAEMON_PORT);
       const notification = JSON.stringify({
         hook_event_name: 'Notification',
         session_id: 'agent-session-under-test',
@@ -268,17 +254,33 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       });
 
       const res = await run(home, ['hook', '--agent', 'claude-code-otlp'], notification, extraEnv);
-      return { home, res, portHeldBefore };
+      return { home, res };
     }
 
     it('starting the proxy writes nothing to stdout or stderr; the cold start is in the file log', async () => {
-      const { home, res, portHeldBefore } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' });
+      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' });
 
       expect(res.stdout).toBe('');
       expect(res.stderr).toBe('');
       expect(fileLog(home)).toContain('[daemon-manager] Spawning daemon');
       expect(existsSync(join(home, 'sso-login.lock'))).toBe(false);
-      expect(await portHeld(DAEMON_PORT)).toBe(portHeldBefore);
+      const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as {
+        port: number; pid: number; health: string;
+      };
+      expect(state.health).toBe('unhealthy');
+      const health = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(5000) });
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ status: 'ok', port: state.port, pid: state.pid });
+      const response = await fetch(`http://127.0.0.1:${state.port}/v1/messages`, {
+        method: 'POST',
+        body: '{}',
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: expect.stringContaining('codemie profile login') },
+      });
     });
 
     it('without CODEMIE_DEBUG the proxy status line still reaches the file log, and nothing reaches stdout or stderr', async () => {
