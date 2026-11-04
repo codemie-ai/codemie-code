@@ -267,26 +267,35 @@ export async function getStoredAnalyticsCredentials(
   return lookupStoredCredentials(getAnalyticsPlatformSource(ssoUrl, env, overrides));
 }
 
+/** Request limits for a user-info fetch; the launch-time project list uses short ones. */
+export interface UserInfoFetchOptions {
+  timeout?: number;
+  maxRetries?: number;
+}
+
 /* eslint-disable no-redeclare */
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  options?: UserInfoFetchOptions
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  jwtToken: string
+  jwtToken: string,
+  options?: UserInfoFetchOptions
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  options: UserInfoFetchOptions = {}
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
   const url = `${apiUrl}/v1/user`;
 
   const client = new HTTPClient({
-    timeout: 10000,
-    maxRetries: 3,
+    timeout: options.timeout ?? 10000,
+    maxRetries: options.maxRetries ?? 3,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
   });
@@ -313,27 +322,41 @@ export async function fetchCodeMieUserInfo(
   return userInfo;
 }
 
-export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{ project: string; userEmail: string }> {
-  if (!authResult.apiUrl || !authResult.cookies) {
-    throw new ConfigurationError('API URL or cookies not found in authentication result');
+/** Bearer-token auth for project selection (JWT profiles): the token is only sent to `apiUrl`. */
+export interface BearerProjectAuth {
+  apiUrl: string;
+  jwtToken: string;
+}
+
+/** Accessible projects of the account (member + admin), deduped and sorted case-insensitively. */
+export function accountProjects(userInfo: CodeMieUserInfo): string[] {
+  const all = [...new Set([...(userInfo.applications || []), ...(userInfo.applications_admin || [])])];
+  return all.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+export async function selectCodeMieProject(
+  authResult: SSOAuthResult | BearerProjectAuth
+): Promise<{ project: string; userEmail: string }> {
+  let userInfo: CodeMieUserInfo;
+  if ('jwtToken' in authResult) {
+    if (!authResult.apiUrl || !authResult.jwtToken) {
+      throw new ConfigurationError('API URL or token not provided for project selection');
+    }
+    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.jwtToken);
+  } else {
+    if (!authResult.apiUrl || !authResult.cookies) {
+      throw new ConfigurationError('API URL or cookies not found in authentication result');
+    }
+    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.cookies);
   }
 
-  const userInfo = await fetchCodeMieUserInfo(
-    authResult.apiUrl,
-    authResult.cookies
-  );
-
-  const applications = userInfo.applications || [];
-  const applicationsAdmin = userInfo.applications_admin || [];
-  const allProjects = [...new Set([...applications, ...applicationsAdmin])];
+  const allProjects = accountProjects(userInfo);
 
   if (allProjects.length === 0) {
     throw new ConfigurationError('No projects found for your account. Please contact your administrator.');
   }
 
-  const sortedProjects = allProjects.sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: 'base' })
-  );
+  const sortedProjects = allProjects;
 
   let project: string;
   if (sortedProjects.length === 1) {
@@ -360,4 +383,47 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{
   }
 
   return { project, userEmail: userInfo.username };
+}
+
+/** Credentials for listing a profile's projects, bound to the host they were issued for. */
+export type ProjectListAuth =
+  | { apiUrl: string; cookies: Record<string, string> }
+  | { apiUrl: string; jwtToken: string };
+
+/**
+ * Credentials and target for listing a profile's CodeMie projects at launch.
+ * The list is fetched only from the host the credentials were issued for:
+ * - ai-run-sso: stored cookies for the profile's own `baseUrl` (no shared-URL
+ *   fallback), sent to `ensureApiBase(baseUrl)`;
+ * - bearer-auth (JWT): the profile's token, sent to `ensureApiBase(baseUrl)`;
+ * - subscription providers: stored analytics credentials for the resolved
+ *   CodeMie URL (never the vendor `baseUrl`), sent to the host they were issued for.
+ * Returns undefined when no usable credential exists for that host.
+ */
+export async function resolveProjectListAuth(config: {
+  provider?: string;
+  baseUrl?: string;
+  codeMieUrl?: string;
+  jwtToken?: string;
+}): Promise<ProjectListAuth | undefined> {
+  if (isCodeMiePlatformProvider(config.provider)) {
+    if (!config.baseUrl || isLoopbackUrl(config.baseUrl)) return undefined;
+    const apiUrl = ensureApiBase(config.baseUrl);
+    if (config.provider === ProviderName.BEARER_AUTH) {
+      return config.jwtToken ? { apiUrl, jwtToken: config.jwtToken } : undefined;
+    }
+    const found = await lookupStoredCredentials({ provider: config.provider, baseUrl: config.baseUrl });
+    if (!found?.credentials.cookies) return undefined;
+    return { apiUrl, cookies: found.credentials.cookies };
+  }
+
+  if (!config.codeMieUrl) return undefined;
+  const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
+  const credentials = await new CodeMieSSO().getStoredCredentials(config.codeMieUrl);
+  if (!credentials?.cookies) return undefined;
+  const apiUrl = credentials.apiUrl ? ensureApiBase(credentials.apiUrl) : ensureApiBase(config.codeMieUrl);
+  // Cookies go only to the host they were issued for (their apiUrl, else the URL they are stored under).
+  const issuedFor = originOf(credentials.apiUrl || config.codeMieUrl);
+  if (originOf(apiUrl) !== issuedFor) return undefined;
+  return { apiUrl, cookies: credentials.cookies };
 }

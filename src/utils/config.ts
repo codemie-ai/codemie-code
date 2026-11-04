@@ -185,9 +185,11 @@ export class ConfigLoader {
     // global); CodeMie identity only from resolveProfileIdentity(). For a global
     // profile the raw record's identity keys are removed first, so a stored
     // `codeMieProject: null` (or a stale URL on a `none` record) never survives.
-    const resolution = await this.resolveProfileIdentity(workingDir, selectedProfileName, {
-      preferLinkedProject: opts.preferLinkedProject
-    });
+    const resolution = await this.resolveIdentityFor(
+      workingDir,
+      { selectedName: selectedProfileName, localName: localProfileName, isLocalProfile: Object.keys(effectiveLocalConfig).length > 0 },
+      { preferLinkedProject: opts.preferLinkedProject }
+    );
     const identityIsAuthoritative = resolution.state === 'own' || resolution.state === 'none';
     if (!resolution.isLocalProfile || identityIsAuthoritative) {
       for (const key of IDENTITY_KEYS) delete (config as Record<string, unknown>)[key];
@@ -313,6 +315,20 @@ export class ConfigLoader {
     profileName?: string,
     opts: { preferLinkedProject?: boolean } = {}
   ): Promise<ProfileIdentityResolution> {
+    const selectedName = await this.resolveProfileName(workingDir, profileName);
+    const localName = await this.resolveLocalProfileName(workingDir, selectedName);
+    const isLocalProfile = !(selectedName && localName && selectedName !== localName)
+      && Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
+    return this.resolveIdentityFor(workingDir, { selectedName, localName, isLocalProfile }, opts);
+  }
+
+  /** resolveProfileIdentity() for profile names load() has already resolved (avoids re-reading the local config). */
+  private static async resolveIdentityFor(
+    workingDir: string,
+    names: { selectedName?: string; localName?: string; isLocalProfile: boolean },
+    opts: { preferLinkedProject?: boolean } = {}
+  ): Promise<ProfileIdentityResolution> {
+    const { selectedName, localName, isLocalProfile } = names;
     const preferLinkedProject = opts.preferLinkedProject === true;
     const globalMulti = await this.loadMultiProviderConfig();
     const localMulti = await this.loadLocalMultiProviderConfig(workingDir);
@@ -324,11 +340,6 @@ export class ConfigLoader {
     // With no genuine local link, a project that comes only from the global scope
     // is not an authoritative source for the native hook (backend routing decides).
     const globalOnly: ProjectOrigin = preferLinkedProject ? 'none' : 'profile';
-
-    const selectedName = await this.resolveProfileName(workingDir, profileName);
-    const localName = await this.resolveLocalProfileName(workingDir, selectedName);
-    const isLocalProfile = !(selectedName && localName && selectedName !== localName)
-      && Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
 
     const tooling: WorkspaceConfig = { ...workspace };
     for (const key of IDENTITY_KEYS) delete tooling[key];
@@ -1510,7 +1521,11 @@ export class ConfigLoader {
     // the profile in use (see resolveProfileWorkspace()).
     const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
-    const resolution = await this.resolveProfileIdentity(workingDir, selectedProfileName);
+    const resolution = await this.resolveIdentityFor(workingDir, {
+      selectedName: selectedProfileName,
+      localName: localProfileName,
+      isLocalProfile: Object.keys(effectiveLocalConfig).length > 0
+    });
     const profileWorkspace: Record<string, unknown> = { ...resolution.workspace };
     const identityWorkspace: Record<string, unknown> = {};
     for (const key of IDENTITY_KEYS) {

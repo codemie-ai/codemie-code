@@ -33,7 +33,7 @@ vi.mock('../identity-resolver.js', async () => ({
   resolveIdentity: resolveIdentityMock,
 }));
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock, resolveProjectOrigin: resolveProjectOriginMock, isLocalProfile: vi.fn(async () => false) },
+  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock, resolveProfileIdentity: vi.fn(async (...args: unknown[]) => ({ projectOrigin: await resolveProjectOriginMock(...args) })), isLocalProfile: vi.fn(async () => false) },
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('../session-project-pin.js', () => ({
@@ -967,7 +967,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       resolveProjectOriginMock.mockResolvedValue('linked_folder');
       await run({ sessionId: 's2', payload: [{ session_id: 's2' }] });
       expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'linked_folder' });
-      expect(resolveProjectOriginMock).toHaveBeenCalledWith('/repo', false, true); // native, global profile
+      expect(resolveProjectOriginMock).toHaveBeenCalledWith('/repo', undefined, { preferLinkedProject: true }); // native, profile in use
     });
 
     it('CR-005: an origin lookup failure degrades to none instead of failing the stamp', async () => {

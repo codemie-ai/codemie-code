@@ -36,6 +36,7 @@ import {
   getStoredPlatformCredentials,
   getStoredPlatformCredentialsFromEnv,
   getStoredAnalyticsCredentials,
+  resolveProjectListAuth,
 } from '../codemie-auth-helpers.js';
 
 describe('ensureApiBase', () => {
@@ -502,5 +503,81 @@ describe('getStoredAnalyticsCredentials', () => {
     const result = await getStoredAnalyticsCredentials(W, profileEnv('anthropic-subscription'));
     expect(result).toEqual({ credentials: previewCreds, url: W });
     expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([W]);
+  });
+});
+
+describe('resolveProjectListAuth — credential host rule (EPMCDME-15411)', () => {
+  beforeEach(() => {
+    mockGetStoredCredentials.mockReset();
+  });
+
+  it('ai-run-sso: uses only the profile baseUrl credential, never the shared URL', async () => {
+    mockGetStoredCredentials.mockImplementation(async (url: string) =>
+      url.startsWith('https://b.example.com') ? { cookies: { s: 'b' }, apiUrl: 'https://b.example.com' } : null
+    );
+    const auth = await resolveProjectListAuth({
+      provider: 'ai-run-sso',
+      baseUrl: 'https://a.example.com/code-assistant-api',
+      codeMieUrl: 'https://b.example.com',
+    });
+    expect(auth).toBeUndefined();
+    expect(mockGetStoredCredentials.mock.calls.every(([url]) => String(url).startsWith('https://a.example.com'))).toBe(true);
+  });
+
+  it('ai-run-sso: sends the profile cookies to the profile API host', async () => {
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { s: 'a' }, apiUrl: 'https://a.example.com/code-assistant-api' });
+    const auth = await resolveProjectListAuth({ provider: 'ai-run-sso', baseUrl: 'https://a.example.com/code-assistant-api' });
+    expect(auth).toEqual({ apiUrl: 'https://a.example.com/code-assistant-api', cookies: { s: 'a' } });
+  });
+
+  it('AC11: a JWT profile on host A with a shared URL on host B targets A only', async () => {
+    const auth = await resolveProjectListAuth({
+      provider: 'bearer-auth',
+      baseUrl: 'https://a.example.com',
+      codeMieUrl: 'https://b.example.com',
+      jwtToken: 'tok',
+    });
+    expect(auth).toEqual({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
+    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+  });
+
+  it('JWT without a token has no list auth', async () => {
+    expect(await resolveProjectListAuth({ provider: 'bearer-auth', baseUrl: 'https://a.example.com' })).toBeUndefined();
+  });
+
+  it('subscription: uses analytics credentials for the resolved CodeMie URL, never the vendor baseUrl', async () => {
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { s: 'c' }, apiUrl: 'https://codemie.example.com/code-assistant-api' });
+    const auth = await resolveProjectListAuth({
+      provider: 'anthropic-subscription',
+      baseUrl: 'https://api.anthropic.com',
+      codeMieUrl: 'https://codemie.example.com',
+    });
+    expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://codemie.example.com');
+    expect(auth).toEqual({ apiUrl: 'https://codemie.example.com/code-assistant-api', cookies: { s: 'c' } });
+  });
+
+  it('subscription without a CodeMie URL or stored login has no list auth', async () => {
+    expect(await resolveProjectListAuth({ provider: 'anthropic-subscription', baseUrl: 'https://api.anthropic.com' })).toBeUndefined();
+    mockGetStoredCredentials.mockResolvedValue(null);
+    expect(await resolveProjectListAuth({ provider: 'moonshot-subscription', codeMieUrl: 'https://c.example.com' })).toBeUndefined();
+  });
+});
+
+describe('selectCodeMieProject — bearer token (JWT setup, AC11)', () => {
+  beforeEach(() => {
+    mockGetRaw.mockReset();
+  });
+
+  it('lists projects with the bearer token and sends no cookie', async () => {
+    mockGetRaw.mockResolvedValue({
+      statusCode: 200,
+      data: JSON.stringify({ username: 'u@example.com', applications: ['only'], applications_admin: [] }),
+    });
+    const result = await selectCodeMieProject({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
+    expect(result).toEqual({ project: 'only', userEmail: 'u@example.com' });
+    const [url, headers] = mockGetRaw.mock.calls[0] as [string, Record<string, string>];
+    expect(url).toBe('https://a.example.com/code-assistant-api/v1/user');
+    expect(headers.Authorization ?? headers.authorization).toBe('Bearer tok');
+    expect(headers.cookie ?? headers.Cookie).toBeUndefined();
   });
 });

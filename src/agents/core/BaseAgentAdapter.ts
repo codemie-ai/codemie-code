@@ -21,6 +21,7 @@ import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
+import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
@@ -628,6 +629,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
       const model = env.CODEMIE_MODEL || 'unknown';
       const codeMieUrl = env.CODEMIE_URL;
+      // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
+      const project = describeProjectBinding(
+        parseProjectBinding(env[PROJECT_BINDING_ENV]),
+        env.CODEMIE_PROJECT || undefined
+      );
 
       // Display ASCII logo with configuration
       console.log(
@@ -636,6 +642,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           provider,
           model,
           codeMieUrl,
+          project,
           agent: this.metadata.name,
           cliVersion,
           sessionId
