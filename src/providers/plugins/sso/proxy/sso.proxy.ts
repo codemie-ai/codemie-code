@@ -295,6 +295,7 @@ export class CodeMieProxy {
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
+        pid: process.pid,
       }));
       return;
     }

@@ -4,7 +4,8 @@ import { getCodemieHome, getDirname } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
-import { isProcessAlive, isProcessAliveStrict, spawnDetached } from '../../../utils/processes.js';
+import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/processes.js';
+import { fetchProxyHealth } from './health-check.js';
 
 export interface DaemonState {
   pid: number;
@@ -32,6 +33,48 @@ export interface DaemonState {
 
 const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
 
+/** The `startedAt` a daemon writes into its state: the start of its own process. */
+export function daemonStartedAt(): string {
+  return new Date(processStartedAt()).toISOString();
+}
+
+/** The daemon is always the user's own process: any `kill(pid, 0)` error, EPERM included, means it is gone. */
+function isDaemonPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a CodeMie proxy answers the shallow `/health` on `port` reporting both that port and `pid` as its own. */
+async function answersOnOwnPort(port: number, pid: number): Promise<boolean> {
+  try {
+    const res = await fetchProxyHealth(port);
+    if (!res.ok) return false;
+    const body = (await res.json()) as { status?: unknown; port?: unknown; pid?: unknown };
+    return body.status === 'ok' && body.port === port && body.pid === pid;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the state's daemon still runs: its pid alive as the user's own process, then its start time
+ * matching the recorded one. A dead daemon's pid reused by a later process of the same user has a later
+ * start; a state without a parsable `startedAt`, or on Windows, is judged by its pid alone. A live pid that
+ * fails the start check (a wall-clock step skews it) still counts when the proxy answers on the state's port.
+ */
+export async function isDaemonAlive(state: Pick<DaemonState, 'pid' | 'startedAt' | 'port'>): Promise<boolean> {
+  if (!isDaemonPidAlive(state.pid)) return false;
+  if (process.platform === 'win32') return true;
+  const startedAt = Date.parse(state.startedAt);
+  if (await isOwnerAlive({ pid: state.pid, ...(Number.isFinite(startedAt) && { startedAt }) })) return true;
+  return answersOnOwnPort(state.port, state.pid);
+}
+
 export async function readState(stateFile: string = DEFAULT_STATE_FILE): Promise<DaemonState | null> {
   try {
     const raw = await readFile(stateFile, 'utf-8');
@@ -45,7 +88,8 @@ export async function writeState(
   state: DaemonState,
   stateFile: string = DEFAULT_STATE_FILE
 ): Promise<void> {
-  const tmp = stateFile + '.tmp';
+  // Per process: two CLI runs writing at once never rename each other's half-written file.
+  const tmp = `${stateFile}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
   await rename(tmp, stateFile);
 }
@@ -64,7 +108,7 @@ export async function checkStatus(
   const state = await readState(stateFile);
   if (!state) return { running: false, state: null };
 
-  if (!isProcessAliveStrict(state.pid)) {
+  if (!(await isDaemonAlive(state))) {
     await clearState(stateFile);
     return { running: false, state: null };
   }
@@ -134,7 +178,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
   for (let i = 0; i < 50; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
     const state = await readState(stateFile);
-    if (state && isProcessAliveStrict(state.pid)) return state;
+    if (state && (await isDaemonAlive(state))) return state;
   }
 
   throw new ToolExecutionError(
@@ -148,7 +192,7 @@ export async function stopDaemon(): Promise<void> {
   const state = await readState(stateFile);
   if (!state) return;
 
-  if (!isProcessAlive(state.pid)) {
+  if (!(await isDaemonAlive(state))) {
     await clearState(stateFile);
     return;
   }
@@ -163,9 +207,10 @@ export async function stopDaemon(): Promise<void> {
     await clearState(stateFile);
     return;
   }
+  // The identity is confirmed above; the waits watch the pid alone, with no `ps` per tick.
   for (let i = 0; i < 50; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
-    if (!isProcessAlive(state.pid)) {
+    if (!isDaemonPidAlive(state.pid)) {
       await clearState(stateFile);
       return;
     }
@@ -183,7 +228,7 @@ export async function stopDaemon(): Promise<void> {
   }
   for (let i = 0; i < 20; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
-    if (!isProcessAlive(state.pid)) break;
+    if (!isDaemonPidAlive(state.pid)) break;
   }
 
   // 3. Always clear state — the SIGKILL'd process won't run its own cleanup.

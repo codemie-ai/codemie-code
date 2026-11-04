@@ -5,7 +5,7 @@
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { Session } from './types.js';
 
-function hostOf(url: string | undefined): string | undefined {
+export function hostOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     return new URL(url).host.toLowerCase();

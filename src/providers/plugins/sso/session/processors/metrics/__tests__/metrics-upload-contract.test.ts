@@ -373,7 +373,9 @@ describe('MetricsSender upload contract', () => {
 
       const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
 
-      await expect(sender.sendSessionMetric(usageMetric)).rejects.toThrow(/Failed after 0 retries/);
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      expect((error as Error).message).toMatch(/Failed after 0 retries/);
+      expect((error as Error).cause).toMatchObject({ statusCode: 503 });
       expect(server.captured).toHaveLength(1);
     });
 

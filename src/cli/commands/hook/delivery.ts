@@ -88,7 +88,7 @@ export function nativeSessionId(record: { sessionId: string; correlation?: { age
  * for the stranded path), the end metric is sent or does not apply, and — for a matched record
  * whose sync applies — no metric line is pending / retryable and no conversation payload is waiting.
  */
-async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
+export async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
   const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
   const record = await new SessionStore().loadSession(sessionId);
   if (!record) return false;
@@ -97,7 +97,11 @@ async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig):
   if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return false;
   // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
+  return hasNoPendingData(sessionId);
+}
 
+/** No metric line pending / retryable and no conversation payload waiting; false when they cannot be read. */
+async function hasNoPendingData(sessionId: string): Promise<boolean> {
   try {
     const { readJSONLTolerant } = await import('../../../agents/core/session/utils/jsonl-reader.js');
     const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');

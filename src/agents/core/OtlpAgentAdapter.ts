@@ -8,6 +8,7 @@ import { resolveIdentityFields, type IdentityFields } from './event-fields/ident
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import type { EvidenceRecord } from './evidence/record-store.js';
+import { enqueuePendingOwner } from './evidence/owner-pending.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -38,6 +39,8 @@ interface PreparedForward {
   options?: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']>[2];
   /** A loss report never acknowledges source data, even if the transport accepts it. */
   failure?: string;
+  /** The events are durably held for their login (owner not resolved yet): the hook batch counts as accepted. */
+  pendingStored?: true;
 }
 
 /** Common fields an event may bring itself: its own non-empty value wins. All others are stamped. */
@@ -140,7 +143,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
           : [batch.events, this.name];
         // One transport call site; retries reuse the same prepared bytes and event IDs.
         const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
-        if (batch.failure) {
+        if (batch.pendingStored) {
+          accepted = true; // durable: finalize commits any source cursor, a retry would only duplicate
+        } else if (batch.failure) {
           // Loss reporting is best-effort and never acknowledges source data.
           if (batch.options?.evidenceLoss) await send().catch(() => false);
         } else {
@@ -171,6 +176,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs);
       if (!stamp.ok) {
+        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
+          logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
+          return { events: [], pendingStored: true };
+        }
         logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}${stamp.detail ? `: ${stamp.detail}` : ''}); event not enqueued`);
         return {
           events: [],
@@ -191,6 +200,34 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
     };
+  }
+
+  /**
+   * Builds the events exactly as a stamped hook would (hook-time facts) and parks them for the login that could not name its owner.
+   * Identity fields are rewritten at replay from the verified login; nothing here is sent.
+   */
+  private async holdForOwner(
+    context: OtlpHookContext,
+    payload: Record<string, unknown>[],
+    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>
+  ): Promise<boolean> {
+    try {
+      const now = Date.now();
+      const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
+      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields()]);
+      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
+      return await enqueuePendingOwner({
+        fp: pending.fp,
+        agentName: this.name,
+        api_identity: pending.fields.api_identity,
+        session_id: pending.fields.session_id,
+        fields: pending.fields,
+        events: payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
+      }, now);
+    } catch (error) {
+      logger.debug(`[${this.name}] holding events for owner failed: ${error instanceof Error ? error.name : 'error'}`);
+      return false;
+    }
   }
 
   /**

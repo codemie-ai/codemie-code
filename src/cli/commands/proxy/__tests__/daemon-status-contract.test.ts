@@ -23,7 +23,7 @@ import {
   checkStatus,
   type DaemonState,
 } from '../daemon-manager.js';
-import { isProcessAlive } from '../../../../utils/processes.js';
+import { isProcessAlive, processStartedAt } from '../../../../utils/processes.js';
 import {
   daemonMatchesRequest,
   getEffectiveClientType,
@@ -47,7 +47,7 @@ function makeFullState(overrides: Partial<DaemonState> = {}): DaemonState {
     clientType: 'vscode-byok',
     syncApiUrl: 'https://api.example.com',
     syncCodeMieUrl: 'https://codemie.example.com',
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(processStartedAt()).toISOString(),
     health: 'ok',
     healthReason: undefined,
     recoveryAttempts: 0,

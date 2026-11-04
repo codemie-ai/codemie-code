@@ -76,6 +76,49 @@ export interface SessionStatus {
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
   evidenceMarked?: true;
+  /**
+   * Original first-failure age of bytes handed over from the owner-pending queue (one finite retention window that a
+   * handover does not reset). Hooks byte ranges of the CURRENT file, ascending, always the head of the pending range;
+   * each expires on its own clock (`expireCarriedAgeLocked`), whatever else holds or fails the session.
+   */
+  carriedAge?: Partial<Record<SpoolStream, AgeSegment[]>>;
+}
+
+export interface AgeSegment {
+  start: number;
+  end: number;
+  since: number;
+}
+
+export const MAX_AGE_SEGMENTS = 64;
+
+/**
+ * True when every pending hooks byte `[cursor, size)` belongs to a carried segment (or nothing is pending). Handed-over bytes
+ * are only ever appended in that state, so they stay the head run of the pending range and expire on their own clock.
+ */
+export function pendingIsCarriedOnly(status: SessionStatus, size: number): boolean {
+  let pos = status.cursors.hooks;
+  for (const seg of [...(status.carriedAge?.hooks ?? [])].sort((x, y) => x.start - y.start)) {
+    if (seg.end <= pos) continue;
+    if (seg.start > pos) break;
+    pos = seg.end;
+  }
+  return pos >= size;
+}
+
+function parseCarriedAge(raw: unknown): SessionStatus['carriedAge'] {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const out: Partial<Record<SpoolStream, AgeSegment[]>> = {};
+  for (const stream of SPOOL_STREAMS) {
+    const list = (raw as Record<string, unknown>)[stream];
+    if (!Array.isArray(list)) continue;
+    const segs = list
+      .map((s) => ({ start: toOffset(s?.start), end: toOffset(s?.end), since: toOffset(s?.since) }))
+      .filter((s) => s.since > 0 && s.end > s.start)
+      .slice(0, MAX_AGE_SEGMENTS);
+    if (segs.length > 0) out[stream] = segs;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface DeliveryFailure {
@@ -239,6 +282,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (discard) status.lastDiscard = discard;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
+  const carried = parseCarriedAge(source['carriedAge']);
+  if (carried) status.carriedAge = carried;
 
   return status;
 }
