@@ -168,6 +168,7 @@ async function cleanup(): Promise<void> {
 }
 
 async function restartProxy(): Promise<void> {
+  const heldListener = awaitingLogin;
   try {
     await awaitingLogin?.stop();
     awaitingLogin = undefined;
@@ -178,8 +179,26 @@ async function restartProxy(): Promise<void> {
   // Pin to the port we already bound so Claude Desktop's URL stays valid.
   config.pinnedPort = true;
   proxy = new CodeMieProxy(config);
-  const { url } = await bringUp();
-  await persistState({ url, ...healthPatch(), lastRecoveryAt: new Date().toISOString() });
+  let started: { port: number; url: string };
+  try {
+    started = await bringUp();
+  } catch (error) {
+    if (heldListener) {
+      // A failed replacement must not discard the sign-in listener when the port is free.
+      await proxy.stop().catch(stopError => {
+        logger.warn(`[proxy-daemon] Cleanup after failed recovery: ${String(stopError)}`);
+      });
+      awaitingLogin = await startAwaitingLoginListener({
+        port: config.port,
+        host: config.host as string,
+        pinnedPort: true,
+        message: 'Proxy recovery failed after sign-in. Automatic recovery will retry on this port.',
+      });
+      await persistState({ url: awaitingLogin.url, ...healthPatch() });
+    }
+    throw error;
+  }
+  await persistState({ url: started.url, ...healthPatch(), lastRecoveryAt: new Date().toISOString() });
 }
 
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
@@ -258,11 +277,11 @@ try {
         await persistState({ health: 'unhealthy', healthReason: awaitingLogin?.message ?? reason });
       },
       // Signed in again while the port was held: bring the real proxy back on it.
-      onUnauthorized: async () => {
+      onUnauthorized: authMethod === 'sso' ? async () => {
         if (awaitingLogin && await credentialsAvailable()) {
           await restartProxy();
         }
-      },
+      } : undefined,
     }
   );
   watcher.start();

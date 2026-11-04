@@ -38,7 +38,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   // failure via mockRejectedValueOnce; vi.spyOn can't do this directly —
   // ESM module namespaces aren't spy-able ("module namespace is not
   // configurable").
-  return { ...actual, unlink: vi.fn(actual.unlink) };
+  return { ...actual, unlink: vi.fn(actual.unlink), readFile: vi.fn(actual.readFile) };
 });
 
 vi.mock('../../daemon-manager.js', () => ({
@@ -1591,6 +1591,23 @@ describe('claude-code-otlp connector', () => {
   describe('OTLP endpoint continuity', () => {
     const live = { url: 'http://127.0.0.1:60005', gatewayKey: 'gk-new' };
     const settingsPath = () => join(homeDir, '.claude', 'settings.json');
+
+    it('merges a user edit made after the mismatch check into the fresh settings', async () => {
+      await writeClaudeCodeOtlpConfig();
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(readFile).mockImplementationOnce(async (path) => {
+        const snapshot = await actual.readFile(path, 'utf-8');
+        const edited = JSON.parse(snapshot);
+        edited.theme = 'concurrent-user-edit';
+        await actual.writeFile(settingsPath(), JSON.stringify(edited));
+        return snapshot;
+      });
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(true);
+      const saved = await readJson(settingsPath());
+      expect(saved.theme).toBe('concurrent-user-edit');
+      expect(saved.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${live.url}/v1/analytics/otlp`);
+    });
 
     it('re-points only the CodeMie endpoint/header at the live daemon and keeps everything else', async () => {
       await writeClaudeCodeOtlpConfig({ scope: 'project' });

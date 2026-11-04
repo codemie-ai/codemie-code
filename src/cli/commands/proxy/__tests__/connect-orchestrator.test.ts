@@ -4,6 +4,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import stripAnsi from 'strip-ansi';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   daemonMatchesRequest,
   deriveDaemonIdentity,
@@ -48,13 +51,15 @@ vi.mock('../connectors/desktop.js', () => ({
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
 }));
-vi.mock('../connectors/vscode.js', () => ({
+vi.mock('../connectors/vscode.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/vscode.js')>()),
   writeVsCodeLanguageModelsConfig: vi.fn(),
 }));
 vi.mock('../connectors/vscode-claude-code.js', () => ({
   writeVsCodeClaudeCodeConfig: vi.fn(),
 }));
-vi.mock('../connectors/claude-code-otlp.js', () => ({
+vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
   writeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
     written: true,
     path: '/mock/claude/settings.json',
@@ -83,7 +88,9 @@ vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
 vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
   syncPluginSkills: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js', () => ({
+vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js')>()),
+  getClaudeSettingsPath: vi.fn(),
   canonicalizePath: vi.fn(async (path: string) => path),
   readAllowlistState: vi.fn().mockResolvedValue({ kind: 'absent' }),
 }));
@@ -441,11 +448,11 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(spawnDaemon).toHaveBeenCalled();
   });
 
-  it('reuses a healthy matching daemon (no stop, no spawn)', async () => {
+  it.each([4001, 62380])('reuses a healthy matching daemon on port %i (no stop, no spawn)', async (port) => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
-    vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matchingDesktopState() as Awaited<ReturnType<typeof checkStatus>>['state'] });
+    vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matchingDesktopState({ port, url: `http://127.0.0.1:${port}` }) as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -477,6 +484,26 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(status).toHaveBeenCalledWith('Starting proxy...');
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
     status.mockRestore();
+  });
+
+  it('keeps the fallback port when connecting to a hook-respawned OTLP daemon', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: true, state: daemonState({
+      port: 62380,
+      url: 'http://127.0.0.1:62380',
+      clientType: 'claude-code-otlp',
+      provider: 'ai-run-sso',
+      targetUrl: 'https://x.example.com/api',
+      project: 'proj',
+      syncCodeMieUrl: 'https://x.example.com',
+    }) as Awaited<ReturnType<typeof checkStatus>>['state'] });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    await connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
   });
 
   it('restarts when the profile model changed against an otherwise-matching daemon', async () => {
@@ -1069,15 +1096,32 @@ describe('ensureOtlpProxy', () => {
     // Stale state on P1, settings on P1, 4001 busy: the daemon falls back to P2.
     vi.mocked(readState).mockResolvedValue(daemonState({ pid: 999999, port: 62380 }) as Awaited<ReturnType<typeof readState>>);
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(readConfiguredOtlpPort).mockResolvedValueOnce(62380);
+    const actual = await vi.importActual<typeof import('../connectors/claude-code-otlp-endpoint.js')>('../connectors/claude-code-otlp-endpoint.js');
+    const { getClaudeSettingsPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js');
+    const home = await mkdtemp(join(tmpdir(), 'otlp-respawn-'));
+    const settingsPath = join(home, '.claude', 'settings.json');
+    await mkdir(join(home, '.claude'));
+    await writeFile(settingsPath, JSON.stringify({ theme: 'dark', env: {
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:62380/v1/analytics/otlp',
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer old-key',
+    } }));
+    vi.mocked(getClaudeSettingsPath).mockReturnValue(settingsPath);
+    vi.mocked(readConfiguredOtlpPort).mockImplementationOnce(actual.readConfiguredOtlpPort);
+    vi.mocked(refreshClaudeCodeOtlpEndpoint).mockImplementationOnce(actual.refreshClaudeCodeOtlpEndpoint);
     const respawned = daemonState({ port: 60005, url: 'http://127.0.0.1:60005' });
     vi.mocked(spawnDaemon).mockResolvedValue(respawned as Awaited<ReturnType<typeof spawnDaemon>>);
     await setupHappyMocks();
 
-    await ensureOtlpProxy('claude-code-otlp');
-
-    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
-    expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(respawned);
+    try {
+      await ensureOtlpProxy('claude-code-otlp');
+      expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
+      const saved = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(saved.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${respawned.url}/v1/analytics/otlp`);
+      expect(saved.env.OTEL_EXPORTER_OTLP_HEADERS).toBe(`Authorization=Bearer ${respawned.gatewayKey}`);
+      expect(saved.theme).toBe('dark');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('falls back to the last daemon port, then the default, when the settings name none', async () => {

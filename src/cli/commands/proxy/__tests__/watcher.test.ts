@@ -117,6 +117,17 @@ describe('ProxyWatcher', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(2);
   });
 
+  it('stops on unauthorized when no sign-in recovery callback is registered', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+    expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
+    expect(cb.restart).not.toHaveBeenCalled();
+  });
+
   it('recovers and resets attempts when health returns after a restart', async () => {
     // First tick unhealthy → triggers a restart; subsequent ticks healthy.
     mockedHealth

@@ -98,6 +98,11 @@ export class ProxyWatcher {
           this.unauthorizedReported = true;
           await this.callbacks.onGiveUp(result.reason ?? 'SSO session expired');
         }
+        // Only an owner with a sign-in recovery callback can recover this session.
+        if (!this.callbacks.onUnauthorized) {
+          this.stop();
+          return;
+        }
         try {
           await this.callbacks.onUnauthorized?.();
         } catch (error) {

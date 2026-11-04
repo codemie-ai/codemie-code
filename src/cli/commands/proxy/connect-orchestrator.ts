@@ -403,6 +403,10 @@ async function ensureDaemon(
   verbose?: boolean
 ): Promise<{ state: DaemonState; startedInThisRun: boolean }> {
   let { running, state } = await checkStatus();
+  // Connect has no explicit port option: preserve a matching daemon's actual fallback port.
+  if (running && state && daemonMatchesRequest(state, { ...requested, port: state.port })) {
+    requested = { ...requested, port: state.port };
+  }
   const matches = Boolean(running && state && daemonMatchesRequest(state, requested));
 
   let unhealthy = false;
