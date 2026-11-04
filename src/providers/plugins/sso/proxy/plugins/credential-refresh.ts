@@ -154,8 +154,8 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   }
 
   /**
-   * Re-reads the store now, ignoring the throttle, and returns what it holds (also adopted as the
-   * snapshot), or null when the read failed, timed out or came back empty. Never joins a
+   * Re-reads the store now, ignoring the throttle, and returns the adopted snapshot (the read's own
+   * result unless a later-started read adopted a newer one first), or null when the read failed, timed out or came back empty. Never joins a
    * `refresh()` read: a throttle read begun before a sign-in would hand back the old snapshot.
    */
   refreshNow(): Promise<T | null> {
@@ -200,7 +200,8 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
         this.lastActedStamp = stamp;
       }
     }
-    return fresh;
+    // A read that lost the race to a newer one hands back the snapshot that was adopted, not its own result.
+    return fresh ? this.current : null;
   }
 
   private async readStoredCredentials(): Promise<T | null> {

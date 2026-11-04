@@ -263,10 +263,14 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
+      // The replaced sign-in of another URL stays recorded, so this success does not erase that URL's stamp.
+      const keepsOtherUrl = lock.lastSucceededUrl !== undefined
+        && (lock.url === undefined || normalizeUrlForKey(lock.lastSucceededUrl) !== normalizeUrlForKey(lock.url));
       await writeLockAtomically(lockPath, {
         pid: lock.pid,
         startedAt: lock.startedAt,
         ...(lock.url !== undefined && { url: lock.url }),
+        ...(keepsOtherUrl && { lastSucceededAt: lock.lastSucceededAt, lastSucceededUrl: lock.lastSucceededUrl }),
         succeededAt: Date.now(),
       });
     }

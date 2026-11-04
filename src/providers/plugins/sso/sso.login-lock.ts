@@ -77,20 +77,25 @@ export function carriedFields(signIn: CompletedSignIn | undefined): Pick<LoginLo
 /**
  * Time of the last completed sign-in for the CodeMie URL `source` resolves to, which survives a
  * newer in-progress or failed attempt taking over the lock; null when none is known. The lock
- * holds one sign-in, so a sign-in recorded for another URL is not returned. A sign-in without a
- * recorded URL, or a source that resolves to no URL, always matches. Never throws: callers rely on
- * an unreadable lock reading as no sign-in.
+ * holds the sign-in it recorded and the one it replaced, and the one recorded for another URL is
+ * not returned. A sign-in without a recorded URL, or a source that resolves to no URL, always
+ * matches. Never throws: callers rely on an unreadable lock reading as no sign-in.
  */
 export async function getLastSignInAt(source: PlatformUrlSource): Promise<number | null> {
   try {
-    const signIn = lastSignInOf(await readLock(getLockPath()));
-    if (!signIn) {
-      return null;
+    const lock = await readLock(getLockPath());
+    const own = lock?.succeededAt !== undefined
+      ? { at: lock.succeededAt, ...(lock.url !== undefined && { url: lock.url }) }
+      : undefined;
+    const carried = lock?.lastSucceededAt !== undefined
+      ? { at: lock.lastSucceededAt, ...(lock.lastSucceededUrl !== undefined && { url: lock.lastSucceededUrl }) }
+      : undefined;
+    for (const signIn of [own, carried]) {
+      if (signIn && (signIn.url === undefined || (await resolvesToUrl(source, signIn.url)))) {
+        return signIn.at;
+      }
     }
-    if (signIn.url !== undefined && !(await resolvesToUrl(source, signIn.url))) {
-      return null;
-    }
-    return signIn.at;
+    return null;
   } catch {
     return null;
   }

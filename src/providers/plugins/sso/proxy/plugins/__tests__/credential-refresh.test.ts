@@ -532,6 +532,21 @@ describe('CredentialRefresher', () => {
       expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(3);
     });
 
+    it('hands back the adopted snapshot, not its own result, when a later-started read finished first', async () => {
+      const refresher = newRefresher(creds('init'));
+      const slow = deferred<StoreResult>();
+      storeYields(slow.promise);
+      const older = refresher.refreshNow();
+      await untilStoreCalls(1);
+
+      storeReturns({ credentials: creds('newer'), url: URL_ });
+      expect(token(await refresher.refresh())).toBe('newer');
+
+      slow.resolve({ credentials: creds('older'), url: URL_ });
+      expect(token(await older)).toBe('newer');
+      expect(token(refresher.get())).toBe('newer');
+    });
+
     it('waits longer than a one-shot process does for a slow store: a read slower than the short deadline still lands', async () => {
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       expect(PROXY_STORE_READ_DEADLINE_MS).toBeGreaterThan(STORE_READ_DEADLINE_MS);

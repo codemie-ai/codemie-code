@@ -724,6 +724,24 @@ describe('last sign-in per CodeMie URL', () => {
     expect(await getLastSignInAt(sourceFor(URL_B))).toBeNull();
   });
 
+  it('keeps the replaced sign-in of another URL when the newer sign-in succeeds', async () => {
+    const succeededAt = Date.now() - 60_000;
+    await writeLock({ pid: 1, startedAt: Date.now() - 90_000, succeededAt, url: URL_A });
+    vi.mocked(spawnDetached).mockReturnValue(process.pid);
+    expect(await startDetachedSsoLogin(URL_B)).toBe('started');
+
+    await releaseLoginLockOnSuccess();
+
+    expect(await readLockFile()).toMatchObject({
+      url: URL_B,
+      succeededAt: expect.any(Number),
+      lastSucceededAt: succeededAt,
+      lastSucceededUrl: URL_A,
+    });
+    expect(await getLastSignInAt(sourceFor(URL_A))).toBe(succeededAt);
+    expect(await getLastSignInAt(sourceFor(URL_B))).not.toBeNull();
+  });
+
   it('carries an earlier sign-in together with its URL across a newer attempt on another URL', async () => {
     const succeededAt = Date.now() - 60_000;
     await writeLock({ pid: 1, startedAt: Date.now() - 90_000, succeededAt, url: URL_A });
