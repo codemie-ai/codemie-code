@@ -3,10 +3,12 @@
  * flags. Pure, no I/O — not wired into the CLI yet; a future `bootstrap` command
  * (EPMCDME-16487) reuses it to print or run the equivalent install invocation.
  *
- * Flags map 1:1 onto the options registered by `createSyncInstallCommand` in
- * `src/cli/commands/analytics/index.ts`. A flag whose value is `undefined` is omitted.
- * Every value is wrapped in single quotes, POSIX-escaped (`'` becomes `'\''`), so the
- * resulting command is safe to pass to a shell as-is.
+ * A flag whose value is `undefined` is omitted. Every other value must pass the
+ * printable-value rule (see `assertPrintableValue`); it is then wrapped in double quotes,
+ * unescaped. The resulting command is safe to pass to a shell as-is, because the
+ * printable-value rule already excludes every character that double quotes do not
+ * neutralize (`"`, `$`, a backtick, `!`, a bare `%`, control characters and non-ASCII
+ * characters).
  */
 
 import { SyncConfigError } from '@/utils/errors.js';
@@ -25,17 +27,51 @@ export interface InstallCommandOptions {
   includeExternal?: IncludeExternalPolicy;
 }
 
-/** Wraps `value` in single quotes, POSIX-escaping any `'` it contains. */
-function quote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+/** Characters that are never safe to print inside a double-quoted shell token. */
+const FORBIDDEN_CHARACTERS = /["$`!]/;
+
+/** A `%` that does not start a `%XX` hex escape (cmd.exe `%name%` expansion risk). */
+const INVALID_PERCENT_ESCAPE = /%(?![0-9A-Fa-f]{2})/;
+
+/**
+ * Throws `SyncConfigError` naming `flag` when `value` is not safe to print as a
+ * double-quoted shell token. A value fails the rule when it contains any of:
+ * - `"`, `$`, a backtick or `!`
+ * - a control character
+ * - a non-ASCII character (this also covers typographic quotes such as U+2018-U+201F)
+ * - a `%` that does not start a `%XX` hex escape
+ */
+export function assertPrintableValue(flag: string, value: string): void {
+  if (FORBIDDEN_CHARACTERS.test(value)) {
+    throw new SyncConfigError(`${flag} contains a character that is not safe to print: one of " $ \` !`);
+  }
+  if (INVALID_PERCENT_ESCAPE.test(value)) {
+    throw new SyncConfigError(`${flag} contains a "%" that is not a %XX escape`);
+  }
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new SyncConfigError(`${flag} contains a control character that is not safe to print`);
+    }
+    if (code > 0x7e) {
+      throw new SyncConfigError(`${flag} contains a non-ASCII character that is not safe to print`);
+    }
+  }
 }
 
-/** Builds a single `--flag 'value'` token, or `undefined` when `value` is absent. */
+/** Wraps `value` in double quotes. Callers must validate it with `assertPrintableValue` first. */
+function quote(value: string): string {
+  return `"${value}"`;
+}
+
+/** Builds a single `--flag "value"` token, or `undefined` when `value` is absent. */
 function flag(name: string, value: string | number | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return `${name} ${quote(String(value))}`;
+  const str = String(value);
+  assertPrintableValue(name, str);
+  return `${name} ${quote(str)}`;
 }
 
 /**
