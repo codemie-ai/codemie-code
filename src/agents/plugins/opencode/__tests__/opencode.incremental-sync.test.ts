@@ -81,6 +81,8 @@ describe('opencode.incremental-sync', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    // The credential lookup is profile-first; an inherited profile would replace the URL under test.
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
     locateSessionTranscript.mockReset();
     processSession.mockReset();
     mockSync.mockReset();
@@ -96,6 +98,7 @@ describe('opencode.incremental-sync', () => {
     stopOpenCodeIncrementalSync(currentSessionId);
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   describe('toggle', () => {
@@ -313,6 +316,32 @@ describe('opencode.incremental-sync', () => {
           sessionId: currentSessionId,
         })
       );
+    });
+
+    it('hands the sender a supersede check that re-reads the same credentials', async () => {
+      process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
+      locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
+      processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+      const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
+      startOpenCodeIncrementalSync({
+        ...commonOptions(),
+        ssoUrl: 'https://codemie.example.com',
+        syncApiUrl: 'https://sync.example.com',
+      } as never);
+
+      await runTicks(5000, 1);
+      const context = mockSync.mock.calls[0][1];
+      expect(typeof context.credentialsSuperseded).toBe('function');
+
+      const readsBefore = mockGetStoredCredentials.mock.calls.length;
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
+      await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
+      expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+      expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
     });
 
     it('uploads with the clientType returned by buildContext() (e.g. codemie-opencode-acp)', async () => {

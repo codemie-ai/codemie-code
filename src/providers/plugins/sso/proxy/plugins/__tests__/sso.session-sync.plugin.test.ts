@@ -35,6 +35,9 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCr
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
+  getLastSignInAt: vi.fn().mockResolvedValue(null),
+}));
 
 // Imported after vi.mock is declared (hoisted anyway).
 import { SSOSessionSyncPlugin } from '../sso.session-sync.plugin.js';
@@ -254,6 +257,74 @@ describe('SSOSessionSyncPlugin', () => {
     });
   });
 
+  describe('cookie header validity', () => {
+    it('drops entries with an empty name or control characters from the cookie string sent to sync', async () => {
+      vi.useFakeTimers();
+      const ctx = buildContext({
+        credentials: {
+          cookies: { auth: 'good', '': 'empty-name', bad: 'line\r\nbreak', 'ba\nd2': 'v', other: 'ok' }
+        } as never
+      });
+      const interceptor = await plugin.createInterceptor(ctx);
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=good; other=ok' });
+
+      await interceptor.onProxyStop?.();
+    });
+  });
+
+  describe('dropped cookie entries', () => {
+    function droppedLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+      return spy.mock.calls
+        .map((call) => call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+        .filter((line) => line.includes('Ignoring invalid cookie entries'));
+    }
+
+    it('debug-logs the key names, never the values, when entries were dropped from the sync cookie header', async () => {
+      vi.useFakeTimers();
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+      const ctx = buildContext({
+        credentials: {
+          cookies: { auth: 'good-secret', '': 'orphan-secret', bad: 'line\r\nbreak-secret', other: 'ok' }
+        } as never
+      });
+      const interceptor = await plugin.createInterceptor(ctx);
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      const lines = droppedLines(debugSpy);
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.every((line) => line.includes('bad') && line.includes('<empty>'))).toBe(true);
+      const all = lines.join('\n');
+      expect(all).not.toContain('good-secret');
+      expect(all).not.toContain('orphan-secret');
+      expect(all).not.toContain('break-secret');
+      expect(all).not.toContain('auth');
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=good-secret; other=ok' });
+
+      await interceptor.onProxyStop?.();
+      debugSpy.mockRestore();
+    });
+
+    it('logs nothing about dropped entries when every cookie is usable', async () => {
+      vi.useFakeTimers();
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+      const interceptor = await plugin.createInterceptor(buildContext());
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      expect(droppedLines(debugSpy)).toHaveLength(0);
+
+      await interceptor.onProxyStop?.();
+      debugSpy.mockRestore();
+    });
+  });
+
   describe('credential refresh (PR #655 review: picks up a re-login, not just the LLM-request path)', () => {
     it('rebuilds the cookie header from a freshly re-read credential before each sync tick', async () => {
       vi.useFakeTimers();
@@ -275,6 +346,49 @@ describe('SSOSessionSyncPlugin', () => {
       expect(syncMock.mock.calls[1][1]).toMatchObject({ cookies: 'auth=fresh-after-relogin' });
 
       await interceptor.onProxyStop?.();
+    });
+  });
+
+  describe('credentialsSuperseded on the sync context', () => {
+    async function runOneTick(): Promise<{
+      credentialsSuperseded?: (sent: string) => Promise<boolean>;
+    }> {
+      vi.useFakeTimers();
+      const interceptor = await plugin.createInterceptor(buildContext());
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      await interceptor.onProxyStop?.();
+      return syncMock.mock.calls[0][1];
+    }
+
+    it('is exposed outside local-dev mode and reports a stored re-login as superseding the sent cookies', async () => {
+      const syncContext = await runOneTick();
+      expect(syncContext.credentialsSuperseded).toBeTypeOf('function');
+
+      getStoredPlatformCredentials.mockResolvedValue({
+        credentials: { cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' },
+        url: 'https://api.example.com',
+      });
+      await expect(syncContext.credentialsSuperseded!('auth=cookie-value')).resolves.toBe(true);
+    });
+
+    it('reports false when the stored cookies equal the ones that were sent', async () => {
+      const syncContext = await runOneTick();
+
+      getStoredPlatformCredentials.mockResolvedValue({
+        credentials: { cookies: { auth: 'cookie-value' }, apiUrl: 'https://api.example.com' },
+        url: 'https://api.example.com',
+      });
+      await expect(syncContext.credentialsSuperseded!('auth=cookie-value')).resolves.toBe(false);
+    });
+
+    it('is unset in local-dev mode', async () => {
+      process.env.CODEMIE_DEV_API_URL = 'http://localhost:8080';
+      process.env.CODEMIE_DEV_API_KEY = 'dev-key';
+
+      const syncContext = await runOneTick();
+
+      expect(syncContext.credentialsSuperseded).toBeUndefined();
     });
   });
 

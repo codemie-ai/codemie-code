@@ -94,6 +94,24 @@ describe('CopilotChatOtlpPlugin', () => {
     expect(stopReason).not.toContain('opened automatically');
   });
 
+  it('does not call the auth invalid when a sign-in finished moments ago', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({
+      ok: false,
+      reason: 'rejected',
+      loginOutcome: 'signed-in-recently',
+    } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const stopReason = String(captured()?.stopReason);
+    expect(stopReason).toContain('A sign-in finished moments ago');
+    expect(stopReason).not.toContain('authentication is invalid');
+  });
+
   it('emits a continue:false shape for a blocked SessionStart (SSO auth failure)', async () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const { captured } = log();
