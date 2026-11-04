@@ -10,7 +10,8 @@
 import chalk from 'chalk';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 import { IDENTITY_KEYS } from '@/env/types.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { ConfigLoader, type ProfileIdentityResolution } from '@/utils/config.js';
+import { codeMieUrlFromApiBase, ensureApiBase, isCodeMiePlatformProvider } from '@/providers/core/codemie-auth-helpers.js';
 import { logger } from '@/utils/logger.js';
 import {
   PROJECT_BINDING_ENV,
@@ -90,19 +91,38 @@ export async function resolveLaunchIdentity(
   }
 
   if (options.canPrompt && options.surface === 'agent' && resolution.profileName) {
-    const outcome = await promptForUnowned(config, resolution.profileName, resolution.shared.codeMieProject, options, deps);
+    const outcome = await promptForUnowned(config, resolution.profileName, resolution, options, deps);
     if (outcome) return { ...base, state: outcome, needsWarning: false };
   }
   return { ...base, state: 'unowned', needsWarning: true };
 }
 
+/**
+ * The CodeMie URL a launch pick is listed from and saved with: the profile's own stored URL, else
+ * the CodeMie host of its API (`baseUrl`) for platform providers, else the persisted shared URL.
+ * Never the merged `config.codeMieUrl`: it can carry the shared URL of another environment or an
+ * exported CODEMIE_URL, and CLI/env overrides are never saved.
+ */
+export function launchIdentityUrl(
+  config: Pick<CodeMieConfigOptions, 'provider' | 'baseUrl'>,
+  resolution: Pick<ProfileIdentityResolution, 'ownCodeMieUrl' | 'shared'>
+): string | undefined {
+  if (resolution.ownCodeMieUrl) return resolution.ownCodeMieUrl;
+  if (isCodeMiePlatformProvider(config.provider)) {
+    return config.baseUrl ? codeMieUrlFromApiBase(ensureApiBase(config.baseUrl)) : undefined;
+  }
+  return resolution.shared.codeMieUrl;
+}
+
 async function promptForUnowned(
   config: CodeMieConfigOptions,
   profileName: string,
-  sharedProject: string | undefined,
+  resolution: ProfileIdentityResolution,
   options: LaunchIdentityOptions,
   deps: LaunchIdentityDeps
 ): Promise<ProjectBindingState | undefined> {
+  const sharedProject = resolution.shared.codeMieProject;
+  const identityUrl = launchIdentityUrl(config, resolution);
   const resolveAuth = deps.resolveAuth
     ?? (await import('@/providers/core/codemie-auth-helpers.js')).resolveProjectListAuth;
   const prompt = deps.prompt
@@ -113,7 +133,7 @@ async function promptForUnowned(
     auth = await resolveAuth({
       provider: config.provider,
       baseUrl: config.baseUrl,
-      codeMieUrl: config.codeMieUrl,
+      codeMieUrl: identityUrl,
       jwtToken: options.jwtToken,
     });
   } catch (error) {
@@ -144,11 +164,12 @@ async function promptForUnowned(
   }
 
   const saved = await ConfigLoader.saveProfileIdentity(profileName, {
-    codeMieUrl: config.codeMieUrl,
+    codeMieUrl: identityUrl,
     codeMieProject: outcome.project,
     codeMieIntegration: outcome.integration,
   });
   if (!saved) return undefined;
+  if (identityUrl) config.codeMieUrl = identityUrl;
   config.codeMieProject = outcome.project;
   if (outcome.integration) config.codeMieIntegration = outcome.integration;
   else delete config.codeMieIntegration;

@@ -58,6 +58,8 @@ export interface ProfileIdentityResolution {
   profileName?: string;
   /** The legacy shared (global workspace) identity, i.e. what the last setup saved. */
   shared: ResolvedIdentity;
+  /** The global profile record's own stored `codeMieUrl` (global profiles only; no fallback). */
+  ownCodeMieUrl?: string;
 }
 
 /** A stored profile record as runtime config: a `null` (off CodeMie) project becomes absent. */
@@ -382,13 +384,16 @@ export class ConfigLoader {
       identity.codeMieProject = localProject;
       return finish(state, identity, 'linked_folder', state === 'own' ? 'profile' : 'global', resolvedName);
     }
-    return finish(
-      state,
-      identity,
-      identity.codeMieProject ? globalOnly : 'none',
-      state === 'own' || state === 'none' ? 'profile' : 'global',
-      resolvedName
-    );
+    return {
+      ...finish(
+        state,
+        identity,
+        identity.codeMieProject ? globalOnly : 'none',
+        state === 'own' || state === 'none' ? 'profile' : 'global',
+        resolvedName
+      ),
+      ...(record?.codeMieUrl ? { ownCodeMieUrl: record.codeMieUrl } : {}),
+    };
   }
 
   /** Whether the provider stores a CodeMie project per global profile (template property). */

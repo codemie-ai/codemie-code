@@ -25,6 +25,7 @@ vi.mock('../../plugins/sso/sso.auth.js', () => ({
 }));
 
 import {
+  codeMieUrlFromApiBase,
   ensureApiBase,
   buildAuthHeaders,
   fetchCodeMieUserInfo,
@@ -38,6 +39,23 @@ import {
   getStoredAnalyticsCredentials,
   resolveProjectListAuth,
 } from '../codemie-auth-helpers.js';
+
+describe('codeMieUrlFromApiBase', () => {
+  it('is the inverse of ensureApiBase', () => {
+    for (const url of ['https://codemie.example.com', 'https://h.example:8443/x']) {
+      expect(codeMieUrlFromApiBase(ensureApiBase(url))).toBe(url);
+    }
+  });
+
+  it('drops a trailing slash and any path after the API suffix', () => {
+    expect(codeMieUrlFromApiBase('https://h.example/code-assistant-api/')).toBe('https://h.example');
+    expect(codeMieUrlFromApiBase('https://h.example/code-assistant-api/v1')).toBe('https://h.example');
+  });
+
+  it('leaves a local dev URL without the suffix unchanged', () => {
+    expect(codeMieUrlFromApiBase('http://localhost:8080')).toBe('http://localhost:8080');
+  });
+});
 
 describe('ensureApiBase', () => {
   it('appends /code-assistant-api when missing', () => {

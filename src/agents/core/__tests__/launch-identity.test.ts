@@ -120,6 +120,64 @@ describe('launch identity policy', () => {
       expect(deps.prompt).toHaveBeenCalledTimes(1);
     });
 
+    describe('saved URL is the host that served the project list (PR #758 review, finding 2)', () => {
+      const pick: LaunchIdentityDeps['prompt'] = async () => ({ kind: 'picked', project: 'mine' });
+      const listedFrom = (resolveAuth: ReturnType<typeof vi.fn>): string =>
+        new URL((resolveAuth.mock.calls[0][0] as { baseUrl: string }).baseUrl).host;
+
+      it('a profile on env A with the shared URL on env B saves A, not B', async () => {
+        await writeGlobal('a', { a: sso({ baseUrl: 'https://codemie-preview.example.com/code-assistant-api' }) });
+        const resolveAuth = vi.fn(async (c: { baseUrl?: string }) => ({ apiUrl: c.baseUrl!, cookies: { s: '1' } }));
+        const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+        expect(config.codeMieUrl).toBe('https://codemie.example.com'); // merged shared URL before the pick
+
+        await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: true, surface: 'agent' }, { resolveAuth, prompt: pick });
+
+        expect(listedFrom(resolveAuth)).toBe('codemie-preview.example.com');
+        expect((await readGlobal()).profiles.a.codeMieUrl).toBe('https://codemie-preview.example.com');
+        expect(config.codeMieUrl).toBe('https://codemie-preview.example.com');
+        const next = await ConfigLoader.resolveProfileIdentity(WORKING_DIR, 'a');
+        expect(next).toMatchObject({ state: 'own', identity: { codeMieUrl: 'https://codemie-preview.example.com', codeMieProject: 'mine' } });
+      });
+
+      it('an exported CODEMIE_URL on an active unowned profile (no --profile) is not saved', async () => {
+        await writeGlobal('a', { a: sso() });
+        process.env.CODEMIE_URL = 'https://exported.example.com';
+        const config = await ConfigLoader.load(WORKING_DIR);
+        expect(config.codeMieUrl).toBe('https://exported.example.com');
+
+        await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: true, surface: 'agent' }, {
+          resolveAuth: async () => cookieAuth,
+          prompt: pick,
+        });
+
+        expect((await readGlobal()).profiles.a.codeMieUrl).toBe('https://codemie.example.com');
+      });
+
+      it("an unowned profile's own stored URL is kept", async () => {
+        await writeGlobal('a', { a: sso({ codeMieUrl: 'https://own.example.com' }) });
+        const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+        await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: true, surface: 'agent' }, {
+          resolveAuth: async () => cookieAuth,
+          prompt: pick,
+        });
+        expect((await readGlobal()).profiles.a.codeMieUrl).toBe('https://own.example.com');
+      });
+
+      it('a subscription profile lists and saves with the persisted shared URL, never an exported one', async () => {
+        await writeGlobal('p', { p: { provider: 'anthropic-subscription', model: 'sonnet' } });
+        process.env.CODEMIE_URL = 'https://exported.example.com';
+        const resolveAuth = vi.fn(async () => cookieAuth);
+        const config = await ConfigLoader.load(WORKING_DIR);
+        expect(config.codeMieUrl).toBe('https://exported.example.com');
+
+        await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: true, surface: 'agent' }, { resolveAuth, prompt: pick });
+
+        expect(resolveAuth.mock.calls[0][0]).toMatchObject({ codeMieUrl: 'https://codemie.example.com' });
+        expect((await readGlobal()).profiles.p.codeMieUrl).toBe('https://codemie.example.com');
+      });
+    });
+
     it('the shared integration is not kept when the pick has no integration', async () => {
       await writeGlobal('a', { a: sso(), b: sso() });
       const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });

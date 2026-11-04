@@ -37,6 +37,11 @@ export function ensureApiBase(rawUrl: string): string {
   return base;
 }
 
+/** Inverse of ensureApiBase(): the CodeMie URL a `.../code-assistant-api` API base belongs to. */
+export function codeMieUrlFromApiBase(apiBase: string): string {
+  return apiBase.replace(/\/+$/, '').replace(/\/code-assistant-api(\/.*)?$/i, '');
+}
+
 export function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
   const headers: Record<string, string> = {
@@ -117,7 +122,7 @@ function originOf(url: string): string {
   }
 }
 
-function isCodeMiePlatformProvider(provider: string | undefined): boolean {
+export function isCodeMiePlatformProvider(provider: string | undefined): boolean {
   return provider === ProviderName.AI_RUN_SSO || provider === ProviderName.BEARER_AUTH;
 }
 
