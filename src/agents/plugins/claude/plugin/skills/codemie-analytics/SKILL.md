@@ -522,8 +522,8 @@ charts, data structure, and modal design to use, ensuring consistency across use
 
 | Report type | Reference file | When to use |
 |-------------|---------------|-------------|
-| Leaderboard dashboard | [`${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md) | Any request for leaderboard rankings, AI champions, top performers, tier distribution |
-| People spending dashboard | [`${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md) | Any request to track LiteLLM costs for a specific list of users (cohort, team, bootcamp, project) |
+| Leaderboard dashboard | [`${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md) | Any request for leaderboard rankings, AI champions, top performers, tier distribution |
+| People spending dashboard | [`${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md) | Any request to track LiteLLM costs for a specific list of users (cohort, team, bootcamp, project) |
 
 ---
 
@@ -567,7 +567,7 @@ If the command returns an auth error, HTTP 401/403/404, or "No CodeMie credentia
 > claude -f
 > ```
 
-**Full workflow** (see `${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md` for all details):
+**Full workflow** (see `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md` for all details):
 
 1. **Parse the list** from Excel/CSV using `openpyxl`. Skip header and TOTAL rows.
 2. **Fetch 3 LiteLLM accounts per user** using Python `asyncio` + `aiohttp` (semaphore 25,
@@ -615,10 +615,10 @@ node $CLI cli-insights-users --time-period last_30_days --per-page 500 --output 
 - Budget warnings: flag rows where `spend / max_budget > 0.8` (warn) and `> 1.0` (error).
 - For the **leaderboard dashboard**, combine `leaderboard` + `leaderboard-summary` +
   `leaderboard-tiers` + `leaderboard-dimensions` to build a comprehensive view. Then follow
-  `${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md` for the exact HTML structure.
+  `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md` for the exact HTML structure.
 - For a **people spending dashboard**, fetch LiteLLM directly with Python async (3 accounts
   per user), then enrich with leaderboard + CLI insights. Follow
-  `${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md` for the exact HTML structure.
+  `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md` for the exact HTML structure.
 - For a **single user deep-dive**, combine `leaderboard-user <email>` with
   `cli-insights-user <name>` for the full picture (champion score + CLI activity).
 - If the CLI prints an auth error, forward its message verbatim — it already tells the user

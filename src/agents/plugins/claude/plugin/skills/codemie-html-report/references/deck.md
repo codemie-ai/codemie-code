@@ -167,10 +167,11 @@ colours its contents. Give it `role="img"` and an `aria-label` that states the f
 ## 5. Build and check
 
 Write the slides once, whole, to `<name>.src.html` with one Write, and build the deck from it
-with `scripts/build.mjs` in this skill's folder (the folder SKILL.md gives):
+with `scripts/build.mjs` in codemie-html-report's own folder
+(`<plugin>/skills/codemie-html-report/`, the base directory given when codemie-html-report loaded):
 
 ```bash
-node <this skill's folder>/scripts/build.mjs deck.src.html --out deck.html
+node <codemie-html-report folder>/scripts/build.mjs deck.src.html --out deck.html
 ```
 
 The source stays small: fix in it and build again; the slop scan's line numbers point into it.
