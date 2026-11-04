@@ -10,7 +10,7 @@ export function isDateOnly(value: string): boolean {
  * Returns null for bad shape or impossible calendar dates (no month rollover).
  */
 export function parseDateOnly(value: string, bound: 'from' | 'to'): Date | null {
-  if (!DATE_ONLY.test(value)) return null;
+  if (!isDateOnly(value)) return null;
   const start = new Date(value);
   if (Number.isNaN(start.getTime()) || start.toISOString().slice(0, 10) !== value) return null;
   return bound === 'from' ? start : new Date(start.getTime() + 86_400_000 - 1);
