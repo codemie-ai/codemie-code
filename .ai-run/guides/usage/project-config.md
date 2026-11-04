@@ -51,6 +51,8 @@ effective active profile when `--profile` is omitted. A local `activeProfile` ma
 profile defined globally; a differently named local team profile may still supply compatible
 project context, but it cannot replace the selected provider, model, or credentials.
 
+**Name conflicts**: profile names should be unique across local and global scope. If a name exists in both (e.g. a committed team `.codemie/` config and a personal global profile), the CLI warns in `codemie profile list`, `codemie profile status` and on agent start (`ConfigLoader.findProfileNameConflicts()`), and `codemie profile rename` refuses a new global name that a local profile already uses.
+
 | Scenario | Source of provider/model | Source of codeMieProject |
 |---|---|---|
 | Only global config | global | global |
