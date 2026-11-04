@@ -388,6 +388,18 @@ async function closeWithoutAttempt(record: Session, options: AttemptOptions): Pr
 }
 
 /**
+ * Marks a copilot-cli record closing past its attempts with its transcript unsent: its lookup could not
+ * conclude, or a transcript is there and this close does not flush it. No pending data shows this, since the
+ * failed passes wrote none. A record left uncorrelated had no transcript to lose.
+ */
+async function markTranscriptUnsent(sessionId: string): Promise<void> {
+  const record = await readLiveRecord(sessionId);
+  if (!record || record.correlation?.status === 'failed') return;
+  await new SessionStore().saveSession({ ...record, droppedAt: Date.now() });
+  logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent; marked dropped`);
+}
+
+/**
  * The synthetic end of a stranded / legacy record, delivered when this launch can. True when a
  * finalize past its attempts failed and the record was closed locally instead.
  */
@@ -400,6 +412,7 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
   }
   logger.info(`[reconcile] ${id}: ${kind} ${record.agentName} record; finalizing${deliver ? ' and delivering' : ' locally'}`);
   const event = await syntheticSessionEnd(record, { flush: !exhausted });
+  if (exhausted && deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id);
   try {
     await pipeline.processEvent(event, recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {

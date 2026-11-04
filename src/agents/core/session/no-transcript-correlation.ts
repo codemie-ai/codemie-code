@@ -2,8 +2,50 @@
  * The correlation of a CodeMie record with its run's native transcript, or with none when the run has no
  * native transcript.
  */
+import { accessSync, constants, readdirSync } from 'fs';
+import { join } from 'path';
 import { logger } from '@/utils/logger.js';
 import { SessionStore } from './SessionStore.js';
+import type { Session } from './types.js';
+
+/**
+ * `read()`, undefined when what it reads does not exist. Only `ENOENT` / `ENOTDIR` say so: any other
+ * error (`EACCES`, `EIO`) leaves the answer unknown and is thrown.
+ */
+export function unlessAbsent<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Whether the transcript exists, for a caller about to read it: true means it exists and read permission
+ * is granted, not that a read will succeed; false that it is absent. One that is there without read
+ * permission, or that cannot be checked, throws: checked before the read, the failure reaches the lookup
+ * rather than surfacing later.
+ */
+export function transcriptExists(path: string): boolean {
+  return (
+    unlessAbsent(() => {
+      accessSync(path, constants.R_OK);
+      return true;
+    }) === true
+  );
+}
+
+/**
+ * Throws unless `<agentHome>/session-state` of a record with a stored `agentHome` can be listed; a record
+ * without one is not checked. The launch creates the home but not `session-state`, and an unmounted
+ * volume's mount point is an empty directory, so a missing root says nothing of the transcript. The cost:
+ * a run that died before Copilot wrote anything spends its attempts and closes with its correlation untouched.
+ */
+export function assertSessionStateListable(record: Pick<Session, 'agentHome'>): void {
+  if (record.agentHome) readdirSync(join(record.agentHome, 'session-state'));
+}
 
 /**
  * A run with no native transcript is not correlated: nothing of it is read, and the correlation names

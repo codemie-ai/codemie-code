@@ -2,6 +2,7 @@ import type { AgentConfig, AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { flagValue } from '../../core/flag-transform.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { SessionStartEvent } from '../../../cli/commands/hook.js';
 import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
@@ -11,11 +12,10 @@ import {
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
-import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { getCopilotHome, getCopilotSessionStateRoot } from './copilot-cli.paths.js';
+import { join, resolve } from 'node:path';
 import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
-import { recordNoTranscript, recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
+import { assertSessionStateListable, recordNoTranscript, recordTranscriptCorrelation, transcriptExists } from '../../core/session/no-transcript-correlation.js';
 import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
 import {
   assertExplicitCopilotModelAllowed,
@@ -58,6 +58,7 @@ function runSessionIdOf(sessionId: string, env: NodeJS.ProcessEnv): string {
  * The run's native transcript: a pinned or resumed run's own session exactly (none when it is missing);
  * a session the wrapper could not name (`--continue`, an id prefix, a name) by the run window.
  * With no native transcript the run goes under the CodeMie id, the one its stored correlation names.
+ * Throws when the lookup could not conclude.
  */
 async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: string; native?: string }> {
   const { SessionStore } = await import('../../core/session/SessionStore.js');
@@ -65,11 +66,30 @@ async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: s
   const runSessionId = record?.correlation?.agentSessionId || sessionId;
   const pinned = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId;
   if (pinned || runSessionId !== sessionId || !record) {
-    const eventsFile = join(getCopilotSessionStateRoot(), runSessionId, 'events.jsonl');
-    return existsSync(eventsFile) ? { runSessionId, native: eventsFile } : { runSessionId: sessionId };
+    if (record) assertSessionStateListable(record);
+    const eventsFile = join(getCopilotSessionStateRoot(record?.agentHome), runSessionId, 'events.jsonl');
+    return transcriptExists(eventsFile) ? { runSessionId, native: eventsFile } : { runSessionId: sessionId };
   }
   const [native] = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).locateTranscript(record);
   return { runSessionId, native };
+}
+
+/**
+ * Stores the run's exit reason on its still active record before anything can stop the close: a thrown lookup or
+ * read, or a session file lock timeout, which throws nothing and leaves the record active. The synthetic end that
+ * closes such a record later ends with it; a SessionEnd that closes the record writes the same reason itself. Nothing
+ * else reads it on an active record. A failure here is only logged: the SessionEnd goes on as it would without it.
+ */
+async function keepExitReason(sessionId: string, reason: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../core/session/SessionStore.js');
+    const store = new SessionStore();
+    const record = await store.loadSession(sessionId);
+    if (record?.status === 'active') await store.saveSession({ ...record, reason });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`[copilot-cli] Could not keep the exit reason of session ${sessionId}: ${message}`);
+  }
 }
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
@@ -86,6 +106,7 @@ function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: COPILOT_CLI_CLIENT_TYPE,
+    rethrowFlushFailure: true,
     ...wrapperOwnerFromEnv(env),
   };
 }
@@ -199,17 +220,16 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
       try {
         const { processEvent } = await import('../../../cli/commands/hook.js');
-        await processEvent(
-          {
-            hook_event_name: 'SessionStart',
-            session_id: runSessionIdOf(sessionId, env),
-            transcript_path: '',
-            permission_mode: 'default',
-            cwd: process.cwd(),
-            source: 'startup',
-          },
-          buildCopilotHookConfig(env, sessionId)
-        );
+        const start: SessionStartEvent = {
+          hook_event_name: 'SessionStart',
+          session_id: runSessionIdOf(sessionId, env),
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          source: 'startup',
+          agent_home: resolve(process.cwd(), getCopilotHome(env)),
+        };
+        await processEvent(start, buildCopilotHookConfig(env, sessionId));
         logger.info(`[copilot-cli] SessionStart hook completed for session ${sessionId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -290,7 +310,10 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         return;
       }
 
+      const reason = exitCode === 0 ? 'exit' : `exit(${exitCode})`;
       try {
+        await keepExitReason(sessionId, reason);
+
         // Native Copilot session events live under COPILOT_HOME, which may be a custom path.
         if (env.COPILOT_HOME) process.env.COPILOT_HOME = env.COPILOT_HOME;
 
@@ -311,7 +334,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
             transcript_path: native ?? '',
             permission_mode: 'default',
             cwd: process.cwd(),
-            reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+            reason,
           },
           buildCopilotHookConfig(env, sessionId)
         );

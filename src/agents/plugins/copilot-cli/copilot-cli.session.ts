@@ -14,7 +14,7 @@
  * manifest's own timestamps make both unnecessary.
  */
 
-import { readdirSync, existsSync, realpathSync, statSync } from 'fs';
+import { readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import {
   latestRecordTime,
@@ -34,8 +34,9 @@ import type { AgentMetadata } from '../../core/types.js';
 import type { Session } from '../../core/session/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
-import { COPILOT_CLI_AGENT_NAME, FULL_SESSION_UUID } from './copilot-cli.constants.js';
-import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
+import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
+import { readCopilotEvents } from './copilot-cli.storage-utils.js';
+import { locateCopilotTranscript } from './copilot-cli.transcript-lookup.js';
 import {
   extractCopilotUsage,
   extractCopilotRunUsage,
@@ -80,57 +81,6 @@ async function recordRunWindow(sessionId: string, context: ProcessingContext): P
     if (error instanceof SessionRecordNotFoundError) return undefined;
     throw error;
   }
-}
-
-const SESSION_ID_SHAPE = '00000000-0000-0000-0000-000000000000';
-
-/**
- * A `--resume` value that is a strict prefix of a session id (hex digits and dashes in the id's shape), lower-cased.
- * A hex-shaped session name is read as a prefix too: it narrows the lookup only while that locates something,
- * else the session is found by the window like any name.
- */
-function resumedIdPrefix(resumed: string | undefined): string | undefined {
-  const value = resumed?.trim().toLowerCase();
-  if (!value || FULL_SESSION_UUID.test(value)) return undefined;
-  return SESSION_ID_SHAPE.startsWith(value.replace(/[0-9a-f]/g, '0')) ? value : undefined;
-}
-
-/** Every session directory name under the root; none when the root cannot be read. */
-function sessionDirNames(root: string): string[] {
-  try {
-    return readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
-
-function realpathOrSelf(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/** The transcript whose latest `session.start` / `session.resume` in [from, until) ran in `runCwd`. */
-function latestStartInWindow(paths: string[], from: number, until: number | undefined, runCwd: string): string | undefined {
-  let best: { path: string; at: number } | undefined;
-  for (const path of paths) {
-    try {
-      if (statSync(path).mtimeMs < from) continue;
-    } catch {
-      continue;
-    }
-    for (const event of readCopilotEventsTolerant(path)) {
-      if (event.type !== 'session.start' && event.type !== 'session.resume') continue;
-      const at = Date.parse(event.timestamp ?? '');
-      const cwd = (event.data as CopilotSessionStartData | undefined)?.context?.cwd;
-      if (!Number.isFinite(at) || at < from || (until !== undefined && at >= until)) continue;
-      if (!cwd || realpathOrSelf(cwd) !== runCwd) continue;
-      if (!best || at > best.at) best = { path, at };
-    }
-  }
-  return best?.path;
 }
 
 export class CopilotCliSessionAdapter implements SessionAdapter {
@@ -237,9 +187,11 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
    * With `run`, the usage and the session-level counters (tools, prompts, skills, file operations)
    * are the run's own: one native session is shared by every run that resumed it. The turn records
    * stay whole — the conversation is numbered over the full session.
+   *
+   * A transcript that cannot be read throws; a missing one is a session with no events.
    */
   async parseSessionFile(filePath: string, sessionId: string, _agentSessionId?: string, run?: RunBounds): Promise<ParsedSession> {
-    const events = readCopilotEventsTolerant(filePath);
+    const events = readCopilotEvents(filePath);
 
     const start = events.find((e) => e.type === 'session.start')?.data as
       | CopilotSessionStartData
@@ -420,37 +372,9 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     };
   }
 
-  /**
-   * The `events.jsonl` of a record that names none: a pinned run's (native id = the CodeMie id),
-   * a `--resume <id>` run's (its stored native id), else the session started or resumed in the
-   * run's window (its start → the start of the next copilot record in the same directory) in the
-   * run's directory — the latest such event wins. A `--resume <id prefix>` run searches the sessions
-   * whose id starts with the prefix first, all of them when those locate none; `--continue` and a
-   * session name are matched by the window alone.
-   *
-   * ponytail: two runs selecting a session in one directory at once are indistinguishable
-   */
+  /** See {@link locateCopilotTranscript}. */
   async locateTranscript(record: Session): Promise<string[]> {
-    const root = getCopilotSessionStateRoot();
-    const eventsOf = (id: string) => join(root, id, 'events.jsonl');
-
-    if (existsSync(eventsOf(record.sessionId))) {
-      return [eventsOf(record.sessionId)];
-    }
-    const resumedId = record.correlation?.agentSessionId;
-    if (resumedId && resumedId !== 'unknown' && !/[\\/]/.test(resumedId) && existsSync(eventsOf(resumedId))) {
-      return [eventsOf(resumedId)];
-    }
-
-    const dirNames = sessionDirNames(root);
-    const prefix = resumedIdPrefix(record.resumeSessionId);
-    const runCwd = realpathOrSelf(record.workingDirectory);
-    const { nextRecordStartInDirectory } = await import('../../core/session/next-record-start.js');
-    const until = await nextRecordStartInDirectory(record);
-    const locate = (names: string[]) => latestStartInWindow(names.map(eventsOf), record.startTime, until, runCwd);
-    const byPrefix = prefix ? dirNames.filter((name) => name.toLowerCase().startsWith(prefix)) : [];
-    const located = (byPrefix.length > 0 ? locate(byPrefix) : undefined) ?? locate(dirNames);
-    return located ? [located] : [];
+    return locateCopilotTranscript(record);
   }
 
   /** Resolve and parse the record's run window once, then run every registered processor in priority order. */

@@ -5,13 +5,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
 import { CopilotCliPluginMetadata } from '../copilot-cli.plugin.js';
 import { CopilotCliMetricsProcessor } from '../session/processors/copilot-cli.metrics-processor.js';
-import { enrichCosts } from '../../../../cli/commands/analytics/cost/cost-enricher.js';
+import { enrichCosts, realDeps } from '../../../../cli/commands/analytics/cost/cost-enricher.js';
+import { readCopilotEvents, readCopilotEventsTolerant } from '../copilot-cli.storage-utils.js';
+import { logger } from '../../../../utils/logger.js';
 import type { AgentConfig } from '../../../core/types.js';
 
 const processEventMock = vi.fn();
@@ -174,9 +176,107 @@ describe('copilot-cli SessionStart', () => {
       expect.objectContaining({ ownerPid: 4242, ownerStartedAt: 1_790_000_000_000 }),
     );
   });
+
+  it.each([
+    ['an absolute COPILOT_HOME', '/run/copilot-home', '/run/copilot-home'],
+    ['a relative COPILOT_HOME, against the launch directory', 'rel/copilot-home', resolve(process.cwd(), 'rel/copilot-home')],
+  ])('sends the run\'s home on the event: %s', async (_form, value, expected) => {
+    await lifecycle.onSessionStart!('sid-home', { COPILOT_HOME: value });
+
+    expect((processEventMock.mock.calls[0][0] as { agent_home: string }).agent_home).toBe(expected);
+  });
+
+  it('a blank COPILOT_HOME sends the default home', async () => {
+    await lifecycle.onSessionStart!('sid-home', { COPILOT_HOME: '  ' });
+
+    expect((processEventMock.mock.calls[0][0] as { agent_home: string }).agent_home).toBe(join(homedir(), '.copilot'));
+  });
 });
 
 describe('copilot-cli SessionEnd correlation', () => {
+  const canDeny = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+  async function endingDenied(id: string, mode: number): Promise<void> {
+    const root = join(copilotHome, 'session-state');
+    mkdirSync(root, { recursive: true });
+    chmodSync(root, mode);
+    try {
+      await endSession(id);
+    } finally {
+      chmodSync(root, 0o755);
+    }
+  }
+
+  it.skipIf(!canDeny)('a window search that could not conclude: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+    const id = '33333333-3333-4333-8333-333333333333';
+    writeRecord(id);
+    const before = readRecord(id).correlation;
+
+    await endingDenied(id, 0o300);
+
+    expect(readRecord(id).correlation).toEqual(before);
+    expect(processEventMock).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(!canDeny)('a direct check that could not conclude: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+    const id = '44444444-4444-4444-8444-444444444444';
+    const resumed = '55555555-5555-4555-8555-555555555555';
+    writeRecord(id, resumed);
+    const before = readRecord(id).correlation;
+
+    await endingDenied(id, 0o000);
+
+    expect(readRecord(id).correlation).toEqual(before);
+    expect(processEventMock).not.toHaveBeenCalled();
+  });
+
+  it('looks under the record\'s agentHome, not the environment\'s COPILOT_HOME', async () => {
+    const id = '66666666-6666-4666-8666-666666666666';
+    const resumed = '77777777-7777-4777-8777-777777777777';
+    const file = writeNative(resumed, [start(resumed)]);
+    writeRecord(id, resumed);
+    const path = join(codemieHome, 'sessions', `${id}.json`);
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), agentHome: copilotHome }));
+
+    await endSession(id, join(copilotHome, 'another-home'));
+
+    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: resumed, transcript_path: file });
+  });
+
+  describe.each([
+    ['a pinned run', undefined],
+    ['a resumed run', '88888888-8888-4888-8888-888888888888'],
+  ])('%s with a stored home', (_form, resumed) => {
+    const id = '12121212-1212-4212-8212-121212121212';
+
+    function launchWithHome(): void {
+      writeRecord(id, resumed ?? id);
+      const path = join(codemieHome, 'sessions', `${id}.json`);
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), agentHome: copilotHome }));
+      launch(id, resumed ? ['--resume', resumed] : []);
+    }
+
+    it('no session-state: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+      launchWithHome();
+      const before = readRecord(id).correlation;
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toEqual(before);
+      expect(processEventMock).not.toHaveBeenCalled();
+    });
+
+    it('session-state with no transcript: not correlated and ends under its CodeMie id', async () => {
+      launchWithHome();
+      mkdirSync(join(copilotHome, 'session-state'));
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toMatchObject({ status: 'failed', agentSessionId: id });
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
+    });
+  });
+
   it('gives two concurrent managed sessions in one cwd their own native session, ignoring a newer standalone one', async () => {
     const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -271,6 +371,74 @@ describe('copilot-cli SessionEnd correlation', () => {
     } finally {
       rmSync(custom, { recursive: true, force: true });
     }
+  });
+});
+
+describe('a Copilot transcript that cannot be read', () => {
+  const canDeny = process.platform !== 'win32' && process.getuid?.() !== 0;
+  const id = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+  const unreadable = (): string => {
+    const file = writeNative(id, [start(id), user(100), assistant(200)]);
+    chmodSync(file, 0o000);
+    return file;
+  };
+
+  it('the strict read of a missing file has no events', () => {
+    expect(readCopilotEvents(join(copilotHome, 'none', 'events.jsonl'))).toEqual([]);
+  });
+
+  it('the strict read under a path that is a file has no events: ENOTDIR is absence', () => {
+    const file = join(cwd, 'a-file');
+    writeFileSync(file, '');
+
+    expect(readCopilotEvents(join(file, 'events.jsonl'))).toEqual([]);
+  });
+
+  it.skipIf(!canDeny)('the strict read of an unreadable file throws', () => {
+    expect(() => readCopilotEvents(unreadable())).toThrow(expect.objectContaining({ code: 'EACCES' }));
+  });
+
+  it('the strict read of a directory throws', () => {
+    expect(() => readCopilotEvents(cwd)).toThrow(expect.objectContaining({ code: 'EISDIR' }));
+  });
+
+  it('the strict read drops a torn line and keeps the other events', () => {
+    const file = join(cwd, 'torn.jsonl');
+    writeFileSync(file, `${JSON.stringify(user(100))}\n{"type":"assist\n${JSON.stringify(assistant(200))}\n`);
+
+    expect(readCopilotEvents(file).map((event) => event.type)).toEqual(['user.message', 'assistant.message']);
+  });
+
+  it.skipIf(!canDeny)('the tolerant read of an unreadable file has no events', () => {
+    const file = unreadable();
+
+    expect(readCopilotEventsTolerant(file)).toEqual([]);
+    expect(vi.mocked(logger.debug).mock.calls.map(([line]) => String(line))).toContain(`[copilot-cli] unreadable events.jsonl at ${file}:`);
+  });
+
+  it.skipIf(!canDeny)('processSession rejects and writes nothing to the metrics or conversation spool', async () => {
+    writeRecord(id);
+    const context = { apiBaseUrl: '', cookies: '', clientType: 'codemie-copilot', version: '1', dryRun: false, sessionId: id, agentSessionId: id };
+
+    await expect(new CopilotCliSessionAdapter(CopilotCliPluginMetadata).processSession(unreadable(), id, context))
+      .rejects.toMatchObject({ code: 'EACCES' });
+
+    expect(readdirSync(join(codemieHome, 'sessions'))).toEqual([`${id}.json`]);
+  });
+
+  it.skipIf(!canDeny)('parseNative of the cost enricher is null, no throw', async () => {
+    await expect(realDeps.parseNative('copilot-cli', unreadable(), id)).resolves.toBeNull();
+  });
+
+  it.skipIf(!canDeny)('the session cost carries why it is not measurable, not a run that cost $0', async () => {
+    const file = unreadable();
+    const { index } = await enrichCosts([{ sessionId: id, startEvent: { agentName: 'copilot-cli', data: { startTime: T0 } }, deltas: [] }] as never[], {
+      resolveAgentName: () => 'copilot-cli',
+      loadAgentSessionFile: async () => file,
+      parseNative: realDeps.parseNative,
+    });
+
+    expect(index.get(id)).toMatchObject({ hadLog: true, priced: false, usageUnavailableReason: 'The Copilot transcript of this run could not be read' });
   });
 });
 

@@ -161,13 +161,15 @@ export interface Session {
   /** Unix ms: the start of the stretch a reopen began */
   stretchStartTime?: number;
   workingDirectory: string; // CWD where agent was launched
+  /** The agent's data home for this run, absolute: for a process that does not share the run's environment. */
+  agentHome?: string;
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
   repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback
   model?: string; // Model the session was launched with; the last-resort model for metrics when neither a branch's deltas nor the session's history name one
 
   correlation: CorrelationResult;
   status: SessionStatus;
-  reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other')
+  reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other'); on an active copilot-cli record, the exit reason its run stored on exit
   origin?: SessionOrigin; // undefined = 'codemie' (back-compat)
 
   // Active duration tracking (excludes idle time)

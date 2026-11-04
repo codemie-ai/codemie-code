@@ -229,7 +229,7 @@ export interface SessionAdapter {
 
   /**
    * Find the transcript(s) of a CodeMie session record that names none (`correlation.agentSessionFile`
-   * empty), read-only. Empty when the transcript cannot be found.
+   * empty), read-only. Empty when none was found; an implementation may throw when it could not conclude.
    */
   locateTranscript?(record: Session): Promise<string[]>;
 }

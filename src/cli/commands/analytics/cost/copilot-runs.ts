@@ -12,6 +12,9 @@ export const isCopilotRun = (agentName: string): boolean => agentName.toLowerCas
 export const NO_RUN_START_REASON =
   'No start time on the CodeMie record of this Copilot run — its window of the shared session is unknown';
 
+/** The reason a Copilot run whose transcript could not be parsed stays unpriced, not a run that cost $0. */
+export const UNREADABLE_TRANSCRIPT_REASON = 'The Copilot transcript of this run could not be read';
+
 /** The copilot runs still to parse and each run's upper window bound, keyed by session id. */
 export interface CopilotRunWindows {
   runs: ParsedEntry[];
@@ -45,4 +48,5 @@ export async function parseCopilotRun(entry: ParsedEntry, bounds: Map<string, nu
   }
   const run = { startTime: entry.startTime, upperBound: bounds.get(entry.sessionId) };
   entry.parsed = await deps.parseNative(entry.agentName, entry.filePath as string, entry.sessionId, run);
+  if (!entry.parsed) entry.unavailableReason = UNREADABLE_TRANSCRIPT_REASON;
 }

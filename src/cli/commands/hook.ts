@@ -49,6 +49,11 @@ export interface SessionStartEvent extends BaseHookEvent {
    * generation ended. Never read from a parsed payload
    */
   startTime?: number;
+  /**
+   * The agent's data home for this run, stored on the record as `agentHome`; set by the plugin's
+   * in-process start or a synthesized one. Never read from a parsed payload
+   */
+  agent_home?: string;
 }
 
 /**
@@ -133,6 +138,12 @@ export interface HookProcessingConfig {
    * stays `active` and the next start's pass retries it (the start pass counts its attempts)
    */
   holdsReconcileLock?: boolean;
+  /**
+   * A transcript pass that throws rethrows, so a SessionEnd stops before its status write: the record stays
+   * `active` for the wrapper's own-record step and the next start. A session file lock timeout is still
+   * reported by the pass. For a caller that holds no reconcile lock.
+   */
+  rethrowFlushFailure?: boolean;
   /** Finalize the record locally only: no end metric, no sync, no rename */
   localOnly?: boolean;
 }
@@ -343,7 +354,7 @@ async function establishOwnGenerationLocked(
   const aside = await setAsideUnclosed(event.session_id, sessionId, config, options);
   if (aside.outcome === 'closed') {
     const startTime = aside.previousEnd ?? previous.endTime ?? (await lastRecordedActivityAt(previous));
-    await createSessionRecord(generationStartEvent(event, startTime), sessionId, config);
+    await createSessionRecord(generationStartEvent(event, startTime, previous), sessionId, config);
   }
   if (aside.outcome !== 'kept' && !isOtherGeneration(await readLiveRecord(sessionId), event.session_id) && existsSync(getSessionPath(sessionId))) {
     return true;
@@ -454,6 +465,7 @@ function logProcessingResult(
  * @param config - Optional configuration object (if not provided, reads from environment variables).
  *   With `holdsReconcileLock` (the start pass, the wrapper's own-record step) a failed flush throws, so
  *   a SessionEnd stops before its status write and the record stays `active` for a later attempt;
+ *   so does a throw of the pass under `rethrowFlushFailure`, a session file lock timeout excepted;
  *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
  * @param options - The hook's bounds and mode, applied to the processing context; absent → the context stays unbounded
  * @param finalPass - `{ finalPass }`, set only by SessionEnd: the session's last processing pass
@@ -553,11 +565,14 @@ async function performIncrementalSync(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:${hookName}] Session processing failed: ${errorMessage}`);
+    // Rethrown to a caller that repeats the pass: any failure under the reconcile lock, any but a session file
+    // lock timeout under `rethrowFlushFailure`. A lock timeout is otherwise reported in the result. Anything
+    // else stops here: a hook must not block agent execution or user prompts.
     if (config?.holdsReconcileLock) {
       throw error;
     }
     if (isSessionFileLockTimeout(error)) lockTimedOut = true;
-    // Don't throw - hook should not block agent execution or user prompts
+    else if (config?.rethrowFlushFailure) throw error;
   }
   return { lastRecordAt, lockTimedOut };
 }
@@ -1000,6 +1015,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(model && { model }),
       startTime,
       workingDirectory,
+      ...(event.agent_home && { agentHome: event.agent_home }),
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
@@ -1655,8 +1671,9 @@ export function createHookCommand(): Command {
         // Parse JSON
         try {
           event = JSON.parse(input) as BaseHookEvent;
-          // The field is the synthesized start's, never a client's
+          // The fields are the synthesized start's and the in-process plugin's, never a client's
           delete (event as Partial<SessionStartEvent>).startTime;
+          delete (event as Partial<SessionStartEvent>).agent_home;
         } catch (parseError: unknown) {
           const parseMsg = parseError instanceof Error ? parseError.message : String(parseError);
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);

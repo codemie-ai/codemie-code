@@ -60,6 +60,11 @@ const { MetricsDataLoader } = await import('../analytics/data-loader.js');
 const { PiPluginMetadata } = await import('../../../agents/plugins/pi/pi.plugin.js');
 const { stopPiIncrementalSync } = await import('../../../agents/plugins/pi/pi.incremental-sync.js');
 const { CodeMieCodePluginMetadata } = await import('../../../agents/plugins/codemie-code.plugin.js');
+const { CopilotCliPluginMetadata } = await import('../../../agents/plugins/copilot-cli/copilot-cli.plugin.js');
+const { CopilotCliSessionAdapter } = await import('../../../agents/plugins/copilot-cli/copilot-cli.session.js');
+const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
+const { ClaudeSessionAdapter } = await import('../../../agents/plugins/claude/claude.session.js');
+const { SessionFileLockTimeoutError } = await import('@/utils/errors.js');
 const { isSqliteAvailable } = await import('../../../agents/plugins/opencode/opencode.sqlite-reader.js');
 const sqliteAvailable = await isSqliteAvailable();
 
@@ -1169,7 +1174,7 @@ describe('SessionEnd inside the agent hook process', () => {
   });
 
   it('generation B\'s SessionEnd over generation A\'s completed_ record only: a fresh record of B finalized with B\'s transcript and delivered under B\'s native id; A\'s set only moved to its generation name', async () => {
-    const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    const a = baseRecord({ status: 'completed', agentHome: '/run/agent-home', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
     const id = a.sessionId;
     writeRecord(a, 'completed_');
     writeDeltas(id, [{ timestamp: a.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
@@ -1181,7 +1186,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
 
     expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['claude-native-next']);
-    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', agentHome: '/run/agent-home', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
     expect(readDeltas(id, 'completed_').map((d) => d.recordId)).toEqual(bLines);
     expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')).toBe(aRecordBytes);
     expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a_metrics.jsonl`), 'utf-8')).toBe(aMetricsBytes);
@@ -1290,6 +1295,14 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(recorded).toEqual(expect.any(Number));
     expect(recorded).toBeGreaterThanOrEqual(before);
     expect(recorded).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('a SessionStart payload carrying agent_home stores no agentHome', async () => {
+    const session = baseRecord();
+
+    await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-1', transcript_path: join(home, 'start.jsonl'), permission_mode: 'default', cwd: home, source: 'startup', agent_home: '/from/a/client' }, session);
+
+    expect(readRecord(session.sessionId).agentHome).toBeUndefined();
   });
 
   it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered (the server answers now): A\'s end metric and line delivered under A\'s id, moved aside under its generation name; B finalized', async () => {
@@ -2588,7 +2601,7 @@ describe('a later event of generation B over generation A\'s record establishes 
 
   it.each(['matched', 'pending'] as const)('Stop of B over A\'s live completed record (correlation %s; delivered, not renamed): A moved aside under its generation name, a fresh record of B starting at A\'s end holds B\'s lines', async (correlationStatus) => {
     const a = generationA({
-      status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'),
+      status: 'completed', agentHome: '/run/agent-home', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'),
       correlation: { status: correlationStatus, retryCount: 0, agentSessionId: 'gen-a' },
     });
     const id = a.sessionId;
@@ -2602,7 +2615,7 @@ describe('a later event of generation B over generation A\'s record establishes 
     expect(existsSync(join(sessionsDir, `completed_${id}-gen-a.json`))).toBe(true);
     expect(existsSync(join(sessionsDir, `completed_${id}_metrics.jsonl`))).toBe(false);
     expect(readDeltas(`${id}-gen-a`, 'completed_').map((d) => d.recordId)).toEqual([`rec-${id}-0`]);
-    expect(readRecord(id)).toMatchObject({ status: 'active', startTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
+    expect(readRecord(id)).toMatchObject({ status: 'active', agentHome: '/run/agent-home', startTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
     expect(readDeltas(id).map((d) => d.recordId)).toEqual(bLines);
   });
 
@@ -3108,5 +3121,246 @@ describe('a Stop hook on a completed record', () => {
     expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(false);
     expect(existsSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`))).toBe(false);
     expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(before);
+  });
+});
+
+describe('a plugin SessionEnd whose transcript pass throws', () => {
+  const NATIVE = 'abababab-abab-4bab-8bab-abababababab';
+  const DEAD_PID = 999_999;
+
+  /** A resumed copilot run whose `events.jsonl` is a directory: it passes the access check and its read fails with EISDIR. */
+  function copilotRun(overrides: Partial<Session> = {}) {
+    const copilotHome = join(home, 'copilot');
+    const transcript = join(copilotHome, 'session-state', NATIVE, 'events.jsonl');
+    mkdirSync(transcript, { recursive: true });
+    const session = baseRecord({
+      agentName: 'copilot-cli',
+      agentHome: copilotHome,
+      ownerPid: DEAD_PID,
+      ownerStartedAt: Date.now() - 2 * 60 * 60 * SECOND,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: NATIVE },
+      ...overrides,
+    });
+    writeRecord(session);
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_SESSION_ID: session.sessionId,
+      COPILOT_HOME: copilotHome,
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: API,
+      CODEMIE_URL: HOST,
+      CODEMIE_TARGET_API_URL: UPSTREAM,
+    };
+    return { session, transcript, env, end: (exitCode = 0) => CopilotCliPluginMetadata.lifecycle!.onSessionEnd!(exitCode, env) };
+  }
+
+  /** Puts a readable transcript of one turn, inside the run, where the directory was. */
+  function makeReadable(transcript: string, session: Session): void {
+    rmSync(transcript, { recursive: true });
+    const at = (ms: number) => new Date(session.startTime + ms).toISOString();
+    writeFileSync(transcript, `${[
+      { type: 'session.start', timestamp: at(SECOND), data: { sessionId: NATIVE, copilotVersion: '1.0.103', startTime: at(SECOND), context: { cwd: home, branch: 'main' } } },
+      { type: 'user.message', timestamp: at(2 * SECOND), data: { text: 'the prompt' } },
+      { type: 'assistant.message', timestamp: at(3 * SECOND), data: { model: 'gpt-5.5', content: 'the reply', outputTokens: 5 } },
+    ].map((event) => JSON.stringify(event)).join('\n')}\n`);
+  }
+
+  const spool = (id: string, kind: string, prefix = '') => join(sessionsDir, `${prefix}${id}_${kind}.jsonl`);
+  const historyUploads = () => urls.filter((url) => url.endsWith(`/v1/conversations/${NATIVE}/history`));
+
+  it('a failed read keeps the record active, sends no end metric, the correlation names the transcript', async () => {
+    const { session, transcript, end } = copilotRun();
+
+    await end();
+
+    const kept = readRecord(session.sessionId);
+    expect(kept.status).toBe('active');
+    expect(kept.endTime).toBeUndefined();
+    expect(kept.correlation).toMatchObject({ status: 'matched', agentSessionId: NATIVE, agentSessionFile: transcript });
+    expect(requests).toEqual([]);
+    expect(existsSync(spool(session.sessionId, 'metrics'))).toBe(false);
+    expect(existsSync(spool(session.sessionId, 'conversation'))).toBe(false);
+  });
+
+  it('the file readable again at the own-record step: deltas and the conversation delivered exactly once, the active time counted once', async () => {
+    const activityStartedAt = Date.parse('2026-10-01T10:00:01Z'); // Before the last transcript record: a second count would add to the total
+    const { session, transcript, env, end } = copilotRun({ activityStartedAt });
+    const id = session.sessionId;
+
+    await end();
+    const { activeDurationMs } = readRecord(id);
+    expect(activeDurationMs).toBeGreaterThanOrEqual(60 * SECOND);
+
+    makeReadable(transcript, session);
+    await finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND });
+
+    const done = readRecord(id, 'completed_');
+    expect(done).toMatchObject({ status: 'completed', reason: 'exit', activeDurationMs });
+    expect(endMetrics()).toHaveLength(1);
+    expect(readDeltas(id, 'completed_').map((d) => d.syncStatus)).toEqual(['synced']);
+    expect(historyUploads()).toHaveLength(1);
+
+    const sent = urls.length;
+    await finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND });
+    await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
+    expect(urls).toHaveLength(sent);
+  });
+
+  it.each([
+    [0, 'exit'],
+    [3, 'exit(3)'],
+  ])('a run that exited with %i and whose read failed keeps its reason: %s in the record and the end metric', async (exitCode, reason) => {
+    const { session, transcript, env, end } = copilotRun();
+
+    await end(exitCode);
+    expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', reason });
+
+    makeReadable(transcript, session);
+    await finalizeOwnRecord(session.sessionId, { env, deadlineMs: Date.now() + 10 * SECOND });
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason });
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual([reason]);
+  });
+
+  it('a lookup that throws: the reason is already on the record, exit in the record and the end metric once finalized', async () => {
+    const { session, transcript, env, end } = copilotRun();
+    rmSync(join(home, 'copilot', 'session-state'), { recursive: true });
+
+    await end();
+    expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', reason: 'exit' });
+    expect(requests).toEqual([]);
+
+    mkdirSync(transcript, { recursive: true });
+    makeReadable(transcript, session);
+    await finalizeOwnRecord(session.sessionId, { env, deadlineMs: Date.now() + 10 * SECOND });
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual(['exit']);
+  });
+
+  it.each([
+    [0, 'exit'],
+    [3, 'exit(3)'],
+  ])('a run that exits with %i and closes: %s on the closed record, one end metric, no live copy left', async (exitCode, reason) => {
+    const { session, transcript, end } = copilotRun();
+    makeReadable(transcript, session);
+
+    await end(exitCode);
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason });
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual([reason]);
+  });
+
+  it('a failure to store the reason does not stop the SessionEnd: it closes the record and sends the end metric', async () => {
+    const { session, transcript, end } = copilotRun();
+    makeReadable(transcript, session);
+    const save = SessionStore.prototype.saveSession;
+    vi.spyOn(SessionStore.prototype, 'saveSession').mockImplementation(function (this: InstanceType<typeof SessionStore>, record: Session) {
+      return record.status === 'active' && record.reason ? Promise.reject(new Error('ENOSPC')) : save.call(this, record);
+    });
+    clearLogs();
+
+    await end();
+
+    expect(vi.mocked(logger.error).mock.calls.flat().join()).toContain(`Could not keep the exit reason of session ${session.sessionId}: ENOSPC`);
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual(['exit']);
+  });
+
+  it('a killed run, with nothing stored, ends interrupted in the record and the end metric', async () => {
+    const { session, transcript, env } = copilotRun();
+    makeReadable(transcript, session);
+
+    await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted' });
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual(['interrupted']);
+  });
+
+  it('a failure to keep the reason is logged and changes nothing else: the run ends interrupted', async () => {
+    const { session, transcript, env, end } = copilotRun();
+    const save = SessionStore.prototype.saveSession;
+    const saving = vi.spyOn(SessionStore.prototype, 'saveSession').mockImplementation(function (this: InstanceType<typeof SessionStore>, record: Session) {
+      return record.reason ? Promise.reject(new Error('ENOSPC')) : save.call(this, record);
+    });
+    clearLogs();
+
+    await expect(end()).resolves.toBeUndefined();
+    expect(vi.mocked(logger.error).mock.calls.flat().join()).toContain(`Could not keep the exit reason of session ${session.sessionId}: ENOSPC`);
+    saving.mockRestore();
+    expect(readRecord(session.sessionId).status).toBe('active');
+
+    makeReadable(transcript, session);
+    await finalizeOwnRecord(session.sessionId, { env, deadlineMs: Date.now() + 10 * SECOND });
+    expect(readRecord(session.sessionId, 'completed_').reason).toBe('interrupted');
+  });
+
+  it('a record already completed keeps the reason it closed with when the SessionEnd throws', async () => {
+    const { session, end } = copilotRun({ status: 'completed', reason: 'logout', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    rmSync(join(home, 'copilot', 'session-state'), { recursive: true });
+
+    await end(3);
+
+    expect(readRecord(session.sessionId).reason).toBe('logout');
+  });
+
+  it('the read still failing: the own-record step rejects, three starts spend their attempts, the fourth ends it completed with nothing of the transcript sent', async () => {
+    const { session, env, end } = copilotRun();
+    const id = session.sessionId;
+    const startedAt = Date.now();
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await end();
+    await expect(finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND })).rejects.toMatchObject({ code: 'EISDIR' });
+    expect(readRecord(id).finalizeAttempts).toBeUndefined();
+
+    for (const spent of [1, 2, 3]) {
+      await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
+      expect(readRecord(id)).toMatchObject({ status: 'active', finalizeAttempts: spent });
+    }
+    expect(requests).toEqual([]);
+
+    await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
+
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit', droppedAt: expect.any(Number) });
+    expect(requests.map((r) => r.name)).toEqual(['codemie_cli_session_total']);
+    await noticeDeliveryAtExit('own', startedAt, true);
+    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    expect(existsSync(spool(id, 'metrics', 'completed_'))).toBe(false);
+    expect(existsSync(spool(id, 'conversation', 'completed_'))).toBe(false);
+  });
+
+  it('a session file lock timeout on the copilot plugin\'s path is the pass\'s own result: kept active, nothing sent, no failure out of the hook, and its reason ends the run once finalized', async () => {
+    const { session, transcript, env, end } = copilotRun();
+    makeReadable(transcript, session);
+    const processing = vi.spyOn(CopilotCliSessionAdapter.prototype, 'processSession').mockRejectedValue(new SessionFileLockTimeoutError('metrics.lock'));
+    clearLogs();
+
+    await end();
+
+    expect(readRecord(session.sessionId).status).toBe('active');
+    expect(requests).toEqual([]);
+    expect(vi.mocked(logger.warn).mock.calls.flat().join()).toContain('could not take a session file lock');
+    expect(vi.mocked(logger.error).mock.calls.flat().join()).not.toContain('SessionEnd hook failed');
+
+    processing.mockRestore();
+    await finalizeOwnRecord(session.sessionId, { env, deadlineMs: Date.now() + 10 * SECOND });
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
+    expect(endMetrics().map((metric) => metric.attributes.reason)).toEqual(['exit']);
+  });
+
+  it('another agent\'s plugin path with a throwing processSession still closes and delivers the record', async () => {
+    const session = baseRecord();
+    writeRecord(session);
+    const transcript = join(home, 'claude.jsonl');
+    writeFileSync(transcript, '');
+    vi.spyOn(ClaudeSessionAdapter.prototype, 'processSession').mockRejectedValue(new Error('EIO: read'));
+
+    await expect(processEvent({ ...syntheticEnd(transcript), reason: 'exit', endTimeFromActivity: undefined }, config(session)))
+      .resolves.toBeUndefined();
+
+    expect(endMetrics()).toHaveLength(1);
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 });
