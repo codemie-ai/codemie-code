@@ -313,6 +313,11 @@ describe('ConfigLoader — per-profile CodeMie identity (EPMCDME-15411)', () => 
   });
 
   describe('global config writes', () => {
+    it('a saved config always carries a workspace key, so migration 007 never re-runs over it', async () => {
+      await ConfigLoader.saveProfile('fresh', sso({ codeMieProject: 'p' }));
+      expect((await readGlobal()).workspace).toEqual({});
+    });
+
     it('saveProfileIdentity does nothing when the profile is gone', async () => {
       await writeGlobal('a', { a: sso() });
       expect(await ConfigLoader.saveProfileIdentity('missing', { codeMieProject: 'x' })).toBe(false);

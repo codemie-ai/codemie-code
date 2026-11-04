@@ -847,6 +847,10 @@ export class ConfigLoader {
     if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
       config.workspace = { ...config.workspace, ...workspaceFields };
     }
+    // A config that holds per-profile identity always carries a `workspace` key:
+    // migration 007 skips such configs, so a re-run (lost ledger) never strips
+    // the profiles' own identity.
+    config.workspace ??= {};
 
     // If this is the first profile, make it active
     if (Object.keys(config.profiles).length === 1) {
@@ -900,6 +904,7 @@ export class ConfigLoader {
       if (identity.codeMieIntegration) record.codeMieIntegration = identity.codeMieIntegration;
     }
     config.profiles[profileName] = this.withCarriedIdentity(record);
+    config.workspace ??= {}; // see saveProfile(): keeps migration 007 from re-running over it
     await this.saveMultiProviderConfig(config);
     return true;
   }
