@@ -13,6 +13,8 @@ export interface CodeMieUserInfo {
   userId: string;
   name: string;
   username: string;
+  /** Authenticated email as the backend reports it; `username` is a different value. */
+  email?: string;
   isAdmin: boolean;
   applications: string[];
   applications_admin: string[];
@@ -267,27 +269,31 @@ export async function getStoredAnalyticsCredentials(
   return lookupStoredCredentials(getAnalyticsPlatformSource(ssoUrl, env, overrides));
 }
 
-/** Request limits for a user-info fetch; the launch-time project list uses short ones. */
-export interface UserInfoFetchOptions {
+/* eslint-disable no-redeclare */
+export interface UserInfoRequestOptions {
+  /** Request limits; the launch-time project list uses short ones. */
   timeout?: number;
   maxRetries?: number;
+  /** false: a 3xx answer fails the lookup instead of being followed (the cookies never leave the first origin). */
+  followRedirects?: boolean;
+  /** Unattended callers only need `email`; skip the interactive login's `applications*` shape check. */
+  emailOnly?: boolean;
 }
 
-/* eslint-disable no-redeclare */
 export function fetchCodeMieUserInfo(
   apiUrl: string,
   cookies: Record<string, string>,
-  options?: UserInfoFetchOptions
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
   jwtToken: string,
-  options?: UserInfoFetchOptions
+  options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
   auth: Record<string, string> | string,
-  options: UserInfoFetchOptions = {}
+  options: UserInfoRequestOptions = {}
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
@@ -296,6 +302,7 @@ export async function fetchCodeMieUserInfo(
   const client = new HTTPClient({
     timeout: options.timeout ?? 10000,
     maxRetries: options.maxRetries ?? 3,
+    followRedirects: options.followRedirects ?? true,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
   });
@@ -310,6 +317,10 @@ export async function fetchCodeMieUserInfo(
   }
 
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
+
+  if (options.emailOnly && userInfo && typeof userInfo === 'object') {
+    return { ...userInfo, applications: userInfo.applications ?? [], applications_admin: userInfo.applications_admin ?? [] };
+  }
 
   if (!Array.isArray(userInfo.applications_admin) && Array.isArray(userInfo.applicationsAdmin)) {
     userInfo.applications_admin = userInfo.applicationsAdmin;

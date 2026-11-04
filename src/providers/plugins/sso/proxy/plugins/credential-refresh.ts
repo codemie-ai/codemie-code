@@ -11,10 +11,11 @@
  * via `PluginContext.credentialRefresher`) now backs every one of those consumers, so there is
  * exactly one cache/throttle clock, and exactly one place this logic can drift.
  *
- * OTLP telemetry forwarding is the one consumer NOT wired to this class: it already had its own
+ * OTLP telemetry forwarding is the one consumer NOT wired to this class: it has its own
  * resume-after-re-auth path (`markCredentialsStale`/`resolveFreshCredentials`/
- * `clearCredentialsStale` in `otlp-spool/auth-state.ts`) from before this fix, gated on an
- * observed 401/403 rather than throttled on every call. Left as-is rather than merged into this
+ * `clearCredentialsStale` in `otlp-spool/auth-state.ts`), gated on an observed 401/403, plus a
+ * periodic re-read of the stored login on each daemon tick (`otlp.plugin.ts`, throttled by
+ * `CREDENTIAL_REFRESH_INTERVAL_MS`, so the effective interval is the tick interval). Left as-is rather than merged into this
  * one, since OTLP forwarding runs on its own tick independent of the request path this class
  * was built for.
  *

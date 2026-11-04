@@ -9,6 +9,9 @@ import { apiIdentity, ownerHash } from './api-identity.js';
 import { launchMode, type RoutingResult } from './routing.js';
 import { parseProjectBinding, PROJECT_BINDING_ENV, type ProjectBindingState } from '@/utils/project-binding.js';
 import { createOrRead, readRecord, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
+import type { PendingFields } from './owner-pending.js';
+import { credentialFingerprint } from '@/providers/core/credential-owner.js';
+import { isSSOCredentials, type SSOCredentials } from '@/providers/core/types.js';
 
 /** Adapter-supplied facts the base cannot know (Claude organization, settings.json routing). */
 export interface EvidenceInputs {
@@ -16,8 +19,56 @@ export interface EvidenceInputs {
   routing: RoutingResult;
 }
 
-/** `detail` names the specific failure (e.g. `project_too_long`); `reason` stays the coarse category. */
-export type StampResult = { ok: true; record: EvidenceRecord } | { ok: false; reason: string; detail?: string };
+/**
+ * `detail` names the specific failure (e.g. `project_too_long`); `reason` stays the coarse category.
+ * `pending` (only with `no_owner`): the hook-time facts and the login fingerprint, so the events can be held for this login.
+ */
+export type StampResult =
+  | { ok: true; record: EvidenceRecord }
+  | { ok: false; reason: string; detail?: string; pending?: { fp: string; fields: PendingFields } };
+
+/** The hook-time facts of a new record, everything but the owner. */
+async function hookTimeFields(
+  context: OtlpHookContext,
+  inputs: EvidenceInputs,
+  sessionId: string,
+  api: string
+): Promise<PendingFields> {
+  const hookConfig = await loadHookConfig(context.cwd);
+  const configDir = hookConfig?.configDir ?? context.cwd;
+  const project = (await resolveSessionProject(context.cwd, sessionId)) || undefined;
+  const project_source = await projectSource(project, hookConfig, configDir);
+  const rawOrigin = await getRawGitOrigin(context.cwd);
+  return {
+    session_id: sessionId,
+    launch_mode: launchMode(process.env),
+    routed_via_codemie: inputs.routing.routed,
+    routing_proof: inputs.routing.routing_proof,
+    organization: inputs.organization,
+    project,
+    project_source,
+    repo_key: rawOrigin ? repoKeyFromRemote(rawOrigin) : undefined,
+    api_identity: api,
+    profile: hookConfig?.config.name,
+    projectBinding: projectBindingFor(project),
+  };
+}
+
+/** Facts to hold for a login whose owner is not known yet; nothing when there is no login or no usable API URL. */
+async function pendingFor(
+  credentials: SSOCredentials,
+  context: OtlpHookContext,
+  inputs: EvidenceInputs,
+  sessionId: string
+): Promise<{ pending: { fp: string; fields: PendingFields } } | Record<string, never>> {
+  if (!isSSOCredentials(credentials) || Object.keys(credentials.cookies).length === 0) return {};
+  try {
+    const api = apiIdentity(credentials.apiUrl);
+    return { pending: { fp: credentialFingerprint(credentials), fields: await hookTimeFields(context, inputs, sessionId, api) } };
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Origin of the project actually selected. Only a project equal to the config's own can name the config's
@@ -66,7 +117,7 @@ export async function stampEvidence(
     const credentials = await resolveHookCredentials();
     if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
     const email = resolveEmailFromCredentials(credentials);
-    if (!email) return { ok: false, reason: 'no_owner' };
+    if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId)) };
     let api: string;
     try {
       api = apiIdentity(credentials.apiUrl);
@@ -82,26 +133,7 @@ export async function stampEvidence(
       return { ok: true, record: found.record };
     }
 
-    const hookConfig = await loadHookConfig(context.cwd);
-    const configDir = hookConfig?.configDir ?? context.cwd;
-    const project = (await resolveSessionProject(context.cwd, sessionId)) || undefined;
-    const project_source = await projectSource(project, hookConfig, configDir);
-    const rawOrigin = await getRawGitOrigin(context.cwd);
-
-    const fields = {
-      session_id: sessionId,
-      launch_mode: launchMode(process.env),
-      routed_via_codemie: inputs.routing.routed,
-      routing_proof: inputs.routing.routing_proof,
-      organization: inputs.organization,
-      project,
-      project_source,
-      repo_key: rawOrigin ? repoKeyFromRemote(rawOrigin) : undefined,
-      api_identity: api,
-      owner_hash: ownerHash(email),
-      profile: hookConfig?.config.name,
-      projectBinding: projectBindingFor(project),
-    };
+    const fields = { ...(await hookTimeFields(context, inputs, sessionId, api)), owner_hash: ownerHash(email) };
     let created = await createOrRead(key, fields);
     if (created.kind === 'evidence_capacity') {
       // At the cap: evict idle records whose sessions have no undelivered spool now, not at the next sweep.

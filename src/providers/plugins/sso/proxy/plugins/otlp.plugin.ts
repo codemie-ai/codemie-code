@@ -3,6 +3,7 @@ import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { withVerifiedOwner } from '../../../../core/credential-owner.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
@@ -14,6 +15,8 @@ import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
 import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
+import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
+import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
 /**
@@ -57,6 +60,7 @@ class OtlpInterceptor implements ProxyInterceptor {
   private tickHandle?: NodeJS.Timeout;
   private sweepHandle?: NodeJS.Timeout;
   private ticking = false;
+  private lastStoredRead = 0;
   private stopped = false;
 
   constructor(
@@ -133,18 +137,24 @@ class OtlpInterceptor implements ProxyInterceptor {
   /**
    * Re-reads the credential store when `markCredentialsStale()` is set, so a
    * successful SSO re-login the user completes while this daemon keeps running
-   * is picked up without a restart. A no-op whenever credentials aren't stale.
+   * is picked up without a restart. Outside the tick it is a no-op whenever credentials aren't stale;
+   * the tick (`periodic`) also re-reads the store at most once per `CREDENTIAL_REFRESH_INTERVAL_MS`.
    */
-  private async refreshCredentialsIfStale(): Promise<void> {
-    if (!areCredentialsStale() || !this.config) {
+  private async refreshCredentialsIfStale(periodic = false): Promise<void> {
+    const stale = areCredentialsStale();
+    // The tick also re-reads on a throttle: hooks stamp with the stored login, and a re-login (account
+    // switch) rejects nothing outgoing, so no stale marker would ever move this snapshot to it.
+    const due = periodic && Date.now() - this.lastStoredRead >= CREDENTIAL_REFRESH_INTERVAL_MS;
+    if ((!stale && !due) || !this.config) {
       return;
     }
+    this.lastStoredRead = Date.now();
 
     try {
       const refreshed = await resolveFreshCredentials(this.config);
       if (refreshed) {
         this.credentials = refreshed;
-        clearCredentialsStale();
+        if (stale) clearCredentialsStale();
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -153,10 +163,12 @@ class OtlpInterceptor implements ProxyInterceptor {
   }
 
   private async tick(): Promise<void> {
-    await this.refreshCredentialsIfStale();
+    await this.refreshCredentialsIfStale(true);
 
-    const creds = this.credentials;
+    // Same owner the hook stamps with: the forwarder's evidence key must match it.
+    const creds = this.credentials && (await withVerifiedOwner(this.credentials));
     if (!creds) {
+      await processPendingOwner(undefined); // still expires held hook events
       return;
     }
 
@@ -175,6 +187,10 @@ class OtlpInterceptor implements ProxyInterceptor {
         })
       )
     );
+
+    // Hook events held for a login whose owner was unknown: replay under this login, expire past retention (no hook
+    // needed). After the walk, so a replayed session is sent by the next tick.
+    await processPendingOwner(creds);
   }
 
   async handleRequest(
