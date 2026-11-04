@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16617",
+  "head": "4822bb8c5f3534769c6f1dc56ddb293a6eba162f",
+  "runner": "npm",
+  "started_at": "2026-11-04T14:05:25Z",
+  "completed_at": "2026-11-04T14:12:30Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 6000, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 18000, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 8000, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 12000, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 61000, "command": "npx vitest run --project unit", "exit_code": 0, "notes": "Passes (476 files, 8127 tests) with CODEMIE_* env vars unset and HOME=$(mktemp -d). Run inside a codemie session with CODEMIE_* exported and real HOME, 16 tests in 6 files fail (env leakage: providers-core, sso.auth-gate, hook.session-delivery, codex/opencode/pi incremental-sync; none touch changed files). With CODEMIE_* unset but real HOME, only the known pre-existing copilot-managed-report.test.ts 'leaves Claude output unchanged by the Copilot data' fails (reads real ~/.claude/projects); it passes under an empty HOME. Not a regression."},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 56000, "command": "npx vitest run --project cli", "exit_code": 0, "notes": "40 files passed, 1 skipped; run with CODEMIE_* env vars unset."},
+    {"id": "secrets", "source": "guide", "status": "SKIPPED", "duration_ms": 2000, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Self-skip: output 'No staged changes to scan'. Script only scans staged files; CI secrets-detection runs unconditionally and is still owed (needs staged changes + Docker/Gitleaks locally)."},
+    {"id": "commitlint", "source": "guide", "status": "PASS", "duration_ms": 1000, "command": "npm run commitlint:last", "exit_code": 0, "notes": "Checks HEAD~1..HEAD only (found 0 problems)."},
+    {"id": "lint-staged-vitest-related", "source": "hook", "status": "PASS", "duration_ms": 8000, "command": "vitest related --run --exclude tests/integration/agent-*.test.ts --exclude tests/integration/cli-commands/models.test.ts <changed .ts files>", "exit_code": 0, "notes": "Run with CODEMIE_* unset and empty HOME. Hook's eslint step is covered by the lint gate; hook typecheck by typecheck gate."}
+  ],
+  "failures": {}
+}
