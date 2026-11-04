@@ -961,7 +961,7 @@ describe('proxy restart', () => {
     exitSpy.mockRestore();
   });
 
-  it('re-spawns a running daemon with its recorded identity', async () => {
+  it('re-spawns a running daemon with its recorded identity and the profile\'s current project (AC12)', async () => {
     const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
 
     await command.parseAsync(['restart'], { from: 'user' });
@@ -977,7 +977,9 @@ describe('proxy restart', () => {
       telemetryMode: 'claude-desktop',
       gatewayKey: 'k',
       model: 'm',
-      project: 'recorded-project',
+      // Re-read from the profile, not the recorded state: a profile that gained its own
+      // project since the daemon started bills it after the restart (EPMCDME-15411).
+      project: 'config-project',
     });
     expect(errorOutput()).not.toContain('already running with different settings');
     expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:4001');

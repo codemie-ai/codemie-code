@@ -10,6 +10,7 @@ import * as paths from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import type { MultiProviderConfig, ProviderProfile } from '@/env/types.js';
 import {
+  reportDaemonProfileIdentity,
   finalizeLaunchIdentity,
   resolveLaunchIdentity,
   unownedWarningText,
@@ -191,6 +192,39 @@ describe('launch identity policy', () => {
       const config = await ConfigLoader.load(WORKING_DIR, { name: 'l' });
       const launch = await resolveLaunchIdentity(config, { workingDir: WORKING_DIR, canPrompt: true, surface: 'agent' });
       expect(launch).toMatchObject({ state: 'not-applicable', needsWarning: false });
+    });
+  });
+
+  describe('reportDaemonProfileIdentity (proxy connect/start/restart, hook cold start)', () => {
+    it('proxy: an unowned profile warns once on stderr naming the shared project; nothing is saved', async () => {
+      await writeGlobal('a', { a: sso(), b: sso() });
+      const before = await fs.readFile(GLOBAL, 'utf-8');
+      const writes: string[] = [];
+      const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+      const state = await reportDaemonProfileIdentity(config, 'proxy', WORKING_DIR, { writeStderr: (t) => writes.push(t) });
+      expect(state).toBe('unowned');
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain('"shared-proj"');
+      expect(await fs.readFile(GLOBAL, 'utf-8')).toBe(before);
+    });
+
+    it('proxy: an own profile does not warn and its project is the daemon project', async () => {
+      await writeGlobal('a', { a: sso({ codeMieProject: 'mine' }), b: sso() });
+      const writes: string[] = [];
+      const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+      expect(await reportDaemonProfileIdentity(config, 'proxy', WORKING_DIR, { writeStderr: (t) => writes.push(t) })).toBe('own');
+      expect(config.codeMieProject).toBe('mine');
+      expect(writes).toHaveLength(0);
+    });
+
+    it('hook: only logs, never writes to stderr', async () => {
+      await writeGlobal('a', { a: sso(), b: sso() });
+      const writes: string[] = [];
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
+      await reportDaemonProfileIdentity(config, 'hook', WORKING_DIR, { writeStderr: (t) => writes.push(t) });
+      expect(writes).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 

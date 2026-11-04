@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import { checkStatus, stopDaemon, type DaemonState } from './daemon-manager.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { DEFAULT_DAEMON_PORT } from './connect-orchestrator.js';
 import { launchDaemon, prepareDaemonLaunch, spawnForProfile } from './launch-daemon.js';
 
@@ -63,6 +64,7 @@ function spawnFailedError(state: DaemonState, error: unknown): ToolExecutionErro
 async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<void> {
   const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
   const profile = config.name ?? opts.profile ?? state.profile;
+  await reportDaemonProfileIdentity(config, 'proxy');
   // Fail on a bad profile or expired SSO before the working daemon is touched.
   const prepared = await prepareDaemonLaunch(config, profile);
 
@@ -78,7 +80,8 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
       gatewayKey: state.gatewayKey,
       // A switched profile's tenant may not serve the old profile's model.
       model: opts.profile ? undefined : state.model,
-      project: opts.profile ? config.codeMieProject : (state.project ?? config.codeMieProject),
+      // Re-read: the profile may have gained its own project since the daemon started (EPMCDME-15411).
+      project: config.codeMieProject,
     });
   } catch (error) {
     throw spawnFailedError(state, error);

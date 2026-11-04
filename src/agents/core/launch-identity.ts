@@ -205,3 +205,27 @@ export function finalizeLaunchIdentity(
   }
   (deps.writeStderr ?? writeStderrSafely)(chalk.yellow(text));
 }
+
+/**
+ * Daemon paths (`proxy connect/start/restart`, hook cold start): never prompt;
+ * an unowned profile writes the warning (stderr for proxy, log only for hook).
+ * Returns the binding state, or undefined when it cannot be resolved.
+ */
+export async function reportDaemonProfileIdentity(
+  config: CodeMieConfigOptions,
+  surface: 'proxy' | 'hook',
+  workingDir: string = process.cwd(),
+  deps: Pick<LaunchIdentityDeps, 'writeStderr'> = {}
+): Promise<ProjectBindingState | undefined> {
+  try {
+    const launch = await resolveLaunchIdentity(config, { workingDir, canPrompt: false, surface });
+    // A throwaway env: the daemon gets its project from `config`, not from this process.
+    finalizeLaunchIdentity(launch, config.codeMieProject ? { CODEMIE_PROJECT: config.codeMieProject } : {}, deps, {});
+    return launch.state;
+  } catch (error) {
+    logger.debug('[launch-identity] daemon profile identity unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}

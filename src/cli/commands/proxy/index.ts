@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { checkStatus, readState, stopDaemon, writeState } from './daemon-manager.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { launchDaemon } from './launch-daemon.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
@@ -134,6 +135,7 @@ export function createProxyCommand(): Command {
           opts.profile ? { name: opts.profile } : undefined
         );
         const profile = config.name ?? 'default';
+        await reportDaemonProfileIdentity(config, 'proxy');
 
         const requestedDaemon: RequestedDaemonConfig = {
           profile,
