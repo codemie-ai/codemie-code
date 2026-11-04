@@ -85,6 +85,10 @@ export function classifyGitError(stderr: string): GitFailureCause {
   ) {
     return 'unreachable';
   }
+  // `clone --branch <b>` / `fetch origin <b>` against a remote that has no such branch.
+  if (/remote branch .+ not found in upstream|couldn't find remote ref/.test(text)) {
+    return 'branch-not-found';
+  }
   if (/\[rejected\]|non-fast-forward|fetch first/.test(text)) {
     return 'rejected';
   }
@@ -104,6 +108,8 @@ export function gitHint(cause: GitFailureCause): string {
       return 'The push was rejected (not a fast-forward): fetch and rebase/merge before retrying.';
     case 'protected':
       return 'The target branch is protected: pick an unprotected branch with --git-branch or ask for push access.';
+    case 'branch-not-found':
+      return 'The target branch does not exist in the repository: create it there first, or omit --git-branch to use the default branch.';
     case 'timeout':
       return 'The git command timed out: check your network connection and retry.';
     case 'other':

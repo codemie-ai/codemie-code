@@ -443,7 +443,7 @@ instructions and registers nothing), runs the per-platform preflight, and — wh
 `--git-repo` is configured — performs a prompt-free test push of a placeholder file into the
 caller's own slug folder in that repository, proving push access *before* anything else is
 touched. A failed test push prints the likely cause (an auth problem, an untrusted SSH host
-key, an unreachable remote, a protected branch, …) plus the redacted git error, removes the
+key, an unreachable remote, a missing or protected branch, …) plus the redacted git error, removes the
 working copy, and registers nothing: no job is unregistered, no settings are written, no job
 is registered. Only once the test push (if any) succeeds does install remove any existing
 job with the same identity (the collector's or a previous CLI install's), write the settings

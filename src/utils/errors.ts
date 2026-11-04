@@ -109,6 +109,7 @@ export type GitFailureCause =
   | 'unreachable'
   | 'rejected'
   | 'protected'
+  | 'branch-not-found'
   | 'timeout'
   | 'other';
 
