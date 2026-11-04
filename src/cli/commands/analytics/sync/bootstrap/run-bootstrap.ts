@@ -19,13 +19,12 @@
  * anywhere here names the webhook's `sig` value.
  */
 
-import { SyncDeliveryError } from '@/utils/errors.js';
-
 import { validateIncludeExternal, validateLookbackDays, validateTriggerUrl } from '../config-store.js';
 import { buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
 import type { SyncReport } from '../types.js';
 import { runGuided } from './guided.js';
+import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT } from './setup-check.js';
 import { getBootstrapStatePath } from './state-store.js';
 import type { BootstrapDeps, BootstrapOptions, BootstrapPrompter } from './types.js';
 
@@ -33,26 +32,9 @@ import type { BootstrapDeps, BootstrapOptions, BootstrapPrompter } from './types
 // controller ruling, without reaching into `./types.js` directly.
 export type { BootstrapDeps, BootstrapOptions, BootstrapPrompter };
 
-/**
- * `setup-check-<stamp>.json`: the `--webhook` mode's connectivity test payload. Same shape as
- * the standalone collector's own check (`wizard-support.js`'s `setupCheckFile`) so a lead
- * reading Power Automate's run history sees a familiar payload. Carries no analytics data and
- * no webhook URL. Deliberately not named `codemie-analytics-…`: analysis tooling attributes
- * files by that prefix, and this one belongs to nobody.
- */
-export function setupCheckReport(now: Date): SyncReport {
-  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const payload = {
-    setupCheck: true,
-    sentAt: now.toISOString(),
-    note: 'Sent by `codemie analytics sync bootstrap` to test the flow. Safe to delete.'
-  };
-
-  return {
-    fileName: `setup-check-${stamp}.json`,
-    bytes: Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
-  };
-}
+// Re-exported (plan task 8) so existing imports/tests of this module keep working unchanged
+// now that both live in `./setup-check.js`, which the guided wizard's step 5 also imports.
+export { setupCheckReport, UPDATE_HINT };
 
 /** Printed to `deps.err` after a successful `--webhook` test send, naming where the test file
  * should show up — never the webhook URL itself. */
@@ -66,12 +48,6 @@ function checkLine(report: SyncReport): string {
 /** Printed to `deps.err` right after {@link checkLine}. */
 const CLEANUP_LINE = 'Delete the test file once you have confirmed delivery.';
 
-/** Printed to `deps.err` after every successful `--webhook` send, right before the install
- * command. Names no version, so it reads the same across CLI releases (spec.md "Install
- * command", decision AR-5). */
-export const UPDATE_HINT =
-  'Developers who see "unknown command" need a newer CodeMie CLI: have them run `codemie self-update`.';
-
 /** Printed when there is no TTY and no `--webhook` was given — the only way forward in either
  * case, so both remedies are named. */
 const NO_TTY_MESSAGE =
@@ -79,13 +55,13 @@ const NO_TTY_MESSAGE =
   'Pass --webhook <url> to run `codemie analytics sync bootstrap` non-interactively, or run it ' +
   'again in a terminal for the guided wizard.';
 
-/** Same shape as `install.ts`'s `printGitFailure`: the redacted message, plus the "flow on /
- * Anyone / whole URL" hint when the failure was a 4xx — keyed off `SyncDeliveryError.status`,
- * never message text, per spec.md "Constraints and left to the builder". */
+/** Same shape as `install.ts`'s `printGitFailure`: the redacted message, plus {@link
+ * sendFailure4xxHint} when the failure was a 4xx. */
 function printSendFailure(deps: BootstrapDeps, err: unknown): void {
   deps.err(`Test send failed: ${errorMessage(err)}`);
-  if (err instanceof SyncDeliveryError && err.status !== undefined && err.status >= 400 && err.status < 500) {
-    deps.err('Check that the flow is turned on, that its trigger allows "Anyone", and that the whole URL was copied.');
+  const hint = sendFailure4xxHint(err);
+  if (hint !== undefined) {
+    deps.err(hint);
   }
 }
 
