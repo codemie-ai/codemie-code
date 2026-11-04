@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, utimesSync, symlinkSync } from 'fs';
 import * as fsPromises from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import type { Session } from '../types.js';
 import type { BaseHookEvent } from '../../types.js';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
@@ -1284,7 +1284,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       process.chdir(cwd);
     }
 
-    expect(load(id).agentHome).toBe('/run/copilot-home');
+    expect(load(id).agentHome).toBe(resolve('/run/copilot-home'));
   });
 });
 

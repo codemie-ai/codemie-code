@@ -573,7 +573,7 @@ describe('CopilotCliSessionAdapter.locateTranscript', () => {
       const agentHome = join(home, 'a-file');
       writeFileSync(agentHome, '');
 
-      await expect(newAdapter().locateTranscript(record({ ...resumed, agentHome }))).rejects.toMatchObject({ code: 'ENOTDIR' });
+      await expect(newAdapter().locateTranscript(record({ ...resumed, agentHome }))).rejects.toMatchObject({ code: expect.stringMatching(/^(ENOTDIR|ENOENT)$/) }); // Windows reports a file on the path as ENOENT
     });
 
     it('a stored home that exists with no session-state throws', async () => {

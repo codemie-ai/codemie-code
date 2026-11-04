@@ -178,7 +178,7 @@ describe('copilot-cli SessionStart', () => {
   });
 
   it.each([
-    ['an absolute COPILOT_HOME', '/run/copilot-home', '/run/copilot-home'],
+    ['an absolute COPILOT_HOME', '/run/copilot-home', resolve('/run/copilot-home')],
     ['a relative COPILOT_HOME, against the launch directory', 'rel/copilot-home', resolve(process.cwd(), 'rel/copilot-home')],
   ])('sends the run\'s home on the event: %s', async (_form, value, expected) => {
     await lifecycle.onSessionStart!('sid-home', { COPILOT_HOME: value });
