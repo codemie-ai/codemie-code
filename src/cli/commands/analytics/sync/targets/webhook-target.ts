@@ -24,9 +24,9 @@ export const MAX_EXPORT_BYTES = 70_000_000;
  * keep the daily job (systemd oneshot / launchd, both without their own limit) running. */
 export const WEBHOOK_TIMEOUT_MS = 5 * 60_000;
 
-function deliveryFailureMessage(err: unknown): string {
+function deliveryFailureMessage(err: unknown, timeoutMs: number): string {
   if (err instanceof Error && err.name === 'TimeoutError') {
-    return `Webhook did not respond within ${WEBHOOK_TIMEOUT_MS / 60_000} minutes`;
+    return `Webhook did not respond within ${timeoutMs / 60_000} minutes`;
   }
   return errorMessage(err);
 }
@@ -39,7 +39,8 @@ export class WebhookTarget {
 
   constructor(
     private readonly url: string,
-    private readonly fetchImpl: typeof fetch = defaultFetch
+    private readonly fetchImpl: typeof fetch = defaultFetch,
+    private readonly timeoutMs: number = WEBHOOK_TIMEOUT_MS
   ) {}
 
   async deliver(report: SyncReport): Promise<void> {
@@ -65,10 +66,10 @@ export class WebhookTarget {
         headers: { 'content-type': 'application/json' },
         body,
         redirect: 'error',
-        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
-      throw new SyncDeliveryError(deliveryFailureMessage(err));
+      throw new SyncDeliveryError(deliveryFailureMessage(err, this.timeoutMs));
     }
 
     if (!response.ok) {
@@ -77,7 +78,14 @@ export class WebhookTarget {
   }
 }
 
-/** Convenience wrapper matching `SyncDeps.send` in `run-sync.ts`: POST `report` to `url`. */
-export async function sendWebhook(url: string, report: SyncReport, fetchImpl?: typeof fetch): Promise<void> {
-  return new WebhookTarget(url, fetchImpl).deliver(report);
+/** Convenience wrapper matching `SyncDeps.send` in `run-sync.ts`: POST `report` to `url`. `timeoutMs`
+ * defaults to {@link WEBHOOK_TIMEOUT_MS}; the bootstrap wizard's interactive test-send (Task 7)
+ * passes a shorter one so a hung flow does not block the terminal for the full 5 minutes. */
+export async function sendWebhook(
+  url: string,
+  report: SyncReport,
+  fetchImpl?: typeof fetch,
+  timeoutMs?: number
+): Promise<void> {
+  return new WebhookTarget(url, fetchImpl, timeoutMs).deliver(report);
 }

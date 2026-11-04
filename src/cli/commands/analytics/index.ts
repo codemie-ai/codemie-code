@@ -11,6 +11,7 @@ import { AnalyticsFormatter } from './formatter.js';
 import { loadAnalytics } from './analytics-core.js';
 import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions } from './types.js';
 import type { InstallOptions } from './sync/types.js';
+import type { BootstrapOptions } from './sync/bootstrap/types.js';
 import type { ExportFormat } from './report/output-target.js';
 import { logger } from '../../../utils/logger.js';
 import { SessionsSource } from './sources/sessions-source.js';
@@ -78,12 +79,36 @@ function createSyncCommand(): Command {
     )
     .enablePositionalOptions();
 
+  sync.addCommand(createSyncBootstrapCommand());
   sync.addCommand(createSyncInstallCommand());
   sync.addCommand(createSyncStatusCommand());
   sync.addCommand(createSyncRunCommand());
   sync.addCommand(createSyncUninstallCommand());
 
   return sync;
+}
+
+/** `codemie analytics sync bootstrap` — the team lead's one-time setup: connect a Teams
+ * channel and SharePoint folder to a Power Automate flow, then print the `sync install`
+ * command for the team's developers. Installs nothing on the lead's own machine. With
+ * `--webhook`, runs non-interactively (no prompts, no TTY required); without it and with a
+ * TTY, runs the guided wizard. Dynamic-imports the runner so loading `codemie analytics`
+ * never pulls in the guided wizard's prompter or the webhook client. */
+function createSyncBootstrapCommand(): Command {
+  return new Command('bootstrap')
+    .description(
+      'Lead: connect a Teams channel and SharePoint folder, then print the install command for your team (installs nothing on this machine)'
+    )
+    .option(
+      '--webhook <url>',
+      "The flow's https trigger URL: runs non-interactively instead of the guided wizard, testing delivery before printing the install command"
+    )
+    .option('--lookback-days <n>', 'Fixed session window for the printed install command, 1-30 (default: follows the CLI default)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
+    .action(async (options: BootstrapOptions) => {
+      const { runBootstrap, createRealBootstrapDeps } = await import('./sync/bootstrap/run-bootstrap.js');
+      process.exitCode = await runBootstrap(options, createRealBootstrapDeps());
+    });
 }
 
 /** `codemie analytics sync install` — registers the daily OS job. Dynamic-imports the

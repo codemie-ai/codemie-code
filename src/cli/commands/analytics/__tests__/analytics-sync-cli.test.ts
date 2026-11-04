@@ -22,6 +22,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Command } from 'commander';
 
+const runBootstrapMock = vi.fn();
+const createRealBootstrapDepsMock = vi.fn();
+vi.mock('../sync/bootstrap/run-bootstrap.js', () => ({
+  runBootstrap: (...a: unknown[]) => runBootstrapMock(...a),
+  createRealBootstrapDeps: (...a: unknown[]) => createRealBootstrapDepsMock(...a),
+}));
+
 const runInstallMock = vi.fn();
 const createRealInstallDepsMock = vi.fn();
 vi.mock('../sync/install.js', () => ({
@@ -86,10 +93,15 @@ describe('analytics sync CLI wiring — command surface', () => {
     expect(description).toMatch(/daily/i);
   });
 
-  it('lists install, status, run, uninstall, each with a "who runs it / what it changes" description', async () => {
+  it('lists bootstrap, install, status, run, uninstall, each with a "who runs it / what it changes" description', async () => {
     const sync = findSync(await buildCommand());
     const names = sync.commands.map((c) => c.name());
-    expect(names).toEqual(['install', 'status', 'run', 'uninstall']);
+    expect(names).toEqual(['bootstrap', 'install', 'status', 'run', 'uninstall']);
+
+    const bootstrap = sync.commands.find((c) => c.name() === 'bootstrap')!;
+    expect(bootstrap.description()).toBe(
+      'Lead: connect a Teams channel and SharePoint folder, then print the install command for your team (installs nothing on this machine)'
+    );
 
     const install = sync.commands.find((c) => c.name() === 'install')!;
     expect(install.description()).toBe('Developer: register the daily delivery job on this machine');
@@ -120,6 +132,7 @@ describe('analytics sync CLI wiring — command surface', () => {
   it('--help lists every subcommand and hides --scheduled', async () => {
     const sync = findSync(await buildCommand());
     const help = sync.helpInformation();
+    expect(help).toContain('bootstrap');
     expect(help).toContain('install');
     expect(help).toContain('status');
     expect(help).toContain('run');
@@ -142,6 +155,7 @@ describe('analytics sync CLI wiring — command surface', () => {
 describe('analytics sync CLI wiring — subcommand dispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    createRealBootstrapDepsMock.mockReturnValue({ fake: 'bootstrap-deps' });
     createRealInstallDepsMock.mockReturnValue({ fake: 'install-deps' });
     createRealStatusDepsMock.mockReturnValue({ fake: 'status-deps' });
     realSyncDepsMock.mockReturnValue({ fake: 'sync-deps' });
@@ -150,6 +164,33 @@ describe('analytics sync CLI wiring — subcommand dispatch', () => {
 
   afterEach(() => {
     process.exitCode = undefined;
+  });
+
+  it('"sync bootstrap --webhook <url> --include-external always" reaches runBootstrap with createRealBootstrapDeps(), exitCode from its result', async () => {
+    runBootstrapMock.mockResolvedValue(0);
+    await parse(['sync', 'bootstrap', '--webhook', 'https://h/x?sig=1', '--include-external', 'always']);
+
+    expect(runBootstrapMock).toHaveBeenCalledTimes(1);
+    const [opts, deps] = runBootstrapMock.mock.calls[0];
+    expect(opts.webhook).toBe('https://h/x?sig=1');
+    expect(opts.includeExternal).toBe('always');
+    expect(deps).toEqual({ fake: 'bootstrap-deps' });
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('"sync bootstrap" forwards --lookback-days too', async () => {
+    runBootstrapMock.mockResolvedValue(0);
+    await parse(['sync', 'bootstrap', '--webhook', 'https://h/x?sig=1', '--lookback-days', '14']);
+
+    const [opts] = runBootstrapMock.mock.calls[0];
+    expect(opts.lookbackDays).toBe('14');
+  });
+
+  it('sets a non-zero exitCode when runBootstrap fails', async () => {
+    runBootstrapMock.mockResolvedValue(1);
+    await parse(['sync', 'bootstrap', '--webhook', 'https://h/x?sig=1']);
+
+    expect(process.exitCode).toBe(1);
   });
 
   it('"sync install --webhook <url> --include-external windows" reaches runInstall unambiguously', async () => {
@@ -270,5 +311,14 @@ describe('--include-external scoping across analytics / sync (regression)', () =
     expect(loadAnalyticsMock).not.toHaveBeenCalled();
     const [opts] = runInstallMock.mock.calls[0];
     expect(opts.includeExternal).toBe('windows');
+  });
+
+  it('"analytics sync bootstrap --webhook <url> --include-external always" applies to bootstrap, not to analytics', async () => {
+    runBootstrapMock.mockResolvedValue(0);
+    await parse(['sync', 'bootstrap', '--webhook', 'https://h/x?sig=1', '--include-external', 'always']);
+
+    expect(loadAnalyticsMock).not.toHaveBeenCalled();
+    const [opts] = runBootstrapMock.mock.calls[0];
+    expect(opts.includeExternal).toBe('always');
   });
 });

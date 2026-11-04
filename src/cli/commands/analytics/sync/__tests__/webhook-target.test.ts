@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ExportTooLargeError, SyncDeliveryError } from '../../../../../utils/errors.js';
-import { MAX_EXPORT_BYTES, WebhookTarget } from '../targets/webhook-target.js';
+import { MAX_EXPORT_BYTES, WEBHOOK_TIMEOUT_MS, WebhookTarget, sendWebhook } from '../targets/webhook-target.js';
 
 describe('WebhookTarget', () => {
   it('resolves on a 2xx response and sends the expected request shape', async () => {
@@ -70,6 +70,35 @@ describe('WebhookTarget', () => {
     await expect(target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}') })).rejects.toSatisfy(
       (err: unknown) => err instanceof SyncDeliveryError && /did not respond within 5 minutes/.test(err.message)
     );
+  });
+
+  it('bounds the POST with WEBHOOK_TIMEOUT_MS by default', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
+
+    await target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}') });
+
+    expect(spy).toHaveBeenCalledWith(WEBHOOK_TIMEOUT_MS);
+  });
+
+  it('honors a custom timeoutMs passed to the constructor', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl, 30_000);
+
+    await target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}') });
+
+    expect(spy).toHaveBeenCalledWith(30_000);
+  });
+
+  it('honors a custom timeoutMs passed to sendWebhook', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+
+    await sendWebhook('https://example.invalid/hook?sig=FAKE', { fileName: 'report.json', bytes: Buffer.from('{}') }, fetchImpl, 30_000);
+
+    expect(spy).toHaveBeenCalledWith(30_000);
   });
 
   it('throws ExportTooLargeError above the size limit without calling fetch', async () => {
