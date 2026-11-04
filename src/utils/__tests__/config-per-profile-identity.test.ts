@@ -322,6 +322,32 @@ describe('ConfigLoader — per-profile CodeMie identity (EPMCDME-15411)', () => 
       expect(sources.codeMieProject).toEqual({ value: 'pa', source: 'profile' });
     });
 
+    describe('showWithSources prints the binding state (PR #758 review, finding 8)', () => {
+      const projectLine = async (): Promise<string | undefined> => {
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        await ConfigLoader.showWithSources(WORKING_DIR);
+        const lines = log.mock.calls.map((call) => String(call[0]));
+        log.mockRestore();
+        // eslint-disable-next-line no-control-regex
+        return lines.map((l) => l.replace(/\u001b\[[0-9;]*m/g, '')).find((l) => l.includes('codeMieProject:'));
+      };
+
+      it('unowned: the shared project is marked as a shared fallback', async () => {
+        await writeGlobal('legacy', { legacy: sso(), own: sso({ codeMieProject: 'team-a' }) });
+        expect(await projectLine()).toBe('  codeMieProject: mtlx-amsd (global) [shared fallback]');
+      });
+
+      it('none: an off-CodeMie profile prints a project line saying so', async () => {
+        await writeGlobal('off', { off: { provider: 'anthropic-subscription', model: 's', codeMieProject: null }, own: sso({ codeMieProject: 'team-a' }) });
+        expect(await projectLine()).toBe('  codeMieProject: off CodeMie (profile)');
+      });
+
+      it('own: unchanged', async () => {
+        await writeGlobal('own', { own: sso({ codeMieProject: 'team-a' }), legacy: sso() });
+        expect(await projectLine()).toBe('  codeMieProject: team-a (profile)');
+      });
+    });
+
     it('labels an unowned profile identity with the global (shared) source', async () => {
       await writeGlobal('b', { a: sso({ codeMieProject: 'pa' }), b: sso() });
       const { sources } = await ConfigLoader.loadWithSources(WORKING_DIR);

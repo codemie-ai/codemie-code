@@ -19,7 +19,7 @@ import {
   isMultiProviderConfig,
   isLegacyConfig
 } from '../env/types.js';
-import type { ProjectBindingState } from './project-binding.js';
+import { bindingLabel, type ProjectBindingState } from './project-binding.js';
 import { writeJsonFileAtomic } from './atomic-write.js';
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
@@ -1649,13 +1649,26 @@ export class ConfigLoader {
       console.log(chalk.cyan(`  Using global config: ${this.GLOBAL_CONFIG}\n`));
     }
 
+    // The project's binding state, as the banner and `codemie profile` show it (spec AC8).
+    const { state } = await this.resolveProfileIdentity(workingDir);
+    const projectNote = state === 'unowned' ? ` ${chalk.yellow(`[${bindingLabel(state)}]`)}` : '';
+
     const sortedKeys = Object.keys(sources).sort();
+    if (state === 'none' && !sortedKeys.includes('codeMieProject')) {
+      sortedKeys.push('codeMieProject');
+      sortedKeys.sort();
+    }
     for (const key of sortedKeys) {
+      if (key === 'codeMieProject' && state === 'none') {
+        console.log(`  ${chalk.cyan(key)}: ${bindingLabel(state)} ${this.getSourceColor('profile')('(profile)')}`);
+        continue;
+      }
       const { value, source } = sources[key];
       const displayValue = this.maskSensitive(key, value);
       const sourceColor = this.getSourceColor(source);
       const sourceLabel = sourceColor(`(${source})`);
-      console.log(`  ${chalk.cyan(key)}: ${displayValue} ${sourceLabel}`);
+      const note = key === 'codeMieProject' ? projectNote : '';
+      console.log(`  ${chalk.cyan(key)}: ${displayValue} ${sourceLabel}${note}`);
     }
 
     console.log(chalk.white('\nPriority: cli > env > project > profile > global > default\n'));

@@ -60,7 +60,7 @@ export function describeProjectBinding(
   }
 }
 
-/** Short label of the state, used by `--show-sources` style output. */
+/** Short label of the state; `codemie profile status --show-sources` prints it on the project line. */
 export function bindingLabel(state: ProjectBindingState): string {
   switch (state) {
     case 'own':
