@@ -26,7 +26,12 @@ vi.mock('../guided.js', () => ({
   runGuided: (...a: unknown[]) => runGuidedMock(...a),
 }));
 
-import { runBootstrap, setupCheckReport, UPDATE_HINT } from '../run-bootstrap.js';
+const createPromptModuleMock = vi.fn();
+vi.mock('inquirer', () => ({
+  default: { createPromptModule: (...a: unknown[]) => createPromptModuleMock(...a) },
+}));
+
+import { createRealBootstrapDeps, runBootstrap, setupCheckReport, UPDATE_HINT } from '../run-bootstrap.js';
 
 const VALID_WEBHOOK = 'https://contoso.example/trigger?sig=FAKESIG';
 
@@ -129,6 +134,23 @@ describe('runBootstrap — --webhook mode, success and failure', () => {
     expect(saveBootstrapStateMock).not.toHaveBeenCalled();
   });
 
+  it('prints UPDATE_HINT after the install command, as its last line', async () => {
+    const order: string[] = [];
+    const deps = createDeps({
+      out: vi.fn((line: string) => {
+        order.push(`out:${line}`);
+      }),
+      err: vi.fn((line: string) => {
+        order.push(`err:${line}`);
+      }),
+    });
+
+    await runBootstrap({ webhook: VALID_WEBHOOK }, deps);
+
+    expect(order[order.length - 1]).toBe(`err:${UPDATE_HINT}`);
+    expect(order.findIndex((line) => line.startsWith('out:'))).toBe(order.length - 2);
+  });
+
   it('omits --lookback-days from the printed command when no fixed value was chosen', async () => {
     const deps = createDeps();
 
@@ -183,6 +205,17 @@ describe('runBootstrap — dispatch without --webhook', () => {
     expect(exit).toBe(0);
   });
 
+  it('turns a guided-mode failure into a message and a non-zero exit instead of throwing', async () => {
+    runGuidedMock.mockRejectedValue(new Error('EACCES: permission denied, open /work/codemie-analytics-flow.zip'));
+    const deps = createDeps({ isTTY: true });
+
+    const exit = await runBootstrap({}, deps);
+
+    expect(exit).toBe(1);
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => l.includes('EACCES'))).toBe(true);
+  });
+
   it('fails at once, naming both --webhook and a terminal, when there is no TTY', async () => {
     const deps = createDeps({ isTTY: false });
 
@@ -193,6 +226,49 @@ describe('runBootstrap — dispatch without --webhook', () => {
     expect(deps.out).not.toHaveBeenCalled();
     expect(errLines(deps).some((l) => l.includes('--webhook'))).toBe(true);
     expect(errLines(deps).some((l) => /terminal/i.test(l))).toBe(true);
+  });
+});
+
+describe('createRealBootstrapDeps — output split', () => {
+  type TtyStream = NodeJS.ReadStream | NodeJS.WriteStream;
+
+  function withTty(stream: TtyStream, value: boolean): () => void {
+    const original = Object.getOwnPropertyDescriptor(stream, 'isTTY');
+    Object.defineProperty(stream, 'isTTY', { value, configurable: true, writable: true });
+    return () => {
+      if (original) {
+        Object.defineProperty(stream, 'isTTY', original);
+      } else {
+        delete (stream as { isTTY?: boolean }).isTTY;
+      }
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('writes the real prompts to stderr, never to stdout', async () => {
+    const promptFn = vi.fn().mockResolvedValue({ value: 'answer' });
+    createPromptModuleMock.mockReturnValue(promptFn);
+
+    const deps = createRealBootstrapDeps();
+
+    await expect(deps.prompt.input('Question')).resolves.toBe('answer');
+    expect(createPromptModuleMock).toHaveBeenCalledWith({ output: process.stderr });
+  });
+
+  it('runs guided mode with stdout redirected, as long as stdin and stderr are terminals', () => {
+    const restore = [
+      withTty(process.stdin, true),
+      withTty(process.stdout, false),
+      withTty(process.stderr, true),
+    ];
+    try {
+      expect(createRealBootstrapDeps().isTTY).toBe(true);
+    } finally {
+      restore.forEach((undo) => undo());
+    }
   });
 });
 

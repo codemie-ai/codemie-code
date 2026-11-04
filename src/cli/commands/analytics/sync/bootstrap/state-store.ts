@@ -13,7 +13,8 @@ import { readFile } from 'fs/promises';
 
 import { getCodemiePath } from '@/utils/paths.js';
 
-import { validateIncludeExternal, validateLookbackDays, validateTriggerUrl } from '../config-store.js';
+import { validateIncludeExternal, validateLookbackDays } from '../config-store.js';
+import { validateTriggerUrl } from '../trigger-url.js';
 import type { InstallCommandOptions } from '../install-command.js';
 import type { IncludeExternalPolicy } from '../types.js';
 import { webhookHost } from '../format.js';
@@ -35,6 +36,9 @@ export interface BootstrapState {
   folderPath?: string;
   timeZone?: string;
   flowImported?: boolean;
+  /** Set when the lead answered "already imported the flow?" with yes, so steps 1-4 were
+   * never asked. `firstUnansweredStep` then starts its check at step 5. */
+  skippedSetup?: boolean;
   webhookUrl?: string;
   webhookTest?: 'passed' | 'skipped';
   includeExternal?: IncludeExternalPolicy;
@@ -108,8 +112,15 @@ export async function saveBootstrapState(state: BootstrapState, path: string = g
  * 1 needs `teamId` + `channelId`; 2 needs `siteUrl` + `folderPath`; 3 needs `timeZone`;
  * 4 needs `flowImported === true`; 5 needs `webhookUrl` + `webhookTest`; 6 needs
  * `includeExternal`; 7 needs `lookbackDays`. `8` when every earlier step is answered.
+ * Steps 1-4 are not checked when `skippedSetup` is set: the lead imported the flow
+ * outside this wizard.
  */
 export function firstUnansweredStep(state: BootstrapState): number {
+  return state.skippedSetup === true ? firstUnansweredLateStep(state) : firstUnansweredSetupStep(state);
+}
+
+/** Steps 1-4 of {@link firstUnansweredStep}, falling through to steps 5-8. */
+function firstUnansweredSetupStep(state: BootstrapState): number {
   if (state.teamId === undefined || state.channelId === undefined) {
     return 1;
   }
@@ -122,6 +133,11 @@ export function firstUnansweredStep(state: BootstrapState): number {
   if (state.flowImported !== true) {
     return 4;
   }
+  return firstUnansweredLateStep(state);
+}
+
+/** Steps 5-8 of {@link firstUnansweredStep}. */
+function firstUnansweredLateStep(state: BootstrapState): number {
   if (state.webhookUrl === undefined || state.webhookTest === undefined) {
     return 5;
   }
@@ -210,7 +226,7 @@ export function summarizeState(state: BootstrapState): string[] {
   if (state.timeZone !== undefined) {
     lines.push(`Time zone: ${state.timeZone}`);
   }
-  if (state.flowImported === true) {
+  if (state.flowImported === true || state.skippedSetup === true) {
     lines.push('Flow: imported');
   }
   if (state.webhookUrl !== undefined) {

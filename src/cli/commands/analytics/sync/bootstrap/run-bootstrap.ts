@@ -19,9 +19,12 @@
  * anywhere here names the webhook's `sig` value.
  */
 
-import { validateIncludeExternal, validateLookbackDays, validateTriggerUrl } from '../config-store.js';
+import type { PromptModule } from 'inquirer';
+
+import { validateIncludeExternal, validateLookbackDays } from '../config-store.js';
 import { buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
+import { validateTriggerUrl } from '../trigger-url.js';
 import type { SyncReport } from '../types.js';
 import { runGuided } from './guided.js';
 import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT } from './setup-check.js';
@@ -69,8 +72,9 @@ function printSendFailure(deps: BootstrapDeps, err: unknown): void {
  * `--webhook` non-interactive mode (spec.md "Non-interactive mode"). Validates every option
  * first — webhook, then lookback, then policy — with no network call before all three pass;
  * each failure names its own flag. Test-sends {@link setupCheckReport} through `deps.send`; on
- * a 2xx it prints the check and cleanup lines plus {@link UPDATE_HINT} to `deps.err`, then the
- * install command to `deps.out`, and returns 0. On any failure it prints no command and
+ * a 2xx it prints the check and cleanup lines to `deps.err`, then the install command to
+ * `deps.out`, then {@link UPDATE_HINT} to `deps.err` (spec.md "after the command"), and
+ * returns 0. On any failure it prints no command and
  * returns a non-zero exit code. Never reads or writes `deps.statePath`.
  */
 async function runWebhookMode(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
@@ -102,7 +106,6 @@ async function runWebhookMode(opts: BootstrapOptions, deps: BootstrapDeps): Prom
 
   deps.err(checkLine(report));
   deps.err(CLEANUP_LINE);
-  deps.err(UPDATE_HINT);
 
   deps.out(
     buildInstallCommand({
@@ -111,7 +114,19 @@ async function runWebhookMode(opts: BootstrapOptions, deps: BootstrapDeps): Prom
       ...(lookbackDays !== undefined && { lookbackDays })
     })
   );
+  deps.err(UPDATE_HINT);
   return 0;
+}
+
+/** Runs the guided wizard, turning anything it throws (a failed zip or state write, a closed
+ * prompt) into a message on `deps.err` and exit code 1, so `runBootstrap` never throws. */
+async function runGuidedSafely(deps: BootstrapDeps): Promise<number> {
+  try {
+    return await runGuided(deps);
+  } catch (err) {
+    deps.err(errorMessage(err));
+    return 1;
+  }
 }
 
 export async function runBootstrap(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
@@ -124,46 +139,49 @@ export async function runBootstrap(opts: BootstrapOptions, deps: BootstrapDeps):
     return 1;
   }
 
-  return runGuided(deps);
+  return runGuidedSafely(deps);
+}
+
+/** An inquirer prompt module that draws on stderr, so only the install command reaches
+ * stdout and `bootstrap > command.txt` captures nothing else. */
+async function loadStderrPrompt(): Promise<PromptModule> {
+  const inquirer = (await import('inquirer')).default;
+  return inquirer.createPromptModule({ output: process.stderr });
 }
 
 /** A real inquirer (`^9`)-backed {@link BootstrapPrompter}, following `install.ts`'s
  * `promptEmail` convention: `inquirer` is loaded with a dynamic `import('inquirer')` so
- * `--webhook` mode and plain `codemie analytics` loading never pull it in. */
+ * `--webhook` mode and plain `codemie analytics` loading never pull it in. Every prompt
+ * writes to stderr ({@link loadStderrPrompt}). */
 function createRealPrompter(): BootstrapPrompter {
   return {
     async input(message: string, def?: string): Promise<string> {
-      const inquirer = (await import('inquirer')).default;
-      const { value } = await inquirer.prompt<{ value: string }>([
-        { type: 'input', name: 'value', message, default: def }
-      ]);
+      const prompt = await loadStderrPrompt();
+      const { value } = await prompt<{ value: string }>([{ type: 'input', name: 'value', message, default: def }]);
       return value;
     },
     async confirm(message: string, def: boolean): Promise<boolean> {
-      const inquirer = (await import('inquirer')).default;
-      const { value } = await inquirer.prompt<{ value: boolean }>([
-        { type: 'confirm', name: 'value', message, default: def }
-      ]);
+      const prompt = await loadStderrPrompt();
+      const { value } = await prompt<{ value: boolean }>([{ type: 'confirm', name: 'value', message, default: def }]);
       return value;
     },
     async select<T extends string>(message: string, choices: { value: T; name: string }[], def?: T): Promise<T> {
-      const inquirer = (await import('inquirer')).default;
-      const { value } = await inquirer.prompt<{ value: T }>([
-        { type: 'list', name: 'value', message, choices, default: def }
-      ]);
+      const prompt = await loadStderrPrompt();
+      const { value } = await prompt<{ value: T }>([{ type: 'list', name: 'value', message, choices, default: def }]);
       return value;
     }
   };
 }
 
-/** Real dependencies for `runBootstrap`: a real TTY check on both stdin and stdout, a real
+/** Real dependencies for `runBootstrap`: a real TTY check on stdin and stderr (the prompts'
+ * streams — stdout may be redirected to capture the install command), a real
  * inquirer-backed prompter, `sendWebhook` at its default timeout, the real browser opener,
  * `console.log`/`console.error` for the stdout/stderr split spec.md requires, and the lead's
  * state-file path. Dynamic-imports `webhook-target.js` and `browser.js` so loading `codemie
  * analytics` never pulls in `fetch`/`open` wiring just to register the command. */
 export function createRealBootstrapDeps(): BootstrapDeps {
   return {
-    isTTY: Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY),
+    isTTY: Boolean(process.stdin.isTTY) && Boolean(process.stderr.isTTY),
     cwd: process.cwd(),
     now: (): Date => new Date(),
     out: (line: string): void => {

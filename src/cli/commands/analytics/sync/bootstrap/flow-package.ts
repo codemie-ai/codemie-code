@@ -73,8 +73,9 @@ export function resolveFlowTemplateDir(): string {
 }
 
 /**
- * The importable package, as zip bytes, with `Flow_config.inputs` set from `inputs` on the
- * template's `definition.json`. The other template files are copied through unchanged.
+ * The importable package, as zip bytes, with `inputs` merged onto the template's
+ * `Flow_config.inputs` in `definition.json` (template-only keys such as `threadKeyPrefix`
+ * and `recentCount` are kept). The other template files are copied through unchanged.
  * `templateDir` defaults to {@link resolveFlowTemplateDir} and is only overridden by tests.
  */
 export async function buildFlowPackage(inputs: FlowConfigInputs, templateDir?: string): Promise<Uint8Array> {
@@ -98,7 +99,9 @@ export async function buildFlowPackage(inputs: FlowConfigInputs, templateDir?: s
     if (!action) {
       throw new ConfigurationError(`Flow template's ${name} has no ${FLOW_CONFIG_ACTION} action`);
     }
-    action.inputs = { ...inputs };
+    // Merge, never replace: the template's own keys (threadKeyPrefix, recentCount) are read
+    // by later actions and must survive.
+    action.inputs = { ...action.inputs, ...inputs };
     entries[name] = new TextEncoder().encode(`${JSON.stringify(flow, null, 2)}\n`);
   }
 

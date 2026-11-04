@@ -131,6 +131,24 @@ describe('firstUnansweredStep', () => {
   });
 });
 
+describe('firstUnansweredStep — "already imported" shortcut', () => {
+  it('starts from step 5 when steps 1-4 were skipped via the shortcut', () => {
+    expect(firstUnansweredStep({ version: 1, skippedSetup: true })).toBe(5);
+  });
+
+  it('lets checkReuse accept a complete state created via the shortcut', () => {
+    const result = checkReuse({
+      version: 1,
+      skippedSetup: true,
+      webhookUrl: FAKE_TRIGGER_URL,
+      webhookTest: 'passed',
+      includeExternal: 'windows',
+      lookbackDays: 'default'
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('checkReuse', () => {
   it('is ok when webhookUrl, webhookTest, includeExternal and lookbackDays are all present and valid', () => {
     const result = checkReuse(COMPLETE_STATE);

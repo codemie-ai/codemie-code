@@ -30,6 +30,11 @@ const TEAMS_HOSTS = ['teams.microsoft.com', 'teams.cloud.microsoft'];
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANNEL_ID = /^19:[^@\s/]+@thread\.(tacv2|skype)$/;
 const SHAREPOINT_HOST = /\.sharepoint\.com$/i;
+/** URL names of SharePoint's default document library. A folder address with no library
+ * view in it must start at one of these, or it may sit in a subsite. */
+const DEFAULT_LIBRARY_ROOTS = new Set(['shared documents', 'documents']);
+/** A library view page, `<site>/<library>/Forms/<view>.aspx`: group 1 is the site path. */
+const LIBRARY_VIEW = /^(.*)\/[^/]+\/Forms\/[^/]+\.aspx$/i;
 const CLOSING: Record<string, string> = { '"': '"', "'": "'", '<': '>', '\u201C': '\u201D', '\u2018': '\u2019' };
 
 /** Drops surrounding whitespace and one pair of quotes or angle brackets pasting adds. */
@@ -94,10 +99,30 @@ function requireSharePoint(url: URL): void {
 }
 
 /**
+ * Throws when the folder may sit in a subsite, so `/sites/A/Sub/...` is never read as site
+ * `/sites/A` with folder `Sub/...`. A library view's own address shows where the library
+ * starts, so its site path must be exactly `sitePath`. Any other address must put the folder
+ * in a default library ({@link DEFAULT_LIBRARY_ROOTS}).
+ */
+function assertNotSubsite(url: URL, sitePath: string, folderPath: string): void {
+  const view = LIBRARY_VIEW.exec(decodePath(url.pathname));
+  const startsAtLibrary = view
+    ? view[1].toLowerCase() === sitePath.toLowerCase()
+    : DEFAULT_LIBRARY_ROOTS.has(folderPath.split('/')[0].toLowerCase());
+  if (!startsAtLibrary) {
+    throw new BootstrapInputError(
+      `"${folderPath}" does not start at a document library such as "Shared Documents", so it may be in a subsite. ` +
+        'Type "manual" to give the site and the folder separately.'
+    );
+  }
+}
+
+/**
  * Site and folder from a folder's address bar: a library view (the folder is in its `id=`
  * parameter), a direct folder path, or a `/:f:/r/` link, which carries the path. The site
  * is the first two segments when they are /sites/<name> or /teams/<name>; anything else —
- * including a subsite — is for the admin to give separately.
+ * including a subsite, refused by {@link assertNotSubsite} — is for the admin to give
+ * separately.
  */
 export function parseFolderUrl(raw: string): FolderLink {
   const url = parseUrl(raw, 'That is not a link. Open the folder in your browser and copy the whole address bar.');
@@ -124,6 +149,7 @@ export function parseFolderUrl(raw: string): FolderLink {
   if (/\.aspx$/i.test(match[3])) {
     throw new BootstrapInputError('That address is a page, not a folder. Open the folder itself and copy the address bar.');
   }
+  assertNotSubsite(url, `/${match[1]}/${match[2]}`, match[3]);
   return { siteUrl: `${url.origin}/${match[1]}/${match[2]}`, folderPath: match[3] };
 }
 

@@ -43,10 +43,14 @@ describe('buildFlowPackage', () => {
     expect(Object.keys(entries).sort()).toEqual([...TEMPLATE_FILES].sort());
   });
 
-  it('sets Flow_config.inputs on definition.json to the given inputs', async () => {
+  it('sets the given inputs on Flow_config, keeping the template-only threadKeyPrefix and recentCount', async () => {
     const entries = unzipSync(await buildFlowPackage(INPUTS, templateDir));
     const definition = JSON.parse(Buffer.from(entries[DEFINITION_PATH]).toString('utf-8'));
-    expect(definition.properties.definition.actions.Flow_config.inputs).toEqual(INPUTS);
+    expect(definition.properties.definition.actions.Flow_config.inputs).toEqual({
+      ...INPUTS,
+      threadKeyPrefix: 'analytics-thread',
+      recentCount: 10
+    });
   });
 
   it('leaves the other 4 files byte-identical to the template', async () => {

@@ -133,6 +133,28 @@ describe('parseFolderUrl', () => {
   });
 });
 
+describe('parseFolderUrl — subsites', () => {
+  it('refuses a direct subsite folder address instead of folding the subsite into the folder path', () => {
+    rejects(() => parseFolderUrl('https://contoso.sharepoint.com/sites/A/Sub/Shared%20Documents/X'), /manual/);
+  });
+
+  it('refuses a subsite library view address', () => {
+    const id = encodeURIComponent('/sites/A/Sub/Shared Documents/X');
+    rejects(
+      () => parseFolderUrl(`https://contoso.sharepoint.com/sites/A/Sub/Shared%20Documents/Forms/AllItems.aspx?id=${id}`),
+      /manual/
+    );
+  });
+
+  it('accepts a custom library from its library view, which shows where the library starts', () => {
+    const id = encodeURIComponent('/sites/A/Reports/2026');
+    expect(parseFolderUrl(`https://contoso.sharepoint.com/sites/A/Reports/Forms/AllItems.aspx?id=${id}`)).toEqual({
+      siteUrl: 'https://contoso.sharepoint.com/sites/A',
+      folderPath: 'Reports/2026'
+    });
+  });
+});
+
 describe('validateSiteUrl / validateFolderPath', () => {
   it('manual entry: a site address of any depth, and a folder path', () => {
     expect(validateSiteUrl(' https://contoso.sharepoint.com/sites/Analytics/Sub/ ')).toBe(

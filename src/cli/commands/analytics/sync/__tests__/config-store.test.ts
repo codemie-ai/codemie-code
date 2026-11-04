@@ -11,9 +11,9 @@ import {
   getSyncSettingsPath,
   loadSyncSettings,
   validateInstallOptions,
-  validateTriggerUrl,
   writeSyncSettings
 } from '../config-store.js';
+import { validateTriggerUrl } from '../trigger-url.js';
 
 const FAKE_URL = 'https://example.invalid/webhook?sig=FAKE';
 const FAKE_GIT_REPO = 'https://example.invalid/team/analytics.git';
