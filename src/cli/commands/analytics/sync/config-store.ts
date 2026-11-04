@@ -14,6 +14,7 @@ import { dirname, posix as posixPath } from 'path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
+import { assertPrintableValue } from './install-command.js';
 import { redactSecrets } from './redact.js';
 import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
 
@@ -38,7 +39,7 @@ export function getSyncSettingsPath(): string {
 /** `undefined`/blank -> no webhook target given (not an error by itself — at least one of
  * webhook/git is required overall, checked by the caller). Otherwise validates the URL is
  * `https:`. */
-function validateWebhookUrl(webhook: string | undefined): string | undefined {
+export function validateWebhookUrl(webhook: string | undefined): string | undefined {
   if (webhook === undefined || webhook.trim() === '') {
     return undefined;
   }
@@ -55,6 +56,75 @@ function validateWebhookUrl(webhook: string | undefined): string | undefined {
   }
 
   return webhook;
+}
+
+// Any whitespace (including a line break), ASCII control character, DEL, or non-ASCII
+// character (U+0080 and up — this also covers typographic quotes a paste may have
+// substituted for `"`). Checked against the raw pasted input, before `new URL` can
+// normalise any of it away.
+// eslint-disable-next-line no-control-regex
+const RAW_TRIGGER_URL_DISALLOWED_PATTERN = /[\s\x00-\x1f\x7f-￿]/;
+
+/** What a bootstrap lead is told in guided mode, whichever check in {@link validateTriggerUrl}
+ * failed. It never echoes the pasted URL or names a flag — only what to do. */
+const GUIDED_TRIGGER_URL_HINT =
+  'That is not a usable trigger URL. Copy the full HTTP POST URL shown on the flow\'s ' +
+  '"When a Teams webhook request is received" trigger, and paste the whole thing.';
+
+/**
+ * Validates and normalises a Power Automate flow trigger URL: the bootstrap wizard's step 5,
+ * `--webhook` in non-interactive mode, and saved-webhook reuse all call this on the same
+ * rule (spec.md "Trigger-URL rule").
+ *
+ * Checks, in order:
+ * 1. `input` as given must contain no whitespace, line break, control character or
+ *    non-ASCII character.
+ * 2. `input` must parse with `new URL`.
+ * 3. The parsed URL must use `https:` and carry a `sig` query parameter.
+ * 4. The normalised `href` must pass {@link assertPrintableValue}.
+ *
+ * Returns the normalised `href` (`new URL(input).href`) — the value that is saved and
+ * printed. In `'option'` mode every error names `--webhook`. In `'guided'` mode no error
+ * echoes the URL or names a flag; every error says to copy the full trigger URL again.
+ */
+export function validateTriggerUrl(input: string, mode: 'option' | 'guided'): string {
+  const fail = (optionMessage: string): never => {
+    throw new SyncConfigError(mode === 'guided' ? GUIDED_TRIGGER_URL_HINT : optionMessage);
+  };
+
+  if (RAW_TRIGGER_URL_DISALLOWED_PATTERN.test(input)) {
+    fail('--webhook must not contain whitespace, a line break, a control character or a non-ASCII character.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new SyncConfigError(
+      mode === 'guided' ? GUIDED_TRIGGER_URL_HINT : `Invalid --webhook URL: ${redactSecrets(input)}`
+    );
+  }
+
+  if (parsed.protocol !== 'https:') {
+    fail(`--webhook must use https: ${redactSecrets(parsed.href)}`);
+  }
+
+  if (parsed.searchParams.get('sig') === null || parsed.searchParams.get('sig') === '') {
+    fail(`--webhook has no "sig" parameter: ${redactSecrets(parsed.href)}`);
+  }
+
+  const href = parsed.href;
+
+  try {
+    assertPrintableValue('--webhook', href);
+  } catch (err) {
+    if (mode === 'guided') {
+      throw new SyncConfigError(GUIDED_TRIGGER_URL_HINT);
+    }
+    throw err;
+  }
+
+  return href;
 }
 
 /** Whether `rawUrl` embeds credentials in its userinfo. On an `http(s)://` URL any userinfo
@@ -219,7 +289,7 @@ function validateAt(at: string | undefined): string {
   return at;
 }
 
-function validateIncludeExternal(includeExternal: string | undefined): IncludeExternalPolicy {
+export function validateIncludeExternal(includeExternal: string | undefined): IncludeExternalPolicy {
   if (includeExternal === undefined) {
     return DEFAULT_INCLUDE_EXTERNAL;
   }
@@ -233,7 +303,7 @@ function validateIncludeExternal(includeExternal: string | undefined): IncludeEx
   return includeExternal as IncludeExternalPolicy;
 }
 
-function validateLookbackDays(lookbackDays: string | undefined): number | undefined {
+export function validateLookbackDays(lookbackDays: string | undefined): number | undefined {
   if (lookbackDays === undefined) {
     return undefined;
   }

@@ -11,11 +11,13 @@ import {
   getSyncSettingsPath,
   loadSyncSettings,
   validateInstallOptions,
+  validateTriggerUrl,
   writeSyncSettings
 } from '../config-store.js';
 
 const FAKE_URL = 'https://example.invalid/webhook?sig=FAKE';
 const FAKE_GIT_REPO = 'https://example.invalid/team/analytics.git';
+const FAKE_TRIGGER_URL = 'https://example.invalid/triggers/invoke?api-version=1&sig=FAKESIG';
 
 describe('getSyncSettingsPath', () => {
   it('points at the collector-compatible analytics-sync.json under the CodeMie home', () => {
@@ -143,6 +145,88 @@ describe('validateInstallOptions', () => {
       gitPath: './reports/analytics/'
     });
     expect(settings.git).toEqual({ repoUrl: FAKE_GIT_REPO, branch: 'main', path: 'reports/analytics' });
+  });
+});
+
+describe('validateTriggerUrl', () => {
+  it('returns the normalised href for a valid https trigger URL with a sig param', () => {
+    expect(validateTriggerUrl(FAKE_TRIGGER_URL, 'option')).toBe(new URL(FAKE_TRIGGER_URL).href);
+  });
+
+  it('rejects an http: trigger URL', () => {
+    const httpUrl = FAKE_TRIGGER_URL.replace('https://', 'http://');
+    expect(() => validateTriggerUrl(httpUrl, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with no sig param', () => {
+    const noSig = 'https://example.invalid/triggers/invoke?api-version=1';
+    expect(() => validateTriggerUrl(noSig, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with an inner space', () => {
+    const withSpace = FAKE_TRIGGER_URL.replace('invoke', 'invo ke');
+    expect(() => validateTriggerUrl(withSpace, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with an embedded line break', () => {
+    const withNewline = `${FAKE_TRIGGER_URL}\n`;
+    expect(() => validateTriggerUrl(withNewline, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with a control character', () => {
+    const withControl = `${FAKE_TRIGGER_URL}\x07`;
+    expect(() => validateTriggerUrl(withControl, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with a trailing non-ASCII typographic quote', () => {
+    const withTypographicQuote = `${FAKE_TRIGGER_URL}”`;
+    expect(() => validateTriggerUrl(withTypographicQuote, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a trigger URL with a "!" in it', () => {
+    const withBang = `${FAKE_TRIGGER_URL}!`;
+    expect(() => validateTriggerUrl(withBang, 'option')).toThrow(SyncConfigError);
+  });
+
+  it('names --webhook in option mode for every rejection', () => {
+    const cases = [
+      FAKE_TRIGGER_URL.replace('https://', 'http://'),
+      'https://example.invalid/triggers/invoke?api-version=1',
+      FAKE_TRIGGER_URL.replace('invoke', 'invo ke'),
+      `${FAKE_TRIGGER_URL}\n`,
+      `${FAKE_TRIGGER_URL}\x07`,
+      `${FAKE_TRIGGER_URL}”`,
+      `${FAKE_TRIGGER_URL}!`
+    ];
+
+    for (const input of cases) {
+      expect(() => validateTriggerUrl(input, 'option')).toThrow(/--webhook/);
+    }
+  });
+
+  it('does not name --webhook in guided mode, and says what to copy instead', () => {
+    const cases = [
+      FAKE_TRIGGER_URL.replace('https://', 'http://'),
+      'https://example.invalid/triggers/invoke?api-version=1',
+      FAKE_TRIGGER_URL.replace('invoke', 'invo ke'),
+      `${FAKE_TRIGGER_URL}\n`,
+      `${FAKE_TRIGGER_URL}\x07`,
+      `${FAKE_TRIGGER_URL}”`,
+      `${FAKE_TRIGGER_URL}!`
+    ];
+
+    for (const input of cases) {
+      let caught: unknown;
+      try {
+        validateTriggerUrl(input, 'guided');
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(SyncConfigError);
+      const message = (caught as Error).message;
+      expect(message).not.toMatch(/--webhook/);
+      expect(message.toLowerCase()).toMatch(/copy/);
+    }
   });
 });
 
