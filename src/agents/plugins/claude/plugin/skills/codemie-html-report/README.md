@@ -89,14 +89,14 @@ self-contained.
   appears unless you supply it for the page.
 
 The controls are added by `scripts/inject-controls.js` as a build step, so no page needs bespoke
-theme code. The build runs the humanizer skill's slop scan on the page as written. The build
+theme code. The build runs the `codemie-humanizer` skill's slop scan on the page as written. The build
 fails on any high finding and on any medium look finding (gradients, glass, glow, eyebrows,
 accent rails, uppercase labels, decorative icons or motion) in the page's own markup and styles,
 so the page ships without them.
 
-Its writing and look rules are the humanizer skill's, cut down to what a CodeMie page needs. They
+Its writing and look rules are the `codemie-humanizer` skill's, cut down to what a CodeMie page needs. They
 live inside this skill, so it needs no other skill installed. To clean an existing page in place
-and keep its own design, use `humanizer`; this skill rebuilds the content as a CodeMie page.
+and keep its own design, use `codemie-humanizer`; this skill rebuilds the content as a CodeMie page.
 
 | File | Holds |
 | --- | --- |

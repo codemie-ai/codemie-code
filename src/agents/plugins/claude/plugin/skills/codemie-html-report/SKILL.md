@@ -23,10 +23,10 @@ script (Step 4) that inlines the design system, adds the theme switch and presen
 runs the slop scan. **Never read or paste the style-guide CSS yourself**: the script inlines it,
 and Step 3 lists every class you need. Never read the scripts or the evals either, and never
 search the repository for example pages: this file and the references say what the build checks,
-and the build names anything left to fix. `<skill-dir>` below is this file's folder; your page's
+and the build names anything left to fix. Your page's
 path is relative to your working directory.
 
-To clean an existing page in place and keep its own design, use the humanizer skill; this skill
+To clean an existing page in place and keep its own design, use the `codemie-humanizer` skill; this skill
 rebuilds the content as a CodeMie page.
 
 ## Step 0 — Write the content first
@@ -57,11 +57,11 @@ Read only the references the page needs:
 
 | File | Read it when |
 | --- | --- |
-| `references/deck.md` | The user asks for a deck, slides or a presentation: the plan, every slide layout, the writing rules, the checks |
-| `references/writing.md` | The page goes to a client or an executive: voice, titles, numbers, sources |
-| `references/glossary.md` | The page is about AI delivery, agents or AI spend, ours or a client's: AI/Run, CodeMie, the Hyperfactory, factories, the control plane, tokenomics and FinOps, pay for output, people |
-| `references/visual.md` | A report or dashboard has a chart, an SVG figure or a diagram; a deck reads it only for a Chart.js chart |
-| `references/analytics.md` | The codemie-analytics skill invoked this one: its data placeholders and the order of its scripts |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/deck.md` | The user asks for a deck, slides or a presentation: the plan, every slide layout, the writing rules, the checks |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/writing.md` | The page goes to a client or an executive: voice, titles, numbers, sources |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/glossary.md` | The page is about AI delivery, agents or AI spend, ours or a client's: AI/Run, CodeMie, the Hyperfactory, factories, the control plane, tokenomics and FinOps, pay for output, people |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/visual.md` | A report or dashboard has a chart, an SVG figure or a diagram; a deck reads it only for a Chart.js chart |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/analytics.md` | The codemie-analytics skill invoked this one: its data placeholders and the order of its scripts |
 
 ## Step 1 — Skeleton
 
@@ -98,7 +98,7 @@ Read only the references the page needs:
   a `.stat-grid`, then `.card.mt-4` sections.
 - **App mockup**: `.app-shell > .app-navbar + .app-sidebar + .app-content > .app-header + main.app-main`.
 - **Centred** (login, error, empty state): `body.flex.items-center.justify-center.min-h-screen > .max-w-md.w-full.p-6`.
-- **Deck** (slides, a presentation): read `references/deck.md` and follow it in place of Steps 1–3.
+- **Deck** (slides, a presentation): read `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/deck.md` and follow it in place of Steps 1–3.
   The build supplies the 1600 × 900 stage, the slide layouts, footers and presenter view, and
   checks every slide's title, notes and layout.
 
@@ -157,7 +157,7 @@ Use only these classes:
 
 ## Charts
 
-Read `references/visual.md` before drawing one. Chart.js goes through the `CodeMieCharts` helper,
+Read `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/visual.md` before drawing one. Chart.js goes through the `CodeMieCharts` helper,
 which the build embeds where you put `<script>/* __CODEMIE_CHARTS__ */</script>`; a single figure
 is inline SVG with no library.
 
@@ -166,7 +166,7 @@ is inline SVG with no library.
 Write the page to `<name>.src.html` and build it into `<name>.html`:
 
 ```bash
-node <skill-dir>/scripts/build.js page.src.html --out page.html [--cdn] [--no-presenter] [--position bottom] [--no-layout]
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/build.js page.src.html --out page.html [--cdn] [--no-presenter] [--position bottom] [--no-layout]
 ```
 
 One call inlines the design system at the placeholder with the fonts the page uses embedded,
@@ -179,7 +179,7 @@ and Chart.js from CDNs instead, only for a page served from a website.
 
 - **Exit 0**: ready. **Exit 2**: a high finding, a medium look finding in the page's own
   markup or styles, or, for a deck, a "Fix:" line from the slide or layout check
-  (`references/deck.md`, section 5); fix each and run again. A false positive, such as a quoted customer sentence,
+  (`${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/deck.md`, section 5); fix each and run again. A false positive, such as a quoted customer sentence,
   stays, with the reason in your reply. **Exit 1**: a step failed; read its message.
 - **Fix a finding by its line** in the source; never read the built page.
 - Fix the real medium text findings. A glossary finding names the word to use after an arrow.

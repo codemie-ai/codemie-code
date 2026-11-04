@@ -57,11 +57,11 @@ If the request fits two rows, ask one question: rewrite it, or review it and say
 ## 1. Scan
 
 ```bash
-node <skill-dir>/scripts/slop-scan.mjs <file>     # compact report; --full shows every example
-cat draft.md | node <skill-dir>/scripts/slop-scan.mjs --stdin [--md | --html | --css]
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/scripts/slop-scan.mjs <file>     # compact report; --full shows every example
+cat draft.md | node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/scripts/slop-scan.mjs --stdin [--md | --html | --css]
 ```
 
-`<skill-dir>` is this file's folder. It reads text, Markdown, HTML, CSS, components and JSON content and reports two layers, text and
+It reads text, Markdown, HTML, CSS, components and JSON content and reports two layers, text and
 look, with line numbers in the original file. It skips code, URLs, quoted spans,
 `data-slop-ignore` elements and `slop:ignore` regions; findings in `>` quotes and in depicted
 chats or terminals come back as `info`. It decides nothing: `high` usually needs action, `medium`
@@ -92,12 +92,12 @@ Load only what this input needs; every file stays in context for the rest of the
 
 | Reference | Read it when |
 | --- | --- |
-| `references/text.md` | Rewrite, Clean or Audit of prose over about 150 words (below that, the gates, this step and the scan suffice): substance, words, sentence shapes, layout, what clean looks like, what not to flag |
-| `references/visual.md` | HTML, CSS, a component, a deck, a chart or a diagram |
-| `references/formats.md` | Not plain text or Markdown: HTML, components, JSON, Office files, PDF, a URL |
-| `references/drafting.md` | Draft mode: what each artifact needs, which questions to ask, the spine, length |
-| `references/glossary.md` | Content about EPAM AI/Run, CodeMie, the Hyperfactory and its factories, the control plane, tokenomics or pay for output; EPAM content for a client; or a scan with `glossary` or `internal-name` findings. A project's own `GLOSSARY.md` wins |
-| `references/languages.md` | Mostly non-English text (the scanner says so), or a non-native speaker's English |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/text.md` | Rewrite, Clean or Audit of prose over about 150 words (below that, the gates, this step and the scan suffice): substance, words, sentence shapes, layout, what clean looks like, what not to flag |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/visual.md` | HTML, CSS, a component, a deck, a chart or a diagram |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/formats.md` | Not plain text or Markdown: HTML, components, JSON, Office files, PDF, a URL |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/drafting.md` | Draft mode: what each artifact needs, which questions to ask, the spine, length |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/glossary.md` | Content about EPAM AI/Run, CodeMie, the Hyperfactory and its factories, the control plane, tokenomics or pay for output; EPAM content for a client; or a scan with `glossary` or `internal-name` findings. A project's own `GLOSSARY.md` wins |
+| `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/languages.md` | Mostly non-English text (the scanner says so), or a non-native speaker's English |
 
 For each finding, ask what the reader would lose if it went. If nothing, it goes; if something,
 find the plainest form that keeps it. Swap in a competitor's name: if nothing becomes false, the
@@ -106,7 +106,7 @@ the problem is not the wording; tell the author so.
 
 ## 4. Return
 
-**Draft**: per `references/drafting.md`. **Rewrite**: text that already reads as written by a
+**Draft**: per `${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/drafting.md`. **Rewrite**: text that already reads as written by a
 person comes back unchanged, with what makes it read that way.
 
 **Clean and Audit**: a plan shorter than what it cleans, then stop; Clean, apply now goes on to
@@ -150,7 +150,7 @@ nodes and the page's own CSS, and fix the rule or token rather than each element
 decorative element removes the CSS that styles only it and the gap it leaves. In code, change
 user-visible strings, class lists and style values, never props, identifiers, keys, i18n keys,
 test ids or strings a test asserts on. Office files and files outside version control: see
-`references/formats.md` first.
+`${CLAUDE_PLUGIN_ROOT}/skills/codemie-humanizer/references/formats.md` first.
 
 ## 6. Verify, then report
 

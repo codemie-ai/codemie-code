@@ -49,12 +49,12 @@ through them in that order, and it never invents a number to make a sentence lan
 
 ## What It Needs
 
-Node 18 or later for the bundled scanner:
+Node 18 or later for the bundled scanner, run from this skill's folder:
 
 ```bash
-node skills/common/humanizer/scripts/slop-scan.mjs <file>          # compact report
-node skills/common/humanizer/scripts/slop-scan.mjs <file> --full   # every example; --json for scripts
-node skills/common/humanizer/scripts/slop-scan.mjs --self-test
+node scripts/slop-scan.mjs <file>          # compact report
+node scripts/slop-scan.mjs <file> --full   # every example; --json for scripts
+node scripts/slop-scan.mjs --self-test
 ```
 
 The scanner reads text, Markdown, HTML, CSS and SCSS, JSX, TSX, Vue and Svelte, and JSON content

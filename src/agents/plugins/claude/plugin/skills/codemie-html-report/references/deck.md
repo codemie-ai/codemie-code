@@ -166,10 +166,11 @@ colours its contents. Give it `role="img"` and an `aria-label` that states the f
 
 ## 5. Build and check
 
-Write the slides once, whole, to `<name>.src.html` with one Write, and build the deck from it:
+Write the slides once, whole, to `<name>.src.html` with one Write, and build the deck from it
+with `scripts/build.js` in this skill's folder (the folder SKILL.md gives):
 
 ```bash
-node <skill-dir>/scripts/build.js deck.src.html --out deck.html
+node <this skill's folder>/scripts/build.js deck.src.html --out deck.html
 ```
 
 The source stays small: fix in it and build again; the slop scan's line numbers point into it.
