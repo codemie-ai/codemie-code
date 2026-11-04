@@ -6,7 +6,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -65,7 +65,7 @@ vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/tick-processor.js', ()
 const { OtlpAgentAdapter } = await import('../../OtlpAgentAdapter.js');
 const { OtlpPlugin } = await import('@/providers/plugins/sso/proxy/plugins/otlp.plugin.js');
 const { OWNER_LOOKUP_COOLDOWN_MS } = await import('@/providers/core/credential-owner.js');
-const { pendingOwnerDir } = await import('../owner-pending.js');
+const { pendingOwnerDir, OWNER_PENDING_MAX_BYTES } = await import('../owner-pending.js');
 const { heldRetentionMs } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js');
 const { streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
 const { forwarderIdentity } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js');
@@ -81,13 +81,17 @@ const user = (email: string) => ({ userId: 'u', name: 'n', username: 'x', email,
 class HookAdapter extends OtlpAgentAdapter<{ cwd: string; payload: Record<string, unknown>[] }> {
   readonly name = 'claude-code-otlp';
   finalized: boolean[] = [];
+  withFinalize = true; // a cursor-less handler returns no finalize: only then does prepareForward build an evidenceLoss report
   protected parseHookInput(raw: string) { return JSON.parse(raw); }
   protected extractHookContext(i: { cwd: string }) {
     return { cwd: i.cwd, sessionId: SESSION, evidenceInputs: { routing: { routed: false, routing_proof: 'unproven' as const } } };
   }
   protected async isTracked() { return true; }
   protected async evaluate(i: { payload: Record<string, unknown>[] }) {
-    return { decision: 'forward' as const, payload: i.payload, finalize: async (ok: boolean) => { this.finalized.push(ok); } };
+    return {
+      decision: 'forward' as const, payload: i.payload,
+      ...(this.withFinalize ? { finalize: async (ok: boolean) => { this.finalized.push(ok); } } : {}),
+    };
   }
   protected async resolveAgentFields() { return {}; }
   protected resolveEventType() { return 'fake.event'; }
@@ -264,6 +268,73 @@ describe('finite retention across restarts', () => {
     expect(JSON.parse(readFileSync(pendingFiles()[0], 'utf8')).events[0].event_id).toBe('id-2');
     expect((await readStatus(SESSION))?.stampLoss).toMatchObject({ reason: 'owner_unresolved_expired', events: 1 });
     expect(spooled()).toHaveLength(0);
+  });
+});
+
+describe('finite retention without any usable login', () => {
+  it('no stored and no refreshed credentials: the early tick path still expires the aged entry; the younger one stays', async () => {
+    m.stored = login('cookie-A');
+    m.userInfo.mockRejectedValue(new Error('down'));
+    await hook(new HookAdapter(), 1);
+    later(heldRetentionMs() - 60_000);
+    await hook(new HookAdapter(), 2);
+    expect(pendingFiles()).toHaveLength(2);
+
+    m.stored = null; // logged out: the interceptor snapshot and the store refresh both yield nothing
+    later(120_000);
+    await daemon().tick();
+
+    expect(pendingFiles()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(pendingFiles()[0], 'utf8')).events[0].event_id).toBe('id-2');
+    expect((await readStatus(SESSION))?.stampLoss).toMatchObject({ reason: 'owner_unresolved_expired', events: 1 });
+    expect(m.tick).not.toHaveBeenCalled();
+    expect(spooled()).toHaveLength(0);
+  });
+});
+
+describe('hold cannot be stored: the source is never acknowledged', () => {
+  const failures: Record<string, () => void> = {
+    // a filler as large as the whole budget, in another login's directory
+    'queue over OWNER_PENDING_MAX_BYTES': () => {
+      mkdirSync(join(pendingOwnerDir(), 'filler'), { recursive: true });
+      const filler = join(pendingOwnerDir(), 'filler', '1800000000000-0000000000000000.json');
+      writeFileSync(filler, '');
+      truncateSync(filler, OWNER_PENDING_MAX_BYTES);
+    },
+    // a plain file where the queue directory belongs: mkdir fails deterministically
+    'write failure': () => {
+      mkdirSync(join(pendingOwnerDir(), '..'), { recursive: true });
+      writeFileSync(pendingOwnerDir(), 'not a directory');
+    },
+  };
+  const entries = () => (statSync(pendingOwnerDir()).isDirectory() ? readdirSync(pendingOwnerDir(), { recursive: true }).length : -1);
+
+  describe.each(Object.keys(failures))('%s', (kind) => {
+    beforeEach(() => {
+      failures[kind]();
+      m.stored = login('cookie-A');
+      m.userInfo.mockRejectedValue(new Error('down'));
+    });
+
+    it('cursor-based handler: finalize(false), no new durable entry, nothing sent', async () => {
+      const before = entries();
+      const adapter = new HookAdapter();
+      await hook(adapter);
+      expect(adapter.finalized).toEqual([false]);
+      expect(entries()).toBe(before);
+      expect(sent).not.toHaveBeenCalled();
+    });
+
+    it('handler without finalize: only a loss report is sent (no events), no new durable entry', async () => {
+      const before = entries();
+      const adapter = new HookAdapter();
+      adapter.withFinalize = false;
+      await hook(adapter);
+      expect(adapter.finalized).toEqual([]);
+      expect(entries()).toBe(before);
+      expect(sent).toHaveBeenCalledTimes(1);
+      expect(sent).toHaveBeenCalledWith([], 'claude-code-otlp', { evidenceLoss: expect.objectContaining({ sessionId: SESSION, events: 1 }) });
+    });
   });
 });
 

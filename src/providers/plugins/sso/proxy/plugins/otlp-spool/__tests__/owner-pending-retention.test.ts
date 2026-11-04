@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 const state = vi.hoisted(() => ({ root: '' }));
 const readStateMock = vi.hoisted(() => vi.fn());
+const stale = vi.hoisted(() => ({ value: false }));
 
 vi.mock('../spool-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../spool-paths.js')>();
@@ -27,7 +28,7 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
     statusFile: (sessionId: string): string => pathJoin(state.root, sessionId + '.status'),
   };
 });
-vi.mock('../auth-state.js', () => ({ areCredentialsStale: (): boolean => false, markCredentialsStale: vi.fn() }));
+vi.mock('../auth-state.js', () => ({ areCredentialsStale: (): boolean => stale.value, markCredentialsStale: vi.fn() }));
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
 vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
@@ -54,6 +55,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     vi.resetModules();
     vi.clearAllMocks();
     delete process.env.OTLP_HELD_RETENTION_MINUTES;
+    stale.value = false;
     vi.useFakeTimers({ toFake: ['Date'], now: T0 });
     vi.stubGlobal('fetch', fetchMock);
     readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: API, syncApiUrl: API });
@@ -189,6 +191,40 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     expect(status.cursors.metrics ?? 0).toBe(0);
     expect(status.holds?.session?.since).toBe(heldSince); // unrelated data keeps its own hold clock
     expect(status.carriedAge).toBeUndefined();
+  });
+
+  it('stale credentials: the carried range still expires at its own deadline through the tick; younger bytes stay and nothing is sent', async () => {
+    const d = await daemon();
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0); // carried, original age T0
+    const carriedEnd = (await d.readStatus(SESSION))!.carriedAge!.hooks![0].end;
+    at(DAY - MIN);
+    await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']); // younger hook behind it
+    await freshOtherStreams(d);
+
+    stale.value = true;
+    at(DAY + MIN);
+    await d.processSessionTick(SESSION, credentials as never);
+
+    const status = (await d.readStatus(SESSION))!;
+    expect(status.cursors.hooks).toBe(carriedEnd); // exactly the expired segment; the younger hook is still pending
+    expect(carriedEnd).toBeLessThan(await hooksSize());
+    expect(status.lastLoss).toMatchObject({ reason: 'no_evidence_timeout', bytes: carriedEnd });
+    expect(status.carriedAge).toBeUndefined();
+    expect(status.cursors.logs ?? 0).toBe(0);
+    expect(status.cursors.metrics ?? 0).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stale credentials, before the deadline: nothing expires', async () => {
+    const d = await daemon();
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0);
+    stale.value = true;
+    at(DAY - MIN);
+    await d.processSessionTick(SESSION, credentials as never);
+    const status = (await d.readStatus(SESSION))!;
+    expect(status.cursors.hooks).toBe(0);
+    expect(status.lastLoss).toBeUndefined();
+    expect(status.carriedAge!.hooks).toHaveLength(1);
   });
 
   it('cap: 65 small adjacent handovers are never merged; the 65th stays queued until the head is acknowledged', async () => {
