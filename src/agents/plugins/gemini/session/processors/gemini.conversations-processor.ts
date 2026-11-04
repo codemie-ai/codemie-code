@@ -22,7 +22,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { SessionStore } from '../../../../core/session/SessionStore.js';
 import { detectTurns, filterNewMessages, type GeminiMessage, type TurnBoundary } from '../utils/turn-detector.js';
-import { extractMessageText } from '../utils/message-text.js';
+import { extractMessageText, extractRawMessageText, NON_TEXT_PROMPT_PLACEHOLDER } from '../utils/message-text.js';
 import { extractToolThoughts } from '../utils/tool-aggregator.js';
 import { mkdir } from 'fs/promises';
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
@@ -78,8 +78,8 @@ export class GeminiConversationsProcessor implements SessionProcessor {
       if (payloads.length === 0) {
         // Advance past skipped turns without changing the history index
         await this.updateSyncState(context.sessionId!, lastMessage.id, 0, lastHistoryIndex);
-        logger.info(`[${this.name}] No user turns to sync (${turns.length} turns skipped)`);
-        return { success: true, message: 'No user turns to sync' };
+        logger.info(`[${this.name}] No turns to sync (${turns.length} turns skipped)`);
+        return { success: true, message: 'No turns to sync' };
       }
 
       // 5. Write payloads to JSONL
@@ -129,26 +129,29 @@ export class GeminiConversationsProcessor implements SessionProcessor {
     let currentHistoryIndex = lastHistoryIndex;
 
     for (const turn of turns) {
+      // Aggregate content from all gemini messages
+      const aggregatedContent = turn.geminiMessages
+        .map(m => extractMessageText(m.content) ?? '')
+        .filter(c => c.length > 0)
+        .join('\n\n');
+
+      // Non-text prompts (attachment-only, <session_context>-only) still get their replies synced
       const userText = extractMessageText(turn.userMessage.content);
-      if (userText === null) continue; // No real user text: skip without consuming an index
+      if (userText === null && aggregatedContent.length === 0) {
+        continue; // Nothing to sync: skip without consuming an index
+      }
 
       currentHistoryIndex++; // Increment for each emitted turn
 
       // User record
       const userRecord = {
         role: 'User',
-        message: userText,
+        message: userText ?? NON_TEXT_PROMPT_PLACEHOLDER,
         history_index: currentHistoryIndex,
         date: turn.userMessage.timestamp,
-        message_raw: userText,
+        message_raw: extractRawMessageText(turn.userMessage.content),
         file_names: []
       };
-
-      // Aggregate content from all gemini messages
-      const aggregatedContent = turn.geminiMessages
-        .map(m => extractMessageText(m.content) ?? '')
-        .filter(c => c.length > 0)
-        .join('\n\n');
 
       // Extract tool thoughts
       const thoughts = extractToolThoughts(turn.geminiMessages);

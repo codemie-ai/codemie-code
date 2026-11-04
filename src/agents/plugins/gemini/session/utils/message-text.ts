@@ -5,6 +5,11 @@
 export type GeminiContent = string | Array<{ text?: string }>;
 
 /**
+ * User message text recorded when a prompt has no extractable text (e.g. attachment-only).
+ */
+export const NON_TEXT_PROMPT_PLACEHOLDER = '[non-text prompt]';
+
+/**
  * Strip <session_context>...</session_context> blocks and trim the result.
  */
 function filterSessionContext(text: string): string | null {
@@ -34,4 +39,21 @@ export function extractMessageText(content: unknown): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Original message text, verbatim (no <session_context> stripping or trimming).
+ * Array content is reduced to its joined text parts.
+ */
+export function extractRawMessageText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part && typeof part === 'object' && typeof part.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
 }
