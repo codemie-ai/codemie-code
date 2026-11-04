@@ -161,6 +161,8 @@ export interface RequestedDaemonConfig {
   profile: string;
   port: number;
   project?: string;
+  /** Binding state of `project`, recorded in the daemon state (not part of matching). */
+  projectBinding?: ProjectBindingState;
   clientType: string;
   provider?: string;
   targetUrl?: string;
@@ -438,6 +440,7 @@ async function ensureDaemon(
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
+      ...(requested.projectBinding ? { projectBinding: requested.projectBinding } : {}),
       ...identity.spawnOptions,
       syncApiUrl: config.ssoConfig?.apiUrl,
       syncCodeMieUrl: config.codeMieUrl,
@@ -472,13 +475,14 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     return;
   }
   // Hook cold start: an unowned profile is only logged, never printed or prompted.
-  await reportDaemonProfileIdentity(config, 'hook', cwd);
+  const projectBinding = await reportDaemonProfileIdentity(config, 'hook', cwd);
 
   const daemonConfig = {
     clientType: agentName,
     port: DEFAULT_DAEMON_PORT,
     profile: config.name ?? 'default',
     project: config.codeMieProject,
+    projectBinding,
     provider: config.provider ?? 'ai-run-sso',
     syncApiUrl: config.ssoConfig?.apiUrl,
     syncCodeMieUrl: config.codeMieUrl,
@@ -892,6 +896,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       profile,
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
+      projectBinding,
       clientType: identity.clientType,
       provider: config.provider ?? 'ai-run-sso',
       targetUrl: config.baseUrl,

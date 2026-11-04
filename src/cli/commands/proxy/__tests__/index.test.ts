@@ -9,6 +9,7 @@ vi.mock('../../../../utils/config.js', () => ({
     load: vi.fn(),
     listProfiles: vi.fn(),
     getActiveProfileName: vi.fn(),
+    resolveProfileIdentity: vi.fn(),
   },
 }));
 
@@ -903,9 +904,10 @@ describe('proxy restart', () => {
   };
 
   const setup = async (
-    status: { running: boolean; state: typeof runningState | null },
+    status: { running: boolean; state: (typeof runningState & { projectBinding?: string }) | null },
     spawnedPort = 4001,
-    configName = 'work'
+    configName = 'work',
+    resolvedBinding = 'own'
   ) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -925,6 +927,11 @@ describe('proxy restart', () => {
       baseUrl: 'https://example.com/api',
       codeMieProject: 'config-project',
     }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ConfigLoader.resolveProfileIdentity).mockImplementation(async (_cwd, name) => ({
+      state: resolvedBinding,
+      profileName: name ?? configName,
+      shared: {},
+    }) as unknown as Awaited<ReturnType<typeof ConfigLoader.resolveProfileIdentity>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
     } as unknown as typeof CodeMieSSO);
@@ -980,9 +987,38 @@ describe('proxy restart', () => {
       // Re-read from the profile, not the recorded state: a profile that gained its own
       // project since the daemon started bills it after the restart (EPMCDME-15411).
       project: 'config-project',
+      projectBinding: 'own',
     });
     expect(errorOutput()).not.toContain('already running with different settings');
     expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:4001');
+  });
+
+  describe('a restart from another directory keeps the project (PR #758 review, finding 6)', () => {
+    it('a project recorded from a repo config (local) is kept, though the profile resolves elsewhere', async () => {
+      const { daemon, command } = await setup({ running: true, state: { ...runningState, projectBinding: 'local' } }, 4001, 'work', 'own');
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project', projectBinding: 'local' });
+    });
+
+    it('an unowned profile keeps the recorded project (state file from an older CLI, no binding)', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'unowned');
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project' });
+    });
+
+    it('a profile that is now off CodeMie drops the recorded project', async () => {
+      const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'none');
+      vi.mocked(ConfigLoader.load).mockResolvedValue({ name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api' } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].project).toBeUndefined();
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].projectBinding).toBe('none');
+    });
   });
 
   it('switches only the profile when --profile is given', async () => {

@@ -135,7 +135,7 @@ export function createProxyCommand(): Command {
           opts.profile ? { name: opts.profile } : undefined
         );
         const profile = config.name ?? 'default';
-        await reportDaemonProfileIdentity(config, 'proxy');
+        const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
 
         const requestedDaemon: RequestedDaemonConfig = {
           profile,
@@ -154,7 +154,7 @@ export function createProxyCommand(): Command {
           throw new ConfigurationError(formatDaemonConflict(state));
         }
 
-        const daemonState = await launchDaemon(config, profile, { port: requestedPort });
+        const daemonState = await launchDaemon(config, profile, { port: requestedPort, projectBinding });
 
         console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
       } catch (error) {
