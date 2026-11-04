@@ -11,6 +11,7 @@ import { LogFollower } from './follower.js';
 import { LogCleaner } from './cleaner.js';
 import type { LogOptions, LogFilter, SessionListEntry } from './types.js';
 import { logger } from '../../../utils/logger.js';
+import { isDateOnly, parseDateOnly } from '@/utils/date-filter.js';
 
 export function createLogCommand(): Command {
   const command = new Command('log');
@@ -363,7 +364,7 @@ function parseFilterOptions(options: LogOptions): LogFilter {
 
   // Parse date filters
   if (options.from) {
-    const fromDate = parseDate(options.from);
+    const fromDate = parseFilterDate(options.from, 'from');
     if (!fromDate) {
       console.warn(chalk.yellow(`Warning: Invalid --from date "${options.from}", ignoring filter`));
     } else {
@@ -372,12 +373,10 @@ function parseFilterOptions(options: LogOptions): LogFilter {
   }
 
   if (options.to) {
-    const toDate = parseDate(options.to);
+    const toDate = parseFilterDate(options.to, 'to');
     if (!toDate) {
       console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
     } else {
-      // Set to end of day (23:59:59.999) to include all entries from that day
-      toDate.setHours(23, 59, 59, 999);
       filter.toDate = toDate;
     }
   }
@@ -402,7 +401,15 @@ function parseFilterOptions(options: LogOptions): LogFilter {
 }
 
 /**
- * Parse date string (YYYY-MM-DD) to Date object
+ * Parse a filter date. Date-only values (YYYY-MM-DD) use the shared UTC policy (inclusive `to`);
+ * other inputs (e.g. full ISO timestamps) keep the loose parse.
+ */
+function parseFilterDate(value: string, bound: 'from' | 'to'): Date | null {
+  return isDateOnly(value) ? parseDateOnly(value, bound) : parseDate(value);
+}
+
+/**
+ * Parse a non-date-only date string to Date object
  */
 function parseDate(dateStr: string): Date | null {
   try {
