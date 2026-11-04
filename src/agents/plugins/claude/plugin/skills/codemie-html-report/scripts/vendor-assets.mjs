@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/*
- * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
- * EPAM intellectual property, provided under a limited license — see LICENSE.
- * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
- * incorporation, or cloning into any repository.
- */
-
 /**
  * vendor-assets.mjs — refresh the fonts and the chart runtime the build embeds, so a finished page
  * opens with no network: as an email or Teams attachment, behind a proxy that blocks CDNs, offline.

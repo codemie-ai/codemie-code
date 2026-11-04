@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/*
- * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
- * EPAM intellectual property, provided under a limited license — see LICENSE.
- * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
- * incorporation, or cloning into any repository.
- */
-
 /**
  * inject-css.js — inline the CodeMie design system and its fonts into a page.
  *

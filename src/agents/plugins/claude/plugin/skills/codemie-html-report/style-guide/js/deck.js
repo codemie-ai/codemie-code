@@ -1,10 +1,3 @@
-/*
- * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
- * EPAM intellectual property, provided under a limited license — see LICENSE.
- * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
- * incorporation, or cloning into any repository.
- */
-
 /*!
  * CodeMie deck runtime: puts the slides on a 1600 × 900 stage scaled to the window.
  * Injected after controls.js by scripts/inject-controls.js, only on pages with slides; the controls

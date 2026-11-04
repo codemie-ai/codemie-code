@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/*
- * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
- * EPAM intellectual property, provided under a limited license — see LICENSE.
- * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
- * incorporation, or cloning into any repository.
- */
-
 /**
  * inject-controls.js — add the CodeMie theme switch and presenter controls to a
  * rendered HTML page.

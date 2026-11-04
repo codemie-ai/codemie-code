@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/*
- * © 2026 EPAM Systems, Inc. ("EPAM"). All rights reserved.
- * EPAM intellectual property, provided under a limited license — see LICENSE.
- * Ownership and all IP rights remain with EPAM and are NOT transferred by use,
- * incorporation, or cloning into any repository.
- */
-
 /**
  * inject-charts.js — give a page that draws charts the Chart.js runtime and the CodeMieCharts helper.
  *
