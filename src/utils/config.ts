@@ -14,9 +14,13 @@ import {
   CodemieAssistant,
   CodemieSkill,
   StorageScope,
+  StoredIdentity,
+  IDENTITY_KEYS,
   isMultiProviderConfig,
   isLegacyConfig
 } from '../env/types.js';
+import type { ProjectBindingState } from './project-binding.js';
+import { writeJsonFileAtomic } from './atomic-write.js';
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
@@ -26,6 +30,49 @@ import { logger } from './logger.js';
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
 
 export { StorageScope };
+
+/** Where the resolved codeMieProject came from; consumed by the evidence record's `project_source`. */
+export type ProjectOrigin = 'linked_folder' | 'profile' | 'none';
+
+/** Which scope supplied the identity: repository config, global workspace (shared) or the profile itself. */
+export type IdentitySource = 'project' | 'global' | 'profile';
+
+/** The CodeMie identity trio as resolved for a session (never `null`). */
+export interface ResolvedIdentity {
+  codeMieUrl?: string;
+  codeMieProject?: string;
+  codeMieIntegration?: CodeMieIntegrationInfo;
+}
+
+/** Result of ConfigLoader.resolveProfileIdentity(). */
+export interface ProfileIdentityResolution {
+  state: ProjectBindingState;
+  /** Resolved identity; absent keys mean none. */
+  identity: ResolvedIdentity;
+  /** Tooling-context workspace plus the resolved identity. */
+  workspace: WorkspaceConfig;
+  projectOrigin: ProjectOrigin;
+  identitySource: IdentitySource;
+  isLocalProfile: boolean;
+  /** Name of the profile the identity belongs to. */
+  profileName?: string;
+  /** The legacy shared (global workspace) identity, i.e. what the last setup saved. */
+  shared: ResolvedIdentity;
+}
+
+/** A stored profile record as runtime config: a `null` (off CodeMie) project becomes absent. */
+export function toRuntimeProfile(record: ProviderProfile): Partial<CodeMieConfigOptions> {
+  const { codeMieProject, ...rest } = record;
+  return codeMieProject == null ? rest : { ...rest, codeMieProject };
+}
+
+function pickIdentity(source: Partial<WorkspaceConfig> | undefined): ResolvedIdentity {
+  return {
+    codeMieUrl: source?.codeMieUrl,
+    codeMieProject: source?.codeMieProject || undefined,
+    codeMieIntegration: source?.codeMieIntegration
+  };
+}
 
 /**
  * Unified configuration loader with priority system:
@@ -134,12 +181,18 @@ export class ConfigLoader {
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
-    // Workspace fields resolve via resolveProfileWorkspace(): tooling context by
-    // whole-object override (local scope, else global), CodeMie identity from the
-    // scope of the profile in use.
-    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
-    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile, opts.preferLinkedProject);
-    Object.assign(config, this.removeUndefined(workspace));
+    // Workspace fields: tooling context by whole-object override (local scope, else
+    // global); CodeMie identity only from resolveProfileIdentity(). For a global
+    // profile the raw record's identity keys are removed first, so a stored
+    // `codeMieProject: null` (or a stale URL on a `none` record) never survives.
+    const resolution = await this.resolveProfileIdentity(workingDir, selectedProfileName, {
+      preferLinkedProject: opts.preferLinkedProject
+    });
+    const identityIsAuthoritative = resolution.state === 'own' || resolution.state === 'none';
+    if (!resolution.isLocalProfile || identityIsAuthoritative) {
+      for (const key of IDENTITY_KEYS) delete (config as Record<string, unknown>)[key];
+    }
+    Object.assign(config, this.removeUndefined(resolution.workspace));
 
     // 2. Environment variables (load .env first if in project)
     const envPath = path.join(workingDir, '.env');
@@ -150,6 +203,12 @@ export class ConfigLoader {
       // No .env file, that's fine
     }
     const envConfig = this.loadFromEnv();
+    // An `own`/`none` profile takes identity only from the resolver: inherited
+    // CODEMIE_URL / CODEMIE_INTEGRATION_* (another session, a shell export) are ignored.
+    if (identityIsAuthoritative) {
+      delete envConfig.codeMieUrl;
+      delete envConfig.codeMieIntegration;
+    }
 
     // If a profile is explicitly selected, only apply env vars that aren't profile-specific
     // This prevents environment contamination from overriding the selected profile
@@ -227,21 +286,138 @@ export class ConfigLoader {
   }
 
   /**
-   * Resolve the workspace for the profile in use. Tooling-context fields follow
-   * resolveWorkspace(). CodeMie identity fields (codeMieUrl, codeMieProject,
-   * codeMieIntegration) come from the scope the profile lives in: a local profile
-   * takes them from resolveWorkspace(), a global profile only from the global
-   * scope's workspace, so a repo's workspace never retargets global profiles.
+   * Single resolver for the CodeMie identity (URL, project, integration) of the
+   * profile in use, plus the binding state that says how it was decided
+   * (EPMCDME-15411). Replaces the former resolveProfileWorkspace(),
+   * resolveProjectOrigin() and resolveIdentitySource().
    *
-   * @param workingDir - Directory whose local config is considered
-   * @param isLocalProfile - Whether the profile in use is defined in the local config
+   * Global profile of a project-carrying provider (see carriesCodeMieProject):
+   * - `own`: a string `codeMieProject` on the profile. Project and integration come
+   *   from the profile only (an absent integration means none); URL is the
+   *   profile's own, else the shared one.
+   * - `none`: `codeMieProject: null`. No URL, project or integration.
+   * - `unowned`: anything else. Shared (last setup) project and integration; URL is
+   *   the profile's own, else the shared one.
+   * Global profile of another provider: `not-applicable`, shared trio as before.
+   *
+   * Local profile: `local`, identity from resolveWorkspace() (local scope, else
+   * global) — unchanged — except that a same-named global `own`/`none` profile
+   * supplies identity when the local scope has no project.
+   *
+   * @param profileName - Explicit profile name (e.g. `--profile`); else the active one
+   * @param opts.preferLinkedProject - Native hook only: a linked folder's `.codemie`
+   *   project beats a global profile's project
    */
-  static async resolveProfileWorkspace(
+  static async resolveProfileIdentity(
     workingDir: string,
-    isLocalProfile: boolean,
-    preferLinkedProject = false
-  ): Promise<WorkspaceConfig> {
-    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile, preferLinkedProject)).workspace;
+    profileName?: string,
+    opts: { preferLinkedProject?: boolean } = {}
+  ): Promise<ProfileIdentityResolution> {
+    const preferLinkedProject = opts.preferLinkedProject === true;
+    const globalMulti = await this.loadMultiProviderConfig();
+    const localMulti = await this.loadLocalMultiProviderConfig(workingDir);
+    const workspace: WorkspaceConfig = localMulti.workspace != null
+      ? localMulti.workspace
+      : (globalMulti.workspace ?? {});
+    const localProject = localMulti.workspace?.codeMieProject;
+    const shared = pickIdentity(globalMulti.workspace);
+    // With no genuine local link, a project that comes only from the global scope
+    // is not an authoritative source for the native hook (backend routing decides).
+    const globalOnly: ProjectOrigin = preferLinkedProject ? 'none' : 'profile';
+
+    const selectedName = await this.resolveProfileName(workingDir, profileName);
+    const localName = await this.resolveLocalProfileName(workingDir, selectedName);
+    const isLocalProfile = !(selectedName && localName && selectedName !== localName)
+      && Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
+
+    const tooling: WorkspaceConfig = { ...workspace };
+    for (const key of IDENTITY_KEYS) delete tooling[key];
+    const finish = (
+      state: ProjectBindingState,
+      identity: ResolvedIdentity,
+      projectOrigin: ProjectOrigin,
+      identitySource: IdentitySource,
+      resolvedName: string | undefined
+    ): ProfileIdentityResolution => ({
+      state,
+      identity: this.removeUndefined(identity),
+      workspace: { ...tooling, ...this.removeUndefined(identity) },
+      projectOrigin,
+      identitySource,
+      isLocalProfile,
+      profileName: resolvedName,
+      shared
+    });
+
+    if (isLocalProfile) {
+      const sameNamedGlobal = localName ? globalMulti.profiles?.[localName] : undefined;
+      const globalState = sameNamedGlobal ? this.classifyGlobalProfile(sameNamedGlobal) : undefined;
+      if (!localProject && (globalState === 'own' || globalState === 'none')) {
+        const identity = this.globalProfileIdentity(sameNamedGlobal!, globalState, shared);
+        return finish(globalState, identity, identity.codeMieProject ? globalOnly : 'none', 'profile', localName);
+      }
+      const identity = pickIdentity(workspace);
+      const origin: ProjectOrigin = !identity.codeMieProject ? 'none' : localProject ? 'linked_folder' : globalOnly;
+      return finish('local', identity, origin, localMulti.workspace != null ? 'project' : 'global', localName);
+    }
+
+    const resolvedName = selectedName ?? globalMulti.activeProfile;
+    const record = resolvedName ? globalMulti.profiles?.[resolvedName] : undefined;
+    const state: ProjectBindingState = record ? this.classifyGlobalProfile(record) : 'not-applicable';
+    const identity = record ? this.globalProfileIdentity(record, state, shared) : { ...shared };
+
+    // Opt-in (native hook): a linked `.codemie` project beats the global profile's project.
+    if (preferLinkedProject && localProject && state !== 'none') {
+      identity.codeMieProject = localProject;
+      return finish(state, identity, 'linked_folder', state === 'own' ? 'profile' : 'global', resolvedName);
+    }
+    return finish(
+      state,
+      identity,
+      identity.codeMieProject ? globalOnly : 'none',
+      state === 'own' || state === 'none' ? 'profile' : 'global',
+      resolvedName
+    );
+  }
+
+  /** Whether the provider stores a CodeMie project per global profile (template property). */
+  static carriesCodeMieProject(provider: string | undefined): boolean {
+    if (!provider) return false;
+    return ProviderRegistry.getProvider(provider.toLowerCase())?.customProperties?.carriesCodeMieProject === true;
+  }
+
+  /** Binding state of a stored global profile record. */
+  private static classifyGlobalProfile(record: ProviderProfile): ProjectBindingState {
+    if (!this.carriesCodeMieProject(record.provider)) return 'not-applicable';
+    if (typeof record.codeMieProject === 'string' && record.codeMieProject.length > 0) return 'own';
+    if (record.codeMieProject === null) return 'none';
+    return 'unowned';
+  }
+
+  /** Identity a global profile resolves to for its state (URL falls back to shared, never the integration). */
+  private static globalProfileIdentity(
+    record: ProviderProfile,
+    state: ProjectBindingState,
+    shared: ResolvedIdentity
+  ): ResolvedIdentity {
+    switch (state) {
+      case 'own':
+        return {
+          codeMieUrl: record.codeMieUrl ?? shared.codeMieUrl,
+          codeMieProject: record.codeMieProject as string,
+          codeMieIntegration: record.codeMieIntegration
+        };
+      case 'none':
+        return {};
+      case 'unowned':
+        return {
+          codeMieUrl: record.codeMieUrl ?? shared.codeMieUrl,
+          codeMieProject: shared.codeMieProject,
+          codeMieIntegration: shared.codeMieIntegration
+        };
+      default:
+        return { ...shared };
+    }
   }
 
   /** Whether the profile in use (explicit `profileName`, else the active one) is defined in the local config. */
@@ -250,69 +426,6 @@ export class ConfigLoader {
     const localName = await this.resolveLocalProfileName(workingDir, selected);
     if (selected && localName && selected !== localName) return false;
     return Object.keys(await this.loadLocalConfigProfile(workingDir, localName)).length > 0;
-  }
-
-  /**
-   * Where the resolved codeMieProject came from: `linked_folder` (local `.codemie`
-   * workspace), `profile` (global profile scope) or `none`. Consumed by the
-   * evidence record's `project_source`.
-   */
-  static async resolveProjectOrigin(
-    workingDir: string,
-    isLocalProfile: boolean,
-    preferLinkedProject = false
-  ): Promise<'linked_folder' | 'profile' | 'none'> {
-    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile, preferLinkedProject)).projectOrigin;
-  }
-
-  private static async resolveProfileWorkspaceWithOrigin(
-    workingDir: string,
-    isLocalProfile: boolean,
-    preferLinkedProject = false
-  ): Promise<{ workspace: WorkspaceConfig; projectOrigin: 'linked_folder' | 'profile' | 'none' }> {
-    const workspace = await this.resolveWorkspace(workingDir);
-    const localProject = (await this.loadLocalMultiProviderConfig(workingDir)).workspace?.codeMieProject;
-    // `preferLinkedProject` is the native hook: with no genuine local link, a project that comes only from
-    // the global scope (global profile, or the global workspace a local profile falls back to) is not
-    // an authoritative source, so the backend falls through to repository/default routing.
-    const globalOnly: 'profile' | 'none' = preferLinkedProject ? 'none' : 'profile';
-    if (isLocalProfile) {
-      if (!workspace.codeMieProject) return { workspace, projectOrigin: 'none' };
-      return { workspace, projectOrigin: localProject ? 'linked_folder' : globalOnly };
-    }
-
-    const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
-    const result: Record<string, unknown> = { ...workspace };
-    for (const key of this.IDENTITY_KEYS) {
-      delete result[key];
-      if (globalWorkspace[key] !== undefined) {
-        result[key] = globalWorkspace[key];
-      }
-    }
-    // Opt-in (native hook): a linked `.codemie` project beats the global profile's project (D2: managed keeps it).
-    if (preferLinkedProject && localProject) {
-      result.codeMieProject = localProject;
-      return { workspace: result as WorkspaceConfig, projectOrigin: 'linked_folder' };
-    }
-    return {
-      workspace: result as WorkspaceConfig,
-      projectOrigin: result.codeMieProject ? globalOnly : 'none'
-    };
-  }
-
-  /**
-   * Scope that supplies CodeMie identity fields for the profile in use — the
-   * attribution counterpart of resolveProfileWorkspace().
-   */
-  private static async resolveIdentitySource(
-    workingDir: string,
-    isLocalProfile: boolean
-  ): Promise<'project' | 'global'> {
-    if (!isLocalProfile) {
-      return 'global';
-    }
-    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
-    return localMultiConfig.workspace != null ? 'project' : 'global';
   }
 
   /**
@@ -369,8 +482,9 @@ export class ConfigLoader {
         );
       }
 
-      // Return profile with name included
-      return { ...rawConfig.profiles[profile], name: profile };
+      // Return profile with name included. The runtime config never carries a
+      // `null` project: load() takes identity from resolveProfileIdentity().
+      return toRuntimeProfile({ ...rawConfig.profiles[profile], name: profile });
     }
 
     // Legacy single-provider config
@@ -398,7 +512,7 @@ export class ConfigLoader {
 
       // If profile exists in local config, return it as an override
       if (profile && rawConfig.profiles[profile]) {
-        return { ...rawConfig.profiles[profile], name: profile };
+        return toRuntimeProfile({ ...rawConfig.profiles[profile], name: profile });
       }
 
       // Otherwise return empty (no local override)
@@ -562,13 +676,15 @@ export class ConfigLoader {
    * Save configuration to global config file
    * Supports both legacy and multi-provider formats
    */
-  static async saveGlobalConfig(config: Partial<CodeMieConfigOptions>): Promise<void> {
+  static async saveGlobalConfig(config: Partial<CodeMieConfigOptions> | MultiProviderConfig): Promise<void> {
     await fs.mkdir(this.GLOBAL_CONFIG_DIR, { recursive: true });
-    await fs.writeFile(
-      this.GLOBAL_CONFIG,
-      JSON.stringify(config, null, 2),
-      'utf-8'
-    );
+    // Atomic (unique temp file + rename, existing mode kept, symlink target written)
+    // and never over an existing file that does not parse: a load of such a file
+    // yields an empty config, and writing it back would erase every profile.
+    await writeJsonFileAtomic(this.GLOBAL_CONFIG, config, {
+      refuseUnparsable: true,
+      label: 'CodeMie global config'
+    });
     // Clear cache
     this.multiProviderCache = null;
   }
@@ -640,7 +756,7 @@ export class ConfigLoader {
    * Save multi-provider config
    */
   static async saveMultiProviderConfig(config: MultiProviderConfig): Promise<void> {
-    await this.saveGlobalConfig(config as any);
+    await this.saveGlobalConfig(config);
   }
 
   static async saveUserEmail(email: string): Promise<void> {
@@ -650,24 +766,10 @@ export class ConfigLoader {
   }
 
   /**
-   * CodeMie identity keys. Resolved from the workspace of the scope the active
-   * profile lives in — see resolveProfileWorkspace().
+   * Workspace keys other than the CodeMie identity trio. saveProfile() routes only
+   * these into the shared global workspace; identity stays on the profile.
    */
-  private static readonly IDENTITY_KEYS: (keyof WorkspaceConfig)[] = [
-    'codeMieUrl',
-    'codeMieProject',
-    'codeMieIntegration'
-  ];
-
-  /**
-   * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
-   * ProviderProfile. Used to split a saved profile's input into its profile half
-   * and its workspace half — see splitProfileAndWorkspace().
-   */
-  private static readonly WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
-    'codeMieUrl',
-    'codeMieProject',
-    'codeMieIntegration',
+  private static readonly NON_IDENTITY_WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
     'hooks',
     'plugins',
     'assistants',
@@ -677,17 +779,28 @@ export class ConfigLoader {
   ];
 
   /**
+   * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
+   * ProviderProfile. Used to split a local profile's input into its profile half
+   * and its workspace half — see splitProfileAndWorkspace().
+   */
+  private static readonly WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
+    ...IDENTITY_KEYS,
+    ...ConfigLoader.NON_IDENTITY_WORKSPACE_KEYS
+  ];
+
+  /**
    * Partition a profile-shaped input into its provider-identity half and its
    * workspace half, so callers that persist a profile can route each half to
    * where it belongs (profiles[name] vs. the scope's workspace).
    */
   private static splitProfileAndWorkspace(
-    input: Partial<CodeMieConfigOptions>
+    input: Partial<CodeMieConfigOptions>,
+    keys: (keyof WorkspaceConfig)[] = this.WORKSPACE_KEYS
   ): { profile: Partial<ProviderProfile>; workspace: Partial<WorkspaceConfig> } {
     const profile: Partial<ProviderProfile> = { ...(input as any) };
     const workspace: Partial<WorkspaceConfig> = {};
 
-    for (const key of this.WORKSPACE_KEYS) {
+    for (const key of keys) {
       if ((input as any)[key] !== undefined) {
         (workspace as any)[key] = (input as any)[key];
         delete (profile as any)[key];
@@ -706,10 +819,19 @@ export class ConfigLoader {
     // Strip top-level-only fields that must not live inside a profile
     const { codemieSkills: _skills, codemieAssistants: _assistants, ...cleanProfile } = profile as any;
 
-    const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(cleanProfile);
+    // Identity stays on the profile (EPMCDME-15411); only tooling-context fields go
+    // to the shared global workspace. The global workspace identity is no longer
+    // written, and never deleted (legacy fallback for unowned profiles).
+    const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(
+      cleanProfile,
+      this.NON_IDENTITY_WORKSPACE_KEYS
+    );
 
     (profileFields as any).name = profileName;
-    config.profiles[profileName] = profileFields as ProviderProfile;
+    config.profiles[profileName] = this.withCarriedIdentity(
+      profileFields as ProviderProfile,
+      config.profiles[profileName]
+    );
 
     if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
       config.workspace = { ...config.workspace, ...workspaceFields };
@@ -721,6 +843,54 @@ export class ConfigLoader {
     }
 
     await this.saveMultiProviderConfig(config);
+  }
+
+  /**
+   * Identity rules for a saved global profile. The trio is atomic: an update that
+   * supplies any identity key replaces the stored trio; an update that supplies
+   * none keeps the stored values. `codeMieProject: null` stores "off CodeMie" and
+   * drops the URL and integration. An explicit `key: undefined` counts as omitted.
+   */
+  private static withCarriedIdentity(update: ProviderProfile, existing?: ProviderProfile): ProviderProfile {
+    const next: Record<string, unknown> = { ...update };
+    for (const key of IDENTITY_KEYS) {
+      if (next[key] === undefined) delete next[key];
+    }
+    const suppliesIdentity = IDENTITY_KEYS.some((key) => key in next);
+    if (!suppliesIdentity && existing) {
+      for (const key of IDENTITY_KEYS) {
+        if ((existing as Record<string, unknown>)[key] !== undefined) {
+          next[key] = (existing as Record<string, unknown>)[key];
+        }
+      }
+    }
+    if (next.codeMieProject === null) {
+      delete next.codeMieUrl;
+      delete next.codeMieIntegration;
+    }
+    return next as ProviderProfile;
+  }
+
+  /**
+   * Field-level identity writer: sets only the identity trio of one global
+   * profile. `null` keeps the profile off CodeMie. Does nothing (returns false)
+   * when the profile no longer exists.
+   */
+  static async saveProfileIdentity(profileName: string, identity: StoredIdentity | null): Promise<boolean> {
+    const config = await this.loadMultiProviderConfig();
+    const record = config.profiles[profileName];
+    if (!record) return false;
+    for (const key of IDENTITY_KEYS) delete (record as Record<string, unknown>)[key];
+    if (identity === null) {
+      record.codeMieProject = null;
+    } else {
+      if (identity.codeMieUrl) record.codeMieUrl = identity.codeMieUrl;
+      if (identity.codeMieProject !== undefined) record.codeMieProject = identity.codeMieProject;
+      if (identity.codeMieIntegration) record.codeMieIntegration = identity.codeMieIntegration;
+    }
+    config.profiles[profileName] = this.withCarriedIdentity(record);
+    await this.saveMultiProviderConfig(config);
+    return true;
   }
 
   /**
@@ -1315,7 +1485,7 @@ export class ConfigLoader {
     // Load all config layers
     type ConfigLayer = {
       data: any;
-      source: 'default' | 'global' | 'project' | 'env' | 'cli';
+      source: ConfigWithSource['source'];
     };
 
     const selectedProfileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
@@ -1340,17 +1510,25 @@ export class ConfigLoader {
     // the profile in use (see resolveProfileWorkspace()).
     const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
-    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
-    const identitySource = await this.resolveIdentitySource(workingDir, isLocalProfile);
-    const profileWorkspace: Record<string, unknown> = {
-      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile))
-    };
+    const resolution = await this.resolveProfileIdentity(workingDir, selectedProfileName);
+    const profileWorkspace: Record<string, unknown> = { ...resolution.workspace };
     const identityWorkspace: Record<string, unknown> = {};
-    for (const key of this.IDENTITY_KEYS) {
+    for (const key of IDENTITY_KEYS) {
       if (profileWorkspace[key] !== undefined) {
         identityWorkspace[key] = profileWorkspace[key];
       }
       delete profileWorkspace[key];
+    }
+    // The raw global profile record must not be listed as the source of identity
+    // keys the resolver replaced (e.g. a `null` project or a stale URL on `none`).
+    const globalLayer: Record<string, unknown> = { ...globalConfig };
+    if (!resolution.isLocalProfile) {
+      for (const key of IDENTITY_KEYS) delete globalLayer[key];
+    }
+    const envLayer = this.loadFromEnv();
+    if (resolution.state === 'own' || resolution.state === 'none') {
+      delete envLayer.codeMieUrl;
+      delete envLayer.codeMieIntegration;
     }
 
     const configs: ConfigLayer[] = [
@@ -1362,7 +1540,7 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: globalConfig,
+        data: globalLayer,
         source: 'global'
       },
       {
@@ -1375,10 +1553,10 @@ export class ConfigLoader {
       },
       {
         data: identityWorkspace,
-        source: identitySource
+        source: resolution.identitySource
       },
       {
-        data: this.loadFromEnv(),
+        data: envLayer,
         source: 'env'
       }
     ];
@@ -1434,7 +1612,7 @@ export class ConfigLoader {
       console.log(`  ${chalk.cyan(key)}: ${displayValue} ${sourceLabel}`);
     }
 
-    console.log(chalk.white('\nPriority: cli > env > project > global > default\n'));
+    console.log(chalk.white('\nPriority: cli > env > project > profile > global > default\n'));
   }
 
   /**
@@ -1510,6 +1688,7 @@ export class ConfigLoader {
       default: chalk.white,
       global: chalk.cyan,
       project: chalk.yellow,
+      profile: chalk.blue,
       env: chalk.green,
       cli: chalk.magenta
     };

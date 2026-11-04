@@ -39,7 +39,7 @@ vi.mock('@/utils/config.js', () => ({
     getActiveProfileName: async () => 'work',
     load: async () => ({ codeMieProject: m.project }),
     hasLocalConfig: async () => false,
-    resolveProjectOrigin: async () => 'profile',
+    resolveProfileIdentity: async () => ({ projectOrigin: 'profile' }),
     isLocalProfile: async () => false,
   },
 }));
