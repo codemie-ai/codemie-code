@@ -1284,7 +1284,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       process.chdir(cwd);
     }
 
-    expect(load(id).agentHome).toBe(resolve('/run/copilot-home'));
+    expect(load(id).agentHome).toBe(resolve(home, '/run/copilot-home'));
   });
 });
 
