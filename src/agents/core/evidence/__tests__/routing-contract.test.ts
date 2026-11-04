@@ -60,11 +60,11 @@ const saved: Record<string, string | undefined> = {};
 function writeGlobal(config: unknown): void {
   writeFileSync(join(home, 'codemie-cli.config.json'), JSON.stringify(config));
 }
-function linkFolder(project: string): void {
+function linkFolder(project: string, codeMieUrl?: string): void {
   mkdirSync(join(repo, '.codemie'), { recursive: true });
   writeFileSync(
     join(repo, '.codemie', 'codemie-cli.config.json'),
-    JSON.stringify({ version: 2, activeProfile: 'work', profiles: {}, workspace: { codeMieProject: project } })
+    JSON.stringify({ version: 2, activeProfile: 'work', profiles: {}, workspace: { codeMieProject: project, ...(codeMieUrl && { codeMieUrl }) } })
   );
 }
 const profile = (name: string, baseUrl: string, codeMieProject?: string) => ({
@@ -112,42 +112,70 @@ afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
 });
 
-describe('finding 1: native without a genuine local link', () => {
+describe('finding 1: native and managed select the project the same way', () => {
   const registered = { 'git.example.com/org/repo': 'repo-proj' };
+  const managed = () =>
+    Object.assign(process.env, { CODEMIE_SESSION_ID: 'm1', CODEMIE_PROFILE_NAME: 'work', CODEMIE_BASE_URL: PROXY, CODEMIE_TARGET_API_URL: WORK_GW, ANTHROPIC_BASE_URL: PROXY });
   // `codemie setup` keeps the profile's project in the global workspace.
   beforeEach(() => {
-    writeGlobal({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) }, workspace: { codeMieProject: 'work-proj' } });
+    writeGlobal({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) }, workspace: { codeMieProject: 'work-proj', codeMieUrl: 'https://prod.example.com/' } });
   });
 
-  it('the global profile project is no source: the registered repository wins', async () => {
-    const { headers } = await frozen('n1');
-    expect(headers['X-CodeMie-Project-Source']).toBeUndefined();
+  it('the global profile project is a profile source in native, as in managed', async () => {
+    const { record, headers } = await frozen('n1');
+    expect(record).toMatchObject({ launch_mode: 'native', project: 'work-proj', project_source: 'profile' });
+    expect(headers['X-CodeMie-Project-Source']).toBe('profile');
+    expect(destination(headers, registered)).toBe('work-proj');
+  });
+
+  it('a workspace-only linked folder (any URL) does not replace the selected global profile project', async () => {
+    for (const [i, url] of [undefined, 'https://prod.example.com', 'https://other.example.com'].entries()) {
+      linkFolder('linked-proj', url);
+      const native = await frozen(`n3-${i}`);
+      expect(native.record).toMatchObject({ project: 'work-proj', project_source: 'profile' });
+      expect(destination(native.headers, registered)).toBe('work-proj');
+    }
+  });
+
+  it('native and managed produce the same project, source and headers for the same selected profile', async () => {
+    linkFolder('linked-proj', 'https://prod.example.com');
+    const native = await frozen('eq-n');
+    managed();
+    const mgd = await frozen('eq-m');
+    expect([native.record.project, native.record.project_source]).toEqual([mgd.record.project, mgd.record.project_source]);
+    expect(native.headers['X-CodeMie-Project']).toBe(mgd.headers['X-CodeMie-Project']);
+    expect(native.headers['X-CodeMie-Project-Source']).toBe(mgd.headers['X-CodeMie-Project-Source']);
+  });
+
+  it('a genuinely local selected profile uses its local workspace project as a linked_folder source', async () => {
+    mkdirSync(join(repo, '.codemie'), { recursive: true });
+    writeFileSync(join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({
+      version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) }, workspace: { codeMieProject: 'linked-proj' },
+    }));
+    const native = await frozen('n4');
+    expect(native.record).toMatchObject({ project: 'linked-proj', project_source: 'linked_folder' });
+    managed();
+    expect((await frozen('n4-m')).record).toMatchObject({ project: 'linked-proj', project_source: 'linked_folder' });
+  });
+
+  it('a local profile that only falls back to the global workspace project is a profile source', async () => {
+    mkdirSync(join(repo, '.codemie'), { recursive: true });
+    writeFileSync(join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) } }));
+    const { record, headers } = await frozen('n5');
+    expect(record).toMatchObject({ project: 'work-proj', project_source: 'profile' });
+    expect(destination(headers, registered)).toBe('work-proj');
+  });
+
+  it('missing project: no project sent, the registered repository then default routing apply', async () => {
+    writeGlobal({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) } });
+    const { record, headers } = await frozen('n2');
+    expect(record.project_source).toBe('none');
     expect(destination(headers, registered)).toBe('repo-proj');
-  });
-
-  it('with no registration either, default routing applies (unlinked-folder marking is the backend\'s)', async () => {
-    const { headers } = await frozen('n2');
     expect(destination(headers)).toBe('DEFAULT (folder not linked)');
   });
 
-  it('a genuinely linked folder still wins and is a linked_folder source', async () => {
-    linkFolder('linked-proj');
-    const { record, headers } = await frozen('n3');
-    expect(record).toMatchObject({ project: 'linked-proj', project_source: 'linked_folder' });
-    expect(destination(headers, registered)).toBe('linked-proj');
-  });
-
-  it('a local profile that only falls back to the global workspace project is not a link either', async () => {
-    writeGlobal({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) }, workspace: { codeMieProject: 'global-ws' } });
-    mkdirSync(join(repo, '.codemie'), { recursive: true });
-    writeFileSync(join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) } }));
-    const { record, headers } = await frozen('n4');
-    expect(record.project_source).toBe('none');
-    expect(destination(headers, registered)).toBe('repo-proj');
-  });
-
   it('managed keeps the selected profile project as a profile source', async () => {
-    Object.assign(process.env, { CODEMIE_SESSION_ID: 'm1', CODEMIE_PROFILE_NAME: 'work', CODEMIE_BASE_URL: PROXY, CODEMIE_TARGET_API_URL: WORK_GW, ANTHROPIC_BASE_URL: PROXY });
+    managed();
     const { record, headers } = await frozen('m1');
     expect(record).toMatchObject({ launch_mode: 'managed', project: 'work-proj', project_source: 'profile' });
     expect(destination(headers, registered)).toBe('work-proj');
@@ -184,7 +212,7 @@ describe('finding 3: the launched profile, not the active one', () => {
   it('native ignores a stray CODEMIE_PROFILE_NAME and keeps the active profile', async () => {
     process.env.CODEMIE_PROFILE_NAME = 'other';
     const { record } = await frozen('l4');
-    expect(record).toMatchObject({ launch_mode: 'native', profile: 'work', project: 'work-proj', project_source: 'none' });
+    expect(record).toMatchObject({ launch_mode: 'native', profile: 'work', project: 'work-proj', project_source: 'profile' });
   });
 });
 
