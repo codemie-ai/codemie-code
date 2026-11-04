@@ -69,6 +69,52 @@ export function authWasRejected(signal: AbortSignal): boolean {
   return signalsRejected.has(signal);
 }
 
+/** Node system error codes of a connection that never opened: the request was never sent. */
+const NEVER_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
+
+/**
+ * Whether `error`, along its `cause` chain and the `errors` of an `AggregateError` (one per address tried), is a
+ * connection-level failure before the request left: no server can have served it. An HTTP answer, a timeout, a
+ * reset after the send and any other error are not.
+ */
+export function requestNeverLeft(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  const pending: unknown[] = [error];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    if (NEVER_SENT_CODES.has((current as { code?: unknown }).code as string)) return true;
+    pending.push((current as { cause?: unknown }).cause);
+    if (current instanceof AggregateError) pending.push(...current.errors);
+  }
+  return false;
+}
+
+const signalsReached = new WeakSet<AbortSignal>();
+const signalsNeverLeft = new WeakSet<AbortSignal>();
+
+/**
+ * Records that a request under `signal` reached the server or may have: it got any HTTP answer, timed out, or failed
+ * after its connection opened (a reset after the send), so a server may have served it.
+ */
+export function noteServerReached(signal: AbortSignal | undefined): void {
+  if (signal) signalsReached.add(signal);
+}
+
+/** Records that a request under `signal` failed before its connection opened (see {@link requestNeverLeft}). */
+export function noteNeverLeft(signal: AbortSignal | undefined): void {
+  if (signal) signalsNeverLeft.add(signal);
+}
+
+/**
+ * Whether no request under `signal` reached the server: one failed before its connection opened and none reached it
+ * or may have (see {@link noteNeverLeft}, {@link noteServerReached}).
+ */
+export function attemptNeverReached(signal: AbortSignal): boolean {
+  return signalsNeverLeft.has(signal) && !signalsReached.has(signal);
+}
+
 export interface BoundedRequest {
   /** Aborts on the request's own timeout (capped by the deadline) or on the caller's abort */
   signal: AbortSignal;
@@ -76,6 +122,11 @@ export interface BoundedRequest {
   stopReason(): SyncStopReason | undefined;
   /** Clears the timer and the abort listener */
   dispose(): void;
+  /**
+   * Notes on the caller's signal what became of the request: without `error` its response arrived; an `error` that
+   * never left notes {@link noteNeverLeft}, any other {@link noteServerReached}.
+   */
+  noteOutcome(error?: unknown): void;
 }
 
 /** The signal for one request: its own `timeoutMs`, capped by the remaining budget, plus the caller's abort. */
@@ -103,6 +154,10 @@ export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRe
     dispose: () => {
       clearTimeout(timer);
       bounds.abortSignal?.removeEventListener('abort', onAbort);
+    },
+    noteOutcome: (error?: unknown) => {
+      if (error !== undefined && requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
+      else noteServerReached(bounds.abortSignal);
     },
   };
 }

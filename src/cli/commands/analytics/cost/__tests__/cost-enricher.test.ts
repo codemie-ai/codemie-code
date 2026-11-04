@@ -1223,4 +1223,32 @@ describe('realDeps.loadAgentSessionFile', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('resolves the runtimeCheckpoint transcript of a record whose agentSessionFile is gone', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'cost-enricher-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const id = 'eddd66b2-0e73-4167-841c-9263207870ae';
+      const livePath = join(home, 'folder-b.jsonl');
+      writeFileSync(livePath, '');
+      writeFileSync(
+        join(home, 'sessions', `${id}.json`),
+        JSON.stringify({
+          correlation: { agentSessionFile: join(home, 'folder-a-gone.jsonl') },
+          runtimeCheckpoint: { transcriptPath: livePath },
+        })
+      );
+
+      expect(await realDeps.loadAgentSessionFile({ sessionId: id } as never)).toBe(livePath);
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

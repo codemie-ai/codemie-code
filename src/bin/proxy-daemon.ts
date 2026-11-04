@@ -18,6 +18,7 @@ import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
+import { daemonStartedAt } from '../cli/commands/proxy/daemon-manager.js';
 
 function readCliVersion(): string {
   try {
@@ -105,7 +106,8 @@ let currentState: Record<string, unknown> = {};
 
 async function persistState(patch: Record<string, unknown>): Promise<void> {
   currentState = { ...currentState, ...patch };
-  const tmp = stateFile + '.tmp';
+  // Per process: two daemons writing at once never rename each other's half-written file.
+  const tmp = `${stateFile}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(currentState, null, 2), 'utf-8');
   await rename(tmp, stateFile!);
 }
@@ -171,7 +173,6 @@ try {
     );
 
     config.triggerPoll = () => telemetryRuntime!.triggerPoll();
-    await telemetryRuntime.start();
   }
 
   const nowIso = new Date().toISOString();
@@ -188,10 +189,13 @@ try {
     telemetryMode,
     syncApiUrl: config.syncApiUrl,
     syncCodeMieUrl: config.syncCodeMieUrl,
-    startedAt: nowIso,
+    startedAt: daemonStartedAt(),
     health: 'ok',
     lastHealthyAt: nowIso,
   });
+
+  // After the state write: `spawnDaemon` reads the daemon as up while the runtime's first poll still runs.
+  await telemetryRuntime?.start();
 
   // Background self-healing watcher: deep-checks every 30s, restarts in-process
   // on the same pinned port, gives up (records unhealthy) after 3 failures or
