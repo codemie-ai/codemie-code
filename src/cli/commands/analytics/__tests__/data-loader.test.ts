@@ -186,6 +186,51 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions[0].agentSessionFile).toBe(agentSessionFile);
   });
 
+  it('takes runtimeCheckpoint.transcriptPath when the agentSessionFile is gone (a Desktop folder switch)', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const livePath = join(dir, 'folder-b-transcript.jsonl');
+    writeFileSync(livePath, '');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: join(dir, 'folder-a-gone.jsonl'), retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: livePath, lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(livePath);
+  });
+
+  it('keeps the agentSessionFile when the runtimeCheckpoint transcript is gone too', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const gone = join(dir, 'folder-a-gone.jsonl');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: gone, retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: join(dir, 'folder-b-gone.jsonl'), lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(gone);
+  });
+
   it('leaves agentSessionFile undefined when the session has no correlation', () => {
     const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
     writeCompletedSession(sessionId); // helper writes no correlation key

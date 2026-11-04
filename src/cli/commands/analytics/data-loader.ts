@@ -137,6 +137,22 @@ export interface RawSessionData {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * A record's transcript: `correlation.agentSessionFile`, or `runtimeCheckpoint.transcriptPath` when that file
+ * does not exist and this one does (a Claude Desktop session that switched folder).
+ */
+export function recordTranscriptPath(record: {
+  correlation?: { agentSessionFile?: string };
+  runtimeCheckpoint?: { transcriptPath?: string };
+}): string | undefined {
+  const agentSessionFile = record.correlation?.agentSessionFile;
+  const transcriptPath = record.runtimeCheckpoint?.transcriptPath;
+  if ((!agentSessionFile || !existsSync(agentSessionFile)) && transcriptPath && existsSync(transcriptPath)) {
+    return transcriptPath;
+  }
+  return agentSessionFile;
+}
+
 /** `--session <id>` matches the whole id, and a full UUID also matches its generations `<uuid>-<gen>`. */
 export function matchesSessionIdFilter(sessionId: string, filterId: string): boolean {
   return sessionId === filterId || (UUID_PATTERN.test(filterId) && sessionId.startsWith(`${filterId}-`));
@@ -285,7 +301,7 @@ export class MetricsDataLoader {
         // Metrics file doesn't exist or can't be read - that's okay, session might have no metrics yet
       }
 
-      return { sessionId, startEvent, endEvent, deltas, agentSessionFile: sessionMetadata.correlation?.agentSessionFile };
+      return { sessionId, startEvent, endEvent, deltas, agentSessionFile: recordTranscriptPath(sessionMetadata) };
     } catch {
       return null;
     }

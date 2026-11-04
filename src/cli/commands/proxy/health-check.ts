@@ -32,7 +32,7 @@ export interface ProxyHealthOptions {
   host?: string;
 }
 
-const SHALLOW_TIMEOUT_MS = 1500;
+export const SHALLOW_TIMEOUT_MS = 1500;
 const DEEP_TIMEOUT_MS = 6000;
 
 async function fetchWithTimeout(
@@ -49,6 +49,14 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * The shallow liveness request: `GET /health` of the proxy on `port`, localhost by default. Rejects when nothing
+ * answers in time; the same deadline aborts a body read that stalls after the headers.
+ */
+export function fetchProxyHealth(port: number, host = '127.0.0.1'): Promise<Response> {
+  return fetch(`http://${host}:${port}/health`, { method: 'GET', signal: AbortSignal.timeout(SHALLOW_TIMEOUT_MS) });
+}
+
 export async function checkProxyHealth(
   opts: ProxyHealthOptions
 ): Promise<ProxyHealthResult> {
@@ -57,7 +65,7 @@ export async function checkProxyHealth(
 
   // 1. Shallow liveness
   try {
-    const res = await fetchWithTimeout(`${base}/health`, { method: 'GET' }, SHALLOW_TIMEOUT_MS);
+    const res = await fetchProxyHealth(opts.port, host);
     if (!res.ok) {
       return {
         healthy: false,
