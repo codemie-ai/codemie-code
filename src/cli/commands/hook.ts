@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
-import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
+import { ensureOtlpProxy } from './proxy/otlp-cold-start.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
