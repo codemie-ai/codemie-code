@@ -14,6 +14,7 @@ const claude = vi.hoisted(() => ({
   env: {} as Record<string, unknown>,
   apiKeyHelper: false,
 }));
+const pin = vi.hoisted(() => ({ project: undefined as string | undefined }));
 
 vi.mock('@/utils/processes.js', async (orig) => ({
   ...(await orig<typeof import('@/utils/processes.js')>()),
@@ -27,7 +28,7 @@ vi.mock('../../hook-credentials.js', () => ({
   }),
 }));
 vi.mock('../../session-project-pin.js', () => ({
-  readPinnedProjectName: async () => undefined,
+  readPinnedProjectName: async () => pin.project,
   pinProjectName: async (_s: string, p: string) => p,
 }));
 vi.mock('@/agents/plugins/claude-code-otlp/event-fields/claude-settings-env.js', () => ({
@@ -100,6 +101,7 @@ beforeEach(() => {
   claude.org = 'Gmail Personal';
   claude.env = {};
   claude.apiKeyHelper = false;
+  pin.project = undefined;
   writeGlobal({
     version: 2,
     activeProfile: 'work',
@@ -179,6 +181,39 @@ describe('finding 1: native and managed select the project the same way', () => 
     const { record, headers } = await frozen('m1');
     expect(record).toMatchObject({ launch_mode: 'managed', project: 'work-proj', project_source: 'profile' });
     expect(destination(headers, registered)).toBe('work-proj');
+  });
+});
+
+describe('project source for native env and pinned values', () => {
+  describe.each(['env', 'pin'] as const)('%s project', (source) => {
+    function supply(project: string): void {
+      if (source === 'env') process.env.CODEMIE_PROJECT = project;
+      else pin.project = project;
+    }
+
+    it('without a configured project keeps source none and repository routing', async () => {
+      writeGlobal({ version: 2, activeProfile: 'work', profiles: { work: profile('work', WORK_GW) } });
+      supply('external-proj');
+      const { record, headers } = await frozen('external');
+      expect(record).toMatchObject({ project: 'external-proj', project_source: 'none' });
+      expect(headers['X-CodeMie-Project']).toBe('external-proj');
+      expect(headers['X-CodeMie-Project-Source']).toBeUndefined();
+      expect(destination(headers, { 'git.example.com/org/repo': 'repo-proj' })).toBe('repo-proj');
+    });
+
+    it('different from the configured project keeps source none', async () => {
+      supply('external-proj');
+      const { record, headers } = await frozen('different');
+      expect(record).toMatchObject({ project: 'external-proj', project_source: 'none' });
+      expect(destination(headers)).toBe('DEFAULT (folder not linked)');
+    });
+
+    it('matching the selected profile own project is a profile source without a workspace', async () => {
+      supply('work-proj');
+      const { record, headers } = await frozen('matching');
+      expect(record).toMatchObject({ project: 'work-proj', project_source: 'profile' });
+      expect(destination(headers, { 'git.example.com/org/repo': 'repo-proj' })).toBe('work-proj');
+    });
   });
 });
 
