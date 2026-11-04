@@ -64,7 +64,12 @@ export async function startAwaitingLoginListener(opts: AwaitingLoginOptions): Pr
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.statusCode = 200;
-      res.end(JSON.stringify({ status: 'ok' }));
+      const address = server.address();
+      res.end(JSON.stringify({
+        status: 'ok',
+        port: typeof address === 'object' && address ? address.port : opts.port,
+        pid: process.pid,
+      }));
       return;
     }
     res.statusCode = 401;

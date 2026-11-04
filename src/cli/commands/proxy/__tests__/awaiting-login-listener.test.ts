@@ -34,9 +34,11 @@ describe('awaiting-login listener', () => {
   });
 
   it('keeps /health alive like the real proxy so the watcher sees a live socket', async () => {
-    const { url } = await start();
+    const { url, port } = await start();
 
-    expect((await fetch(`${url}/health`)).status).toBe(200);
+    const health = await fetch(`${url}/health`);
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ status: 'ok', port, pid: process.pid });
     // ...while the authenticated deep probe is rejected, which the watcher reads as "unauthorized".
     expect((await fetch(`${url}/v1/llm_models?include_all=true`)).status).toBe(401);
   });

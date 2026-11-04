@@ -219,7 +219,6 @@ try {
     config.triggerPoll = () => telemetryRuntime!.triggerPoll();
   }
 
-  const nowIso = new Date().toISOString();
   await persistState({
     pid: process.pid,
     port: actualPort,
