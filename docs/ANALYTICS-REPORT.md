@@ -364,8 +364,8 @@ Export flags:
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
-  --from <YYYY-MM-DD>       Start date (inclusive)
-  --to   <YYYY-MM-DD>       End date (inclusive)
+  --from <YYYY-MM-DD>       Start date (inclusive, UTC calendar day)
+  --to   <YYYY-MM-DD>       End date (inclusive: the whole UTC day, through 23:59:59.999Z)
   --project <pattern>       Filter by project name (basename, partial, or full path)
   --agent <name>            Filter by agent: claude, gemini, codex, etc.
   --branch <name>           Filter by git branch
