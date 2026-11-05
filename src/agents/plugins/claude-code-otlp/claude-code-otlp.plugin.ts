@@ -39,6 +39,7 @@ import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code
 import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
 import { readPromptHookTimeoutSeconds } from './claude-code-otlp.allowlist.js';
 import { evaluateClaudeAnalyticsGate } from './claude-code-otlp.gate.js';
+import { readClaudeAnalyticsPreferences } from './claude-code-otlp.preferences.js';
 import {
   buildSessionEnvEvent,
   openMainTranscriptPass,
@@ -53,7 +54,7 @@ import {
 import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
 import { ProviderRegistry } from '@/providers/index.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
-import { oauthAccountPays, routedViaCodemie } from '@/agents/core/evidence/routing.js';
+import { fundingRoute, oauthAccountPays, routedViaCodemie } from '@/agents/core/evidence/routing.js';
 import { loadHookConfig } from '@/agents/core/event-fields/identity-fields.js';
 import { readClaudeOrganization } from './event-fields/claude-org.js';
 import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
@@ -113,10 +114,14 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       codemieProvider,
       profileBaseUrl: config?.baseUrl,
     };
+    const routing = routedViaCodemie(routingInput);
+    const prefs = await readClaudeAnalyticsPreferences();
     const evidenceInputs: EvidenceInputs = {
       // The saved OAuth login names the payer only when the session really authenticates with it.
       organization: oauthAccountPays({ ...routingInput, apiKeyHelper: settings.apiKeyHelper }) ? await readClaudeOrganization() : undefined,
-      routing: routedViaCodemie(routingInput),
+      routing,
+      funding_route: fundingRoute({ ...routingInput, apiKeyHelper: settings.apiKeyHelper }, routing),
+      collection_generation: prefs.kind === 'ok' ? prefs.value.collectionGeneration : 0,
     };
     return {
       cwd: hookInput.cwd,

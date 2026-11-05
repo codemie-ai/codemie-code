@@ -88,7 +88,11 @@ function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsStore {
       label: 'Claude Code',
       path: getClaudeAnalyticsPreferencesPath,
       async update(mutate) {
-        await updateClaudeAnalyticsPreferences(async (current) => ({ ...current, ...(await mutate(current)) }));
+        await updateClaudeAnalyticsPreferences(async (current) => {
+          const next = { ...current, ...(await mutate(current)) };
+          // Every explicit enable/disable starts a new collection generation, in the same atomic write.
+          return next.enabled === current.enabled ? next : { ...next, collectionGeneration: current.collectionGeneration + 1 };
+        });
       },
     };
   }

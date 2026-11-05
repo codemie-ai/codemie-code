@@ -4,6 +4,7 @@ import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
+import type { FundingRoute } from './routing.js';
 import { parseProjectBinding, type ProjectBindingState } from '@/utils/project-binding.js';
 import {
   evidenceRecordIdleDays,
@@ -32,6 +33,12 @@ export interface EvidenceFields {
   api_identity: string;
   owner_hash: string;
   profile?: string;
+  /** New publication contract only: absent = a session recorded before it existed (stays legacy, never upgraded). */
+  funding_route?: FundingRoute;
+  /** Frozen `collection_generation` at the first stamp; absent = 0. */
+  collection_generation?: number;
+  /** Frozen reference of the explicit work-consent entry that applied at the first stamp (no path); absent = no consent. */
+  consent_ref?: string;
   /** Local-only: how the launcher bound `project` (CODEMIE_PROJECT_BINDING); never sent to the backend. */
   projectBinding?: ProjectBindingState;
 }
@@ -123,6 +130,10 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (typeof r.routed_via_codemie !== 'boolean') return undefined;
   if (r.routing_proof !== 'proven' && r.routing_proof !== 'unproven') return undefined;
   if (!['linked_folder', 'profile', 'none'].includes(r.project_source as string)) return undefined;
+  if (r.funding_route !== undefined && !['api_based', 'subscription', 'unknown'].includes(r.funding_route as string)) return undefined;
+  if (r.collection_generation !== undefined && !(Number.isSafeInteger(r.collection_generation) && (r.collection_generation as number) >= 0)) return undefined;
+  if (r.consent_ref !== undefined && !(typeof r.consent_ref === 'string' && /^[0-9a-f]{16}$/.test(r.consent_ref))) return undefined;
+  if (r.consent_ref !== undefined && r.funding_route === undefined) return undefined; // consent exists only on the new contract
   if (r.projectBinding !== undefined && !parseProjectBinding(r.projectBinding)) return undefined;
   if (typeof r.created !== 'number' || typeof r.last_used !== 'number') return undefined;
   if (limitViolation(r, raw)) return undefined;

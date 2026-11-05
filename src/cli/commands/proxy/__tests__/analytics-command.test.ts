@@ -57,6 +57,26 @@ describe('createProxyAnalyticsCommand', () => {
     expect(await readPreferences()).toMatchObject({ enabled: false });
   });
 
+  it('every real enable/disable change bumps collectionGeneration, a no-op does not', async () => {
+    await runCommand(['disable']);
+    expect(await readPreferences()).toMatchObject({ enabled: false, collectionGeneration: 1 });
+    await runCommand(['disable']);
+    expect(await readPreferences()).toMatchObject({ collectionGeneration: 1 });
+    await runCommand(['enable']);
+    expect(await readPreferences()).toMatchObject({ enabled: true, collectionGeneration: 2 });
+    await runCommand(['exclude', '/work/a']);
+    expect(await readPreferences()).toMatchObject({ collectionGeneration: 2 });
+  });
+
+  it('a failed preferences write fails closed: the command errors and nothing is changed', async () => {
+    const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(getClaudeAnalyticsPreferencesPath(), { recursive: true }); // a directory where the file belongs
+    await runCommand(['disable']);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+  });
+
   it('enable sets enabled back to true after disable', async () => {
     await runCommand(['disable']);
     await runCommand(['enable']);
