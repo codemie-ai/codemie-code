@@ -1,0 +1,507 @@
+/* ============================================================
+   DECK
+   A 1600 × 900 stage that style-guide/js/deck.js scales to the window, one slide at a time.
+   scripts/inject-css.mjs inlines this file, with Geist and Geist Mono, only into pages with slides.
+   Sizes are stage pixels; inside .slide-body they are em, so deck.js can grow a sparse body and
+   shrink a crowded one. references/deck.md is the catalogue of what follows: keep the two in step.
+   ============================================================ */
+html.cm-deck {
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+:root {
+  --ink: var(--color-text-primary);
+  --ink-2: color-mix(in srgb, var(--color-text-muted) 72%, var(--color-text-primary));
+  --ink-3: var(--color-text-muted);
+  --ink-4: color-mix(in srgb, var(--color-text-muted) 64%, var(--color-bg-card));
+  --hair: var(--color-border-structural);
+  --wash: #1C1D20;
+  --deep: 72%; /* how much of a colour a solid fill with white text keeps; the rest is black */
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 22px rgba(0, 0, 0, 0.28);
+  --brand: linear-gradient(90deg, var(--color-purple), var(--color-info) 55%, var(--color-cyan));
+  --person: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4.5 21c.6-3.8 3.6-6 7.5-6s6.9 2.2 7.5 6'/%3E%3C/svg%3E");
+}
+html.light {
+  --wash: #F6F7F9;
+  --deep: 86%;
+  --lift: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 18px rgba(16, 24, 40, 0.06);
+}
+
+/* Colour names a part and keeps that meaning through the deck: c1 blue, c2 purple, c3 green, c4 cyan,
+   c5 amber, c0 grey for "other"; ok, warn and bad are status. A class sets --k for what is inside it. */
+.c0 { --k: var(--color-chart-other); }
+.c1 { --k: var(--color-info); }
+.c2 { --k: var(--color-purple); }
+.c3 { --k: var(--color-success); }
+.c4 { --k: var(--color-cyan); }
+.c5 { --k: var(--color-warning); }
+.ok { --k: var(--color-success); }
+.warn { --k: var(--color-warning); }
+.bad { --k: var(--color-error); }
+.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad {
+  --k-tint: color-mix(in srgb, var(--k) 9%, var(--color-bg-card));
+  --k-line: color-mix(in srgb, var(--k) 36%, var(--color-bg-card));
+  --k-text: color-mix(in srgb, var(--k) 80%, var(--color-text-primary));
+}
+
+/* --- Frame --- */
+html.cm-deck, html.cm-deck body { height: 100%; }
+html.cm-deck body { margin: 0; padding: 0; overflow: hidden; background: var(--color-bg-page); -webkit-font-smoothing: antialiased; }
+.deck { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+.deck-stage {
+  position: relative;
+  flex: none;
+  width: 1600px;
+  height: 900px;
+  transform: scale(var(--deck-scale, 1));
+  transform-origin: center;
+  background: var(--color-bg-card);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent), 0 24px 60px rgba(0, 0, 0, 0.12);
+}
+.deck-stage::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: var(--brand); z-index: 5; }
+:fullscreen .deck-stage { border-radius: 0; box-shadow: none; }
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 62px 88px 78px;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.35s ease, visibility 0s linear 0.35s;
+}
+.slide.is-active { visibility: visible; opacity: 1; transition: opacity 0.35s ease; }
+.cm-snap { visibility: visible !important; opacity: 1 !important; }
+.deck-static .slide { transition: none; }
+@media (prefers-reduced-motion: reduce) { .slide, .slide.is-active { transition: none; } }
+/* Motion: the stage shows once deck.js has sized every slide; then a slide's parts (.rise, in
+   order --i) come up as it opens, and drawn connectors flow. Still for ?static, reduced motion and print. */
+html.cm-deck:not(.deck-ready) .deck-stage { opacity: 0; }
+@keyframes deck-rise { from { opacity: 0; transform: translateY(14px); } }
+@keyframes deck-flow { to { stroke-dashoffset: -24; } }
+.deck-ready .slide.is-active .rise { animation: deck-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(0.06s + var(--i, 0) * 0.07s); }
+.deck-ready .slide.is-active :is(.hub-wires path, .dg .ln.dash) { animation: deck-flow 1.2s linear infinite; }
+.deck-static .slide :is(.rise, .hub-wires path, .dg .ln.dash) { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .slide :is(.rise, .hub-wires path, .dg .ln.dash) { animation: none !important; } }
+@media print { .slide :is(.rise, .hub-wires path, .dg .ln.dash) { animation: none !important; } }
+
+/* These resets outrank a single class, so a class that styles a p on a slide is written .slide .x. */
+.slide :is(h1, h2, h3, h4, p, ul, ol, dl, dd, figure) { margin: 0; }
+.slide p { font-size: inherit; line-height: inherit; color: inherit; }
+.slide :is(b, strong) { font-weight: 650; color: var(--ink); }
+.slide :is(b, strong, span, em):is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { color: var(--k-text); }
+
+/* --- Type --- */
+.slide h2 { font-size: 48px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; color: var(--ink); max-width: 1420px; text-wrap: balance; }
+.slide h1 { font-size: 74px; line-height: 1.03; font-weight: 750; letter-spacing: -0.035em; color: var(--ink); max-width: 1100px; text-wrap: balance; }
+/* A level or a stage named before the title: <h2><span class="chip c3">Level 3</span>Close the loop…</h2> */
+.slide :is(h1, h2) > .chip:first-child { display: inline-block; margin-right: 0.36em; padding: 0.14em 0.42em 0.17em; border: 0; border-radius: 0.24em; background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); color: #FFFFFF; font: 700 0.54em/1.15 var(--font-sans); letter-spacing: -0.005em; vertical-align: 0.17em; }
+.slide .lede { margin-top: 16px; font-size: 22px; line-height: 1.5; color: var(--ink-2); max-width: 1180px; }
+.slide .muted { color: var(--ink-3); }
+.slide-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1em;
+  font-size: 20px;
+  line-height: 1.45;
+}
+/* .mid centres a body that fills less than the slide; a .fine source line stays at the bottom. */
+.slide-body.mid > :first-child { margin-top: auto; }
+.slide-body.mid > :last-child:not(.fine) { margin-bottom: auto; }
+.slide-body.mid > .split { align-items: center; }
+/* The slide's part (data-section) over its title, after a dot in the slide's colour. */
+.slide .deck-section { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 16px; font-weight: 600; color: var(--ink-2); }
+.deck-section::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--k, var(--color-info)); }
+.deck-foot { position: absolute; left: 88px; right: 88px; bottom: 26px; display: flex; justify-content: space-between; align-items: center; gap: 24px; font-size: 14px; color: var(--ink-3); }
+.deck-foot b { font-weight: 600; color: var(--ink-2); }
+.deck-foot .pg { font-variant-numeric: tabular-nums; }
+/* Small print on the slide: the source, the sample, what is illustrative. Last in the body, it sits at the bottom. */
+.slide .fine { font-size: 15px; line-height: 1.45; color: var(--ink-3); }
+.slide-body > .fine:last-child { margin-top: auto; }
+/* A label over a group of parts, set in mono capitals: <p class="cap">One ticket, from arrival to reply</p>. */
+.slide .cap { display: block; font: 600 max(14px, 0.66em)/1.35 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.slide .cap:is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { color: var(--k-text); }
+
+/* --- Slide types --- */
+.slide.cover, .slide.statement, .slide.close { justify-content: center; }
+.cover .context { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; font-size: 16px; font-weight: 600; color: var(--ink-2); }
+.cover .context::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--k, var(--color-info)); }
+.cover .lede { margin-top: 26px; font-size: 25px; line-height: 1.45; max-width: 760px; text-wrap: balance; }
+.cover ul { margin-top: 44px; gap: 10px; font-size: 21px; color: var(--ink); }
+.cover ul > li { padding-left: 24px; }
+.cover ul > li::before { top: 0.5em; width: 10px; height: 10px; border-radius: 3px; }
+.cover ul > li:nth-child(3n+1)::before { background: var(--color-info); }
+.cover ul > li:nth-child(3n+2)::before { background: var(--color-purple); }
+.cover ul > li:nth-child(3n)::before { background: var(--color-success); }
+/* The cover's picture: the deck's model or its key number, down the right side. */
+.cover:has(.cover-art) { padding-right: 782px; }
+.cover-art { position: absolute; top: 62px; right: 88px; bottom: 62px; width: 630px; display: flex; flex-direction: column; justify-content: center; gap: 20px; font-size: 20px; line-height: 1.4; }
+.cover-art > :is(svg, img) { width: 100%; height: auto; max-height: 100%; }
+.cover-art > .ladder { flex: 1; }
+.slide.statement h2 { font-size: 64px; line-height: 1.08; max-width: 1280px; }
+/* The close: two or three lines of a few words, each on a coloured verb, under the deck's name. */
+.slide.close {
+  align-items: flex-start;
+  gap: 6px;
+  background:
+    radial-gradient(900px 520px at 90% 10%, color-mix(in srgb, var(--color-purple) 10%, transparent), transparent 70%),
+    radial-gradient(700px 500px at 5% 95%, color-mix(in srgb, var(--color-success) 8%, transparent), transparent 70%);
+}
+.slide.close > p:not(.deck-section) { font-size: 68px; line-height: 1.08; font-weight: 750; letter-spacing: -0.035em; }
+.slide.close > .deck-section { margin-bottom: 14px; }
+
+/* --- Building blocks, in em of .slide-body --- */
+.slide ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.4em; }
+.slide ul > li { position: relative; padding-left: 1.05em; }
+.slide ul > li::before { content: ""; position: absolute; left: 0; top: 0.58em; width: 0.36em; height: 0.36em; border-radius: 50%; background: var(--k, var(--color-info)); }
+
+.cols-2, .cols-3, .cols-4 { display: grid; gap: 22px; align-items: stretch; }
+.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* Then and now: an arrow in the gap between the panes. */
+.flow { column-gap: 60px; }
+.flow > * { position: relative; }
+.flow > :not(:last-child)::after { content: ""; position: absolute; top: 50%; right: -44px; width: 28px; height: 28px; transform: translateY(-50%); background: var(--ink-4); clip-path: polygon(0 36%, 52% 36%, 52% 12%, 100% 50%, 52% 88%, 52% 64%, 0 64%); }
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 5fr 7fr; gap: 56px; align-items: start; }
+.split.rev { grid-template-columns: 7fr 5fr; }
+.split.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.split.aside { grid-template-columns: minmax(0, 1fr) 420px; }
+.split > * { min-width: 0; }
+.split > .chart-frame { align-self: stretch; }
+.slide :is(.split, .cols-2, .cols-3, .cols-4, .kpis).mid { align-items: center; }
+
+/* A card: white with a hairline; a colour class gives it a coloured top edge and title. */
+.pane { position: relative; display: flex; flex-direction: column; gap: 0.5em; padding: 1.05em 1.2em 1.15em; background: var(--color-bg-card); border: 1px solid var(--hair); border-radius: 16px; box-shadow: var(--lift); }
+.pane:is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { border-top: 4px solid var(--k); }
+.pane .n { font: 600 max(14px, 0.66em)/1.35 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--k-text, var(--ink-3)); }
+.pane h3 { font-size: 1.15em; line-height: 1.25; font-weight: 700; color: var(--ink); }
+.pane:is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) h3 { color: var(--k-text); }
+.pane p { color: var(--ink-2); }
+.pane .foot { margin-top: auto; padding-top: 0.7em; border-top: 1px solid var(--hair); font-size: 0.82em; color: var(--ink-3); }
+.slide .pane.fill { background: color-mix(in srgb, var(--k, var(--color-info)) 10%, var(--color-bg-card)); border-color: var(--k-line, var(--hair)); border-top-color: var(--k, var(--color-info)); }
+
+.num-xl { font-size: 4.4em; line-height: 0.95; font-weight: 750; letter-spacing: -0.04em; }
+.num-l { font-size: 2.8em; line-height: 1; font-weight: 700; letter-spacing: -0.035em; }
+.num-m { font-size: 1.7em; line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
+/* Two to four numbers side by side, each on a tile: the value in mono, its base under it. */
+.kpis { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.8em; }
+.kpis.col { grid-auto-flow: row; grid-auto-columns: auto; }
+.kpis > div { display: flex; flex-direction: column; gap: 0.4em; padding: 0.9em 1.1em 1em; background: var(--wash); border: 1px solid var(--hair); border-radius: 14px; }
+.kpis b { font-family: var(--font-mono); font-weight: 600; letter-spacing: -0.03em; color: var(--k-text, var(--ink)); }
+.kpis .num-l { font-size: 2.3em; }
+.kpis span { font-size: 0.85em; line-height: 1.4; color: var(--ink-2); }
+/* The one number a slide is about: a dark card in both themes. */
+.focus { display: flex; flex-direction: column; gap: 0.4em; padding: 1.2em 1.4em 1.3em; background: radial-gradient(420px 220px at 100% 0%, rgba(139, 92, 246, 0.45), transparent 70%), linear-gradient(150deg, #191B24, #23253A); color: #FFFFFF; border-radius: 20px; box-shadow: 0 18px 44px rgba(20, 20, 40, 0.28); }
+.focus :is(.num-xl, .num-l, .num-m, b, h3) { color: #FFFFFF; }
+.focus .num-xl { font-size: 3.8em; }
+.focus > span:first-child, .focus h3 { font-size: max(15px, 0.75em); line-height: 1.35; font-weight: 600; color: rgba(255, 255, 255, 0.72); }
+.focus p, .focus li { font-size: max(15px, 0.8em); color: rgba(255, 255, 255, 0.78); }
+.slide .focus .fine { color: rgba(255, 255, 255, 0.55); }
+.focus ul > li::before { background: rgba(255, 255, 255, 0.7); }
+
+.callouts { list-style: none; padding: 0.3em 0 0; counter-reset: callout; display: flex; flex-direction: column; gap: 1.1em; }
+.callouts > li { counter-increment: callout; position: relative; padding-left: 2.2em; }
+.callouts > li::before {
+  content: counter(callout);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2em;
+  height: 2em;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000);
+  color: #FFFFFF;
+  font: 700 0.75em/1 var(--font-sans);
+}
+.callouts b { display: block; font-weight: 650; line-height: 1.3; }
+.callouts > li > span { display: block; margin-top: 0.25em; font-size: 0.83em; line-height: 1.45; color: var(--ink-2); }
+
+.steps { list-style: none; padding: 0; counter-reset: step; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 26px; }
+.steps::before { content: ""; position: absolute; left: 1em; right: 0; top: calc(1em - 1px); border-top: 2px solid var(--k-line, var(--hair)); }
+.steps > li { counter-increment: step; position: relative; margin-top: 3em; padding: 0.85em 1em 1em; background: var(--color-bg-card); border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--lift); color: var(--ink-2); }
+.steps > li.fill { background: color-mix(in srgb, var(--k, var(--color-info)) 9%, var(--color-bg-card)); border-color: var(--k-line, var(--hair)); }
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -3.35em;
+  width: 2.2em;
+  height: 2.2em;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-bg-card);
+  border: 2px solid var(--k, var(--color-info));
+  color: var(--k-text, var(--color-info));
+  font: 600 0.9em/1 var(--font-mono);
+}
+.steps b { display: block; margin-bottom: 0.25em; font-size: 1.05em; color: var(--ink); }
+.steps > .fill::before { background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); border-color: transparent; color: #FFFFFF; }
+
+/* --- Labels --- */
+/* A unit or a status beside a part: <span class="chip c1">tokens</span>. */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--k-line, var(--hair)); background: var(--k-tint, var(--wash)); color: var(--k-text, var(--ink-2)); font: 600 14px/1.2 var(--font-mono); white-space: nowrap; vertical-align: middle; }
+/* A number in a drawing that a numbered list beside it explains. */
+.mk { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); color: #FFFFFF; font: 700 15px/1 var(--font-sans); font-style: normal; vertical-align: middle; }
+.slide .legend { display: flex; flex-wrap: wrap; gap: 0.4em 1.4em; font-size: max(15px, 0.78em); color: var(--ink-2); }
+.slide .legend > :is(span, b, em, i) { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; font-style: normal; color: var(--ink-2); }
+.legend > ::before { content: ""; flex: none; width: 0.85em; height: 0.85em; border-radius: 3px; background: var(--k, var(--ink-3)); }
+.legend > .who::before { border-radius: 0; background: var(--ink-2); -webkit-mask: var(--person) center / contain no-repeat; mask: var(--person) center / contain no-repeat; }
+/* A drawing of a real thing for a row or a part: <i class="ico" data-i="server"></i>; deck.js draws it. */
+.ico { display: inline-grid; place-items: center; flex: none; width: 2.3em; height: 2.3em; border-radius: 0.6em; background: color-mix(in srgb, var(--k, var(--color-info)) 11%, var(--color-bg-card)); color: var(--k, var(--color-info)); font-style: normal; }
+.ico > svg { width: 52%; height: 52%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* --- Drawings in HTML --- */
+/* Rows: one thing a line, with its icon, its name and detail, and its unit or value. */
+.rows { display: flex; flex-direction: column; gap: 0.6em; }
+.rows > * { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.8em; padding: 0.6em 0.8em; background: var(--color-bg-card); border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--lift); }
+/* A p.cap first in the rows labels them; it is not a row. */
+.slide .rows > .cap { display: block; padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; }
+.rows > :not(:has(> .ico)) { grid-template-columns: minmax(0, 1fr) auto; }
+.rows > * > b { font-size: 0.88em; font-weight: 650; line-height: 1.25; }
+.rows > * > b small { display: block; margin-top: 0.15em; font-size: 0.84em; font-weight: 400; color: var(--ink-3); }
+.rows > * > em { font: 600 0.92em/1.2 var(--font-mono); font-style: normal; color: var(--ink); white-space: nowrap; }
+.slide .rows > .fill { background: color-mix(in srgb, var(--k, var(--color-info)) 10%, var(--color-bg-card)); border-color: var(--k-line, var(--hair)); }
+
+/* A chain: the real parts a piece of work passes through, as cards with a coloured top edge, an
+   arrow between two parts. Inside a part: its name, a small detail, and an em value in mono. An i
+   between parts is a labelled arrow; .who is a person's step; .down runs top to bottom. */
+.chain { --flow: var(--k, var(--color-info)); display: flex; align-items: stretch; }
+.chain > :not(i) {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  min-height: 4.4em;
+  padding: 0.7em 0.85em 0.8em;
+  background: var(--color-bg-card);
+  border: 1px solid var(--hair);
+  border-top: 4px solid var(--k, var(--color-info));
+  border-radius: 10px;
+  box-shadow: var(--lift);
+  font-size: 0.95em;
+  line-height: 1.25;
+  font-weight: 650;
+  color: var(--k-text, var(--ink));
+  text-align: left;
+}
+.chain > :not(i) small { display: block; margin-top: 0.2em; font-size: max(14px, 0.74em); font-weight: 400; line-height: 1.4; color: var(--ink-3); }
+.chain > :not(i) em { margin-top: auto; padding-top: 0.45em; font: 600 1.35em/1.1 var(--font-mono); font-style: normal; letter-spacing: -0.02em; color: var(--k-text, var(--color-info)); }
+.chain > :not(i) + :not(i) { margin-left: 2.3em; }
+.chain > :not(i) + :not(i)::after { content: ""; position: absolute; top: 50%; right: calc(100% + 0.55em); width: 1.2em; height: 1.2em; transform: translateY(-50%); background: var(--flow); clip-path: polygon(0 36%, 52% 36%, 52% 12%, 100% 50%, 52% 88%, 52% 64%, 0 64%); }
+.chain > i { position: relative; flex: 0 1 auto; align-self: center; min-width: 4.5em; max-width: 9em; margin: 0 0.4em; padding: 0 0.9em 0.9em 0.2em; font-size: max(14px, 0.7em); font-style: normal; font-weight: 500; line-height: 1.25; color: var(--ink-3); text-align: center; }
+.chain > i::before { content: ""; position: absolute; left: 0; right: 0.5em; bottom: 0; border-top: 2px dashed var(--flow); }
+.chain > i::after { content: ""; position: absolute; right: 0; bottom: calc(1px - 0.35em); width: 0.7em; height: 0.7em; background: var(--flow); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.chain > .who { padding-right: 2em; }
+.chain > .who::before { content: ""; position: absolute; top: 0.7em; right: 0.7em; width: 0.95em; height: 0.95em; background: var(--k-text, var(--ink-3)); -webkit-mask: var(--person) center / contain no-repeat; mask: var(--person) center / contain no-repeat; }
+.slide .chain > .fill { background: color-mix(in srgb, var(--k, var(--color-info)) 11%, var(--color-bg-card)); border-color: var(--k-line, var(--hair)); border-top-color: var(--k, var(--color-info)); }
+.chain.down { flex-direction: column; align-items: stretch; }
+.chain.down > :not(i) { flex: none; min-height: 0; }
+.chain.down > :not(i) + :not(i) { margin: 1.8em 0 0; }
+.chain.down > :not(i) + :not(i)::after { top: auto; right: auto; left: 50%; bottom: calc(100% + 0.3em); transform: translateX(-50%) rotate(90deg); }
+.chain.down > i { align-self: stretch; max-width: none; margin: 0.3em 0; padding: 0.35em 0 0.6em 1.5em; text-align: left; }
+.chain.down > i::before { left: 0.5em; right: auto; top: 0; bottom: 0.55em; border-top: 0; border-left: 2px dashed var(--flow); }
+.chain.down > i::after { left: calc(0.5em - 0.3em); right: auto; bottom: 0; width: 0.7em; height: 0.6em; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+
+/* A zone groups the parts one team or system owns, on a band of its colour; .bound is a boundary
+   (a sandbox, a client's network, a harness), named by the chip that sits on its line. */
+.zone { position: relative; display: flex; flex-direction: column; gap: 0.75em; padding: 1em 1.1em 1.1em; border-radius: 20px; background: linear-gradient(180deg, color-mix(in srgb, var(--k, var(--color-info)) 7%, var(--color-bg-card)), var(--wash) 65%); border: 1px solid color-mix(in srgb, var(--k, var(--color-info)) 22%, var(--hair)); --gap-bg: var(--wash); --loop-gap: 0.75em; }
+.zone > header { display: flex; justify-content: space-between; align-items: baseline; gap: 1em; }
+.zone > header > :first-child { font-size: 1em; font-weight: 700; color: var(--k-text, var(--ink)); }
+.zone > header > :not(:first-child) { font: 600 max(14px, 0.64em)/1.3 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.zone > p { font-size: 0.9em; color: var(--ink-2); }
+.zone.bound { background: transparent; border: 2px dashed var(--k-line, var(--ink-4)); padding-top: 1.5em; --gap-bg: var(--color-bg-card); }
+.zone.bound > .chip:first-child { position: absolute; top: -14px; left: 20px; }
+/* A return path under a chain, from its right end back to its left: a rescan, a retry, a review
+   that sends work back. --from and --to inset its ends. */
+.loop { position: relative; height: 30px; margin: calc(2px - var(--loop-gap, 1.1em)) var(--to, 8%) 0.9em var(--from, 8%); border: 2px dashed var(--k, var(--ink-4)); border-top: 0; border-radius: 0 0 14px 14px; }
+.loop::before { content: ""; position: absolute; left: -7px; top: -9px; border: 6px solid transparent; border-top: 0; border-bottom: 10px solid var(--k, var(--ink-4)); }
+.loop > span { position: absolute; left: 50%; bottom: 0; transform: translate(-50%, 50%); padding: 0 12px; background: var(--gap-bg, var(--color-bg-card)); font-size: max(14px, 0.76em); color: var(--ink-2); white-space: nowrap; }
+
+/* The layers of a system, top to bottom: each a band with its name on the left and its parts. */
+.layers { display: flex; flex-direction: column; gap: 10px; }
+.layers > * { display: flex; align-items: center; gap: 0.55em; padding: 0.6em 0.7em 0.6em 1.15em; border-radius: 18px; background: var(--wash); border: 1px solid var(--hair); }
+.layers > :is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { background: linear-gradient(90deg, color-mix(in srgb, var(--k) 10%, var(--color-bg-card)), var(--wash)); border-color: color-mix(in srgb, var(--k) 26%, var(--hair)); }
+.layers > * > b:first-child { flex: 0 0 11em; min-width: 0; line-height: 1.2; font-weight: 700; color: var(--k-text, var(--ink)); }
+.layers > * > b:first-child small { display: block; margin-top: 0.2em; font-size: max(14px, 0.76em); font-weight: 400; color: var(--ink-3); }
+.layers > * > :not(:first-child) { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; min-height: 2.6em; padding: 0.45em 0.8em; border-radius: 12px; background: var(--color-bg-card); border: 1px solid var(--hair); box-shadow: var(--lift); font-size: 0.9em; font-weight: 600; line-height: 1.22; text-align: center; color: var(--ink); }
+.layers > * > :not(:first-child) small { font-size: max(14px, 0.8em); font-weight: 400; color: var(--ink-3); }
+.slide .layers > * > .fill { background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); border-color: transparent; color: #FFFFFF; }
+.slide .layers > * > .fill small { color: rgba(255, 255, 255, 0.84); }
+
+/* Levels that build on each other, each step higher than the one before, each in its own colour
+   unless the ladder has one. */
+.ladder { flex: 1; min-height: 0; display: flex; align-items: flex-end; gap: 16px; }
+:where(.ladder > :nth-child(5n+1)) { --k: var(--color-info); }
+:where(.ladder > :nth-child(5n+2)) { --k: var(--color-purple); }
+:where(.ladder > :nth-child(5n+3)) { --k: var(--color-success); }
+:where(.ladder > :nth-child(5n+4)) { --k: var(--color-cyan); }
+:where(.ladder > :nth-child(5n)) { --k: var(--color-warning); }
+.ladder:is(.c0, .c1, .c2, .c3, .c4, .c5) > :not(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { --k: inherit; }
+.ladder > * { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3em; padding: 1em 1em 1.05em; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--k) 36%, var(--color-bg-card)); background: linear-gradient(180deg, color-mix(in srgb, var(--k) 15%, var(--color-bg-card)), var(--color-bg-card) 78%); font-size: 0.85em; line-height: 1.4; color: var(--ink-2); }
+.ladder > :nth-last-child(1) { min-height: 100%; }
+.ladder > :nth-last-child(2) { min-height: 84%; }
+.ladder > :nth-last-child(3) { min-height: 68%; }
+.ladder > :nth-last-child(4) { min-height: 53%; }
+.ladder > :nth-last-child(5) { min-height: 40%; }
+.ladder > :nth-last-child(n+6) { min-height: 28%; }
+.ladder > * > b:first-child { font: 600 1.6em/1 var(--font-mono); color: var(--k); }
+.ladder h3 { font-size: 1.12em; line-height: 1.2; font-weight: 700; color: var(--ink); }
+.ladder p { font-weight: 600; color: color-mix(in srgb, var(--k) 80%, var(--color-text-primary)); }
+.ladder p.foot { margin-top: auto; padding-top: 0.6em; border-top: 1px solid color-mix(in srgb, var(--k) 36%, var(--color-bg-card)); font-size: 0.86em; font-weight: 400; color: var(--ink-2); }
+.slide .ladder > .fill { background: color-mix(in srgb, var(--k) var(--deep), #000000); border-color: transparent; color: #FFFFFF; }
+.slide .ladder > .fill :is(b, h3, p) { color: #FFFFFF; }
+.slide .ladder > .fill p.foot { border-top-color: rgba(255, 255, 255, 0.4); color: rgba(255, 255, 255, 0.86); }
+
+/* --- Data without a chart library --- */
+/* Bars: label, bar, value; the bar's length is --v over the container's --max. They take the
+   part's colour; a fill row is the one the slide is about, and the others turn lighter. */
+.slide :is(.bars, .hbars).c0 { --k: var(--color-info); }
+.hbars { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 0.75em 1em; align-items: center; }
+.hbars > * { display: contents; }
+.hbars span { font-weight: 500; color: var(--ink); }
+.hbars i { display: block; height: 1.6em; width: calc(var(--v) / var(--max) * 100%); min-width: 4px; border-radius: 0 8px 8px 0; background: var(--k, var(--color-info)); }
+.hbars b { font: 600 1em var(--font-mono); text-align: right; color: var(--ink); }
+.hbars:has(> .fill) > :not(.fill) i { background: color-mix(in srgb, var(--k, var(--color-info)) 40%, var(--color-bg-card)); }
+.hbars > .fill b { color: var(--k-text, var(--color-info)); }
+/* Columns: the value above, the label below, the height --v over --max; --hi draws a range above
+   the bar (15–20). They fill the height they are given, --h at least. */
+.bars { flex: 1 1 auto; align-self: stretch; display: flex; min-height: var(--h, 260px); }
+.bars > * { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; text-align: center; }
+.bars > *::before, .bars > *::after { width: min(62%, 220px); }
+.bars > * > b { order: 0; margin-bottom: 0.3em; font: 600 1.15em/1.1 var(--font-mono); letter-spacing: -0.02em; color: var(--ink); }
+.bars > *::after { content: ""; order: 1; display: none; height: calc((var(--hi, 0) - var(--v)) / var(--max) * (100% - 4.4em)); border: 2px dashed color-mix(in srgb, var(--k, var(--color-info)) 45%, var(--color-bg-card)); border-bottom: 0; border-radius: 8px 8px 0 0; background: color-mix(in srgb, var(--k, var(--color-info)) 10%, var(--color-bg-card)); }
+.bars > [style*="--hi"]::after { display: block; }
+.bars > *::before { content: ""; order: 2; height: calc(var(--v) / var(--max) * (100% - 4.4em)); min-height: 3px; border-radius: 8px 8px 0 0; background: var(--k, var(--color-info)); }
+.bars > [style*="--hi"]::before { border-radius: 0; }
+.bars:has(> .fill) > :not(.fill)::before { background: color-mix(in srgb, var(--k, var(--color-info)) 40%, var(--color-bg-card)); }
+.bars > .fill > b { color: var(--k-text, var(--color-info)); }
+.bars > * > span { order: 3; align-self: stretch; min-height: 2.5em; padding: 0.5em 0.3em 0; border-top: 1px solid var(--ink-4); font-size: max(14px, 0.75em); line-height: 1.3; color: var(--ink-3); }
+/* One bar cut into parts by --v: a budget, a week's hours, a share. Each part holds its value in a
+   b and its name; parts take blue, purple, cyan and green in turn, a c0–c5 class colours one, and
+   .lo is a light part. */
+.stack { display: flex; gap: 3px; min-height: 4.6em; }
+:where(.stack > :nth-child(4n+1)) { --k: var(--color-info); }
+:where(.stack > :nth-child(4n+2)) { --k: var(--color-purple); }
+:where(.stack > :nth-child(4n+3)) { --k: var(--color-cyan); }
+:where(.stack > :nth-child(4n)) { --k: var(--color-success); }
+.stack > * { flex: var(--v, 1) 1 0; min-width: 8px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 0.05em; padding: 0.5em 0.8em; overflow: hidden; background: color-mix(in srgb, var(--k) var(--deep), #000000); color: #FFFFFF; font-size: 0.8em; font-weight: 500; font-style: normal; line-height: 1.25; }
+.stack > * > b { font: 600 1.35em/1.1 var(--font-mono); letter-spacing: -0.02em; color: inherit; }
+.stack > :first-child { border-radius: 12px 0 0 12px; }
+.stack > :last-child { border-radius: 0 12px 12px 0; }
+.stack > :only-child { border-radius: 12px; }
+.stack > .lo { background: var(--wash); box-shadow: inset 0 0 0 1px var(--hair); color: var(--ink-2); }
+/* One square per item; deck.js turns <i class="ok" data-n="27"></i> into 27 squares. */
+.waffle { display: grid; grid-template-columns: repeat(var(--cols, 10), 1.3em); gap: 0.26em; align-content: start; }
+.waffle > i { width: 1.3em; height: 1.3em; border-radius: 0.26em; background: var(--k, var(--color-info)); }
+/* Many into one: the sources on the left, a bracket, the total or the outcome on the right. */
+.into { display: grid; grid-template-columns: minmax(0, 1fr) 84px minmax(0, 0.85fr); align-items: center; }
+.into > :first-child { display: flex; flex-direction: column; gap: 0.5em; }
+.into > :first-child > * { display: flex; justify-content: space-between; align-items: center; gap: 0.8em; padding: 0.6em 0.9em; border: 1px solid var(--hair); border-radius: 12px; background: var(--color-bg-card); box-shadow: var(--lift); }
+.into > :first-child > * > b { flex: 1; }
+.into > :first-child > * > b small { display: block; font-size: max(14px, 0.76em); font-weight: 400; color: var(--ink-3); }
+.into > :first-child > * > span { font: 600 1em var(--font-mono); color: var(--ink); white-space: nowrap; }
+.into > i { align-self: stretch; position: relative; margin: 1.5em 34px 1.5em 0; border: 2px dashed var(--k, var(--color-info)); border-left: 0; border-radius: 0 20px 20px 0; }
+.into > i::before { content: ""; position: absolute; left: 100%; top: 50%; width: 22px; margin-top: -1px; border-top: 2px dashed var(--k, var(--color-info)); }
+.into > i::after { content: ""; position: absolute; left: calc(100% + 20px); top: 50%; width: 12px; height: 14px; transform: translateY(-50%); background: var(--k, var(--color-info)); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+/* A hub: input rows, the core (a pane or a focus), then output rows if any; a column may open on a
+   p.cap. deck.js draws one dashed connector per row, in the row's colour. */
+.hub { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr); align-items: center; column-gap: 84px; }
+.hub:not(:has(> :nth-child(3):not(.hub-wires))) { grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr); }
+.hub > * { position: relative; z-index: 1; min-width: 0; }
+.hub > :not(.pane, .focus, .rows, .hub-wires) { display: flex; flex-direction: column; gap: 0.6em; }
+.hub > .hub-wires { position: absolute; left: 0; top: 0; z-index: 0; overflow: visible; pointer-events: none; }
+.slide .pane.fill > .ico { background: var(--color-bg-card); }
+.hub-wires path { fill: none; stroke: var(--k, var(--color-info)); stroke-width: 2; stroke-dasharray: 6 6; stroke-linecap: round; opacity: 0.8; }
+/* A set of named things: languages, tools, teams. */
+.chips { display: flex; flex-wrap: wrap; gap: 0.5em; }
+.chips > * { display: inline-flex; align-items: center; gap: 0.45em; padding: 0.45em 0.9em; border-radius: 12px; border: 1px solid var(--hair); background: var(--color-bg-card); box-shadow: var(--lift); color: var(--ink); font-size: 0.95em; font-weight: 600; white-space: nowrap; }
+.chips > :is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { background: var(--k-tint); border-color: var(--k-line); color: var(--k-text); box-shadow: none; }
+.slide .chips > .fill { background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); border-color: transparent; color: #FFFFFF; }
+
+/* --- The ask: one row per decision, who makes it, by when --- */
+.decisions { list-style: none; padding: 0; counter-reset: decision; display: flex; flex-direction: column; }
+.decisions > li { counter-increment: decision; display: grid; grid-template-columns: 2.2em minmax(0, 1fr) 9.5em 8em; gap: 1em; align-items: center; padding: 0.85em 0; border-bottom: 1px solid var(--hair); }
+.decisions > li::before { content: counter(decision); width: 1.8em; height: 1.8em; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--k, var(--color-info)) var(--deep), #000000); color: #FFFFFF; font: 700 0.8em/1 var(--font-sans); }
+.decisions > li > b { font-size: 1.05em; line-height: 1.3; }
+.decisions > li > b small { display: block; margin-top: 0.2em; font-size: 0.8em; font-weight: 400; color: var(--ink-2); }
+.decisions > li > span { color: var(--ink-2); }
+.decisions > li > span:first-of-type { font-weight: 600; color: var(--ink); }
+.decisions > li.head { counter-increment: none; padding: 0 0 0.5em; }
+.decisions > li.head::before { content: ""; background: none; }
+.decisions > li.head > * { font: 600 max(14px, 0.66em)/1.3 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+
+/* --- Real things: a terminal, a screen --- */
+.terminal { position: relative; margin: 0; padding: 58px 26px 24px; overflow: hidden; background: #15161A; color: #E8E8EA; border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22); font: 500 0.8em/1.65 var(--font-mono); white-space: pre-wrap; }
+.terminal::before { content: ""; position: absolute; inset: 0 0 auto; height: 38px; background: #1F2025; }
+.terminal::after { content: ""; position: absolute; top: 13.5px; left: 16px; width: 11px; height: 11px; border-radius: 50%; background: #FF5F57; box-shadow: 19px 0 0 #FEBC2E, 38px 0 0 #28C840; }
+.terminal b { color: #FFFFFF; font-weight: 600; }
+.terminal .dim { color: #8A8D96; }
+.slide .terminal :is(span, b, em).ok { color: #5BD38A; }
+.slide .terminal :is(span, b, em).c1 { color: #8FC8FF; }
+.slide .terminal :is(span, b, em).c2 { color: #C6A8FF; }
+.slide .terminal :is(span, b, em):is(.warn, .c5) { color: #FEBC2E; }
+.slide .terminal :is(span, b, em).bad { color: #FF7B72; }
+.screen { overflow: hidden; background: var(--color-bg-card); border: 1px solid var(--hair); border-radius: 14px; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 14px 34px rgba(16, 24, 40, 0.1); }
+.screen > .bar { display: flex; justify-content: space-between; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--hair); background: var(--wash); font: 500 14px/1.3 var(--font-mono); color: var(--ink-3); }
+.screen > .body { display: flex; flex-direction: column; gap: 0.7em; padding: 1em 1.2em; font-size: 0.85em; }
+.screen > .body h4 { font-size: 1.05em; font-weight: 700; color: var(--ink); }
+.screen img { display: block; width: 100%; }
+.slide .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.45em 1.2em; font-size: 0.9em; line-height: 1.4; }
+.slide .kv dt { color: var(--ink-3); }
+.slide .kv dd { color: var(--ink); }
+.slide .kv .mono { font-family: var(--font-mono); font-size: 0.92em; }
+.slide .kv dd:is(.c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { color: var(--k-text); font-weight: 600; }
+.slide .note { color: var(--ink-2); }
+
+/* --- Tables and charts on a slide --- */
+.slide .table-wrapper { overflow: visible; border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--lift); }
+.slide .table { font-size: 0.9em; line-height: 1.4; }
+.slide .table :is(th, td) { padding: 0.72em 1em; }
+.slide .table thead th { position: static; white-space: normal; background: var(--wash); border: 0; border-bottom: 1px solid var(--hair); border-radius: 0; font: 600 max(14px, 0.7em)/1.3 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.slide .table tbody td { color: var(--ink); vertical-align: top; }
+.slide .table .td-number { font-family: var(--font-mono); }
+.slide .table tbody tr:hover td { background: none; }
+.slide .chart-frame { flex: 1; height: auto; min-height: 280px; }
+
+/* --- Drawings in SVG: draw in stage pixels (a viewBox as wide as the space it fills, 1424 for the
+   whole body) and colour with these classes; a c0–c5 class on a <g> colours what is inside it.
+   deck.js adds the arrowheads: marker-end="url(#ah)", or #ah1, #ah2, #ah3 in the category colours. */
+svg.dg { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); font-size: 18px; fill: var(--ink-2); }
+.dg .t1 { fill: var(--ink); font-weight: 600; }
+.dg .t3 { fill: var(--ink-3); }
+.dg .tk { fill: var(--k-text, var(--ink)); font-weight: 700; }
+.dg .tw { fill: #FFFFFF; font-weight: 600; }
+.dg .box { fill: var(--color-bg-card); stroke: var(--k-line, var(--hair)); stroke-width: 1.5; }
+.dg .tint { fill: var(--k-tint, var(--wash)); stroke: var(--k-line, var(--hair)); stroke-width: 1.5; }
+.dg .solid { fill: var(--k, var(--color-info)); }
+.dg .ln { fill: none; stroke: var(--k, var(--ink-4)); stroke-width: 2; }
+.dg .dash { stroke-dasharray: 6 6; }
+.dg .bound { fill: none; stroke: var(--k-line, var(--ink-4)); stroke-width: 2; stroke-dasharray: 8 6; }
+.dg .grid { fill: none; stroke: var(--hair); stroke-width: 1; }
+.dg .dot { fill: var(--ink); }
+
+/* --- Print or save as PDF: one slide per page --- */
+@media print {
+  @page { size: 1600px 900px; margin: 0; }
+  html.cm-deck, html.cm-deck body { height: auto; overflow: visible; background: none; }
+  .deck { position: static; display: block; }
+  .deck-stage { width: 1600px; height: auto; transform: none; border-radius: 0; box-shadow: none; overflow: visible; }
+  .deck-stage::before { display: none; }
+  .slide { position: relative; inset: auto; width: 1600px; height: 900px; visibility: visible; opacity: 1; break-after: page; background-color: var(--color-bg-card); }
+  .slide::after { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: var(--brand); }
+  .slide * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
