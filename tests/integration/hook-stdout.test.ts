@@ -207,6 +207,35 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     expect(readFileSync(join(home, '.last-seen-version'), 'utf-8').trim()).toBe(OLD_MARKER);
   });
 
+  describe('--json invocations (EPMCDME-16716)', () => {
+    it('proxy analytics status --json on a fresh home writes only JSON to stdout, still runs migrations, and skips the update check', async () => {
+      const home = freshHome();
+
+      const res = await run(home, ['proxy', 'analytics', 'status', '--json'], '');
+
+      expect(res.code).toBe(0);
+      expect(res.stdout).not.toContain('migration(s)');
+      expect(() => JSON.parse(res.stdout)).not.toThrow();
+      expect(existsSync(join(home, 'migrations.json'))).toBe(true);
+      expect(fileLog(home)).toContain('[MigrationRunner] Found');
+      expect(registryHits).toBe(0);
+      expect(res.stderr).not.toContain('migration(s) failed');
+    });
+
+    it('proxy analytics status --json warns on stderr when a start-up migration fails, and keeps stdout pure JSON', async () => {
+      const home = freshHome();
+      // 001-config-rename reports success:false (invalid-json) for an unparsable legacy config.json.
+      writeFileSync(join(home, 'config.json'), '{not json', 'utf-8');
+
+      const res = await run(home, ['proxy', 'analytics', 'status', '--json'], '');
+
+      expect(res.code).toBe(0);
+      expect(() => JSON.parse(res.stdout)).not.toThrow();
+      expect(res.stdout).not.toContain('migration(s)');
+      expect(res.stderr).toMatch(/1 migration\(s\) failed/);
+    });
+  });
+
   describe('OTLP hook on a cold proxy daemon', () => {
     const daemonHomes: string[] = [];
 
