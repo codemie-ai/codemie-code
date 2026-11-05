@@ -2,7 +2,7 @@ import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
-import { spawnDaemon, type DaemonState, type SpawnOptions } from './daemon-manager.js';
+import { readConnectionRecord, spawnDaemon, type DaemonState, type SpawnOptions } from './daemon-manager.js';
 import { verifySsoCredentials } from './connect-orchestrator.js';
 
 export type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
@@ -28,6 +28,15 @@ export async function prepareDaemonLaunch(config: LoadedConfig, profile: string)
   ]);
 
   return config as LaunchableConfig;
+}
+
+/**
+ * Whether `proxy start` / `proxy restart` should (re)write proxy-connection.json: an explicit
+ * `--profile` always does; without it the daemon may have loaded the cwd profile, so an existing
+ * valid record (set by `proxy connect`) is left alone.
+ */
+export async function shouldWriteConnectionRecord(profileOption: string | undefined): Promise<boolean> {
+  return Boolean(profileOption) || !(await readConnectionRecord());
 }
 
 /** Spawn the daemon for a prepared config; `overrides` carries port and identity. */

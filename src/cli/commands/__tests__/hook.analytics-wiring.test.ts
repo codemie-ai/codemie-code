@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 
-vi.mock('../proxy/connect-orchestrator.js', () => ({ ensureOtlpProxy: vi.fn() }));
+vi.mock('../proxy/otlp-cold-start.js', () => ({ ensureOtlpProxy: vi.fn() }));
 
 const readAnalyticsCookieAuth = vi.hoisted(() => vi.fn());
 const metricsSenderOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
@@ -31,7 +31,7 @@ import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import type { BaseHookEvent } from '@/agents/core/types.js';
-import { ensureOtlpProxy } from '../proxy/connect-orchestrator.js';
+import { ensureOtlpProxy } from '../proxy/otlp-cold-start.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { AgentRegistry } from '../../../agents/registry.js';
 import { OtlpAgentAdapter } from '@/agents/core/OtlpAgentAdapter.js';
