@@ -161,4 +161,22 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
     expect(record).not.toHaveProperty('clientType');
     expect(record).not.toHaveProperty('telemetryMode');
   });
+
+  it('looks up the credentials of the profile provider, not a hard-coded one', async () => {
+    const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { getStoredPlatformCredentials } = await import('../../../../providers/core/codemie-auth-helpers.js');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work',
+      provider: 'custom-sso',
+      baseUrl: 'https://x.example.com/api',
+      codeMieUrl: 'https://x.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await ensureOtlpProxy(AGENT);
+
+    expect(getStoredPlatformCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'custom-sso' })
+    );
+  });
 });

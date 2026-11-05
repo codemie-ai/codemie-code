@@ -291,7 +291,9 @@ export async function assertSsoCredentials(
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
     const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveProfileCodeMieUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -300,7 +302,7 @@ export async function assertSsoCredentials(
   if (loginUrl !== null) {
     throw new ConfigurationError(
       `No active CodeMie session for profile '${profileName}'.\n` +
-      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login${loginUrl}` })}`
     );
   }
 }
@@ -323,6 +325,14 @@ export async function verifySsoCredentials(
       console.error(line);
     }
     process.exit(1);
+  }
+}
+
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
 }
 
