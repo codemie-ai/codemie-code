@@ -207,6 +207,21 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     expect(readFileSync(join(home, '.last-seen-version'), 'utf-8').trim()).toBe(OLD_MARKER);
   });
 
+  describe('--json invocations (EPMCDME-16716)', () => {
+    it('proxy analytics status --json on a fresh home writes only JSON to stdout, still runs migrations, and skips the update check', async () => {
+      const home = freshHome();
+
+      const res = await run(home, ['proxy', 'analytics', 'status', '--json'], '');
+
+      expect(res.code).toBe(0);
+      expect(res.stdout).not.toContain('migration(s)');
+      expect(() => JSON.parse(res.stdout)).not.toThrow();
+      expect(existsSync(join(home, 'migrations.json'))).toBe(true);
+      expect(fileLog(home)).toContain('[MigrationRunner] Found');
+      expect(registryHits).toBe(0);
+    });
+  });
+
   describe('OTLP hook on a cold proxy daemon', () => {
     const daemonHomes: string[] = [];
 
