@@ -21,7 +21,8 @@ import {
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
 import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
-import { clearAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
+import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
+import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 
 /**
  * A 2xx HTML page where JSON was expected: fetch follows the redirect of an expired session, so the SSO login page
@@ -53,7 +54,7 @@ export interface ConversationApiClient {
 export function createApiClient(config: ConversationApiConfig): ConversationApiClient {
   // Private state (closure)
   const bounds: SyncBounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
-  const apiConfig: Required<Omit<ConversationApiConfig, 'deadlineMs' | 'abortSignal'>> = {
+  const apiConfig: Required<Omit<ConversationApiConfig, 'deadlineMs' | 'abortSignal' | 'credentialsSuperseded'>> = {
     baseUrl: config.baseUrl,
     cookies: config.cookies || '',
     apiKey: config.apiKey || '',
@@ -83,7 +84,13 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
   /** The server rejected the credentials: the attempt is not counted and analytics auth waits for a re-login. */
   async function rejectCredentials(signal: AbortSignal | undefined, reason: string): Promise<void> {
     noteAuthFailure(signal);
-    await markAnalyticsAuthInvalid(reason, apiConfig.baseUrl);
+    await markAuthInvalidUnlessSuperseded({
+      reason,
+      baseUrl: apiConfig.baseUrl,
+      cookies: apiConfig.cookies,
+      apiKey: apiConfig.apiKey,
+      credentialsSuperseded: config.credentialsSuperseded
+    });
   }
 
   // Public interface

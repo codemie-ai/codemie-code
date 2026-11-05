@@ -85,7 +85,8 @@ export function createSyncProcessor(): SessionProcessor {
         clientType: context.clientType,
         dryRun: context.dryRun,
         deadlineMs: context.syncDeadlineMs,
-        abortSignal: context.abortSignal
+        abortSignal: context.abortSignal,
+        credentialsSuperseded: context.credentialsSuperseded
       });
 
       // Send each pending payload to API
@@ -210,10 +211,13 @@ export function createSyncProcessor(): SessionProcessor {
       // rewriting it here from the latest *successful* payload rewound it past turns
       // that were queued but not yet synced, re-queueing them as duplicates.
       let maxHistoryIndex = -1;
+      const historyIndexByConversation: Record<string, number> = {};
       for (const payload of pendingPayloads) {
         if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
+        const { conversationId } = payload.payload;
         for (const historyIndex of payload.historyIndices || []) {
           maxHistoryIndex = Math.max(maxHistoryIndex, historyIndex);
+          historyIndexByConversation[conversationId] = Math.max(historyIndexByConversation[conversationId] ?? -1, historyIndex);
         }
       }
 
@@ -238,6 +242,7 @@ export function createSyncProcessor(): SessionProcessor {
           syncUpdates: successCount > 0 ? {
             conversations: {
               lastSyncedHistoryIndex: maxHistoryIndex,
+              historyIndexByConversation,
               conversationId: lastSentConversationId,
               totalMessagesSynced: totalMessages,
               totalSyncAttempts: 1,

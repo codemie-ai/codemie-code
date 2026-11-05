@@ -7,7 +7,7 @@
  * Mirrors the mocking pattern established in AgentCLI-print-config.test.ts.
  */
 
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AgentCLI } from '../AgentCLI.js';
 import type { AgentAdapter } from '../types.js';
 import { ConfigLoader } from '../../../utils/config.js';
@@ -58,7 +58,14 @@ function mockHandleRunDependencies(model: string) {
 }
 
 describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  // An inherited CODEMIE_MODEL makes handleRun classify the model as env-sourced.
+  beforeEach(() => {
+    vi.stubEnv('CODEMIE_MODEL', undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('sets CODEMIE_MODEL_SOURCE=cli when --model is passed explicitly (non-interactive, "claude-sonnet-5[1m]")', async () => {
     mockHandleRunDependencies('claude-sonnet-5[1m]');

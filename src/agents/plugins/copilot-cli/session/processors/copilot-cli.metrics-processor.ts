@@ -18,9 +18,11 @@ import type {
   ProcessingContext,
   ProcessingResult,
 } from '../../../../core/session/BaseProcessor.js';
-import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { resolveRunWindow } from '../../../../core/session/run-window.js';
+import type { RunWindow } from '../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
+import { inRun } from '../../copilot-cli.usage.js';
 import { logger } from '../../../../../utils/logger.js';
 
 interface TurnRecord {
@@ -44,60 +46,13 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
         '../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js'
       );
       const writer = new MetricsWriter(session.sessionId);
+      const window = session.runWindow ?? (await resolveRunWindow(session.sessionId, context));
       const existing = await writer.readAll();
-      const written = new Set(existing.map((d) => d.recordId));
-
-      const turns = (session.messages as TurnRecord[]).filter((m) => m.type === 'assistant');
-      const agentSessionId = context.agentSessionId ?? session.sessionId;
-      const fallbackBranch = context.gitBranch ?? (session.metadata?.gitBranch as string | undefined);
-      const openingPrompt = session.metrics?.userPrompts?.[0];
-
-      // Activity not yet on disk: transcript totals minus what earlier runs wrote.
-      const pending = subtractWritten(session, existing);
-
-      const newTurns = turns
-        .map((turn, i) => ({ turn, recordId: `${agentSessionId}-turn-${i}` }))
-        .filter(({ recordId }) => !written.has(recordId));
-
-      const build = (
-        recordId: string,
-        timestamp: string | number,
-        branch: string | undefined,
-        model: string | undefined,
-        carry: boolean
-      ): Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> => ({
-        recordId,
-        sessionId: session.sessionId,
-        agentSessionId,
-        timestamp,
-        gitBranch: branch ?? fallbackBranch,
-        tools: carry ? pending.tools : {},
-        ...(carry && {
-          ...(Object.keys(pending.toolStatus).length > 0 && { toolStatus: pending.toolStatus }),
-          ...(pending.fileOperations.length > 0 && { fileOperations: pending.fileOperations }),
-          ...(Object.keys(pending.skillInvocations).length > 0 && { skillInvocations: pending.skillInvocations }),
-        }),
-        ...(model && { models: [model] }),
-        ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
-      });
-
-      const deltas = newTurns.map(({ turn, recordId }, i) =>
-        build(recordId, turn.timestamp ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0)
-      );
-
-      // Activity that arrived after every turn was already written has no turn to ride on.
-      // Keep it (never silently drop) as a clearly-identified supplement delta.
-      if (deltas.length === 0 && hasActivity(pending)) {
-        const key = `${agentSessionId}-supplement-${existing.length}`;
-        deltas.push(build(key, session.metadata?.createdAt ?? Date.now(), undefined, undefined, true));
-      }
+      const deltas = runDeltas(session, context, window, existing);
 
       let deltasWritten = 0;
       if (deltas.length > 0) {
-        // ponytail: copilot's supplement delta time is session-level, not per-event, so the run window's lower
-        // bound cannot apply here yet; restore it once the supplement delta carries lastRecordAt (13d3b).
-        const window = await resolveRunWindow(session.sessionId, context);
-        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        const appended = await writer.appendDeltas(deltas, window);
         if (appended.gone) {
           logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
           return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
@@ -112,6 +67,59 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
+}
+
+type DeltaRow = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
+
+/**
+ * The deltas of this pass: one per new assistant turn inside the run's window (an untimed turn lies only in
+ * the whole-session window and is stamped with the run's last transcript record), the run's activity riding
+ * the first of them.
+ */
+function runDeltas(session: ParsedSession, context: ProcessingContext, window: RunWindow, existing: MetricDelta[]): DeltaRow[] {
+  const written = new Set(existing.map((d) => d.recordId));
+  const turns = (session.messages as TurnRecord[]).filter((m) => m.type === 'assistant');
+  const agentSessionId = context.agentSessionId ?? session.sessionId;
+  const fallbackBranch = context.gitBranch ?? (session.metadata?.gitBranch as string | undefined);
+  const openingPrompt = session.metrics?.userPrompts?.[0];
+  const lastRecordAt = latestRecordTime(session.recordTimes, window.upperBound);
+
+  // Activity not yet on disk: transcript totals minus what earlier runs wrote.
+  const pending = subtractWritten(session, existing);
+
+  const runTurns = turns
+    .map((turn, i) => ({ turn, recordId: `${agentSessionId}-turn-${i}` }))
+    .filter(({ turn, recordId }) => !written.has(recordId) && inRun(turn, window));
+
+  const build = (recordId: string, timestamp: string | number, branch: string | undefined, model: string | undefined, carry: boolean): DeltaRow => ({
+    recordId,
+    sessionId: session.sessionId,
+    agentSessionId,
+    timestamp,
+    gitBranch: branch ?? fallbackBranch,
+    tools: carry ? pending.tools : {},
+    ...(carry && {
+      ...(Object.keys(pending.toolStatus).length > 0 && { toolStatus: pending.toolStatus }),
+      ...(pending.fileOperations.length > 0 && { fileOperations: pending.fileOperations }),
+      ...(Object.keys(pending.skillInvocations).length > 0 && { skillInvocations: pending.skillInvocations }),
+    }),
+    ...(model && { models: [model] }),
+    ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
+  });
+
+  const deltas = runTurns.map(({ turn, recordId }, i) =>
+    build(recordId, turn.timestamp ?? lastRecordAt ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0)
+  );
+
+  // Activity with no turn of this run to ride on (it arrived after every turn was written) is kept
+  // as a clearly-identified supplement delta, stamped inside the run window: the run's last transcript
+  // record, else the window's start, so the writer never drops it as another run's.
+  if (runTurns.length === 0 && hasActivity(pending)) {
+    const inWindowAt = lastRecordAt !== undefined && lastRecordAt >= window.startTime ? lastRecordAt : undefined;
+    const stamp = inWindowAt ?? (Number.isFinite(window.startTime) ? window.startTime : Date.now());
+    deltas.push(build(`${agentSessionId}-supplement-${existing.length}`, stamp, undefined, undefined, true));
+  }
+  return deltas;
 }
 
 interface PendingActivity {

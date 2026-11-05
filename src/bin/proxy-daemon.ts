@@ -20,6 +20,9 @@ import { parseProjectBinding } from '../utils/project-binding.js';
 import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 import { daemonStartedAt } from '../cli/commands/proxy/daemon-manager.js';
+import { startAwaitingLoginListener, type AwaitingLoginListener } from '../cli/commands/proxy/awaiting-login-listener.js';
+import { AuthenticationError } from '../providers/plugins/sso/proxy/proxy-errors.js';
+import { getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
 
 function readCliVersion(): string {
   try {
@@ -105,6 +108,8 @@ installSystemProxyDispatcher();
 let proxy = new CodeMieProxy(config);
 let telemetryRuntime: DesktopTelemetryRuntime | undefined;
 let watcher: ProxyWatcher | undefined;
+// Set while the real proxy could not start for want of SSO credentials: this listener holds the port.
+let awaitingLogin: AwaitingLoginListener | undefined;
 let currentState: Record<string, unknown> = {};
 
 async function persistState(patch: Record<string, unknown>): Promise<void> {
@@ -115,15 +120,58 @@ async function persistState(patch: Record<string, unknown>): Promise<void> {
   await rename(tmp, stateFile!);
 }
 
+/**
+ * Start the real proxy; with no SSO credentials, keep the port bound with a listener that answers
+ * an actionable 401 and let the watcher swap the proxy in once the user has signed in.
+ */
+async function bringUp(): Promise<{ port: number; url: string }> {
+  try {
+    const started = await proxy.start();
+    awaitingLogin = undefined;
+    return started;
+  } catch (error) {
+    if (!(error instanceof AuthenticationError) || authMethod !== 'sso') {
+      throw error;
+    }
+    logger.warn(`[proxy-daemon] ${error.message} Holding the port until credentials are available.`);
+    awaitingLogin = await startAwaitingLoginListener({
+      port: config.port,
+      host: config.host as string,
+      pinnedPort: config.pinnedPort,
+      message: error.message,
+    });
+    return awaitingLogin;
+  }
+}
+
+function healthPatch(): Record<string, unknown> {
+  return awaitingLogin
+    ? { health: 'unhealthy', healthReason: awaitingLogin.message }
+    : { health: 'ok', healthReason: undefined, lastHealthyAt: new Date().toISOString() };
+}
+
+async function credentialsAvailable(): Promise<boolean> {
+  const stored = await getStoredPlatformCredentials({
+    provider: config.provider,
+    baseUrl: config.targetApiUrl,
+    codeMieUrl: config.syncCodeMieUrl,
+  });
+  return Boolean(stored?.credentials);
+}
+
 async function cleanup(): Promise<void> {
   watcher?.stop();
+  try { await awaitingLogin?.stop(); } catch { /* ignore */ }
   try { await telemetryRuntime?.stop(); } catch { /* ignore */ }
   try { await proxy.stop(); } catch { /* ignore */ }
   try { await unlink(stateFile!); } catch { /* ignore */ }
 }
 
 async function restartProxy(): Promise<void> {
+  const heldListener = awaitingLogin;
   try {
+    await awaitingLogin?.stop();
+    awaitingLogin = undefined;
     await proxy.stop();
   } catch (error) {
     logger.warn(`[proxy-daemon] proxy.stop() during restart failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -131,21 +179,33 @@ async function restartProxy(): Promise<void> {
   // Pin to the port we already bound so Claude Desktop's URL stays valid.
   config.pinnedPort = true;
   proxy = new CodeMieProxy(config);
-  const { url } = await proxy.start();
-  await persistState({
-    url,
-    health: 'ok',
-    healthReason: undefined,
-    lastHealthyAt: new Date().toISOString(),
-    lastRecoveryAt: new Date().toISOString(),
-  });
+  let started: { port: number; url: string };
+  try {
+    started = await bringUp();
+  } catch (error) {
+    if (heldListener) {
+      // A failed replacement must not discard the sign-in listener when the port is free.
+      await proxy.stop().catch(stopError => {
+        logger.warn(`[proxy-daemon] Cleanup after failed recovery: ${String(stopError)}`);
+      });
+      awaitingLogin = await startAwaitingLoginListener({
+        port: config.port,
+        host: config.host as string,
+        pinnedPort: true,
+        message: 'Proxy recovery failed after sign-in. Automatic recovery will retry on this port.',
+      });
+      await persistState({ url: awaitingLogin.url, ...healthPatch() });
+    }
+    throw error;
+  }
+  await persistState({ url: started.url, ...healthPatch(), lastRecoveryAt: new Date().toISOString() });
 }
 
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
 process.on('SIGINT',  async () => { await cleanup(); process.exit(0); });
 
 try {
-  const { port: actualPort, url } = await proxy.start();
+  const { port: actualPort, url } = await bringUp();
 
   // Pin future restarts to the port we actually bound. The initial bind may
   // have fallen back to a random port if 4001 was busy; recovery must reuse
@@ -178,7 +238,6 @@ try {
     config.triggerPoll = () => telemetryRuntime!.triggerPoll();
   }
 
-  const nowIso = new Date().toISOString();
   await persistState({
     pid: process.pid,
     port: actualPort,
@@ -194,8 +253,7 @@ try {
     syncApiUrl: config.syncApiUrl,
     syncCodeMieUrl: config.syncCodeMieUrl,
     startedAt: daemonStartedAt(),
-    health: 'ok',
-    lastHealthyAt: nowIso,
+    ...healthPatch(),
   });
 
   // After the state write: `spawnDaemon` reads the daemon as up while the runtime's first poll still runs.
@@ -216,8 +274,14 @@ try {
         });
       },
       onGiveUp: async (reason) => {
-        await persistState({ health: 'unhealthy', healthReason: reason });
+        await persistState({ health: 'unhealthy', healthReason: awaitingLogin?.message ?? reason });
       },
+      // Signed in again while the port was held: bring the real proxy back on it.
+      onUnauthorized: authMethod === 'sso' ? async () => {
+        if (awaitingLogin && await credentialsAvailable()) {
+          await restartProxy();
+        }
+      } : undefined,
     }
   );
   watcher.start();

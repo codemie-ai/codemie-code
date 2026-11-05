@@ -147,6 +147,25 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 
+  it('does not say sign-in is required right after a sign-in finished', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({
+      ok: false,
+      reason: 'rejected',
+      loginOutcome: 'signed-in-recently',
+    } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: 'userPromptTransformed', prompt: 'hi' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const prompt = String(captured()?.modifiedTransformedPrompt);
+    expect(prompt).not.toContain('sign-in required');
+    expect(prompt).toMatch(/^Reply only with: ".*finished moments ago/);
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
   it('checks SSO against the session profile, not the config resolved from the current directory', async () => {
     const sessionProfile = {
       provider: 'ai-run-sso',

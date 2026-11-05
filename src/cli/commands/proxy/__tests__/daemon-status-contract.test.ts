@@ -24,9 +24,9 @@ import {
   type DaemonState,
 } from '../daemon-manager.js';
 import { isProcessAlive, processStartedAt } from '../../../../utils/processes.js';
+import { getEffectiveClientType } from '../client-type.js';
 import {
   daemonMatchesRequest,
-  getEffectiveClientType,
   type RequestedDaemonConfig,
 } from '../connect-orchestrator.js';
 import { createProxyCommand } from '../index.js';

@@ -8,17 +8,26 @@
 
 import { readFileSync } from 'fs';
 import type { CopilotEvent } from './copilot-cli-event-types.js';
+import { unlessAbsent } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
 
 export function readCopilotEventsTolerant(filePath: string): CopilotEvent[] {
-  let text: string;
   try {
-    text = readFileSync(filePath, 'utf-8');
+    return readCopilotEvents(filePath);
   } catch (error) {
     logger.debug(`[copilot-cli] unreadable events.jsonl at ${filePath}:`, error);
     return [];
   }
+}
 
+/** The transcript's events: an absent file has none, any other read failure throws, a torn line is dropped. */
+export function readCopilotEvents(filePath: string): CopilotEvent[] {
+  const text = unlessAbsent(() => readFileSync(filePath, 'utf-8'));
+  return text === undefined ? [] : parseCopilotEvents(text, filePath);
+}
+
+/** The events of a transcript's text; a torn or unparseable line is dropped. */
+export function parseCopilotEvents(text: string, filePath: string): CopilotEvent[] {
   const events: CopilotEvent[] = [];
   let dropped = 0;
 

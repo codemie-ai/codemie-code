@@ -28,13 +28,7 @@ import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
 import { CredentialRefresher } from './credential-refresh.js';
-
-/** `key=value; key=value` cookie header from a cookie map — same shape every caller here needs. */
-function buildCookieHeader(cookies: Record<string, string>): string {
-  return Object.entries(cookies)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
-}
+import { buildCookieHeader, droppedCookieKeys, sentCredentialsSuperseded } from '../../session/cookie-auth.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -172,13 +166,16 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // Build cookie header from the daemon-startup snapshot (only if not in local dev mode) —
     // refreshed before every sync tick in syncSessions(), so a successful browser re-login
     // reaches this periodic sync too, not just the LLM-request path (PR #655 review, blocking).
-    const cookieHeader = this.isLocalDev ? '' : buildCookieHeader(credentials.get().cookies);
+    const cookieHeader = this.isLocalDev ? '' : this.buildSyncCookieHeader(credentials.get().cookies);
 
     // Create processing context (shared by SessionSyncer)
     this.context = {
       apiBaseUrl: this.isLocalDev ? devApiUrl! : this.resolveSyncApiBaseUrl(),
       cookies: cookieHeader,
       apiKey: this.isLocalDev ? devApiKey : undefined,
+      credentialsSuperseded: this.isLocalDev
+        ? undefined
+        : (sent: string) => sentCredentialsSuperseded(sent, this.credentials),
       clientType,
       version,
       dryRun
@@ -259,7 +256,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       // completed between ticks is picked up here too, instead of this periodic sync forever
       // posting the stale startup-time cookie header (PR #655 review, blocking).
       if (!this.isLocalDev) {
-        this.context.cookies = buildCookieHeader((await this.credentials.refresh()).cookies);
+        this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
       }
 
       // Use SessionSyncer service
@@ -279,6 +276,17 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  private buildSyncCookieHeader(cookies: Record<string, string>): string {
+    const dropped = droppedCookieKeys(cookies);
+    if (dropped.length > 0) {
+      logger.debug(`[${this.name}] Ignoring invalid cookie entries`, {
+        invalidCookieCount: dropped.length,
+        invalidCookieNames: dropped,
+      });
+    }
+    return buildCookieHeader(cookies);
   }
 
   private resolveSyncApiBaseUrl(): string {

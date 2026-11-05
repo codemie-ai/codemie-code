@@ -167,6 +167,30 @@ describe('Metrics Post-Processing Integration', () => {
     expect(featureMetric!.attributes.total_tool_calls).toBe(1);
   });
 
+  it('stamps the session_id the run\'s start metric was accepted under over the correlation id', () => {
+    const deltas: MetricDelta[] = [
+      {
+        recordId: 'record-1',
+        sessionId: 'test-session-id',
+        agentSessionId: 'agent-session-1',
+        timestamp: Date.now(),
+        gitBranch: 'main',
+        tools: {Read: 1},
+        syncStatus: 'pending',
+        syncAttempts: 0
+      }
+    ];
+    const resumedRun: MetricsSession = {
+      ...mockSession,
+      startMetricSessionId: 'start-metric-id',
+      correlation: {...mockSession.correlation, agentSessionId: 'linked-native-id'}
+    };
+
+    const [metric] = aggregateDeltas(deltas, resumedRun, '1.0.0', 'codemie-copilot');
+
+    expect(metric.attributes.session_id).toBe('start-metric-id');
+  });
+
   it('should handle empty project paths gracefully', () => {
     const sessionWithEmptyPath: MetricsSession = {
       ...mockSession,
