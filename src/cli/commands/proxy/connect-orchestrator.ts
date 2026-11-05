@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -338,14 +339,6 @@ async function resolveActiveProfileName(): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
-  }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
