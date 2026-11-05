@@ -570,6 +570,41 @@ describe('OpenCodeConversationsProcessor.process', () => {
     ]);
   });
 
+  it('numbers runs A, C, D over one opencode session across the full session, each run sending only its own exchange', async () => {
+    const T = 1_700_000_000_000;
+    const exchanges = [T + 10_000, T + 20_000, T + 30_000];
+    const messages = exchanges.flatMap((at, i) => [
+      { id: `msg-u${i}`, sessionID: OC_SESSION_ID, role: 'user', time: { created: at } },
+      { id: `msg-a${i}`, sessionID: OC_SESSION_ID, role: 'assistant', time: { created: at + 1_000 }, modelID: 'kimi-k2' },
+    ]);
+    const partsMap = Object.fromEntries(exchanges.flatMap((_at, i) => [
+      [`msg-u${i}`, [{ id: `pu${i}`, messageID: `msg-u${i}`, sessionID: OC_SESSION_ID, type: 'text', text: `prompt ${i}` }]],
+      [`msg-a${i}`, [{ id: `pa${i}`, messageID: `msg-a${i}`, sessionID: OC_SESSION_ID, type: 'text', text: `reply ${i}` }]],
+    ]));
+    // Each run starts just before its own exchange; the next run's start bounds it
+    const starts = exchanges.map((at) => at - 1_000);
+    const runs = starts.map((startTime) => {
+      const sessionId = newSessionId('oc-conv-run');
+      writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime }));
+      return sessionId;
+    });
+
+    for (const [i, sessionId] of runs.entries()) {
+      await new OpenCodeConversationsProcessor().process(
+        buildSession(sessionId, messages, partsMap),
+        { ...baseContext(sessionId, OC_SESSION_ID), recordsBeforeMs: starts[i + 1] },
+      );
+    }
+
+    const payloads = runs.map((sessionId) => readJsonl<Record<string, any>>(getSessionConversationPath(sessionId)));
+    expect(payloads.map((records) => records.map((record) => record.historyIndices))).toEqual([[[0, 0]], [[1, 1]], [[2, 2]]]);
+    expect(payloads.map((records) => records[0].payload.history.map((entry: any) => entry.message))).toEqual([
+      ['prompt 0', 'reply 0'],
+      ['prompt 1', 'reply 1'],
+      ['prompt 2', 'reply 2'],
+    ]);
+  });
+
   it('queues a user-only payload when the prompt has no assistant reply yet', async () => {
     const sessionId = newSessionId('oc-conv-noreply');
     // A brand-new user prompt is published immediately (messageCount 1, no
@@ -643,23 +678,25 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(deltas[1].tools).toEqual({});
   });
 
-  it('writes a supplement delta whose session time predates the record start, and dedupes it by recordId', async () => {
+  it('stamps a resumed session\'s supplement delta with its last record inside the run window; a turn before the record start is dropped', async () => {
     const sessionId = newSessionId('copilot-metrics-resumed');
     const context = baseContext(sessionId, 'copilot-agent');
     // The session was created long before this record started (a resumed session)
     writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime: Date.parse('2026-10-01T00:00:00Z') }));
     const session = {
-      ...buildSession(sessionId, { tools: { read: 2 } }, []),
+      ...buildSession(sessionId, { tools: { read: 2 } }, [
+        { type: 'assistant', timestamp: '2026-05-09T12:00:01Z', message: { model: 'gpt-5' } },
+      ]),
       metadata: { createdAt: '2026-05-09T12:00:00Z' },
+      recordTimes: ['2026-05-09T12:00:00Z', '2026-05-09T12:00:01Z', '2026-10-01T00:05:00Z'],
     } as ParsedSession;
 
-    const first = await processor.process(session, context);
-    const second = await processor.process(session, context);
+    await processor.process(session, context);
+    await processor.process(session, context);
 
-    expect(first.metadata?.recordsProcessed).toBe(1);
-    expect(second.metadata?.recordsProcessed).toBe(0);
     const deltas = readJsonl<MetricDelta>(getSessionMetricsPath(sessionId));
     expect(deltas.map((d) => d.recordId)).toEqual(['copilot-agent-supplement-0']);
+    expect(deltas[0].timestamp).toBe(Date.parse('2026-10-01T00:05:00Z'));
     expect(deltas[0].tools).toEqual({ read: 2 });
   });
 
