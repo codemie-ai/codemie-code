@@ -56,7 +56,9 @@ beforeEach(() => {
   prefsMock.mockResolvedValue({ kind: 'ok', value: { collectionGeneration: 0 } });
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
-afterEach(() => {
+afterEach(async () => {
+  // The plugin's logger (fresh per vi.resetModules) opens its log file under CODEMIE_HOME/logs; release it before rmSync (Windows ENOTEMPTY).
+  await (await import('@/utils/logger.js')).logger.close();
   vi.restoreAllMocks();
   if (prev === undefined) delete process.env.CODEMIE_HOME; else process.env.CODEMIE_HOME = prev;
   rmSync(home, { recursive: true, force: true });
