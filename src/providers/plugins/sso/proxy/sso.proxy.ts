@@ -32,6 +32,7 @@ import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
 import { isTlsVerificationEnabled } from '../../../../utils/system-proxy.js';
 import { getStoredPlatformCredentials } from '../../../core/codemie-auth-helpers.js';
+import { resolveProfileCodeMieUrl } from '../../../core/login-url.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
@@ -99,7 +100,7 @@ export class CodeMieProxy {
         if (!credentials) {
           throw new AuthenticationError(
             `SSO credentials not found for ${this.config.targetApiUrl}. ` +
-            `Please run: codemie profile login --url ${this.config.targetApiUrl}`
+            `Please run: codemie profile login --url ${resolveProfileCodeMieUrl(this.config.targetApiUrl, this.config.syncCodeMieUrl)}`
           );
         }
       }
