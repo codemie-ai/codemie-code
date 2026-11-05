@@ -121,6 +121,15 @@ describe('hook-side transitions', () => {
     expect(await t.gate(hook({ session_id: 's3' }))).toBe('stop'); // no consent entry holds
   });
 
+  it('the project comparison is canonical (trim, case-insensitive), so a casing-only difference is not a folder change', async () => {
+    const t = await setup();
+    await t.record({ project: 'Proj' });
+    projectMock.mockResolvedValue('  proj ');
+    expect(await t.gate(hook())).toBe('continue');
+    projectMock.mockResolvedValue('proj-other');
+    expect(await t.gate(hook())).toBe('stop');
+  });
+
   it('a session recorded before the new contract stays legacy and is not stopped by scope checks', async () => {
     const t = await setup();
     await t.record({ funding_route: undefined, collection_generation: undefined });

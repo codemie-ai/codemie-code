@@ -221,7 +221,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
         return this.stopSession(key, 'generation_changed', sessionId);
       }
-      if ((await resolveProjectAtCwd(hookInput.cwd)) !== (record.project ?? '')) {
+      // Same canonical form as the consent store and the backend (trim, case-insensitive); never skipped on a source difference.
+      const canon = (p: string): string => p.trim().toLowerCase();
+      if (canon(await resolveProjectAtCwd(hookInput.cwd)) !== canon(record.project ?? '')) {
         return this.stopSession(key, 'folder_changed', sessionId);
       }
       if (record.consent_ref) {

@@ -18,11 +18,12 @@ const TEXT: Record<StopReason, string> = {
   contract_unsupported: 'the analytics backend does not accept this client version.',
   hold_expired: 'the analytics backend stayed unavailable for too long.',
   hold_contract_unavailable: 'the analytics backend is not ready for this client yet; data is held and will be retried.',
+  hold_state_unknown: 'the analytics backend could not be reached to confirm it is ready; data is held and will be retried.',
   consent_invalid: 'the analytics backend rejected the folder consent.',
   requires_session: 'the analytics backend rejected the request.',
   unspecified: 'publishing stopped.',
 };
 
 export function stopNoticeText(reason: StopReason): string {
-  return `CodeMie analytics paused for this session: ${TEXT[reason]} ${reason === 'hold_contract_unavailable' ? 'Claude keeps working.' : GUIDE}`;
+  return `CodeMie analytics paused for this session: ${TEXT[reason]} ${reason === 'hold_contract_unavailable' || reason === 'hold_state_unknown' ? 'Claude keeps working.' : GUIDE}`;
 }

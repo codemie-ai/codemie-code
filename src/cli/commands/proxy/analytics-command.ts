@@ -31,7 +31,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import inquirer from 'inquirer';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
-import { connectFolder, disconnectFolder } from '@/agents/core/evidence/consent-store.js';
+import { connectFolder, coveringEntries, disconnectFolder } from '@/agents/core/evidence/consent-store.js';
 import { resolveSessionProject } from '@/agents/core/event-fields/identity-fields.js';
 import { adviceForReason, coverageNote, resumeNote } from './analytics-hints.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
@@ -326,12 +326,19 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
   await withErrorHandling(async () => {
     assertClaudeOnly(opts);
     const canonical = await canonicalizePath(path ?? resolveProjectRoot());
-    const removed = await disconnectFolder(await requireIdentity(), canonical);
-    console.log(
-      removed > 0
-        ? chalk.green(`✓ Disconnected ${canonical}. Sessions that rely on it stop publishing, including queued data.`)
-        : chalk.dim(`Nothing to change: ${canonical} is not connected.`)
-    );
+    const identity = await requireIdentity();
+    const removed = await disconnectFolder(identity, canonical);
+    const covering = await coveringEntries(identity, canonical);
+    if (removed > 0) {
+      console.log(chalk.green(`✓ Disconnected ${canonical}. Sessions that rely on it stop publishing, including queued data.`));
+    } else if (covering.length === 0) {
+      console.log(chalk.dim(`Nothing to change: ${canonical} is not connected.`));
+    }
+    // A connected parent still authorizes this folder: say so, with the exact command that withdraws it.
+    for (const e of covering) {
+      console.log(chalk.yellow(`${canonical} is still covered by the connection ${e.folder} (project ${e.project}).`));
+      console.log(`To withdraw it, run: codemie proxy analytics disconnect-folder "${e.folder}"`);
+    }
   });
 }
 
