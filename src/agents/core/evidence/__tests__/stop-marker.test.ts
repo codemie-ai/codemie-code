@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, utimesSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrRead, recordKey, sweepRecords, evidenceDir, type EvidenceFields } from '../record-store.js';
-import { isStopped, stopFileName, takeNotice, writeStop } from '../stop-marker.js';
+import { isStopped, stopFileName, takeNotice, writeNotice, writeStop } from '../stop-marker.js';
 
 const DAY = 86_400_000;
 let home: string;
@@ -73,5 +73,16 @@ describe('stop-marker', () => {
     utimesSync(markerPath(), old, old);
     await sweepRecords({ pendingKeys: new Set() });
     expect(existsSync(markerPath())).toBe(true);
+  });
+
+  it('a notice-only marker does not stop publication, shows once, and is upgraded by a later stop', async () => {
+    await writeNotice(key, 'hold_contract_unavailable', 's1');
+    expect(await isStopped(key)).toBe(false);
+    expect(await takeNotice(key)).toBe('hold_contract_unavailable');
+    await writeStop(key, 'hold_expired', 's1');
+    expect(await isStopped(key)).toBe(true);
+    expect(await takeNotice(key)).toBe('hold_expired');
+    await writeNotice(key, 'folder_changed', 's1'); // never downgrades a stop
+    expect(await isStopped(key)).toBe(true);
   });
 });

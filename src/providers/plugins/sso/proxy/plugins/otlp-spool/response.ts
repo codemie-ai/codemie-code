@@ -18,7 +18,21 @@ export interface SendOutcome {
   rejected?: number;
   /** 409 stale_policy: the backend's current policy version. */
   policyVersion?: string;
+  /** 422 final refusal of the publication contract: the range is dropped and the session stops with a notice. */
+  final?: true;
+  /** 503 hold status: not retried as an ordinary failure; the first one raises a notice. */
+  hold?: true;
 }
+
+/** 422 reasons the backend declares final (body `{"reason","disposition":"final"}`). */
+export const FINAL_422_REASONS: readonly string[] = [
+  'publication_contract_unsupported', 'publication_contract_missing', 'publication_contract_requires_session',
+  'consent_invalid', 'consent_without_project', 'consent_personal_project',
+];
+/** 503 reasons that hold (within the retention window) instead of retrying as a transient failure. */
+export const HOLD_503_REASONS: readonly string[] = [
+  'publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled',
+];
 
 export const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_REASON = 200;
@@ -141,7 +155,8 @@ function otlpPartial(body: Buffer, contentType: string): Partial | null | 'malfo
  */
 function reasonToken(body: BodyRead): string | undefined {
   if (body.state !== 'complete') return undefined;
-  const detail = parseJson(body.bytes)?.['detail'];
+  const json = parseJson(body.bytes);
+  const detail = json?.['detail'] ?? json?.['reason'];
   return typeof detail === 'string' && /^[a-z][a-z0-9_]{2,63}$/.test(detail) ? detail : undefined;
 }
 
@@ -158,9 +173,17 @@ export function decodeResponse(status: number, contentType: string, body: BodyRe
       ? { kind: 'stale', reason: 'stale_policy', policyVersion: reasonOf(json['policy_version']) }
       : { kind: 'failed', reason: 'http_409' };
   }
+  if (status === 422) {
+    const reason = reasonToken(body);
+    // A recognised final refusal is terminal and never a retry; anything else keeps the existing 4xx handling.
+    if (reason && FINAL_422_REASONS.includes(reason)) return { kind: 'discarded', reason, final: true };
+  }
   if (status >= 500) {
     const detail = status === 503 ? reasonToken(body) : undefined;
-    return { kind: 'retry', reason: `http_${status}`, ...(detail ? { detail } : {}) };
+    return {
+      kind: 'retry', reason: `http_${status}`, ...(detail ? { detail } : {}),
+      ...(detail && HOLD_503_REASONS.includes(detail) ? { hold: true as const } : {}),
+    };
   }
   if (status < 200 || status >= 300) return { kind: 'failed', reason: `http_${status}` };
 

@@ -99,3 +99,29 @@ describe('decodeResponse: unverified 2xx responses are never acknowledged', () =
     expect(decodeResponse(200, PB, { state: 'truncated', bytes: Buffer.alloc(0) }, true)).toEqual({ kind: 'failed', reason: 'response_too_large' });
   });
 });
+
+describe('decodeResponse: publication contract statuses', () => {
+  const json = (o: unknown) => complete(JSON.stringify(o));
+  it.each([
+    'publication_contract_unsupported', 'publication_contract_missing', 'publication_contract_requires_session',
+    'consent_invalid', 'consent_without_project', 'consent_personal_project',
+  ])('422 %s is a final refusal, never a retry', (reason) => {
+    expect(decodeResponse(422, 'application/json', json({ reason, disposition: 'final' }), true)).toMatchObject({ kind: 'discarded', reason, final: true });
+  });
+  it('an unknown 422 keeps the existing rejected handling', () => {
+    expect(decodeResponse(422, 'application/json', json({ reason: 'whatever' }), true)).toEqual({ kind: 'failed', reason: 'http_422' });
+  });
+  it.each(['publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled'])(
+    '503 %s holds', (reason) => {
+      expect(decodeResponse(503, 'application/json', json({ reason, disposition: 'hold' }), true)).toMatchObject({ kind: 'retry', detail: reason, hold: true });
+    });
+  it.each(['personal_destination_unavailable', 'default_project_unavailable', 'some_new_reason'])('503 %s uses the ordinary retry', (detail) => {
+    const o = decodeResponse(503, 'application/json', json({ detail }), true);
+    expect(o).toMatchObject({ kind: 'retry', detail });
+    expect(o.hold).toBeUndefined();
+  });
+  it('a recognised 200 discard is terminal-unsuccessful without any echo', () => {
+    expect(decodeResponse(200, 'application/json', json({ accepted: 0, dropped: 3, reason: 'session_contract_conflict' }), true))
+      .toMatchObject({ kind: 'discarded', reason: 'session_contract_conflict' });
+  });
+});

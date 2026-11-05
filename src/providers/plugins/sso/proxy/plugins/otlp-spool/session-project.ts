@@ -17,6 +17,8 @@ export const HOLD_REASONS = [
   'project_conflict',
   'otlp_unparseable',
   'otlp_entry_too_large',
+  'publication_stopped',
+  'publication_contract_unavailable',
 ] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
 
@@ -73,6 +75,10 @@ export interface SessionEvidenceInput {
   heldSince?: number;
   now: number;
   retentionMs: number;
+  /** A publication-stop marker exists for the session: nothing is sent, backlog included. */
+  stopped?: boolean;
+  /** Default true. False: the backend does not (or not yet) advertise the negotiated contract. */
+  contractAdvertised?: boolean;
 }
 
 export type SessionEvidenceDecision =
@@ -94,8 +100,11 @@ export function evaluateSessionEvidence(input: SessionEvidenceInput): SessionEvi
   const { record } = input;
   const valid = record && (record.kind === 'created' || record.kind === 'existing') ? record.record : undefined;
 
+  if (input.stopped) return hold('publication_stopped');
   if (record && !valid) return hold('stamp_invalid');
   if (input.marked && !valid) return hold('stamp_invalid');
+  // A new-contract session is never sent as legacy, whatever the capability: held until advertised.
+  if (valid?.funding_route !== undefined && input.contractAdvertised === false) return hold('publication_contract_unavailable');
   if (input.capability === 'legacy') return input.stickyPersonal ? hold('personal_not_forwardable') : legacy;
   if (valid) return { action: 'send_evidence', record: valid };
   if (input.hasHooks || input.preEpoch) return legacy;

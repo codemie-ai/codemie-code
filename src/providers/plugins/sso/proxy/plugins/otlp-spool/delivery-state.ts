@@ -173,7 +173,7 @@ export function deliveryFailureOf(o: SendOutcome): { reason: DeliveryLossReason;
   if (cause === 'credentials_stale' || cause === 'not_sendable') return undefined;
   if (['http_400', 'http_413', 'http_422'].includes(cause)) return { reason: 'delivery_rejected', detail: cause };
   if (o.detail) return { reason: 'destination_unavailable', detail: o.detail };
-  if (cause === 'response_malformed' || cause === 'response_too_large') return { reason: 'response_unverified', detail: cause };
+  if (cause === 'response_unverified' || cause === 'response_malformed' || cause === 'response_too_large') return { reason: 'response_unverified', detail: cause };
   return { reason: 'delivery_failed', detail: cause };
 }
 

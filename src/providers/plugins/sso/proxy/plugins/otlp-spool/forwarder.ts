@@ -33,6 +33,8 @@ import { authHeadersFor, resolveAnalyticsEndpoint, type AnalyticsEndpoint } from
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
+import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
+import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
@@ -78,6 +80,11 @@ async function postToBackend(
       status: response.status,
       contentType: response.headers?.get('content-type') ?? '',
       body: await readBoundedBody(response),
+      echo: {
+        contract: response.headers?.get(CONTRACT_HEADER) ?? undefined,
+        destination: response.headers?.get(DESTINATION_HEADER) ?? undefined,
+        boundProject: response.headers?.get(BOUND_PROJECT_HEADER) ?? undefined,
+      },
     };
   } finally {
     clearTimeout(timer);
@@ -88,6 +95,29 @@ interface WireResponse {
   status: number;
   contentType: string;
   body: BodyRead;
+  echo: { contract?: string; destination?: string; boundProject?: string };
+}
+
+/**
+ * An accepted new-contract response is publication only with the contract echo and a destination; for consent
+ * (N1) the destination must be the project and the bound project must equal the frozen one (case-insensitive).
+ * Funding is never compared. A recognised discard needs no echo (the backend omits it).
+ */
+function echoVerified(echo: WireResponse['echo'], ctx: EvidenceContext): boolean {
+  if (echo.contract !== PUBLICATION_CONTRACT) return false;
+  const dest = echo.destination?.toLowerCase();
+  if (dest !== 'project' && dest !== 'personal') return false;
+  if (!ctx.consent) return true;
+  return dest === 'project' && !!echo.boundProject && echo.boundProject.toLowerCase() === (ctx.record.project ?? '').toLowerCase();
+}
+
+/** Persist the stop; if even that fails the next sendGuard/tick still refuses, so a failure is only logged. */
+async function stopSession(ctx: EvidenceContext, reason: Parameters<typeof writeStop>[1]): Promise<void> {
+  try {
+    await writeStop(ctx.key, reason, ctx.record.session_id);
+  } catch (err) {
+    logger.warn('[otlp-forwarder] stop marker not written', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));
+  }
 }
 
 const isAuthFailure = (response: WireResponse): boolean =>
@@ -142,7 +172,20 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       if (response && isAuthFailure(response)) return { kind: 'auth-expired' };
     }
     if (!response) return { kind: 'failed', reason: 'not_sendable' };
-    const outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks', !!req.evidence);
+    let outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks', !!req.evidence);
+    if (req.evidence?.newContract) {
+      const ctx = req.evidence;
+      if (outcome.kind === 'ok' && !echoVerified(response.echo, ctx)) {
+        // Never acknowledged, and never retried into more unverified publication: the session stops with a notice.
+        outcome = { kind: 'failed', reason: 'response_unverified' };
+        await stopSession(ctx, 'response_unverified');
+      } else if (outcome.final) {
+        await stopSession(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
+          : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
+      } else if (outcome.hold) {
+        await writeNotice(ctx.key, 'hold_contract_unavailable', ctx.record.session_id).catch(() => undefined);
+      }
+    }
     // Legacy JSON exports are independent records; retain main's payload-rejection policy.
     // Evidence requests keep 400 retryable because missing evidence headers are recoverable.
     if (!req.evidence && OTEL_JSON_STREAMS.includes(stream as OtelJsonStream) && [400, 413, 422].includes(response.status)) {

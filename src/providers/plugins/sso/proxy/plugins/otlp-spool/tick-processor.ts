@@ -2,6 +2,8 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { isStopped, writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { advertisesContract } from './policy-cache.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
@@ -40,6 +42,15 @@ async function stickyPersonalOf(key: string): Promise<boolean> {
   return v.state === 'unreadable' || (v.state === 'ok' && v.verdict.class === 'personal');
 }
 
+/** A stop marker is the owner of "never publish again"; a write failure only means the hold continues and is retried. */
+async function stopQuietly(key: string, reason: Parameters<typeof writeStop>[1], sessionId: string): Promise<void> {
+  try {
+    await writeStop(key, reason, sessionId);
+  } catch (err) {
+    logger.debug('[otlp-tick] stop marker not written', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
+  }
+}
+
 /**
  * Policy/capability for the forwarder's namespace, refreshed (bounded by the cache's backoff) before
  * the session lock is taken, so a slow backend never blocks spool appends. `undefined` = no identity.
@@ -47,12 +58,16 @@ async function stickyPersonalOf(key: string): Promise<boolean> {
 async function tickPolicyState(
   credentials: SSOCredentials | JWTCredentials,
   endpoint: AnalyticsEndpoint,
-  reprobe: boolean
+  reprobe: boolean,
+  sessionId: string
 ): Promise<PolicyState | undefined> {
   const id = endpoint.identity;
   if (!id) return undefined;
   const ns = { ...id, ...(endpoint.profile ? { profile: endpoint.profile } : {}) };
-  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe);
+  // Only a new-contract session needs the backend to advertise the contract (bounded refresh when it does not).
+  const found = await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId));
+  const needContract = (found?.kind === 'existing' || found?.kind === 'created') && found.record.funding_route !== undefined;
+  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe, needContract);
 }
 
 /**
@@ -85,6 +100,8 @@ async function applySessionEvidenceLocked(
     marked: status.evidenceMarked === true,
     record: key ? await readRecord(key) : undefined,
     capability: policy?.capability ?? 'unknown',
+    stopped: key ? await isStopped(key) : false,
+    contractAdvertised: policy ? advertisesContract(policy) : false,
     // An unreadable verdict may hide a sticky Personal: treated as Personal (fail closed, never legacy).
     stickyPersonal: key ? await stickyPersonalOf(key) : false,
     preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
@@ -108,11 +125,17 @@ async function applySessionEvidenceLocked(
     const since = status.holds?.session?.since ?? now;
     if (status.holds?.session?.reason !== decision.reason) {
       logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
+      // First hold on an unadvertised contract: the user is told once (marker notice; the hold itself may recover).
+      if (decision.reason === 'publication_contract_unavailable' && !heldSince && key) {
+        await writeNotice(key, 'hold_contract_unavailable', sessionId).catch(() => undefined);
+        logger.warn('[otlp-tick] analytics publication held: the backend does not advertise the publication contract');
+      }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };
   } else {
     clearHold(status, 'session');
     if (decision.action === 'lose') {
+      if (decision.reason === 'publication_contract_unavailable' && key) await stopQuietly(key, 'hold_expired', sessionId);
       await recordLossLocked(sessionId, status, decision.reason, undefined, now);
     } else {
       status.sendMode = decision.action === 'send_evidence' ? 'evidence' : 'legacy';
@@ -179,7 +202,7 @@ export async function processSessionTick(
   const endpoint = areCredentialsStale() ? undefined : await resolveAnalyticsEndpoint(credentials);
   if (endpoint === null) return holdEndpointMismatch(sessionId);
   const reprobe = (await readStatus(sessionId))?.holds?.session?.reason === 'organization_encoding_unsupported';
-  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe) : undefined;
+  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe, sessionId) : undefined;
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
