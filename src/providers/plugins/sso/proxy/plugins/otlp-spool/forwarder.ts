@@ -29,7 +29,8 @@ import {
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 import { withSessionLock } from './session-lock.js';
-import { authHeadersFor, resolveAnalyticsEndpoint, type AnalyticsEndpoint } from './classification.js';
+import { authHeadersFor, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
+import { advertisesContract } from './policy-cache.js';
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
@@ -165,6 +166,8 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       ? postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req))
       : null;
 
+  // A 422 publication_contract_unsupported gets exactly one capability refresh before it is final.
+  let contractRefreshed = false;
   const exchange = async (): Promise<SendOutcome> => {
     let response = await attempt();
     if (response && isAuthFailure(response)) {
@@ -175,6 +178,13 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     let outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks', !!req.evidence);
     if (req.evidence?.newContract) {
       const ctx = req.evidence;
+      if (outcome.final && outcome.reason === 'publication_contract_unsupported' && !contractRefreshed) {
+        contractRefreshed = true;
+        const state = await sessionPolicyState(ctx.ns, ctx.baseUrl, ctx.credentials, true, undefined, true);
+        // Still advertised after the refresh: resend once (a second refusal is final). No longer advertised: hold, not stop.
+        if (advertisesContract(state)) return exchange();
+        outcome = { kind: 'retry', reason: 'http_422', detail: 'publication_contract_unavailable', hold: true };
+      }
       if (outcome.kind === 'ok' && !echoVerified(response.echo, ctx)) {
         // Never acknowledged, and never retried into more unverified publication: the session stops with a notice.
         outcome = { kind: 'failed', reason: 'response_unverified' };

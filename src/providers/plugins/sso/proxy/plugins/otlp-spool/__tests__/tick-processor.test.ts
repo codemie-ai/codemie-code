@@ -541,6 +541,81 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     expect(forwardSession).not.toHaveBeenCalled();
   });
 
+  describe('new-contract wiring (stop marker, contract advertisement, hold expiry)', () => {
+    async function stampNewContract(): Promise<string> {
+      const { createOrRead } = await import('@/agents/core/evidence/record-store.js');
+      const { key, api_identity, owner_hash } = await identity();
+      const r = await createOrRead(key, {
+        session_id: SESSION, launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven', project: 'A',
+        project_source: 'profile', api_identity, owner_hash, funding_route: 'subscription', collection_generation: 0,
+      });
+      expect(r.kind).toBe('created');
+      return key;
+    }
+    async function seedPending(holdSince?: number): Promise<void> {
+      const { writeStatus, createStatus } = await import('../session-status.js');
+      await seed({ [`${SESSION}.hooks.ndjson`]: hookEnvelope('A', true), [`${SESSION}.otel_logs.bin`]: 'abcde' });
+      await writeStatus(SESSION, {
+        ...createStatus(), project: 'A', projectScanned: true,
+        ...(holdSince ? { holds: { session: { reason: 'publication_contract_unavailable', since: holdSince } } } : {}),
+      } as never);
+    }
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('a stop marker holds publication_stopped and nothing is forwarded', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { writeStop } = await import('@/agents/core/evidence/stop-marker.js');
+      await evidenceCapable();
+      const key = await stampNewContract();
+      await writeStop(key, 'folder_changed', SESSION);
+      await seedPending();
+      await tick();
+      expect((await current()).holds?.session?.reason).toBe('publication_stopped');
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('an authoritative backend that does not advertise the contract: held with the "not ready" notice, never sent as legacy', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { takeNotice, isStopped } = await import('@/agents/core/evidence/stop-marker.js');
+      vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ organizations: [], version: 'v1' }), { status: 200 }));
+      await evidenceCapable();
+      const key = await stampNewContract();
+      await seedPending();
+      await tick();
+      expect((await current()).holds?.session?.reason).toBe('publication_contract_unavailable');
+      expect(await takeNotice(key)).toBe('hold_contract_unavailable');
+      expect(await isStopped(key)).toBe(false);
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('capability unknown (backend unreachable): still held and fail closed, but the notice says it could not be confirmed', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { takeNotice, isStopped } = await import('@/agents/core/evidence/stop-marker.js');
+      vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+      const key = await stampNewContract();
+      await seedPending();
+      await tick();
+      expect((await current()).holds?.session?.reason).toBe('publication_contract_unavailable');
+      expect(await takeNotice(key)).toBe('hold_state_unknown');
+      expect(await isStopped(key)).toBe(false);
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('past the retention bound the hold expires: queued data is lost with a recorded reason and the session stops (hold_expired)', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { takeNotice, isStopped } = await import('@/agents/core/evidence/stop-marker.js');
+      vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+      const key = await stampNewContract();
+      await seedPending(Date.now() - 25 * 3_600_000);
+      await tick();
+      const status = await current();
+      expect(status.lastLoss).toMatchObject({ reason: 'publication_contract_unavailable' });
+      expect(await isStopped(key)).toBe(true);
+      expect(await takeNotice(key)).toBe('hold_expired');
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+  });
+
   it('AC8: a stamped session without a project is forwarded and nothing is discarded locally', async () => {
     const { writeStatus, createStatus } = await import('../session-status.js');
     const { forwardSession } = await import('../forwarder.js');

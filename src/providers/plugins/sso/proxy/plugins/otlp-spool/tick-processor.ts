@@ -127,8 +127,12 @@ async function applySessionEvidenceLocked(
       logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
       // First hold on an unadvertised contract: the user is told once (marker notice; the hold itself may recover).
       if (decision.reason === 'publication_contract_unavailable' && !heldSince && key) {
-        await writeNotice(key, 'hold_contract_unavailable', sessionId).catch(() => undefined);
-        logger.warn('[otlp-tick] analytics publication held: the backend does not advertise the publication contract');
+        // Authoritative only when the backend was actually consulted: absent or unknown capability is transient (still held, still bounded).
+        const authoritative = !!policy && policy.capability !== 'unknown';
+        await writeNotice(key, authoritative ? 'hold_contract_unavailable' : 'hold_state_unknown', sessionId).catch(() => undefined);
+        logger.warn(authoritative
+          ? '[otlp-tick] analytics publication held: the backend does not advertise the publication contract'
+          : '[otlp-tick] analytics publication held: the backend capability could not be confirmed');
       }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };

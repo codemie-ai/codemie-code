@@ -13,11 +13,14 @@ const writeStopMock = vi.fn();
 const writeNoticeMock = vi.fn();
 const consentHoldsMock = vi.fn();
 const noteFailureMock = vi.fn(async () => 'noted');
+const refreshPolicyMock = vi.fn();
+const snapshotNdjsonMock = vi.fn();
+const snapshotBytesMock = vi.fn();
 
 vi.mock('../spool-io.js', () => ({
   snapshotPendingHookRecords: snapshotPendingHookRecordsMock,
-  snapshotPendingBytes: vi.fn().mockResolvedValue(null),
-  snapshotPendingNdjsonRecords: vi.fn().mockResolvedValue(null),
+  snapshotPendingBytes: snapshotBytesMock,
+  snapshotPendingNdjsonRecords: snapshotNdjsonMock,
   isSendAllowed: isSendAllowedMock,
   noteStreamHold: vi.fn().mockResolvedValue('clear'),
   forwarderIdentity: vi.fn().mockReturnValue({ api_identity: 'https://api', owner_hash: 'h' }),
@@ -36,7 +39,7 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
 vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock }));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
 vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({ ...(await importOriginal<object>()), readRecord: readRecordMock }));
-vi.mock('../policy-cache.js', async (importOriginal) => ({ ...(await importOriginal<object>()), getPolicyState: getPolicyStateMock, refreshPolicy: vi.fn() }));
+vi.mock('../policy-cache.js', async (importOriginal) => ({ ...(await importOriginal<object>()), getPolicyState: getPolicyStateMock, refreshPolicy: refreshPolicyMock }));
 vi.mock('../verdict-store.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   readVerdictState: vi.fn().mockResolvedValue({ state: 'none' }),
@@ -84,6 +87,8 @@ describe('new-contract forwarding', () => {
     snapshotPendingHookRecordsMock.mockResolvedValue(batch);
     isStoppedMock.mockResolvedValue(false);
     consentHoldsMock.mockResolvedValue(true);
+    snapshotNdjsonMock.mockResolvedValue(null);
+    snapshotBytesMock.mockResolvedValue(null);
   });
   afterEach(() => vi.unstubAllGlobals());
   const run = async () => (await import('../forwarder.js')).forwardSession('s1', true, credentials);
@@ -175,5 +180,52 @@ describe('new-contract forwarding', () => {
     await run();
     expect(Object.keys(sentHeaders()).map((k) => k.toLowerCase())).not.toContain('x-codemie-work-consent');
     expect(sentHeaders()['X-CodeMie-Funding-Route']).toBe('subscription');
+  });
+
+  it('N0 (no consent) accepted with destination=project (derived corporate/codemie routing) is acknowledged', async () => {
+    fetchMock.mockImplementation(async () => respond(200, {}, echo('project', 'Proj A')));
+    await run();
+    expect(sentHeaders()).not.toHaveProperty('X-CodeMie-Work-Consent');
+    expect(advanceCursorMock).toHaveBeenCalled();
+    expect(writeStopMock).not.toHaveBeenCalled();
+  });
+
+  describe('422 publication_contract_unsupported: one bounded refresh before it is final', () => {
+    const unsupported = () => respond(422, { reason: 'publication_contract_unsupported', disposition: 'final' });
+    it('refresh still advertises the contract: one resend, a second refusal is final and stops the session', async () => {
+      refreshPolicyMock.mockResolvedValue(policy(['1']));
+      fetchMock.mockImplementation(async () => unsupported());
+      await run();
+      expect(refreshPolicyMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(writeStopMock).toHaveBeenCalledWith(expect.any(String), 'contract_unsupported', 's1');
+      expect(advanceCursorMock).toHaveBeenCalledTimes(1); // the final discard drops the range once, never a success
+      expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', batch.byteLength, expect.objectContaining({ reason: 'publication_contract_unsupported' }));
+    });
+    it('refresh no longer advertises it: hold with a notice, no stop, nothing acknowledged, no resend', async () => {
+      refreshPolicyMock.mockResolvedValue(policy());
+      fetchMock.mockImplementation(async () => unsupported());
+      await run();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(writeNoticeMock).toHaveBeenCalledWith(expect.any(String), 'hold_contract_unavailable', 's1');
+      expect(writeStopMock).not.toHaveBeenCalled();
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+    });
+    it('a successful resend after the refresh is acknowledged normally', async () => {
+      refreshPolicyMock.mockResolvedValue(policy(['1']));
+      fetchMock.mockImplementationOnce(async () => unsupported()).mockImplementationOnce(async () => respond(200, {}, echo('personal')));
+      await run();
+      expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+      expect(writeStopMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('a stopped session sends on no stream: hooks, OTLP and masked-JSON are all gated by the same stop', async () => {
+    isStoppedMock.mockResolvedValue(true);
+    const rec = JSON.stringify({ resource: {} });
+    snapshotNdjsonMock.mockResolvedValue({ project: 'Proj A', records: [rec], cursor: 0, byteLength: rec.length + 1 });
+    snapshotBytesMock.mockResolvedValue({ project: 'Proj A', bytes: Buffer.from([0]), cursor: 0, more: false });
+    await (await import('../forwarder.js')).forwardSession('s1', false, credentials);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
