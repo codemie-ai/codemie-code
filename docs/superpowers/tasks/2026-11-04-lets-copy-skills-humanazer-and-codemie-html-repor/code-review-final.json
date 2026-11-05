@@ -1,0 +1,507 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "deterministic",
+    "rationale": "All 4 prior blocking findings are kind:decision, each resolved by an id-mapped hitl decision in fix_evidence; evidence-only check, roster targeted-verifier=ran, confidence high; risk_flags [breaking-change] recorded (escalate_on empty)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "deterministic",
+      "rationale": "4 decision_needed findings (CR-001..CR-004); confidence low: oversized diff (10049 lines) and blind lens truncated - partial coverage; risk_flags [breaking-change] recorded (escalate_on empty). HALT on escalation trigger 4."
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "user decided all four decision_needed findings: CR-001 fix (restore temp/<OUT> cleanup prompt in codemie-analytics after hand-off, keep SKILL.md temp note consistent); CR-003 fix (convert codemie-html-report build/inject scripts to .mjs ESM, drop nested package.json, update references, README notes divergence from upstream; codemie-public-skills untouched); CR-002 closed by CR-003, re-run AC9 from dist; CR-004 fix (vitest byte-identity test for slop-scan.mjs + references/glossary.md, READMEs point to it; file length accepted as vendored). Run fix round and check round."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "deterministic",
+      "rationale": "All 4 prior blocking findings are kind:decision, each resolved by an id-mapped hitl decision in fix_evidence; evidence-only check, roster targeted-verifier=ran, confidence high; risk_flags [breaking-change] recorded (escalate_on empty)"
+    }
+  ],
+  "reviewed_head": "78585bf8b2e0a7cad2465d753a32f09a459f7a5f",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 4 prior blocking findings are kind:decision. Each has an id-mapped human (hitl) decision with outcome and rationale in fix_evidence bound to HEAD 4a742d8d, so all 4 are resolved; the mapped commands record exit_code 0 and were not re-run. This is an evidence-only check: no source was inspected, and the 18 deferred items were not re-checked.",
+  "confidence": "low",
+  "check_confidence": "high",
+  "risk_flags": [
+    "breaking-change"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 4,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-analytics/SKILL.md",
+      "line": 328,
+      "title": "Raw-data temp cleanup prompt lost",
+      "problem": "Before this change, codemie-html-report SKILL.md had an analytics-only 'Final Step — Temp file cleanup' that asked the user whether to delete the temp/ folder of raw API responses (<OUT>). Replacing html-report with the upstream copy removed that step. The rewritten codemie-analytics Step 3a hand-off (and the deleted Step 3b) does not restore it, and SKILL.md:183 still says temp files are not cleaned up automatically.",
+      "impact": "Analytics runs now leave raw API responses on disk with no prompt to delete them. These can hold per-user spending and leaderboard data. This is a behaviour regression introduced by this change, confirmed by reading the old html-report SKILL.md at 916710fb and the current analytics hand-off.",
+      "recommendation": "Decide where the analytics-only \"ask the user whether to delete temp/ (<OUT>)\" step now lives. The likely place is a final step after the Step 3a hand-off in codemie-analytics/SKILL.md, because html-report must stay byte-identical to upstream. This needs a human scope call, because the spec allows no analytics edits beyond the hand-off.",
+      "status": "decided",
+      "check_notes": "Mapped hitl decision: restore the temp/ cleanup prompt as analytics Step 3b; artifact present",
+      "fix": {
+        "change": "codemie-analytics SKILL.md: new Step 3b asks whether to delete $OUT after the report is built; the Step 2 temp-files note points to it",
+        "test": "n/a"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "src/agents/plugins/claude/plugin/skills/codemie-analytics/SKILL.md"
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "Restore the temp/ raw-data cleanup prompt in codemie-analytics after the hand-off to codemie-html-report, and keep the SKILL.md temp-files note consistent.",
+        "rationale": "User decision (hitl): the prompt was lost when html-report was replaced; analytics owns $OUT, so the step lives in codemie-analytics as Step 3b."
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/package.json",
+      "title": "No check that the commonjs pin ships",
+      "problem": "This is a regression gap. The skill scripts load only because the new nested package.json {\"type\":\"commonjs\"} overrides the root \"type\":\"module\". No test or gate spawns any skill script from src/ or dist/, and shipping relies only on copy-plugins.js:25 not filtering .json files.",
+      "impact": "If the one-line package.json is dropped, renamed or excluded from what ships, every build.js and inject-*.js call fails at load time with 'require is not defined in ES module scope'. Reports and decks then cannot be built. AC9 checks this once in Stage 7, but nothing guards it afterwards. Consumer: the build step that the codemie-html-report SKILL.md tells the agent to run.",
+      "recommendation": "Decide whether to add a lasting guard, such as a post-build check or a test that spawns `dist/.../codemie-html-report/scripts/build.js` on a fixture and expects exit 0. Without the nested package.json, every CommonJS script fails to load. AGENTS.md allows tests only on explicit request, and the stand-in chose hands-on validation (AC9) instead of a test, so this needs the user's explicit go-ahead.",
+      "status": "decided",
+      "check_notes": "Mapped hitl decision: moot after CR-003 (no CJS pin); dist build and AC9 commands exit 0",
+      "fix": {
+        "change": "Closed by CR-003: nested package.json removed; AC9 re-run, building a report and the deck gallery from the dist copy",
+        "test": "npm run build, then dist build.mjs on a report fixture and on deck-gallery.src.html (exit 0)"
+      },
+      "evidence": {
+        "commands": [
+          {
+            "command": "rm -rf dist/agents/plugins/claude/plugin/skills/codemie-html-report && npm run build && test ! -e dist/agents/plugins/claude/plugin/skills/codemie-html-report/package.json && test ! -e dist/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js && test -f dist/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.mjs",
+            "exit_code": 0
+          },
+          {
+            "command": "node dist/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-data.mjs <scratch>/report.src.html <scratch>/data && node dist/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.mjs <scratch>/report.src.html --out <scratch>/report.html",
+            "exit_code": 0
+          },
+          {
+            "command": "node dist/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.mjs dist/agents/plugins/claude/plugin/skills/codemie-html-report/style-guide/deck-gallery.src.html --out <scratch>/deck-gallery.html",
+            "exit_code": 0
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "Closed by CR-003: no CommonJS pin is left to ship. Re-run AC9 from the dist copy.",
+        "rationale": "User decision (hitl): the .mjs scripts run under the root type:module with no nested package.json, so there is nothing whose omission breaks the build."
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "line": 32,
+      "title": "CommonJS skill scripts break the Imports rule",
+      "problem": "code-quality.md's Imports rule requires ES modules with no require()/CommonJS, and AGENTS.md Common Pitfalls says to avoid require() and __dirname. build.js, inject-charts.js, inject-controls.js, inject-css.js and inject-data.js use both, and this change opts the skill into CommonJS with a new package.json {\"type\":\"commonjs\"}. The spec chose the pin over an ESM rewrite, but in an autonomous spec gate (product-owner stand-in SR-001), not as a user decision.",
+      "impact": "The repo's documented code-quality standard is not met by newly shipped scripts. The rule and the spec's copy-verbatim choice cannot both hold without a recorded exemption.",
+      "recommendation": "Get a human decision. One option is to convert build.js and the inject-*.js scripts to ES modules (`import` from 'node:...', directory from `import.meta.url`) and drop the `{\"type\":\"commonjs\"}` pin. That diverges from upstream. The other option is to document in code-quality.md that vendored skill scripts under `claude/plugin/skills` are exempt. The spec chose the pin, but a stand-in agent made that choice, not the user.",
+      "status": "decided",
+      "check_notes": "Mapped hitl decision: convert scripts to .mjs and drop package.json; vitest command exit 0",
+      "fix": {
+        "change": "html-report build and inject scripts converted to ESM .mjs, package.json deleted, references updated, README notes the divergence from the source",
+        "test": "npx vitest run --project unit src/agents/plugins/claude/__tests__/skills-shared-files.test.ts (ships codemie-html-report scripts as ES modules)"
+      },
+      "evidence": {
+        "commands": [
+          {
+            "command": "npx vitest run --project unit src/agents/plugins/claude/__tests__/skills-shared-files.test.ts",
+            "exit_code": 0
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "Convert build.js and inject-charts/controls/css/data.js to ES modules (.mjs), delete the nested package.json, update every reference, and note the intentional divergence from codemie-public-skills in the README.",
+        "rationale": "User decision (hitl): brings the scripts in line with the code-quality.md Imports rule; codemie-public-skills is not touched."
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/slop-scan.mjs",
+      "title": "Duplicated 1956-line slop-scan without drift guard",
+      "problem": "code-quality.md's Code Structure Guidelines keep files under 500 lines. slop-scan.mjs is 1956 lines and ships byte-identical in codemie-html-report and codemie-humanizer, as does references/glossary.md. No test or gate checks that the copies stay identical; the spec's cmp is a one-off validation step. The READMEs also cite a drift-guard test (evals/humanizer-shared-files.test.ts) that does not exist in this repo.",
+      "impact": "A fix to one scanner's rules leaves the other skill grading text differently, so the html-report build gate and codemie-humanizer can disagree about the same text without any failure. This is also a documented structure standard that is not met.",
+      "recommendation": "Get a human decision. Options: ship one shared copy if the plugin layout allows it, add a gate or test that checks the two slop-scan.mjs and glossary.md copies are identical, or mark slop-scan.mjs as vendored and exempt from the 500-line structure rule. The `cmp` run during validation is a one-off check, not a guard.",
+      "status": "decided",
+      "check_notes": "Mapped hitl decision: vitest byte-identity drift guard; file length accepted; command exit 0",
+      "fix": {
+        "change": "New drift test for slop-scan.mjs and glossary.md; html-report and humanizer READMEs point to it",
+        "test": "npx vitest run --project unit src/agents/plugins/claude/__tests__/skills-shared-files.test.ts (keeps ... byte-identical; mutation run confirmed it fails on drift)"
+      },
+      "evidence": {
+        "commands": [
+          {
+            "command": "npx vitest run --project unit src/agents/plugins/claude/__tests__/skills-shared-files.test.ts",
+            "exit_code": 0
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "Add a vitest test that slop-scan.mjs and references/glossary.md are byte-identical in codemie-html-report and codemie-humanizer, and point both READMEs at it. File length accepted as copied third-party-style code.",
+        "rationale": "User decision (hitl): a lasting drift guard instead of a one-off cmp."
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/references/analytics.md",
+      "line": 12,
+      "title": "inject-data rewrites source in place",
+      "problem": "Running inject-data.js in place on page.src.html uses up the placeholders. A refresh rerun exits 1, and the raw JSON stays in the editable source.",
+      "preexisting": "Verbatim upstream analytics.md and inject-data.js; the task is a copy."
+    },
+    {
+      "id": "DF-002",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "Build gate has no regression tests",
+      "problem": "No test covers deckCheck, the exit-code contract, ICON_NAMES parsing or the --no-presenter replace.",
+      "preexisting": "Upstream script, copied verbatim; upstream evals are not copied, by design."
+    },
+    {
+      "id": "DF-003",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "Deck with no speaker notes passes",
+      "problem": "deckCheck flags missing data-notes only when some slides have notes, so a deck with no notes passes.",
+      "preexisting": "Verbatim upstream build.js (only the licence header differs)."
+    },
+    {
+      "id": "DF-004",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "ICON_NAMES regex breaks on reformat",
+      "problem": "The icon list is parsed out of deck.js by a formatting-dependent regex. If deck.js is reformatted, every data-i icon fails.",
+      "preexisting": "Verbatim upstream build.js (only the licence header differs)."
+    },
+    {
+      "id": "DF-005",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "In-place rebuild skips re-injection",
+      "problem": "Without --out, the idempotence markers stop a rebuild from refreshing CSS, fonts and controls, so an earlier --cdn build stays CDN.",
+      "preexisting": "Verbatim upstream build.js and inject-*.js."
+    },
+    {
+      "id": "DF-006",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "Layout probe skipped without </body>",
+      "problem": "The probe is injected before </body>. A page without that tag is never measured but still passes.",
+      "preexisting": "Verbatim upstream build.js (only the licence header differs)."
+    },
+    {
+      "id": "DF-007",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "Layout result JSON.parse uncaught",
+      "problem": "Truncated layout output throws inside the child close handler and crashes the build.",
+      "preexisting": "Verbatim upstream build.js (only the licence header differs)."
+    },
+    {
+      "id": "DF-008",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/build.js",
+      "title": "Self-contained check misses script loads",
+      "problem": "externalLoads ignores fetch/import(), object data, SVG use href, meta refresh and later srcset URLs.",
+      "preexisting": "Verbatim upstream build.js (only the licence header differs)."
+    },
+    {
+      "id": "DF-009",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-controls.js",
+      "title": "--no-presenter leaves broken Focus button",
+      "problem": "The flag is an exact-string replace and still adds the Focus button, which then opens a non-syncing copy of the deck.",
+      "preexisting": "Verbatim upstream inject-controls.js and controls.js."
+    },
+    {
+      "id": "DF-010",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-controls.js",
+      "title": "Light theme not forced with single quotes",
+      "problem": "With class='x' on html, the test regex matches but the replace regex does not, so no light class is added.",
+      "preexisting": "Verbatim upstream inject-controls.js."
+    },
+    {
+      "id": "DF-011",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-css.js",
+      "title": "Font face without unicode-range throws",
+      "problem": "fontsFor dereferences the unicode-range match without a null check.",
+      "preexisting": "Verbatim upstream inject-css.js."
+    },
+    {
+      "id": "DF-012",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-data.js",
+      "title": "Data injection escaping is untested",
+      "problem": "Nothing exercises the JSON validation or the escaping of '<', U+2028 and U+2029.",
+      "preexisting": "Upstream script, copied verbatim; upstream evals are not copied, by design."
+    },
+    {
+      "id": "DF-013",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/scripts/inject-data.js",
+      "title": "Unfilled placeholders exit 0",
+      "problem": "It only warns about leftover placeholders, and a leftover placeholder is a JS syntax error that kills the page script.",
+      "preexisting": "Verbatim upstream inject-data.js."
+    },
+    {
+      "id": "DF-014",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/style-guide/js/charts.js",
+      "title": "Re-creating a chart throws",
+      "problem": "Calling create twice on one canvas does not destroy the existing chart, so Chart.js throws 'Canvas is already in use'.",
+      "preexisting": "Verbatim upstream charts.js."
+    },
+    {
+      "id": "DF-015",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/style-guide/js/charts.js",
+      "title": "Unknown colour token paints transparent",
+      "problem": "A misspelled token paints the series transparent and raises no warning.",
+      "preexisting": "Verbatim upstream charts.js."
+    },
+    {
+      "id": "DF-016",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/style-guide/js/controls.js",
+      "title": "Slide counter includes backup slides",
+      "problem": "Footers number main slides only, but the counter, nav and #N hash count backup slides too.",
+      "preexisting": "Verbatim upstream controls.js and deck.js."
+    },
+    {
+      "id": "DF-017",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-html-report/style-guide/js/deck.js",
+      "title": "Waffle data-n=0 draws one square",
+      "problem": "parseInt(...) || 1 turns a zero count into one square, and a large n is not capped.",
+      "preexisting": "Verbatim upstream deck.js."
+    },
+    {
+      "id": "DF-018",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/plugin/skills/codemie-humanizer/SKILL.md",
+      "title": "Humanizer rules apply session-wide",
+      "problem": "'While this skill is loaded' applies to everything written afterwards, including commit and MR text.",
+      "preexisting": "Upstream humanizer SKILL.md; only the name and paths changed."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Scope 1: replace codemie-html-report with SRC minus evals/ and LICENSE; delete bundle.css; add package.json type commonjs",
+      "status": "pass",
+      "notes": "File list matches SRC minus evals/LICENSE plus package.json; bundle.css deleted with no remaining reader"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 2: add codemie-humanizer from SRC/common/humanizer minus evals/ and LICENSE; html-report mentions renamed",
+      "status": "pass",
+      "notes": "9 files match; frontmatter name codemie-humanizer; html-report SKILL/README updated"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: SKILL.md paths to ${CLAUDE_PLUGIN_ROOT}/skills/<name>/...; reference docs reworded skill-relative",
+      "status": "pass",
+      "notes": "Both SKILL.md files rewritten; deck.md and analytics.md <skill-dir> lines reworded"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: no LICENSE, licence frontmatter or EPAM headers; keep LICENSE-OFL.txt and Chart.js banner",
+      "status": "pass",
+      "notes": "No EPAM header lines remain; OFL and Chart.js banner kept"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 5: content otherwise byte-identical; scripts stay CJS/.mjs; vendor-assets.mjs ships; slop-scan.mjs and glossary.md in both skills",
+      "status": "pass",
+      "notes": "diff -r vs SRC differs only in headers/paths/README; lens could not run a full byte comparison"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: analytics hand-off passes data folder and output path, defers to references/analytics.md, adds override line",
+      "status": "pass",
+      "notes": "Single hunk at codemie-analytics SKILL.md:315; see CR-001 for the lost cleanup prompt"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 7: plugin.json version 1.0.30 -> 1.0.31",
+      "status": "pass",
+      "notes": "Version bumped"
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 8: gitleaks allowlist only if flagged, path-anchored",
+      "status": "pending-stage-7",
+      "notes": "No allowlist change; gitleaks run is execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: codemie-humanizer exists, no evals/ or LICENSE, no skills/humanizer/",
+      "status": "pass",
+      "notes": "Only codemie-humanizer present"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: codemie-html-report matches SRC file list minus evals/ and LICENSE, plus package.json; bundle.css gone",
+      "status": "pass",
+      "notes": "32 files match"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: normalised diff vs source shows only the allowed rewrites",
+      "status": "pass",
+      "notes": "Spot-checked by lens; diff -r in triage confirms the scripts differ only in licence headers"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: no <skill-dir>; no ${CLAUDE_PLUGIN_ROOT} in reference docs; SKILL.md paths resolve",
+      "status": "pass",
+      "notes": "Token only in the two SKILL.md files; referenced paths exist"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: no EPAM rights lines, licence frontmatter or skill LICENSE; OFL and Chart.js banner remain",
+      "status": "pass",
+      "notes": "Confirmed"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: analytics hand-off defers to references/analytics.md, override line present, no /*__CSS__*/",
+      "status": "pass",
+      "notes": "No __CSS__ under the plugin"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: plugin.json version is 1.0.31",
+      "status": "pass",
+      "notes": "Confirmed"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: npm run build, typecheck, lint and installer/sync tests pass",
+      "status": "pending-stage-7",
+      "notes": "Execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: inject-data.js, build.js, slop-scan.mjs run from dist/ and installed copy; single package.json under P",
+      "status": "pending-stage-7",
+      "notes": "Static part verified; script runs are execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: pre-commit gitleaks passes; allowlist limited to two named paths",
+      "status": "pending-stage-7",
+      "notes": "Execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: cmp confirms slop-scan.mjs and glossary.md copies identical across both skills",
+      "status": "pass",
+      "notes": "Identical hunk sizes and blobs; cmp run not visible in diff"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no msgraph changes",
+      "status": "pass",
+      "notes": "None"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no new Vitest tests or eval runner",
+      "status": "pass",
+      "notes": "None"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no TypeScript changes to copy-plugins.js, sync-plugin.ts or installers",
+      "status": "pass",
+      "notes": "None"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no codemie-analytics edits beyond hand-off and override line",
+      "status": "pass",
+      "notes": "Single hunk"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: analytics report CLI and codemie-bundle.css untouched",
+      "status": "pass",
+      "notes": "Not in changed files"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: vendored assets not refreshed",
+      "status": "pass",
+      "notes": "Copied as-is"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no CHANGELOG entry",
+      "status": "pass",
+      "notes": "None"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "6 subjects in 916710fb..HEAD all match <type>(<scope>): <subject> per git-workflow.md; types feat/fix/chore are in the allowed type-enum, scope skills is in the allowed scope-enum, subjects are imperative and under 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md is TypeScript-oriented (naming, return types, .js imports) and most changed files are Markdown/CSS/vendored assets with nothing to adjudicate; but its Imports rule (no require()/CommonJS, ES modules) and AGENTS.md Common Pitfalls (no require()/__dirname) are broken by codemie-html-report scripts build.js, inject-charts.js, inject-controls.js, inject-css.js, inject-data.js, which use require() and __dirname, with package.json newly pinned to type commonjs; Code Structure Guidelines (files under 500 lines) broken by scripts/slop-scan.mjs at 1956 lines, shipped byte-identical in both codemie-html-report and codemie-humanizer"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "guide not at .ai-run/guides/development/security-patterns.md; adjudicated against the repo's documented security guide .ai-run/guides/security/security-practices.md (AGENTS.md Guide Map). No attribution headers, credentials, secret logging or hardcoded secrets touched; inject-data.js escapes < and U+2028/2029 before inlining JSON into script blocks; build.js spawns the browser and pkill with argv arrays (no shell) on a mkdtemp profile; controls.js/deck.js innerHTML calls take static SVG icon strings and counters; vendor-assets.mjs fetches fonts and Chart.js only at maintainer vendoring time and the CDN tag carries an SRI integrity hash. No concrete security issue found"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Request-changes: 4 decision_needed items remain and the code-quality standard is partial. CR-001: the temp/ raw-data cleanup prompt was lost. CR-002: nothing checks that the commonjs package.json ships. CR-003: CommonJS scripts break the code-quality.md Imports rule, and a stand-in chose the pin. CR-004: a 1956-line slop-scan.mjs is duplicated with no drift guard. Coverage is incomplete: the diff is oversized (~1.5 MB), the blind lens ran out of budget before the remaining humanizer references and scripts, and 2.3 confirmed pre-existence by diffing against upstream SRC instead of tracing reachability for each candidate. 18 items were deferred as verbatim upstream defects (code-review-deferred.local.md in the run dir) and 10 were dismissed as cosmetic, stale-comment or style noise.",
+    "confidence": "low",
+    "risk_flags": [
+      "breaking-change"
+    ]
+  }
+}
