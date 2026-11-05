@@ -3,7 +3,10 @@ import { buildAttributionHeaders } from '../header-injection.plugin.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
-import type { NamespaceId } from './policy-cache.js';
+import { advertisesContract, getPolicyState, type NamespaceId } from './policy-cache.js';
+import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { consentHolds } from '@/agents/core/evidence/consent-store.js';
+import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 
 /** Project the session is bound to; the backend gates analytics on it. */
@@ -17,7 +20,39 @@ export interface EvidenceContext {
   baseUrl: string;
   credentials: SSOCredentials | JWTCredentials;
   result: ClassResult;
+  /** The record is a new-contract session (funding claim frozen): contract and funding go on every request. */
+  newContract: boolean;
+  /** Explicit work consent: the frozen entry still holds right now. Never true from spooled or inbound headers. */
+  consent: boolean;
 }
+
+/**
+ * Whether this session may make a NEW network send right now (checked at tick and before every attempt).
+ * A stopped session sends nothing, backlog included. For the new contract the frozen collection generation must
+ * equal the current one and a frozen consent entry must still hold; a mismatch persists a stop (never a downgrade
+ * that would send under another scope). Unreadable evidence is no send, never open.
+ */
+export async function sendGuard(key: string, record: EvidenceRecord): Promise<boolean> {
+  if (await isStopped(key)) return false;
+  if (record.funding_route === undefined) return true; // legacy-recorded session: unchanged
+  try {
+    const prefs = await readClaudeAnalyticsPreferences();
+    if (prefs.kind !== 'ok') return false;
+    if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
+      await writeStop(key, 'generation_changed', record.session_id);
+      return false;
+    }
+    if (record.consent_ref && !(await consentHolds(record.consent_ref, scopeOf(record)))) {
+      await writeStop(key, 'consent_revoked', record.session_id);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const scopeOf = (r: EvidenceRecord) => ({ owner_hash: r.owner_hash, api_identity: r.api_identity, project: r.project ?? '' });
 
 /**
  * Evidence headers (spec item 6; backend `EVIDENCE_HEADERS`), from the record's frozen values and
@@ -38,6 +73,7 @@ export function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record
     repoKey: record.repo_key,
     project: record.project,
     projectSource: record.project_source,
+    contract: ctx.newContract && record.funding_route ? { fundingRoute: record.funding_route, consent: ctx.consent } : undefined,
   });
   for (const name of built.omitted) logger.debug(`[otlp-evidence] ${name} omitted: not_latin1_header_value`);
   return built.headers;
@@ -61,14 +97,18 @@ export async function evidenceContext(
   const key = recordKey(id.api_identity, id.owner_hash, sessionId);
   const found = await readRecord(key);
   if (found?.kind !== 'existing' && found?.kind !== 'created') return null;
+  if (!(await sendGuard(key, found.record))) return null;
   const ns: NamespaceId = { ...id, ...(profile ? { profile } : {}) };
+  const newContract = found.record.funding_route !== undefined;
+  // A new-contract session is never sent as legacy: without the advertised contract nothing is sent.
+  if (newContract && !advertisesContract(await getPolicyState(ns, { needContract: true }))) return null;
   let result = decided;
   if (!result) {
     const cls = await classifySession(key, found.record, await sessionPolicyState(ns, baseUrl, credentials));
     if (cls.action !== 'send') return null;
     result = cls.result;
   }
-  return { key, record: found.record, ns, baseUrl, credentials, result };
+  return { key, record: found.record, ns, baseUrl, credentials, result, newContract, consent: newContract && !!found.record.consent_ref };
 }
 
 /**

@@ -32,7 +32,7 @@ import { withSessionLock } from './session-lock.js';
 import { authHeadersFor, resolveAnalyticsEndpoint, type AnalyticsEndpoint } from './classification.js';
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { proveJsonRecord } from './otlp-json-reader.js';
-import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, type EvidenceContext } from './evidence-send.js';
+import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
@@ -131,7 +131,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
   // it for its hooks prefix only. `null` = no longer sendable, nothing is fetched (the next
   // snapshot applies the policy under the lock).
   const attempt = async (): Promise<WireResponse | null> =>
-    (await isSendAllowed(sessionId, stream, req.project, req.range))
+    (await isSendAllowed(sessionId, stream, req.project, req.range)) && (!req.evidence || (await sendGuard(req.evidence.key, req.evidence.record)))
       ? postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req))
       : null;
 
