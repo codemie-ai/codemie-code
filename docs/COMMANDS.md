@@ -1270,6 +1270,8 @@ codemie --version
 
 A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
 
+A command run with `--json` (for example `codemie proxy analytics status --json`) also runs pending migrations silently (file log only) and skips the update check and the what's-new notice, so on every run, including the first one in an empty `CODEMIE_HOME`, its stdout carries only the JSON.
+
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default
 - First invocation may take up to 5 seconds (network check)
