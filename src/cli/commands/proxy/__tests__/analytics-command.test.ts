@@ -189,7 +189,7 @@ describe('createProxyAnalyticsCommand', () => {
     const names = createProxyAnalyticsCommand()
       .commands.map((c) => c.name())
       .sort();
-    expect(names).toEqual(['disable', 'enable', 'exclude', 'include', 'status']);
+    expect(names).toEqual(['connect-folder', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
   });
 
   it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {

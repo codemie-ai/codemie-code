@@ -29,6 +29,10 @@ import { evaluateClaudeAnalyticsGate } from '@/agents/plugins/claude-code-otlp/c
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import inquirer from 'inquirer';
+import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
+import { connectFolder, disconnectFolder } from '@/agents/core/evidence/consent-store.js';
+import { resolveSessionProject } from '@/agents/core/event-fields/identity-fields.js';
 import { adviceForReason, coverageNote, resumeNote } from './analytics-hints.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -267,6 +271,66 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
   });
 }
 
+/** The folder-management actions apply to Claude Code only; the Copilot connectors have no work consent. */
+function assertClaudeOnly(opts: ConnectorOptions): void {
+  if (resolveAnalyticsConnector(opts) !== CLAUDE_CODE_OTLP_AGENT_NAME) {
+    throw new ConfigurationError('Work-consent folders are only available for Claude Code analytics.');
+  }
+}
+
+async function requireIdentity(): Promise<{ api_identity: string; owner_hash: string }> {
+  const identity = await currentEvidenceIdentity();
+  if (!identity) {
+    throw new ConfigurationError('Sign in to CodeMie first (codemie profile login): the consent is tied to your account and backend.');
+  }
+  return identity;
+}
+
+async function connectWorkFolder(path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }): Promise<void> {
+  await withErrorHandling(async () => {
+    assertClaudeOnly(opts);
+    const target = path ?? resolveProjectRoot();
+    const canonical = await canonicalizePath(target);
+    // The project may come from the profile or workspace configuration; that only proposes it, never grants consent.
+    const project = (opts.project ?? (await resolveSessionProject(canonical, undefined))).trim();
+    if (!project) {
+      throw new ConfigurationError('No CodeMie project resolved for this folder. Pass --project <name>.');
+    }
+    const identity = await requireIdentity();
+    console.log(`Folder:  ${canonical}`);
+    console.log(`Project: ${project}`);
+    console.log('This covers every sub-folder of that folder that resolves to the same project.');
+    console.log(chalk.yellow('Conversation content (prompts, tool input and output, transcripts) of those sessions becomes visible to the project admins.'));
+    if (!opts.yes) {
+      if (!process.stdin.isTTY) {
+        throw new ConfigurationError('Confirmation required: re-run with --yes to connect this folder.');
+      }
+      const { ok } = await inquirer.prompt<{ ok: boolean }>([{ type: 'confirm', name: 'ok', message: 'Connect this folder?', default: false }]);
+      if (!ok) {
+        console.log(chalk.dim('Nothing changed.'));
+        return;
+      }
+    }
+    const saved = await connectFolder({ ...identity, project }, canonical);
+    console.log(chalk.green(`✓ Connected ${saved} to project ${project}. Applies to sessions that start after this.`));
+    console.log(chalk.dim('Connecting does not turn collection on and does not change what is collected; it only authorizes this folder.'));
+    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, saved);
+  });
+}
+
+async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOptions): Promise<void> {
+  await withErrorHandling(async () => {
+    assertClaudeOnly(opts);
+    const canonical = await canonicalizePath(path ?? resolveProjectRoot());
+    const removed = await disconnectFolder(await requireIdentity(), canonical);
+    console.log(
+      removed > 0
+        ? chalk.green(`✓ Disconnected ${canonical}. Sessions that rely on it stop publishing, including queued data.`)
+        : chalk.dim(`Nothing to change: ${canonical} is not connected.`)
+    );
+  });
+}
+
 function withConnectorOptions(command: Command): Command {
   return command
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Target Claude Code (default)')
@@ -299,6 +363,19 @@ export function createProxyAnalyticsCommand(): Command {
       .command('include [path]')
       .description('Remove a project from the exclusion list (default: the current project root)')
   ).action((path: string | undefined, opts: ConnectorOptions) => includeProject(path, opts));
+
+  withConnectorOptions(
+    analytics
+      .command('connect-folder [path]')
+      .description('Authorize work-project analytics for a folder (default: the current project root); Claude Code only')
+  )
+    .option('--project <name>', 'CodeMie project (default: the one the profile or workspace resolves)')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action((path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }) => connectWorkFolder(path, opts));
+
+  withConnectorOptions(
+    analytics.command('disconnect-folder [path]').description('Withdraw work-project authorization for a folder (default: the current project root)')
+  ).action((path: string | undefined, opts: ConnectorOptions) => disconnectWorkFolder(path, opts));
 
   withConnectorOptions(
     analytics.command('status').description('Show the effective analytics configuration for the connector')

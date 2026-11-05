@@ -412,7 +412,7 @@ describe('proxy command registration', () => {
     const analytics = proxy.commands.find((c) => c.name() === 'analytics');
     expect(analytics).toBeDefined();
     const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
-    expect(subcommandNames).toEqual(['disable', 'enable', 'exclude', 'include', 'status']);
+    expect(subcommandNames).toEqual(['connect-folder', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
   });
 });
 
