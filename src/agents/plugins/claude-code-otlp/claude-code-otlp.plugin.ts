@@ -28,7 +28,7 @@ import { parsePromptFields } from '@/agents/core/ticket-parser.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
-import { resolveIdentityCandidateFields } from '@/agents/core/event-fields/identity-fields.js';
+import { resolveIdentityCandidateFields, resolveProjectAtCwd } from '@/agents/core/event-fields/identity-fields.js';
 import {
   resolveGitCommitFields,
   resolveGitHeadFields,
@@ -40,6 +40,13 @@ import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
 import { readPromptHookTimeoutSeconds } from './claude-code-otlp.allowlist.js';
 import { evaluateClaudeAnalyticsGate } from './claude-code-otlp.gate.js';
 import { readClaudeAnalyticsPreferences } from './claude-code-otlp.preferences.js';
+import { stopNoticeText } from './claude-code-otlp.notice.js';
+import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
+import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { isStopped, takeNotice, writeStop, type StopReason } from '@/agents/core/evidence/stop-marker.js';
+import { consentHolds } from '@/agents/core/evidence/consent-store.js';
+import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
+import type { OtlpAdapterDeps } from '@/agents/core/types.js';
 import {
   buildSessionEnvEvent,
   openMainTranscriptPass,
@@ -140,6 +147,115 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const decision = await evaluateClaudeAnalyticsGate(hookInput.cwd);
     logger.debug(`[${this.name}] analytics gate decision`, ...sanitizeLogArgs({ reason: decision.reason }));
     return decision.tracked;
+  }
+
+  /** The one-shot user notice of this hook, printed once at the end (or merged into a block answer). */
+  private pendingNotice?: string;
+
+  public override async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
+    try {
+      await super.processOtlpEvent(rawHookInput, deps);
+    } finally {
+      // The hook always returns normally; the notice is a systemMessage (user-visible, not model context).
+      if (this.pendingNotice) {
+        console.log(JSON.stringify({ systemMessage: this.pendingNotice }));
+        this.pendingNotice = undefined;
+      }
+    }
+  }
+
+  protected override emitBlock(decision: Parameters<OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput>['emitBlock']>[0]): void {
+    if (!this.pendingNotice) return super.emitBlock(decision);
+    console.log(JSON.stringify({ ...decision, systemMessage: this.pendingNotice }));
+    this.pendingNotice = undefined;
+  }
+
+  /** Surfaces a pending notice (written by this hook or by the daemon) at most once, with a logger fallback. */
+  private async queueNotice(key: string): Promise<void> {
+    const reason = await takeNotice(key);
+    if (!reason) return;
+    this.pendingNotice = stopNoticeText(reason);
+    logger.warn(`[${this.name}] ${this.pendingNotice}`);
+  }
+
+  private async stopSession(key: string, reason: StopReason, sessionId: string): Promise<'stop'> {
+    try {
+      await writeStop(key, reason, sessionId);
+      await this.queueNotice(key);
+    } catch (err) {
+      // Marker write failure: nothing is spooled for this hook.
+      logger.debug(`[${this.name}] stop marker not written: ${err instanceof Error ? err.name : 'error'}`);
+    }
+    return 'stop';
+  }
+
+  /**
+   * After the global gates: a stopped session spools nothing; a non-startup hook with no record is a session of
+   * unknown scope; a recorded new-contract session must still be in the same collection generation, project and
+   * (when consented) connected folder. Anything unreadable fails closed. Never throws.
+   */
+  protected override async transitionGate(hookInput: HookInput): Promise<'continue' | 'stop'> {
+    try {
+      const id = await currentEvidenceIdentity();
+      if (!id) return 'continue'; // no owner yet: the stamp path holds or reports it
+      const sessionId = hookInput.session_id;
+      const key = recordKey(id.api_identity, id.owner_hash, sessionId);
+      if (await isStopped(key)) {
+        await this.queueNotice(key);
+        return 'stop';
+      }
+      const found = await readRecord(key);
+      if (found && found.kind !== 'existing' && found.kind !== 'created') {
+        return found.kind === 'stamp_invalid' ? this.stopSession(key, 'resume_unknown', sessionId) : 'stop';
+      }
+      if (!found) {
+        const source = readOptionalString(hookInput, 'source');
+        const freshSession = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
+        if (freshSession || (await hasPendingOwnerSession(sessionId))) return 'continue';
+        return this.stopSession(key, 'resume_unknown', sessionId);
+      }
+      const record = found.record;
+      if (record.funding_route === undefined) return 'continue'; // recorded before the new contract: legacy, unchanged
+      const prefs = await readClaudeAnalyticsPreferences();
+      if (prefs.kind !== 'ok') return 'stop';
+      if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
+        return this.stopSession(key, 'generation_changed', sessionId);
+      }
+      if ((await resolveProjectAtCwd(hookInput.cwd)) !== (record.project ?? '')) {
+        return this.stopSession(key, 'folder_changed', sessionId);
+      }
+      if (record.consent_ref) {
+        const scope = { owner_hash: id.owner_hash, api_identity: id.api_identity, project: record.project ?? '' };
+        if (!(await consentHolds(record.consent_ref, scope, hookInput.cwd))) {
+          const reason = (await consentHolds(record.consent_ref, scope)) ? 'folder_changed' : 'consent_revoked';
+          return this.stopSession(key, reason, sessionId);
+        }
+      }
+      await this.queueNotice(key); // e.g. a first-hold notice the daemon wrote
+      return 'continue';
+    } catch (err) {
+      logger.debug(`[${this.name}] transition check failed: ${err instanceof Error ? err.name : 'error'}`);
+      return 'stop';
+    }
+  }
+
+  /**
+   * Excluded / out-of-scope hooks collect nothing and start nothing. The one exception is a privacy-stop marker for
+   * a session already recorded, so returning to the folder cannot backfill what was skipped. Disabled never writes.
+   */
+  protected override async onUntrackedHook(hookInput: HookInput): Promise<void> {
+    try {
+      const decision = await evaluateClaudeAnalyticsGate(hookInput.cwd);
+      if (decision.reason !== 'project-excluded' && decision.reason !== 'not-in-allowlist') return;
+      const id = await currentEvidenceIdentity();
+      if (!id) return;
+      const key = recordKey(id.api_identity, id.owner_hash, hookInput.session_id);
+      const found = await readRecord(key);
+      if (found?.kind !== 'existing' && found?.kind !== 'created') return; // unknown session: stays untracked
+      await this.stopSession(key, 'scope_excluded', hookInput.session_id);
+    } catch (err) {
+      logger.debug(`[${this.name}] untracked-hook stop failed: ${err instanceof Error ? err.name : 'error'}`);
+    }
   }
 
   /** Resolved once per call so every record in the batch shares one client-version lookup. */

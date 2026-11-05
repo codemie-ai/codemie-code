@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
@@ -51,6 +51,22 @@ async function totalBytes(): Promise<number> {
     }
   }
   return total;
+}
+
+/** Whether a hook of this session is still held for its owner (the daemon creates its record at replay). Never throws. */
+export async function hasPendingOwnerSession(sessionId: string): Promise<boolean> {
+  try {
+    for (const dir of await readdir(pendingOwnerDir())) {
+      for (const file of await readdir(join(pendingOwnerDir(), dir))) {
+        if (!entryFirstAt(file)) continue;
+        try {
+          const entry = JSON.parse(await readFile(join(pendingOwnerDir(), dir, file), 'utf-8')) as { session_id?: unknown };
+          if (entry.session_id === sessionId) return true;
+        } catch { /* unreadable entry: not proof */ }
+      }
+    }
+  } catch { /* no queue */ }
+  return false;
 }
 
 /** Durable (tmp + rename) write. `true` only when the entry is on disk. Never throws. */

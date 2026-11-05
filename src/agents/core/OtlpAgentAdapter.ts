@@ -110,6 +110,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       return;
     }
 
+    // Per-hook session transition check (stop markers, folder / consent / generation changes). Adapters without one continue.
+    if ((await this.transitionGate(hookInput)) === 'stop') return;
+
     try {
       try {
         await ensureOtlpProxy(this.name);
@@ -251,6 +254,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    */
   protected async onHookError(err: unknown, _input: TInput): Promise<void> {
     throw err;
+  }
+
+  /** Runs after the allowlist gate and before the daemon or any spool write. `stop`: nothing is spooled for this hook. */
+  protected async transitionGate(_input: TInput): Promise<'continue' | 'stop'> {
+    return 'continue';
   }
 
   /** Optional host-specific response when a recognized hook cannot be tracked. */
