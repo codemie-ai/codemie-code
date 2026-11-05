@@ -57,7 +57,7 @@ function check(name, ok, detail) {
 
 // ---------------------------------------------------------------- fixtures (SYNTHETIC creds/config, REAL files)
 rmSync(WORK, { recursive: true, force: true });
-const dirs = Object.fromEntries(['consented', 'unconsented', 'excluded', 'other'].map((n) => [n, join(WORK, 'ws', n)]));
+const dirs = Object.fromEntries(['consented', 'unconsented', 'excluded', 'other', 'derived'].map((n) => [n, join(WORK, 'ws', n)]));
 for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
 w(join(CH, 'codemie-cli.config.json'), {
   version: 2,
@@ -66,6 +66,13 @@ w(join(CH, 'codemie-cli.config.json'), {
 });
 // the consented folder resolves to the work project through its workspace config (as a real work checkout does)
 w(join(dirs.consented, '.codemie', 'codemie-cli.config.json'), {
+  version: 2,
+  activeProfile: PROFILE,
+  profiles: { [PROFILE]: { provider: 'anthropic-subscription', model: 'x' } },
+  workspace: { codeMieProject: 'work-proj', codeMieUrl: URL_ },
+});
+// the derived folder resolves to the work project like a work checkout but is NEVER connected (no consent)
+w(join(dirs.derived, '.codemie', 'codemie-cli.config.json'), {
   version: 2,
   activeProfile: PROFILE,
   profiles: { [PROFILE]: { provider: 'anthropic-subscription', model: 'x' } },
@@ -193,6 +200,8 @@ check('reader: the owner reads the personal session', await visible(u1, USER, 'o
 check('reader: a super admin does not read the personal session', !(await visible(u1, 'admin@example.invalid', 'super')));
 const u1h = (await wire(u1))[0]?.headers || {};
 check('wire: no consent header without consent', u1h['x-codemie-work-consent'] === undefined, u1h);
+// profile/global-only project (global-proj from the profile, no workspace entry, no consent): private, never work-visible
+check('profile-sourced project without consent: no project admin reads it', !(await visible(u1, 'pa@example.invalid', 'project_admin')), u1s);
 
 // 2. disabled and excluded
 w(join(CH, 'claude-analytics.json'), { enabled: false });
@@ -286,6 +295,57 @@ const e1 = await session('no-echo e1', dirs.consented);
 await post('/_e2e/fault', { sid: e1, status: 200, body: { accepted: 5, dropped: 0 } });
 await tick('e1', e1);
 check('SYNTHETIC 200 without contract echo: never acknowledged, the session is stopped', markerOf(e1)?.reason === 'response_unverified', markerOf(e1));
+
+// 11. (CR-014a/b) derived corporate N0: an unconnected work checkout whose Claude login names a corporate organization keeps the
+// backend's derived project routing (no consent header; not stored as personal). SYNTHETIC: the organization name in ~/.claude.json.
+const claudeJson = join(HOME, '.claude.json');
+w(claudeJson, { oauthAccount: { organizationName: 'Acme Corp' } });
+const n0 = await session('derived corporate n0', dirs.derived);
+await tick('n0', n0, true);
+const n0s = await stored(n0);
+const n0h = (await wire(n0))[0]?.headers || {};
+check('derived corporate N0: no consent header, project routing kept (not personal)',
+  n0h['x-codemie-work-consent'] === undefined && n0s.dims[0]?.project_name === 'work-proj' && n0s.dims[0]?.project_origin !== 'personal', { n0h, dims: n0s.dims });
+check('derived corporate N0: not stopped by the echo check', markerOf(n0)?.stop !== true, markerOf(n0));
+w(claudeJson, { oauthAccount: { organizationName: 'Personal Org (synthetic)' } });
+
+// 12. (CR-014c) 503 hold produced by the REAL backend gate (project analytics disabled): held, notice-only marker, nothing
+// acknowledged or stored; delivered once the project is enabled again (no stop, no loss).
+await post('/_e2e/project/work-proj/analytics/off');
+const h1 = await session('real 503 hold h1', dirs.consented);
+await tick('h1 while off', h1);
+check('REAL 503 hold: nothing stored while the project has analytics disabled', (await stored(h1)).dims.length === 0, await stored(h1));
+check('REAL 503 hold: not a stop', markerOf(h1)?.stop !== true, markerOf(h1));
+await post('/_e2e/project/work-proj/analytics/on');
+await tick('h1 after on', h1, true);
+check('REAL 503 hold: delivered once the project is enabled', (await stored(h1)).dims[0]?.project_origin === 'linked_folder', await stored(h1));
+
+// 13. (CR-014c) SYNTHETIC final 200 discard (the backend does not produce it here): acknowledged, not stored, NOT a stop
+const z1 = await session('discard z1', dirs.consented);
+await post('/_e2e/fault', { sid: z1, status: 200, body: { accepted: 0, dropped: 1, reason: 'session_contract_conflict' } });
+await tick('z1', z1);
+check('SYNTHETIC 200 discard: not a stop', markerOf(z1)?.stop !== true, markerOf(z1));
+
+// 14. (CR-015) /clear pair then repeated resume of the KNOWN old session: no duplicated consumption rows (REPLAY hook sequence)
+const k1 = await session('known k1', dirs.consented);
+await tick('k1', k1, true);
+hook('known k1: SessionEnd(clear)', 'SessionEnd', k1, dirs.consented, { reason: 'clear' });
+const k2 = newSid();
+hook('known k2: SessionStart(clear)', 'SessionStart', k2, dirs.consented, { source: 'clear' });
+hook('known k2: Stop', 'Stop', k2, dirs.consented);
+await tick('k2', k2, true);
+const usage = async (sid) => (await stored(sid)).counts.usage_requests;
+const u1n = await usage(k1);
+const u2n = await usage(k2);
+for (let i = 0; i < 3; i++) {
+  hook(`known k1: SessionStart(resume) #${i}`, 'SessionStart', k1, dirs.consented, { source: 'resume' });
+  hook(`known k1: Stop after resume #${i}`, 'Stop', k1, dirs.consented);
+  hook(`known k2: Stop #${i}`, 'Stop', k2, dirs.consented);
+}
+await tick('k resume', k1);
+check('/clear + repeated resume: the known sessions add no duplicated usage rows',
+  (await usage(k1)) === u1n && (await usage(k2)) === u2n && u1n > 0, { k1: [u1n, await usage(k1)], k2: [u2n, await usage(k2)] });
+check('/clear + repeated resume: the known session is not stopped', markerOf(k1)?.stop !== true, markerOf(k1));
 
 // ================================================================ result
 writeFileSync(OUT, JSON.stringify({ results, trace }, null, 2));

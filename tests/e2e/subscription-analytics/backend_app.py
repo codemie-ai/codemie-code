@@ -132,6 +132,13 @@ async def add_fault(request: Request) -> dict:
     return {"queued": len(FAULTS)}
 
 
+@app.post("/_e2e/project/{name}/analytics/{state}")
+async def set_project_analytics(name: str, state: str) -> dict:
+    """REAL gate input: toggles the project's cli_analytics_enabled in the stubbed application directory."""
+    _apps[name].cli_analytics_enabled = state == "on"
+    return {"enabled": _apps[name].cli_analytics_enabled}
+
+
 @app.get("/_e2e/requests")
 async def requests_log(sid: str | None = None) -> list[dict]:
     return [r for r in REQUEST_LOG if sid is None or r["session"] == sid]

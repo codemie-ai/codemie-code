@@ -20,11 +20,11 @@ Covered: consent connect/disconnect, consented work visible to super/project adm
 (owner-only) storage, disabled and excluded, `/clear`, resume of an unrecorded session, folder change, disable then
 re-enable, consent revoked, no duplicate consumption, old backend (setting off: held, never published, user notified
 once, delivered after the backend advertises the contract), header injection on the analytics wire (request log), 422
-requires-session, accepted answer without echo, notification (hook `systemMessage` on stdout).
+requires-session, accepted answer without echo, profile-sourced project without consent (private), derived corporate N0 (project routing kept, SYNTHETIC organization name), a 503 hold produced by the real backend gate (project analytics disabled, then delivered), a SYNTHETIC final 200 discard (not a stop), `/clear` pair plus repeated resume of the known session (REPLAY hook sequence; no duplicated usage rows), notification (hook `systemMessage` on stdout).
 
 Not covered (gaps):
 - A live Claude Code session: hooks are replayed, so the interactive `/clear`-after-`cd` TUI case remains a manual check.
 - Model-request traffic: stripping of analytics-only headers on model requests is unit-tested only.
-- A 200 discard with/without echo and 503 hold statuses are exercised by `forwarder-contract.test.ts` and `response.test.ts`,
-  not here (the backend does not produce them for this harness).
+- The 200 discard is a canned (SYNTHETIC) response; the 503 hold is real (backend gate). Other statuses are unit-tested in
+  `forwarder-contract.test.ts` and `response.test.ts`.
 - The backend's real authentication and application database (stubbed) and the PG14 leg (not repeated).
