@@ -73,6 +73,11 @@ export function verdictFileName(key: string): string {
   return `${key}.verdict.json`;
 }
 
+/** Publication-stop marker file name for a record key (never matches RECORD_RE). */
+export function stopFileName(key: string): string {
+  return `${key}.stop.json`;
+}
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -247,10 +252,12 @@ export async function sweepRecords(
     entries.push({ key, lastUsed });
   }
   let evicted = 0;
+  const evictedKeys = new Set<string>();
   const evict = async (key: string): Promise<boolean> => {
     try {
       await unlink(join(dir, `${key}.json`));
       evicted++;
+      evictedKeys.add(key);
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
       return true;
@@ -270,5 +277,35 @@ export async function sweepRecords(
       if (!pendingKeys.has(e.key) && (await evict(e.key))) live--;
     }
   }
+  await sweepStopMarkers(dir, now, idleMs, (key, sessionId) =>
+    (entries.some((e) => e.key === key) && !evictedKeys.has(key)) || pendingKeys.has(key) ||
+    (!!sessionId && !!opts.pendingSessionIds?.has(sessionId)));
   return { evicted, capacityBlocked: live > cap };
+}
+
+const STOP_MARKER_RE = /^[0-9a-f]{64}\.stop\.json$/;
+/** Margin past record idle expiry before an unreferenced marker may go (a later resume then lacks scope evidence and fails closed). */
+const STOP_MARKER_MARGIN_MS = 7 * DAY_MS;
+
+/** A marker is pinned while its record or queued data can still authorize publication; only then does it age out. */
+async function sweepStopMarkers(
+  dir: string,
+  now: number,
+  idleMs: number,
+  pinned: (key: string, sessionId: string | undefined) => boolean,
+): Promise<void> {
+  let names: string[];
+  try { names = (await readdir(dir)).filter((n) => STOP_MARKER_RE.test(n)); } catch { return; }
+  for (const name of names) {
+    const key = name.slice(0, -'.stop.json'.length);
+    let sessionId: string | undefined;
+    try {
+      const m = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { session_id?: unknown };
+      if (typeof m.session_id === 'string') sessionId = m.session_id;
+    } catch { /* unreadable marker: pinned by age only */ }
+    try {
+      if (pinned(key, sessionId)) continue;
+      if (now - (await stat(join(dir, name))).mtimeMs > idleMs + STOP_MARKER_MARGIN_MS) await unlink(join(dir, name));
+    } catch { /* best effort */ }
+  }
 }
