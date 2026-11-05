@@ -75,6 +75,38 @@ describe('runBootstrap — --webhook mode validation (before any send)', () => {
     expect(errLines(deps).some((l) => l.includes('--webhook'))).toBe(true);
   });
 
+  it('accepts --webhook-b64 as the same trigger URL and prints the same install command', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhookB64: encodeWebhook(VALID_WEBHOOK), includeExternal: 'always' }, deps);
+
+    expect(exit).toBe(0);
+    expect(deps.send).toHaveBeenCalledWith(VALID_WEBHOOK, expect.anything());
+    expect(deps.out).toHaveBeenCalledWith(
+      `codemie analytics sync install --webhook-b64 ${encodeWebhook(VALID_WEBHOOK)} --include-external "always"`
+    );
+  });
+
+  it('rejects an invalid --webhook-b64, naming the flag, without sending', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhookB64: 'not+base64url' }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => l.includes('--webhook-b64'))).toBe(true);
+  });
+
+  it('rejects --webhook and --webhook-b64 together, without sending', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, webhookB64: encodeWebhook(VALID_WEBHOOK) }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => l.includes('not both'))).toBe(true);
+  });
+
   it('rejects a lookback of 31, naming --lookback-days, without sending', async () => {
     const deps = createDeps();
 

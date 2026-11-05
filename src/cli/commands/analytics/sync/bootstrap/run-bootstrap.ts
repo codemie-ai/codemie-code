@@ -21,11 +21,14 @@
 
 import type { PromptModule } from 'inquirer';
 
+import { SyncConfigError } from '@/utils/errors.js';
+
 import { validateIncludeExternal, validateLookbackDays } from '../config-store.js';
 import { buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { SyncReport } from '../types.js';
+import { decodeWebhook } from '../webhook-encoding.js';
 import { runGuided } from './guided.js';
 import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT } from './setup-check.js';
 import { getBootstrapStatePath } from './state-store.js';
@@ -68,6 +71,18 @@ function printSendFailure(deps: BootstrapDeps, err: unknown): void {
   }
 }
 
+/** The raw trigger URL from `--webhook` or the decoded `--webhook-b64`, same rule as
+ * `install`: giving both throws. Only called once at least one of them is set. */
+function resolveWebhookOption(opts: BootstrapOptions): string {
+  if (opts.webhookB64 === undefined) {
+    return opts.webhook ?? '';
+  }
+  if (opts.webhook !== undefined) {
+    throw new SyncConfigError('Pass either --webhook or --webhook-b64, not both.');
+  }
+  return decodeWebhook(opts.webhookB64);
+}
+
 /**
  * `--webhook` non-interactive mode (spec.md "Non-interactive mode"). Validates every option
  * first — webhook, then lookback, then policy — with no network call before all three pass;
@@ -78,17 +93,11 @@ function printSendFailure(deps: BootstrapDeps, err: unknown): void {
  * returns a non-zero exit code. Never reads or writes `deps.statePath`.
  */
 async function runWebhookMode(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
-  const rawWebhook = opts.webhook;
-  if (rawWebhook === undefined) {
-    // Unreachable: runBootstrap only takes this branch once opts.webhook is defined.
-    return 1;
-  }
-
   let webhookUrl: string;
   let lookbackDays: number | undefined;
   let includeExternal: ReturnType<typeof validateIncludeExternal>;
   try {
-    webhookUrl = validateTriggerUrl(rawWebhook, 'option');
+    webhookUrl = validateTriggerUrl(resolveWebhookOption(opts), 'option');
     lookbackDays = validateLookbackDays(opts.lookbackDays);
     includeExternal = validateIncludeExternal(opts.includeExternal);
   } catch (err) {
@@ -130,7 +139,7 @@ async function runGuidedSafely(deps: BootstrapDeps): Promise<number> {
 }
 
 export async function runBootstrap(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
-  if (opts.webhook !== undefined) {
+  if (opts.webhook !== undefined || opts.webhookB64 !== undefined) {
     return runWebhookMode(opts, deps);
   }
 

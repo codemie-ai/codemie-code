@@ -104,6 +104,10 @@ function createSyncBootstrapCommand(): Command {
       '--webhook <url>',
       "The flow's https trigger URL: runs non-interactively instead of the guided wizard, testing delivery before printing the install command"
     )
+    .option(
+      '--webhook-b64 <value>',
+      'The same trigger URL encoded as base64url, for shells that mangle a raw URL (use instead of --webhook)'
+    )
     .option('--lookback-days <n>', 'Fixed session window for the printed install command, 1-30 (default: follows the CLI default)')
     .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
     .action(async (options: BootstrapOptions) => {

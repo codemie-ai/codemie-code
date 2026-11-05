@@ -12,6 +12,8 @@ import type { SyncReport } from '../types.js';
 /** Raw flags accepted by `codemie analytics sync bootstrap`. */
 export interface BootstrapOptions {
   webhook?: string;
+  /** `--webhook-b64`: the trigger URL as base64url, for shells that mangle a raw URL. */
+  webhookB64?: string;
   lookbackDays?: string;
   includeExternal?: string;
 }

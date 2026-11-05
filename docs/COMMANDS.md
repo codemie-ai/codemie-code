@@ -758,6 +758,9 @@ codemie analytics sync bootstrap
 # Non-interactive mode (no TTY needed; test-send before printing install command)
 codemie analytics sync bootstrap --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
 codemie analytics sync bootstrap --webhook <url> --lookback-days 14 --include-external always
+
+# Same, with the trigger URL base64url-encoded (Windows: see below)
+codemie analytics sync bootstrap --webhook-b64 <value>
 ```
 
 `bootstrap` connects a Teams channel and SharePoint folder to a Power Automate flow, then
@@ -779,6 +782,18 @@ command to register their daily job.
 
 **Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
 CLI), `--include-external <windows|always|never>` (default: windows).
+
+**Windows and `--webhook`:** when `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
+trigger URL at `&` and cmd.exe expands its `%…%` runs, so `--webhook "<url>"` arrives broken.
+Use the guided mode (the URL is pasted into a prompt, not the command line), or pass
+`--webhook-b64` with the URL encoded as base64url — it behaves exactly like `--webhook`, and
+giving both is an error. In PowerShell:
+
+```powershell
+$url = '<trigger URL>'
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($url)).TrimEnd('=').Replace('+','-').Replace('/','_')
+codemie analytics sync bootstrap --webhook-b64 $b64
+```
 
 **Output:** Install command to stdout; everything else to stderr. The webhook is printed as
 `--webhook-b64 <value>` — the trigger URL encoded as base64url (`A-Z a-z 0-9 - _` only), so the
