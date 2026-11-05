@@ -96,7 +96,7 @@ describe('runAnalytics CLI metadata wiring', () => {
       expect.anything(),
       expect.objectContaining({
         periodStart: new Date('2026-07-01').toISOString(),
-        periodEnd: new Date('2026-07-21').toISOString(),
+        periodEnd: '2026-07-21T23:59:59.999Z',
       })
     );
   });

@@ -11,6 +11,7 @@ import { LogFollower } from './follower.js';
 import { LogCleaner } from './cleaner.js';
 import type { LogOptions, LogFilter, SessionListEntry } from './types.js';
 import { logger } from '../../../utils/logger.js';
+import { parseFilterDate } from '@/utils/date-filter.js';
 
 export function createLogCommand(): Command {
   const command = new Command('log');
@@ -363,7 +364,7 @@ function parseFilterOptions(options: LogOptions): LogFilter {
 
   // Parse date filters
   if (options.from) {
-    const fromDate = parseDate(options.from);
+    const fromDate = parseFilterDate(options.from, 'from');
     if (!fromDate) {
       console.warn(chalk.yellow(`Warning: Invalid --from date "${options.from}", ignoring filter`));
     } else {
@@ -372,12 +373,10 @@ function parseFilterOptions(options: LogOptions): LogFilter {
   }
 
   if (options.to) {
-    const toDate = parseDate(options.to);
+    const toDate = parseFilterDate(options.to, 'to');
     if (!toDate) {
       console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
     } else {
-      // Set to end of day (23:59:59.999) to include all entries from that day
-      toDate.setHours(23, 59, 59, 999);
       filter.toDate = toDate;
     }
   }
@@ -399,21 +398,6 @@ function parseFilterOptions(options: LogOptions): LogFilter {
   }
 
   return filter;
-}
-
-/**
- * Parse date string (YYYY-MM-DD) to Date object
- */
-function parseDate(dateStr: string): Date | null {
-  try {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
-      return null;
-    }
-    return date;
-  } catch {
-    return null;
-  }
 }
 
 /**
