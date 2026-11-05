@@ -185,8 +185,8 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
 
   deps.print(`Analytics sync: ${enabled}`);
   if (enabled === 'disabled') {
-    deps.print('  The OS job is missing or disabled outside the CLI. Run install again:');
-    deps.print('  codemie analytics sync install --webhook <url> | --git-repo <url>');
+    deps.print('  The OS job is missing or disabled outside the CLI. Run install again (the command your team lead shared):');
+    deps.print('  codemie analytics sync install --webhook-b64 <value> | --webhook <url> | --git-repo <url>');
   }
   deps.print(`  Run time:              ${settings.at} local`);
   deps.print(`  Lookback window:       ${lookbackText(settings)}`);

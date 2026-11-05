@@ -751,6 +751,9 @@ codemie analytics --agent gemini
 
 ### Team lead setup (`analytics sync bootstrap`)
 
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
 ```bash
 # Lead: guided wizard to connect Teams/SharePoint and print install command
 codemie analytics sync bootstrap
@@ -810,9 +813,13 @@ resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
 ### Scheduled delivery (`analytics sync`)
 
 ```bash
-# Developer: register the daily delivery job on this machine
-codemie analytics sync install --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
-codemie analytics sync install --webhook <url> --at 02:30 --lookback-days 14 --include-external always
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "windows"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
 
 # Developer: show whether the job is installed and its last outcome
 codemie analytics sync status

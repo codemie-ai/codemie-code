@@ -402,6 +402,9 @@ All filter, report, and export flags from the base command also apply to `analyt
 
 ## Scheduled delivery (`analytics sync`)
 
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
 `codemie analytics sync install|status|run|uninstall` registers and runs a daily per-user
 OS job that POSTs the same priced JSON report `codemie analytics --export json` builds to
 the team's webhook — one way, nothing comes back. It takes over the developer side of the
@@ -415,9 +418,13 @@ sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-boot
 ### Commands
 
 ```bash
-# Developer: register the daily delivery job on this machine
-codemie analytics sync install --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
-codemie analytics sync install --webhook <url> --at 02:30 --lookback-days 14 --include-external always
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "windows"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
 
 # Developer: show whether the job is installed and its last outcome
 codemie analytics sync status
