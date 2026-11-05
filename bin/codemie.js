@@ -41,9 +41,15 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
   if (await MigrationRunner.hasPending()) {
-    await MigrationRunner.runPending({
+    const migrationResult = await MigrationRunner.runPending({
       silent: isHookProcess || isMachineOutput  // Show migration messages to user, except in a hook or for --json output
     });
+    // A silent run prints no failure line, and the logger writes errors to the console only in
+    // debug mode, so a --json caller would never learn that a migration failed (it retries on
+    // every start-up). One line on stderr keeps stdout pure JSON. A hook's console is nulled.
+    if (isMachineOutput && !isHookProcess && migrationResult.failed > 0) {
+      console.error(`Warning: ${migrationResult.failed} migration(s) failed; see the log file for details`);
+    }
   }
 } catch (error) {
   // Don't block CLI if migration fails
