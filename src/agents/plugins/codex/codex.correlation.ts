@@ -145,44 +145,6 @@ async function listClaimedRolloutFiles(ownSessionId: string, sinceMs: number): P
 }
 
 /**
- * Point the CodeMie session record at the rollout this run produced.
- *
- * Without this every codex session reported hadLog=false and costUSD=0. It also
- * lets the native loader recognise the rollout as CodeMie-owned instead of an
- * untracked session.
- *
- * @returns true when the record now names `rolloutPath`; false when there is no record yet,
- *   the record keeps another rollout, or the save failed
- */
-export async function recordRolloutCorrelation(sessionId: string, rolloutPath: string): Promise<boolean> {
-  try {
-    const { SessionStore } = await import('../../core/session/SessionStore.js');
-    const store = new SessionStore();
-    const session = await store.loadSession(sessionId);
-    if (!session) {
-      logger.debug(`[codex] No session record for ${sessionId}; skipping rollout correlation`);
-      return false;
-    }
-    const existing = session.correlation?.agentSessionFile;
-    if (existing && existing !== rolloutPath) {
-      logger.warn(`[codex] Session ${sessionId} is already correlated to another rollout; keeping it`);
-      return false;
-    }
-    session.correlation = {
-      ...session.correlation,
-      status: 'matched',
-      agentSessionFile: rolloutPath,
-    };
-    await store.saveSession(session);
-    return true;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.debug(`[codex] Failed to record rollout correlation (non-blocking): ${msg}`);
-    return false;
-  }
-}
-
-/**
  * Resolve a path through symlinks, falling back to the original path on error.
  * Used so a `cwd` of `/Users/foo` and a rollout's `projectPath` of
  * `/private/Users/foo` (or vice versa) compare equal.

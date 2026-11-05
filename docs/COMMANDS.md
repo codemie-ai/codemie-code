@@ -687,7 +687,9 @@ authoritative per-model usage rollup that is matched against the pricing table. 
 Cost view shows a **Coverage by agent** table (sessions priced / native-log found per
 tool), so unpriced tools are explicit. Sessions whose native log is absent, or whose
 agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
-"priced N of M" and never silently counted as `$0`.
+"priced N of M" and never silently counted as `$0`. Both counts, like the terminal's
+`Priced sessions`, are over the sessions the report keeps: a session with no recorded
+activity and no token usage is dropped and counted in neither.
 
 **Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
 scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
@@ -698,7 +700,10 @@ tracked sessions. By default only sessions CodeMie launched are counted; pass
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by
 `(message.id, requestId)` across all sessions (the earliest session owns a shared response),
-counting each response once — without this the figure inflates ~2–3×. On a subscription you
+counting each response once — without this the figure inflates ~2–3×. GitHub Copilot CLI keeps
+one native session for every run that resumed it: each run is priced from the usage records of its
+own run window (its start up to the next run's start), or, for a resumed run on a build that writes none, from the
+growth of the session's cumulative per-model counters over that run's shutdown; never added to the session it resumed. On a subscription you
 don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
 API value of your usage, not dollars billed.
 

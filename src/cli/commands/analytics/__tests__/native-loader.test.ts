@@ -564,6 +564,21 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
     expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
   });
 
+  it('adopts a transcript named by a sidecar of either naming scheme', async () => {
+    writeFileSync(
+      join(mockSessionsDir, '1a2b3c4d-codemie-session-3-codemie-marker.json'),
+      JSON.stringify({ transcriptPath: ownedTranscript, codemieSessionId: 'codemie-session-3', codemieAgent: 'claude' })
+    );
+    writeFileSync(
+      join(mockSessionsDir, 'external-codemie-marker.json'),
+      JSON.stringify({ transcriptPath: externalTranscript, codemieSessionId: 'codemie-session-4', codemieAgent: 'claude' })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(true);
+  });
+
   it('tracks and owns the switched transcript of a record whose agentSessionFile no longer exists', async () => {
     writeFileSync(
       join(mockSessionsDir, 'codemie-session-3.json'),
@@ -593,6 +608,18 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
     expect(tracked.has(realNativeDeps.realPath(externalTranscript))).toBe(true);
     expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
     expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(true);
+  });
+
+  it('adopts a transcript from an earlier version by its in-band codemie_session_start line, with no sidecar', async () => {
+    const legacyTranscript = join(mockSessionsDir, 'legacy.jsonl');
+    writeFileSync(
+      legacyTranscript,
+      '{"type":"user"}\n{"type":"codemie_session_start","uuid":"u1","codemie_session_id":"cm-old","codemie_agent":"claude"}\n'
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(legacyTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(false);
   });
 
   it('tracks only the string transcript paths of a record with a malformed one', async () => {

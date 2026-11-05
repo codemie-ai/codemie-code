@@ -129,10 +129,10 @@ function buildSessionAttributes(
   clientType: string,
   { branch, fallbackModel }: { branch: string; fallbackModel?: string }
 ): ToolUsageAttributes {
-  // Use agent session ID from session correlation for API calls
-  // This is the canonical source of truth set during SessionStart
-  // Fallback: If correlation not set, try deltas, then session ID
-  const agentSessionId = session.correlation?.agentSessionId
+  // The id the run's start metric was accepted under; else the agent session id from the
+  // correlation set during SessionStart, then the deltas', then the CodeMie session id
+  const agentSessionId = session.startMetricSessionId
+    || session.correlation?.agentSessionId
     || deltas[0]?.agentSessionId
     || session.sessionId;
 

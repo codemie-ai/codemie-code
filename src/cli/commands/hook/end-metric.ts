@@ -135,10 +135,10 @@ export async function sendSessionEndMetrics(
       abortSignal: options.abortSignal
     });
 
-    // Send session end metric (use agent session ID for API)
+    // The id the run's start metric was accepted under, else (none or empty) the agent session id
     await sender.sendSessionEnd(
       {
-        sessionId: agentSessionId,
+        sessionId: session.startMetricSessionId || agentSessionId,
         agentName,
         provider: provider || 'unknown',
         project,
