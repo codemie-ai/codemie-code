@@ -131,6 +131,42 @@ describe('proxy connect desktop', () => {
     );
   });
 
+  it('prints the bare login command when the selected profile is the active profile', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('codemie-new');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return {
+        getStoredCredentials: vi.fn().mockResolvedValue(null),
+      };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('  Run: codemie profile login');
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('--url'));
+    vi.mocked(ConfigLoader.getActiveProfileName).mockReset();
+  });
+
   it('checks both credential URLs and suggests the selected profile URL when workspace URL differs', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
