@@ -33,8 +33,10 @@ export interface EvidenceFields {
   api_identity: string;
   owner_hash: string;
   profile?: string;
-  /** New publication contract only: absent = a session recorded before it existed (stays legacy, never upgraded). */
+  /** Frozen funding evidence: absent = a session recorded before the publication contract (never upgraded). */
   funding_route?: FundingRoute;
+  /** Only newly recorded sessions may negotiate a legacy wire protocol before their first send. */
+  negotiate_publication?: true;
   /** Frozen `collection_generation` at the first stamp; absent = 0. */
   collection_generation?: number;
   /** Frozen reference of the explicit work-consent entry that applied at the first stamp (no path); absent = no consent. */
@@ -90,6 +92,8 @@ export function stopAckFileName(key: string): string {
   return `${key}.stop-ack.json`;
 }
 
+export const publicationModeFileName = (key: string): string => `${key}.publication.json`;
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -136,6 +140,7 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (r.routing_proof !== 'proven' && r.routing_proof !== 'unproven') return undefined;
   if (!['linked_folder', 'profile', 'none'].includes(r.project_source as string)) return undefined;
   if (r.funding_route !== undefined && !['api_based', 'subscription', 'unknown'].includes(r.funding_route as string)) return undefined;
+  if (r.negotiate_publication !== undefined && (r.negotiate_publication !== true || r.funding_route === undefined)) return undefined;
   if (r.collection_generation !== undefined && !(Number.isSafeInteger(r.collection_generation) && (r.collection_generation as number) >= 0)) return undefined;
   if (r.consent_ref !== undefined && !(typeof r.consent_ref === 'string' && /^[0-9a-f]{16}$/.test(r.consent_ref))) return undefined;
   if (r.consent_ref !== undefined && r.funding_route === undefined) return undefined; // consent exists only on the new contract
@@ -276,6 +281,7 @@ export async function sweepRecords(
       evictedKeys.add(key);
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
+      await unlink(join(dir, publicationModeFileName(key))).catch(() => undefined);
       return true;
     } catch { return false; }
   };

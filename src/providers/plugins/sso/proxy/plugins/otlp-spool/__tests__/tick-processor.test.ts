@@ -542,12 +542,13 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
   });
 
   describe('new-contract wiring (stop marker, contract advertisement, hold expiry)', () => {
-    async function stampNewContract(): Promise<string> {
+    async function stampNewContract(overrides: Partial<import('@/agents/core/evidence/record-store.js').EvidenceFields> = {}): Promise<string> {
       const { createOrRead } = await import('@/agents/core/evidence/record-store.js');
       const { key, api_identity, owner_hash } = await identity();
       const r = await createOrRead(key, {
         session_id: SESSION, launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven', project: 'A',
         project_source: 'profile', api_identity, owner_hash, funding_route: 'subscription', collection_generation: 0,
+        ...overrides,
       });
       expect(r.kind).toBe('created');
       return key;
@@ -561,6 +562,33 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       } as never);
     }
     afterEach(() => vi.unstubAllGlobals());
+
+    it.each([200, 404])('a safe new routed session reaches the forwarder on an old backend (policy status %s)', async (status) => {
+      const { forwardSession } = await import('../forwarder.js');
+      vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ organizations: [], version: 'v1' }), { status }));
+      await stampNewContract({ routed_via_codemie: true, funding_route: 'api_based', negotiate_publication: true });
+      await seedPending();
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(SESSION, false, expect.anything(),
+        expect.objectContaining({ class: 'codemie' }), expect.anything());
+      expect((await current()).sendMode).toBe('evidence'); // local guards retained even with legacy wire headers
+      expect((await current()).holds?.session).toBeUndefined();
+    });
+
+    it.each([
+      { organization: 'Personal' },
+      { consent_ref: 'abcdef0123456789', routed_via_codemie: true },
+      { routing_proof: 'unproven' as const, routed_via_codemie: true },
+      {},
+    ])('a new unsafe or unclassified session stays held on an old backend: %j', async (overrides) => {
+      const { forwardSession } = await import('../forwarder.js');
+      vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ organizations: ['Acme'], version: 'v1' }), { status: 200 }));
+      await stampNewContract({ negotiate_publication: true, ...overrides });
+      await seedPending();
+      await tick();
+      expect(forwardSession).not.toHaveBeenCalled();
+      expect((await current()).holds?.session?.reason).toBe('publication_contract_unavailable');
+    });
 
     it('a stop marker holds publication_stopped and nothing is forwarded', async () => {
       const { forwardSession } = await import('../forwarder.js');

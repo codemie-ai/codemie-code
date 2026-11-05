@@ -140,7 +140,7 @@ interface SendRequest {
 }
 
 function requestHeaders(req: SendRequest): Record<string, string> {
-  if (req.evidence) return evidenceHeaders(req.sessionId, req.evidence);
+  if (req.evidence && req.evidence.wireMode !== 'legacy') return evidenceHeaders(req.sessionId, req.evidence);
   // Legacy request: no Session-Id or evidence header; no project = no Project header (AC8).
   const project = rawProjectHeader(req.project);
   return project ? { [PROJECT_HEADER]: project } : {};

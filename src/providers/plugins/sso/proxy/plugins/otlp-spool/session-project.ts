@@ -103,6 +103,8 @@ export function evaluateSessionEvidence(input: SessionEvidenceInput): SessionEvi
   if (input.stopped) return hold('publication_stopped');
   if (record && !valid) return hold('stamp_invalid');
   if (input.marked && !valid) return hold('stamp_invalid');
+  // Classification and the durable publication-mode decision below the tick govern safe legacy compatibility.
+  if (valid?.negotiate_publication) return { action: 'send_evidence', record: valid };
   // A new-contract session is never sent as legacy, whatever the capability: held until advertised.
   if (valid?.funding_route !== undefined && input.contractAdvertised === false) return hold('publication_contract_unavailable');
   if (input.capability === 'legacy') return input.stickyPersonal ? hold('personal_not_forwardable') : legacy;

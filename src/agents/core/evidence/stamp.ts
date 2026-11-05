@@ -56,7 +56,7 @@ async function hookTimeFields(
     profile: hookConfig?.config.name,
     projectBinding: projectBindingFor(project),
     ...(inputs.funding_route !== undefined
-      ? { funding_route: inputs.funding_route, collection_generation: inputs.collection_generation ?? 0 }
+      ? { funding_route: inputs.funding_route, collection_generation: inputs.collection_generation ?? 0, negotiate_publication: true as const }
       : {}),
   };
 }

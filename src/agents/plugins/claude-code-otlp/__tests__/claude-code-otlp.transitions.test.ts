@@ -132,6 +132,15 @@ describe('hook-side transitions', () => {
     expect(await t.gate(hook())).toBe('stop');
   });
 
+  it('checks the current folder using the stamped profile instead of the globally active one', async () => {
+    const t = await setup();
+    await t.record({ profile: 'original' });
+    expect(await t.gate(hook())).toBe('continue');
+    expect(projectMock).toHaveBeenCalledWith(hook().cwd, 'original');
+    projectMock.mockResolvedValue('other-project');
+    expect(await t.gate(hook({ cwd: join(tmpdir(), 'other-repo') }))).toBe('stop');
+  });
+
   it('a session recorded before the new contract stays legacy and is not stopped by scope checks', async () => {
     const t = await setup();
     await t.record({ funding_route: undefined, collection_generation: undefined });

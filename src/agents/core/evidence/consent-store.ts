@@ -24,10 +24,9 @@ export interface ConsentEntry {
   folder: string;
   /**
    * Connection incarnation, random per actual connect. Disconnect + reconnect gets a new one, so a session that froze an
-   * earlier connection's reference is never authorized by the new one. Absent on entries written before it existed
-   * (their reference is unchanged: they are not upgraded, and a reconnect after their removal gets an id).
+   * earlier connection's reference is never authorized by the new one.
    */
-  id?: string;
+  id: string;
 }
 
 export interface ConsentScope {
@@ -47,8 +46,7 @@ const sameProject = (a: string, b: string): boolean => a.trim().toLowerCase() ==
 /** Stable, path-free reference frozen into the evidence record; changes with any of its parts and with each reconnect. */
 export function consentRef(e: ConsentEntry): string {
   const h = createHash('sha256');
-  const parts = [comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase()];
-  if (e.id) parts.push(e.id); // an id-less (older) entry keeps its previous reference
+  const parts = [comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase(), e.id];
   for (const p of parts) h.update(`${p.length}:${p}|`);
   return h.digest('hex').slice(0, 16);
 }
@@ -56,7 +54,7 @@ export function consentRef(e: ConsentEntry): string {
 function validEntry(v: unknown): v is ConsentEntry {
   if (!v || typeof v !== 'object') return false;
   const e = v as Record<string, unknown>;
-  if (e.id !== undefined && (typeof e.id !== 'string' || !e.id)) return false;
+  if (typeof e.id !== 'string' || !/^[0-9a-f]{16}$/.test(e.id)) return false;
   return ['owner_hash', 'api_identity', 'project', 'folder'].every((k) => typeof e[k] === 'string' && (e[k] as string).length > 0);
 }
 

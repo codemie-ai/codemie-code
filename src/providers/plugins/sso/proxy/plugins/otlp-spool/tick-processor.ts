@@ -32,6 +32,7 @@ import { heldRetentionMs } from './spool-config.js';
 import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
 import { classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
+import { publicationMode } from './publication-mode.js';
 
 const currentlyForwarding = new Set<string>();
 
@@ -118,7 +119,10 @@ async function applySessionEvidenceLocked(
       return { decision: cls };
     }
     if (cls.action === 'hold') decision = holdOrLose(cls.reason, heldSince, now, heldRetentionMs());
-    else result = cls.result;
+    else if (decision.record.funding_route !== undefined &&
+      !(await publicationMode(key, decision.record, policy ?? { policy: null, capability: 'unknown', usable: false, refreshDue: true }, cls.result))) {
+      decision = holdOrLose('publication_contract_unavailable', heldSince, now, heldRetentionMs());
+    } else result = cls.result;
   }
 
   if (decision.action === 'hold') {

@@ -118,7 +118,7 @@ export async function resolveSessionProject(cwd: string, sessionId: string | und
 /** The profile config the hook resolves for `cwd` (same walk as the project lookup); undefined on failure. */
 export async function loadHookConfig(
   cwd: string,
-  opts: { fromCwd?: boolean } = {}
+  opts: { fromCwd?: boolean; profile?: string } = {}
 ): Promise<{ config: CodeMieConfigOptions; configDir: string } | undefined> {
   // `fromCwd`: walk up from the hook's own cwd instead of the session's fixed project dir (used to notice a folder change).
   const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim();
@@ -127,7 +127,7 @@ export async function loadHookConfig(
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the
     // globally active profile, selects hook config, routing proof and project. Native has no such export.
     const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
-    const profileName = launched || (await ConfigLoader.getActiveProfileName(configDir));
+    const profileName = opts.profile || launched || (await ConfigLoader.getActiveProfileName(configDir));
     const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
     return { config, configDir };
   } catch {
@@ -136,10 +136,10 @@ export async function loadHookConfig(
 }
 
 /** The project the hook's current cwd resolves to, ignoring the session pin: `CODEMIE_PROJECT` wins, else the config found from cwd. */
-export async function resolveProjectAtCwd(cwd: string): Promise<string> {
+export async function resolveProjectAtCwd(cwd: string, profile?: string): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
   if (envProject) return envProject;
-  return (await loadHookConfig(cwd, { fromCwd: true }))?.config.codeMieProject ?? '';
+  return (await loadHookConfig(cwd, { fromCwd: true, profile }))?.config.codeMieProject ?? '';
 }
 
 async function resolveProjectNameFromConfig(cwd: string): Promise<string> {

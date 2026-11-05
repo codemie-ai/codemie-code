@@ -3,11 +3,12 @@ import { buildAttributionHeaders } from '../header-injection.plugin.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
-import { advertisesContract, getPolicyState, type NamespaceId } from './policy-cache.js';
+import { getPolicyState, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { consentHolds } from '@/agents/core/evidence/consent-store.js';
 import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
+import { publicationMode, type PublicationMode } from './publication-mode.js';
 
 /** Project the session is bound to; the backend gates analytics on it. */
 export const PROJECT_HEADER = 'X-CodeMie-Project';
@@ -20,8 +21,9 @@ export interface EvidenceContext {
   baseUrl: string;
   credentials: SSOCredentials | JWTCredentials;
   result: ClassResult;
-  /** The record is a new-contract session (funding claim frozen): contract and funding go on every request. */
+  /** The session selected contract mode: contract and frozen funding go on every request. */
   newContract: boolean;
+  wireMode?: PublicationMode;
   /** Explicit work consent: the frozen entry still holds right now. Never true from spooled or inbound headers. */
   consent: boolean;
 }
@@ -99,16 +101,19 @@ export async function evidenceContext(
   if (found?.kind !== 'existing' && found?.kind !== 'created') return null;
   if (!(await sendGuard(key, found.record))) return null;
   const ns: NamespaceId = { ...id, ...(profile ? { profile } : {}) };
-  const newContract = found.record.funding_route !== undefined;
-  // A new-contract session is never sent as legacy: without the advertised contract nothing is sent.
-  if (newContract && !advertisesContract(await getPolicyState(ns, { needContract: true }))) return null;
+  let state: PolicyState | undefined;
   let result = decided;
   if (!result) {
-    const cls = await classifySession(key, found.record, await sessionPolicyState(ns, baseUrl, credentials));
+    state = await sessionPolicyState(ns, baseUrl, credentials, undefined, undefined, found.record.funding_route !== undefined);
+    const cls = await classifySession(key, found.record, state);
     if (cls.action !== 'send') return null;
     result = cls.result;
   }
-  return { key, record: found.record, ns, baseUrl, credentials, result, newContract, consent: newContract && !!found.record.consent_ref };
+  const wireMode = found.record.funding_route === undefined ? 'evidence'
+    : await publicationMode(key, found.record, state ?? await getPolicyState(ns, { needContract: true }), result);
+  if (!wireMode) return null;
+  const newContract = wireMode === 'contract';
+  return { key, record: found.record, ns, baseUrl, credentials, result, newContract, wireMode, consent: newContract && !!found.record.consent_ref };
 }
 
 /**
@@ -121,6 +126,8 @@ export async function reclassify(ctx: EvidenceContext): Promise<boolean> {
   if (!state.policy || state.policy.version === ctx.result.policy_version) return false;
   const cls = await classifySession(ctx.key, ctx.record, state);
   if (cls.action !== 'send') return false;
+  if (ctx.record.funding_route !== undefined &&
+    !(await publicationMode(ctx.key, ctx.record, state, cls.result))) return false;
   ctx.result = cls.result;
   return true;
 }

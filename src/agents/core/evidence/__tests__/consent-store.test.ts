@@ -80,7 +80,7 @@ describe('consent-store', () => {
     expect(await consentHolds(second, scope)).toBe(true);
   });
 
-  it('an older id-less entry keeps its reference and is not upgraded by connect; unrelated connections are untouched', async () => {
+  it('an entry without an incarnation is rejected and cannot authorize its old frozen reference', async () => {
     const other = join(home, 'other');
     mkdirSync(other);
     await connectFolder(scope, other);
@@ -88,16 +88,9 @@ describe('consent-store', () => {
     const raw = JSON.parse(readFileSync(consentStorePath(), 'utf-8')) as { entries: Array<Record<string, unknown>> };
     delete raw.entries[0].id;
     writeFileSync(consentStorePath(), JSON.stringify(raw));
-    const legacyRef = (await resolveConsent(scope, other))!;
-    expect(legacyRef).not.toBe(otherRef); // the id was part of the new reference
-    await connectFolder(scope, other); // idempotent: no upgrade
-    expect(await resolveConsent(scope, other)).toBe(legacyRef);
-    await connectFolder(scope, work);
-    await disconnectFolder(scope, work);
-    expect(await consentHolds(legacyRef, scope)).toBe(true);
-    await disconnectFolder(scope, other);
-    await connectFolder(scope, other);
-    expect(await consentHolds(legacyRef, scope)).toBe(false);
+    expect(await resolveConsent(scope, other)).toBeUndefined();
+    expect(await consentHolds(otherRef, scope)).toBe(false);
+    await expect(connectFolder(scope, other)).rejects.toThrow(/unreadable/);
   });
 
   it('a malformed entry id makes the store unreadable (no consent)', async () => {

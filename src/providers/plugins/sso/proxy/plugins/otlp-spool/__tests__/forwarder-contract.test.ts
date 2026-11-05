@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const snapshotPendingHookRecordsMock = vi.fn();
 const advanceCursorMock = vi.fn();
@@ -74,7 +77,10 @@ const echo = (dest: string, project?: string) => ({
 const sentHeaders = () => fetchMock.mock.calls[0][1].headers as Record<string, string>;
 
 describe('new-contract forwarding', () => {
+  let home: string;
   beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'forward-contract-'));
+    vi.stubEnv('CODEMIE_HOME', home);
     vi.resetModules();
     vi.clearAllMocks();
     fetchMock.mockReset();
@@ -90,8 +96,36 @@ describe('new-contract forwarding', () => {
     snapshotNdjsonMock.mockResolvedValue(null);
     snapshotBytesMock.mockResolvedValue(null);
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
   const run = async () => (await import('../forwarder.js')).forwardSession('s1', true, credentials);
+
+  it.each(['legacy', 'evidence'] as const)('sends a safe routed new session using %s headers and never upgrades it mid-session', async (capability) => {
+    const safe = { ...record, negotiate_publication: true, routed_via_codemie: true, funding_route: 'api_based' };
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: safe });
+    getPolicyStateMock.mockResolvedValue(capability === 'legacy'
+      ? { policy: null, capability: 'legacy', usable: false, refreshDue: false } : policy());
+    fetchMock.mockImplementation(async () => respond(200, {}));
+    await run();
+    expect(fetchMock).toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalled();
+    expect(sentHeaders()).toHaveProperty('X-CodeMie-Project', 'Proj A');
+    expect(sentHeaders()).not.toHaveProperty('X-CodeMie-Publication-Contract');
+    expect(sentHeaders()).not.toHaveProperty('X-CodeMie-Funding-Route');
+    expect(!!sentHeaders()['X-CodeMie-Session-Id']).toBe(capability === 'evidence');
+    fetchMock.mockClear();
+    getPolicyStateMock.mockResolvedValue(policy(['1']));
+    await run();
+    expect(sentHeaders()).not.toHaveProperty('X-CodeMie-Publication-Contract');
+    // The legacy wire still carries the local evidence context and must honor privacy stops.
+    fetchMock.mockClear();
+    isStoppedMock.mockResolvedValue(true);
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it('N0 acceptance with the echo is acknowledged; contract and funding are sent, consent is not', async () => {
     fetchMock.mockImplementation(async () => respond(200, {}, echo('personal')));
@@ -227,5 +261,22 @@ describe('new-contract forwarding', () => {
     snapshotBytesMock.mockResolvedValue({ project: 'Proj A', bytes: Buffer.from([0]), cursor: 0, more: false });
     await (await import('../forwarder.js')).forwardSession('s1', false, credentials);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a legacy fallback keeps the per-attempt stop check after hooks and before OTLP/JSON streams', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: {
+      ...record, negotiate_publication: true, routed_via_codemie: true, funding_route: 'api_based',
+    } });
+    getPolicyStateMock.mockResolvedValue({ policy: null, capability: 'legacy', usable: false, refreshDue: false });
+    const rec = JSON.stringify({ resource: {} });
+    snapshotNdjsonMock.mockResolvedValue({ project: 'Proj A', records: [rec], cursor: 0, byteLength: rec.length + 1 });
+    snapshotBytesMock.mockResolvedValue({ project: 'Proj A', bytes: Buffer.from([0]), cursor: 0, more: false });
+    fetchMock.mockImplementation(async () => {
+      isStoppedMock.mockResolvedValue(true);
+      return respond(200, {});
+    });
+    await (await import('../forwarder.js')).forwardSession('s1', false, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // hooks only; queued OTLP/JSON never sent
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', batch.byteLength);
   });
 });
