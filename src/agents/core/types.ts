@@ -567,9 +567,6 @@ export interface AgentMetricsConfig {
  * Controls how agents collect and process metrics
  */
 export interface MetricsConfig {
-  // Provider filter
-  enabled: (provider: string) => boolean;
-
   // Retry configuration
   retry: {
     attempts: number;
@@ -686,6 +683,8 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  endTimeFromActivity?: boolean;   // SessionEnd only: end the session at its last recorded activity, not now
+  endTime?: number;                // SessionEnd only: the session's end (epoch ms), already resolved by the caller
 }
 
 // Forward declaration for extension installer
@@ -736,7 +735,12 @@ export enum AgentAdapterType {
 export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
-  forwardOtlpEventsToSpool: (events: Record<string, unknown>[], agentName: string) => Promise<boolean>;
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  ) => Promise<boolean>;
 }
 
 /**
@@ -774,6 +778,12 @@ export interface AgentAdapter {
    * this capability.
    */
   extractNativeResumeId?(args: string[]): string | undefined;
+
+  /**
+   * Whether the launch continues the agent's earlier session without naming it (e.g. `--continue`).
+   * Agents without such a form may omit this capability.
+   */
+  continuesNativeSession?(args: string[]): boolean;
 
   /**
    * Additional installation steps that run regardless of agent installation status

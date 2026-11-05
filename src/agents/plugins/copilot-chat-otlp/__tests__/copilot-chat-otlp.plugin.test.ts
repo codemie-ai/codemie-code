@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null), hasLocalConfig: vi.fn(async () => false) },
 }));
@@ -8,13 +9,21 @@ vi.mock('@/agents/core/copilot-connector-scope.js', () => ({
   isCopilotProjectTracked: vi.fn(),
   readCopilotConnectorScope: vi.fn(async () => ({ kind: 'ok', value: { enabled: true, scope: 'user' } })),
 }));
+vi.mock('@/agents/core/copilot-analytics-preferences.js', () => ({
+  readCopilotAnalyticsPreferences: vi.fn(),
+  isCopilotAnalyticsProjectExcluded: vi.fn(),
+}));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import {
+  isCopilotAnalyticsProjectExcluded,
+  readCopilotAnalyticsPreferences,
+} from '@/agents/core/copilot-analytics-preferences.js';
 import { CopilotChatOtlpPlugin } from '../copilot-chat-otlp.plugin.js';
 
 function hookInput(overrides: Record<string, unknown> = {}): string {
@@ -46,6 +55,11 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.clearAllMocks();
     vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: true, scope: 'user' } } as never);
     vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
+      kind: 'ok',
+      value: { enabled: true, excludedProjects: [] },
+    });
+    vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -80,6 +94,24 @@ describe('CopilotChatOtlpPlugin', () => {
     expect(stopReason).not.toContain('opened automatically');
   });
 
+  it('does not call the auth invalid when a sign-in finished moments ago', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({
+      ok: false,
+      reason: 'rejected',
+      loginOutcome: 'signed-in-recently',
+    } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const stopReason = String(captured()?.stopReason);
+    expect(stopReason).toContain('A sign-in finished moments ago');
+    expect(stopReason).not.toContain('authentication is invalid');
+  });
+
   it('emits a continue:false shape for a blocked SessionStart (SSO auth failure)', async () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const { captured } = log();
@@ -108,6 +140,24 @@ describe('CopilotChatOtlpPlugin', () => {
     });
   });
 
+  it('checks SSO against the session profile, not the config resolved from the current directory', async () => {
+    const sessionProfile = {
+      provider: 'ai-run-sso',
+      ssoUrl: 'https://prod.example',
+      baseUrl: 'https://prod.example/code-assistant-api',
+    };
+    vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuth).toHaveBeenCalledWith(sessionProfile);
+    // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
+    expect(resolveHookAuthProfile).toHaveBeenCalledWith();
+    logSpy.mockRestore();
+  });
+
   it('forwards normally (no block) when SSO auth succeeds', async () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -119,7 +169,7 @@ describe('CopilotChatOtlpPlugin', () => {
   });
 
   it('emits a permissionDecision:deny shape for PreToolUse on internal error (not an auth-failure message)', async () => {
-    vi.mocked(ConfigLoader.load).mockRejectedValueOnce(new Error('disk full'));
+    vi.mocked(resolveHookAuthProfile).mockRejectedValueOnce(new Error('disk full'));
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
@@ -214,5 +264,100 @@ describe('CopilotChatOtlpPlugin', () => {
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  describe('analytics preferences gate', () => {
+    // CR-002: opting out of analytics must never stop the user's Copilot Chat. A block here means
+    // `continue:false` (SessionStart/UserPromptSubmit) or `permissionDecision:deny` (PreToolUse).
+    type OptOut = 'disabled' | 'excluded' | 'corrupt-preferences';
+    const OPT_OUTS: OptOut[] = ['disabled', 'excluded', 'corrupt-preferences'];
+
+    function applyOptOut(kind: OptOut): void {
+      if (kind === 'disabled') {
+        vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
+          kind: 'ok',
+          value: { enabled: false, excludedProjects: [] },
+        });
+      } else if (kind === 'excluded') {
+        vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(true);
+      } else {
+        vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'corrupt' });
+      }
+    }
+
+    describe.each(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'] as const)(
+      '%s while analytics is opted out',
+      (eventName) => {
+        it.each(OPT_OUTS)('%s: emits nothing, never blocks, forwards nothing, never touches the daemon', async (kind) => {
+          applyOptOut(kind);
+          const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+          await plugin.processOtlpEvent(hookInput({ hook_event_name: eventName, prompt: 'hi' }), {
+            ensureOtlpProxy,
+            forwardOtlpEventsToSpool,
+          });
+
+          expect(logSpy).not.toHaveBeenCalled();
+          expect(ensureOtlpProxy).not.toHaveBeenCalled();
+          expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+        });
+      }
+    );
+
+    it.each(OPT_OUTS)('%s stays silent even when the connector scope is corrupt (no scope block for an opted-out user)', async (kind) => {
+      applyOptOut(kind);
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(OPT_OUTS)('%s stays silent even when the session identity is missing (no identity block for an opted-out user)', async (kind) => {
+      applyOptOut(kind);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
+        ensureOtlpProxy,
+        forwardOtlpEventsToSpool,
+      });
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('stays silent for an opted-out user when the connector is not connected (scope disabled)', async () => {
+      applyOptOut('disabled');
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: false } } as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('analytics enabled and project not excluded: forwards normally, no block (default / absent preferences)', async () => {
+      vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
+    });
+
+    it('missing identity still reports the identity message when analytics is enabled (existing behavior preserved)', async () => {
+      const { captured } = log();
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
+        ensureOtlpProxy,
+        forwardOtlpEventsToSpool,
+      });
+
+      expect(captured()).toEqual({
+        continue: false,
+        stopReason: expect.stringContaining('identity or working directory is missing'),
+      });
+    });
   });
 });

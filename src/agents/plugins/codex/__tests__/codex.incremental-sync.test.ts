@@ -49,6 +49,8 @@ let currentSessionId = '';
 
 describe('codex.incremental-sync', () => {
   beforeEach(() => {
+    // The credential lookup is profile-first; an inherited profile would replace the URL under test.
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
     discoverSessions.mockReset();
     parseSessionFile.mockReset();
     processSession.mockReset();
@@ -68,6 +70,7 @@ describe('codex.incremental-sync', () => {
     discoverSessions.mockReset();
     parseSessionFile.mockReset();
     processSession.mockReset();
+    vi.unstubAllEnvs();
   });
 
   function commonOptions() {
@@ -105,6 +108,48 @@ describe('codex.incremental-sync', () => {
       currentSessionId,
       expect.any(Object),
     ]);
+  });
+
+  it('names the rollout on the session record at the first tick that finds the record', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const home = mkdtempSync(join(tmpdir(), 'codex-link-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const recordPath = join(home, 'sessions', `${currentSessionId}.json`);
+      process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '30';
+      discoverSessions.mockResolvedValue([
+        { sessionId: 'codex-uuid', filePath: '/tmp/rollout-linked.jsonl', createdAt: Date.now(), agentName: 'codex' },
+      ]);
+      parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+      processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+
+      const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+      startCodexIncrementalSync(commonOptions());
+      // The first tick runs before the session record exists
+      await waitFor(() => processSession.mock.calls.length >= 1);
+      writeFileSync(recordPath, JSON.stringify({
+        sessionId: currentSessionId,
+        agentName: 'codex',
+        status: 'active',
+        correlation: { status: 'pending', retryCount: 0 },
+      }));
+      // Two more ticks: at least one of them started after the record was written
+      const ticksBefore = processSession.mock.calls.length;
+      await waitFor(() => processSession.mock.calls.length >= ticksBefore + 2);
+
+      const linked = JSON.parse(readFileSync(recordPath, 'utf-8')) as { correlation: { agentSessionFile?: string } };
+      expect(linked.correlation.agentSessionFile).toBe('/tmp/rollout-linked.jsonl');
+    } finally {
+      const { stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+      stopCodexIncrementalSync(currentSessionId);
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('skips rollouts whose projectPath does not realpath-match cwd', async () => {
@@ -208,6 +253,35 @@ describe('codex.incremental-sync', () => {
         sessionId: currentSessionId,
       })
     );
+  });
+
+  it('hands the sender a supersede check that re-reads the same credentials', async () => {
+    process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '50';
+    discoverSessions.mockResolvedValue([
+      { sessionId: 'codex-uuid', filePath: '/tmp/rollout.jsonl', createdAt: Date.now(), agentName: 'codex' },
+    ]);
+    parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+    processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+    const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+    startCodexIncrementalSync({
+      ...commonOptions(),
+      ssoUrl: 'https://codemie.example.com',
+      syncApiUrl: 'https://sync.example.com',
+    });
+
+    await waitFor(() => mockSync.mock.calls.length >= 1);
+    const context = mockSync.mock.calls[0][1];
+    expect(typeof context.credentialsSuperseded).toBe('function');
+
+    const readsBefore = mockGetStoredCredentials.mock.calls.length;
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+    await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
+    await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
+    expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
   });
 
   it('skips upload when ssoUrl or syncApiUrl is not set', async () => {

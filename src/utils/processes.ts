@@ -112,13 +112,87 @@ export interface DetachedSpawnOptions {
   windowsHide?: boolean;
 }
 
+/** Only ESRCH means the pid is gone; EPERM (another user's process) and any other error mean it exists. */
 export function isProcessAlive(pid: number): boolean {
+  // A pid read from a corrupt file; 0 and negatives signal a process group, not a process
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
+}
+
+/** Env vars a CLI wrapper exports to its agent so a session record can name the process that owns it. */
+export const WRAPPER_PID_ENV = 'CODEMIE_WRAPPER_PID';
+export const WRAPPER_STARTED_AT_ENV = 'CODEMIE_WRAPPER_STARTED_AT';
+
+/** The identity of a process: its pid and its start time (epoch ms). */
+export interface ProcessIdentity {
+  pid: number;
+  startedAt?: number;
+}
+
+// Taken once: `process.uptime()` stops during a system sleep, so a later evaluation would drift past the start.
+const STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
+
+/** This process's start time (epoch ms). */
+export function processStartedAt(): number {
+  return STARTED_AT;
+}
+
+/** The wrapper identity from `env`: both vars as numbers, or none. */
+export function wrapperOwnerFromEnv(env: NodeJS.ProcessEnv): { ownerPid: number; ownerStartedAt: number } | undefined {
+  const rawPid = env[WRAPPER_PID_ENV];
+  const rawStartedAt = env[WRAPPER_STARTED_AT_ENV];
+  if (!rawPid || !rawStartedAt) return undefined;
+  const ownerPid = Number(rawPid);
+  const ownerStartedAt = Number(rawStartedAt);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !Number.isFinite(ownerStartedAt)) return undefined;
+  return { ownerPid, ownerStartedAt };
+}
+
+/**
+ * How far a pid's real start (now − `ps etime`) may sit after the stored start and still be the same process.
+ * Only that side is checked: every writer stores a start no earlier than the real one (`processStartedAt()`, or a
+ * daemon state written after start-up by an older daemon), and a reused pid always belongs to a process started
+ * after its owner stored its start. A stored start later than the real one is therefore always the owner — which
+ * also keeps a live owner alive across a backward wall-clock step. `ps etime` has 1 s resolution and on Linux is
+ * boot-clock elapsed, so a forward step moves `now − etime` later; 60 s absorbs such steps. A false "alive" then
+ * needs an owner that lived under a minute and a pid reused within it — it only delays the finalization.
+ */
+export const OWNER_START_TOLERANCE_MS = 60_000;
+
+/** A hung `ps` must not stall the caller; past this, the answer is the pid-only check. */
+const PS_TIMEOUT_MS = 1000;
+
+/** `ps -o etime=` output (`[[dd-]hh:]mm:ss`) → milliseconds; undefined when unparsable. */
+export function parseEtime(etime: string): number | undefined {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (!match) return undefined;
+  const [, days, hours, minutes, seconds] = match;
+  return ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60_000 + Number(seconds) * 1000;
+}
+
+/**
+ * Whether the process that owns a record is still the one running under its pid: the pid is alive AND its
+ * real start is no later than `startedAt` + {@link OWNER_START_TOLERANCE_MS}. Without `startedAt`, on Windows,
+ * or when `ps` fails or prints nothing parsable, the answer is the pid-only check.
+ *
+ * ponytail: Linux procps `etime` assumed to print the same format as macOS; Windows is pid-only.
+ */
+export async function isOwnerAlive(owner: ProcessIdentity): Promise<boolean> {
+  if (!isProcessAlive(owner.pid)) return false;
+  if (owner.startedAt === undefined || process.platform === 'win32') return true;
+
+  const elapsed = await exec('ps', ['-o', 'etime=', '-p', String(owner.pid)], { timeout: PS_TIMEOUT_MS })
+    .then((result) => parseEtime(result.stdout), () => undefined);
+  if (elapsed === undefined) {
+    // The pid may have gone between the two checks (ps prints nothing for it).
+    return isProcessAlive(owner.pid);
+  }
+  return Date.now() - elapsed <= owner.startedAt + OWNER_START_TOLERANCE_MS;
 }
 
 /**
@@ -130,6 +204,11 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
   for (const childPid of listChildPids(pid)) {
     signalTree(childPid, signal);
   }
+  signalProcess(pid, signal);
+}
+
+/** Send `signal` to one process. A process already gone is skipped; any other failure is logged at debug and never thrown. */
+export function signalProcess(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(pid, signal);
   } catch (error) {
@@ -137,6 +216,17 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
       logger.debug(`[signalTree] kill ${signal} ${pid} failed:`, error);
     }
   }
+}
+
+/** A process and the parent it had when it was listed. */
+export interface ListedProcess {
+  pid: number;
+  parentPid: number;
+}
+
+/** All descendants of `pid` (not `pid` itself) with their parents, deepest first, found by `pgrep -P`. POSIX only. */
+export function listDescendants(pid: number): ListedProcess[] {
+  return listChildPids(pid).flatMap(childPid => [...listDescendants(childPid), { pid: childPid, parentPid: pid }]);
 }
 
 /** A hung `pgrep` must not stall shutdown; past this, the node is treated as childless. */
@@ -565,6 +655,65 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   return joined ? joined.toLowerCase() : undefined;
 }
 
+const DEFAULT_REMOTE_PORTS: Record<string, string> = { ssh: '22', https: '443', http: '80' };
+
+/**
+ * Credential-free `host[:port]/path` repository key, mirroring the backend's `normalize_remote`
+ * (codemie-backend-ingest-routing: src/codemie/service/project/repository_registration_service.py).
+ * Host lower-cased, path case kept; credentials, scheme, query/fragment, `.git`, trailing `/` and the
+ * scheme's default port (ssh 22, https 443, http 80) dropped; IPv6 hosts bracketed. An scp-style
+ * `user@host:path` has no port, so `git@h:8443/a/b` is `h/8443/a/b`.
+ *
+ * @returns the key, or undefined when there is no host or path. Never throws or echoes the input.
+ */
+export function repoKeyFromRemote(remote: string): string | undefined {
+  const text = (remote ?? '').trim();
+  let host: string;
+  let port = '';
+  let path: string;
+
+  // Local filesystem remotes are never a repository key and must not leak their path: a Windows
+  // drive path (`C:\u\r`, `C:/u/r`, drive-relative `c:r`) would otherwise parse as scp host `c`.
+  if (/^[a-z]:/i.test(text)) return undefined;
+
+  const url = text.match(/^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i);
+  if (url && url[1].toLowerCase() === 'file') return undefined;
+  if (url) {
+    const authority = url[2].slice(url[2].lastIndexOf('@') + 1);
+    const hp = authority.match(/^\[([^\]]*)\](?::(\d*))?$/) ?? authority.match(/^([^:]*)(?::(\d*))?$/);
+    if (!hp) return undefined;
+    host = hp[1].toLowerCase();
+    port = hp[2] ?? '';
+    if (port && (Number(port) > 65535 || port === DEFAULT_REMOTE_PORTS[url[1].toLowerCase()])) port = '';
+    if (hp[2] === '') port = '';
+    path = url[3];
+  } else {
+    const scp = text.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/\\].*)$/);
+    if (!scp) return undefined;
+    host = scp[1].toLowerCase();
+    path = scp[2];
+  }
+
+  path = path.replace(/^\/+|\/+$/g, '');
+  if (path.endsWith('.git')) path = path.slice(0, -4).replace(/\/+$/, '');
+  if (!host || !path) return undefined;
+  const h = host.includes(':') ? `[${host}]` : host;
+  return port ? `${h}:${port}/${path}` : `${h}/${path}`;
+}
+
+/**
+ * Raw `origin` remote of a working directory. MAY CARRY CREDENTIALS: never log it; pass it only to
+ * `repoKeyFromRemote` or an evidence channel that expects a raw remote. Fails soft to undefined.
+ */
+export async function getRawGitOrigin(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Detect the canonical repository identifier from a working directory's git `origin` remote.
  * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
@@ -598,33 +747,52 @@ export async function resolveRepositoryName(workingDirectory: string): Promise<s
   return (await detectGitRemoteRepo(workingDirectory)) ?? extractRepository(workingDirectory);
 }
 
+const LOCAL_BRANCH_REF_PREFIX = 'refs/heads/';
+
 /**
  * Detect current git branch from working directory
  *
+ * Uses `git symbolic-ref -q HEAD` rather than `git rev-parse --abbrev-ref HEAD`: it also resolves
+ * an unborn HEAD (repository without commits), where rev-parse fails, and it exits 1 on a
+ * detached HEAD, which is reported as no branch. The full ref is read and `refs/heads/` stripped
+ * here because `--short` returns `heads/<name>` when a tag shares the branch name.
+ *
  * @param cwd - Working directory path
- * @returns Git branch name or undefined if not in a git repo
+ * @returns Git branch name, or undefined when not in a git repo or HEAD is detached
  */
 export async function detectGitBranch(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', {
+    const { stdout } = await execAsync('git symbolic-ref -q HEAD', {
       cwd,
       timeout: 5000,
       windowsHide: true,
     });
 
-    const branch = stdout.trim();
-
-    // Handle detached HEAD state
-    if (branch === 'HEAD') {
-      logger.debug('[GitUtils] Detached HEAD state detected');
+    const ref = stdout.trim();
+    const branch = ref.startsWith(LOCAL_BRANCH_REF_PREFIX)
+      ? ref.slice(LOCAL_BRANCH_REF_PREFIX.length)
+      : '';
+    if (!branch) {
+      logger.debug(
+        `[GitUtils] HEAD does not point at a local branch in ${cwd} (symbolic-ref output: "${ref}"); reporting no branch`
+      );
       return undefined;
     }
 
-    logger.debug(`[GitUtils] Detected git branch: ${branch}`);
+    logger.debug(`[GitUtils] Detected git branch in ${cwd}: ${branch} (ref: ${ref})`);
     return branch;
   } catch (error) {
-    // Not a git repo or git command failed
-    logger.debug('[GitUtils] Failed to detect git branch:', error);
+    const exitCode = (error as { code?: unknown }).code;
+    if (exitCode === 1) {
+      logger.debug(
+        `[GitUtils] Detached HEAD in ${cwd} (git symbolic-ref -q HEAD exited 1); reporting no branch`
+      );
+    } else {
+      logger.debug(
+        `[GitUtils] Failed to detect git branch in ${cwd} (git symbolic-ref -q HEAD, exit code: ${String(exitCode)}):`,
+        error
+      );
+    }
     return undefined;
   }
 }

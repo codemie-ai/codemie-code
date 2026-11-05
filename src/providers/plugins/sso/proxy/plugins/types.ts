@@ -88,8 +88,8 @@ export interface ProxyInterceptor {
   /** Called when proxy starts (for initialization) */
   onProxyStart?(): Promise<void>;
 
-  /** Called when proxy stops (for cleanup) */
-  onProxyStop?(): Promise<void>;
+  /** Called when proxy stops (for cleanup); network work stops at `bounds.deadlineMs` when given */
+  onProxyStop?(bounds?: { deadlineMs?: number }): Promise<void>;
 
   /** Called before forwarding request */
   onRequest?(context: ProxyContext): Promise<void>;
@@ -142,7 +142,8 @@ export interface ProxyInterceptor {
 
 export interface UpstreamResponseTools {
   readBody(response: IncomingMessage): Promise<Buffer>;
-  retry(requestBody: Buffer): Promise<IncomingMessage>;
+  /** `null`/`undefined` replays a request that was sent without a body (GET, HEAD, DELETE). */
+  retry(requestBody: Buffer | null | undefined): Promise<IncomingMessage>;
   fromBuffer(response: IncomingMessage, body: Buffer): IncomingMessage;
 }
 

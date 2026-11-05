@@ -14,9 +14,11 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../agents/core/session/BaseProcessor.js';
-import { shouldStopSync } from '../../../../agents/core/session/BaseProcessor.js';
+import { getSyncStopReason, type SyncStopReason } from '../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
-import { open, stat, unlink } from 'fs/promises';
+import { open, readFile, stat, unlink } from 'fs/promises';
+import { isOwnerAlive, isProcessAlive, processStartedAt } from '../../../../utils/processes.js';
+import { parsePidLockHolder, reclaimStaleLock } from '../../../../utils/pid-lock.js';
 import { logger } from '../../../../utils/logger.js';
 import { getCodemiePath } from '../../../../utils/paths.js';
 import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
@@ -32,7 +34,7 @@ export interface SessionSyncResult {
   failedProcessors: string[];
 }
 
-/** Lock files older than this are considered stale (holder died without releasing) */
+/** A lock naming no pid is considered stale past this age (holder died without releasing) */
 const SYNC_LOCK_STALE_MS = 120_000;
 
 type SyncLockState =
@@ -88,14 +90,15 @@ export class SessionSyncer {
   /**
    * Try to acquire the cross-process sync lock for a session (exclusive create).
    * A stale lock (holder killed mid-sync) is removed and acquisition retried once.
+   * `pidOnly` (a hook process): the holder is checked by its pid alone, never by spawning `ps`.
    */
-  private async tryAcquireSyncLock(lockPath: string): Promise<SyncLockState> {
+  private async tryAcquireSyncLock(lockPath: string, pidOnly: boolean): Promise<SyncLockState> {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const handle = await open(lockPath, 'wx');
         try {
-          // Write the pid for debuggability
-          await handle.writeFile(String(process.pid));
+          // The holder's identity: a lock whose holder is dead is reclaimed at once
+          await handle.writeFile(JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
         } finally {
           await handle.close();
         }
@@ -109,10 +112,12 @@ export class SessionSyncer {
           return 'unavailable';
         }
 
-        if (attempt === 0 && await this.isSyncLockStale(lockPath)) {
-          logger.debug(`[SessionSyncer] Removing stale sync lock: ${lockPath}`);
-          await unlink(lockPath).catch(() => undefined);
-          continue;
+        if (attempt === 0) {
+          const raw = await readFile(lockPath, 'utf-8').catch(() => null);
+          if (await this.isSyncLockStale(lockPath, raw, pidOnly)) {
+            logger.debug(`[SessionSyncer] Removing stale sync lock: ${lockPath}`);
+            if (await reclaimStaleLock(lockPath, raw)) continue;
+          }
         }
 
         return 'held-by-other';
@@ -122,12 +127,18 @@ export class SessionSyncer {
   }
 
   /**
-   * A lock is stale when its mtime is older than SYNC_LOCK_STALE_MS.
-   * Stat errors (e.g. lock vanished between open and stat) are treated as stale
-   * so acquisition is retried once.
+   * A lock naming a holder pid is stale when that holder is dead ({@link isOwnerAlive});
+   * a lock naming no pid is stale when its mtime is older than SYNC_LOCK_STALE_MS.
+   * `raw` is the lock content, null when it could not be read. Read / stat errors (e.g. lock
+   * vanished between open and stat) are treated as stale so acquisition is retried once.
    */
-  private async isSyncLockStale(lockPath: string): Promise<boolean> {
+  private async isSyncLockStale(lockPath: string, raw: string | null, pidOnly: boolean): Promise<boolean> {
+    if (raw === null) return true;
     try {
+      const holder = parsePidLockHolder(raw);
+      if (holder) {
+        return !(pidOnly ? isProcessAlive(holder.pid) : await isOwnerAlive(holder));
+      }
       const stats = await stat(lockPath);
       return Date.now() - stats.mtimeMs > SYNC_LOCK_STALE_MS;
     } catch {
@@ -160,7 +171,7 @@ export class SessionSyncer {
     // incremental syncs can run concurrently for the same session. Only one sync
     // per session may run at a time; others defer to the next run.
     const lockPath = getCodemiePath('sessions', `${sessionId}.sync.lock`);
-    const lockState = await this.tryAcquireSyncLock(lockPath);
+    const lockState = await this.tryAcquireSyncLock(lockPath, context.hookProcess === true);
     if (lockState === 'held-by-other') {
       logger.info(`[SessionSyncer] Sync already in progress for session ${sessionId} in another process, deferring`);
       return {
@@ -226,11 +237,15 @@ export class SessionSyncer {
       const processorResults: Record<string, ProcessingResult> = {};
       const failedProcessors: string[] = [];
       const allResults: ProcessingResult[] = [];
+      let stopReason: SyncStopReason | undefined;
+      let skippedProcessors = 0;
 
-      for (const processor of this.processors) {
+      for (const [index, processor] of this.processors.entries()) {
         // Stop between processors when the sync deadline expired or an abort was
         // signaled; processors that did not run are deferred to the next sync.
-        if (shouldStopSync(context)) {
+        stopReason = getSyncStopReason({ deadlineMs: context.syncDeadlineMs, abortSignal: context.abortSignal });
+        if (stopReason) {
+          skippedProcessors = this.processors.length - index;
           logger.debug('[SessionSyncer] Sync deadline reached or aborted, deferring remaining processors');
           break;
         }
@@ -286,9 +301,14 @@ export class SessionSyncer {
       }
 
       const totalCount = Object.keys(processorResults).length;
-      const message = failedProcessors.length === 0
-        ? parts.length > 0 ? `Synced ${parts.join(', ')}` : 'No pending data to sync'
-        : `Sync completed with ${failedProcessors.length}/${totalCount} failures`;
+      const stopMessage = stopReason
+        ? `sync stopped early (${stopReason}), ${skippedProcessors} processors skipped`
+        : undefined;
+      const message = failedProcessors.length > 0
+        ? `Sync completed with ${failedProcessors.length}/${totalCount} failures`
+        : stopMessage
+          ? parts.length > 0 ? `Synced ${parts.join(', ')}; ${stopMessage}` : stopMessage
+          : parts.length > 0 ? `Synced ${parts.join(', ')}` : 'No pending data to sync';
 
       logger.info(`[SessionSyncer] ${message}`);
 

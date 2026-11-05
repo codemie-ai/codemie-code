@@ -5,6 +5,23 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
   isProjectTracked: vi.fn(),
   readPromptHookTimeoutSeconds: vi.fn(async () => undefined),
 }));
+const readClaudeAnalyticsPreferencesMock = vi.fn(async () => ({
+  kind: 'ok' as const,
+  value: { version: 1 as const, enabled: true, excludedProjects: [] },
+}));
+vi.mock('../claude-code-otlp.preferences.js', () => ({
+  readClaudeAnalyticsPreferences: readClaudeAnalyticsPreferencesMock,
+  isProjectExcluded: vi.fn(async () => false),
+}));
+// File-level, not per-describe: `vi.clearAllMocks()` in each describe's own beforeEach clears call
+// history but not a mock's last-set resolved value, so a test overriding this must not leak its
+// override into every later test in the file.
+beforeEach(() => {
+  readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+    kind: 'ok',
+    value: { version: 1, enabled: true, excludedProjects: [] },
+  });
+});
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
@@ -12,6 +29,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: vi.fn() }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));
@@ -37,6 +55,7 @@ const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
 const readSubagentMetaMock = vi.fn();
 const readForkedSkillMarkerMock = vi.fn();
+const resolveSubagentSkillMock = vi.fn(async (_transcript: string, _agentId: string) => ({ skillName: '', pending: false }));
 const subagentFilePathMock = vi.fn((transcriptPath: string, agentId: string) => `${transcriptPath}:${agentId}`);
 const resolveSessionEnvFieldsMock = vi.fn();
 
@@ -76,6 +95,7 @@ vi.mock('../transcript/orchestrator.js', () => ({
 vi.mock('../transcript/subagent-usage.js', () => ({
   readSubagentMeta: readSubagentMetaMock,
   readForkedSkillMarker: readForkedSkillMarkerMock,
+  resolveSubagentSkill: resolveSubagentSkillMock,
   subagentFilePath: subagentFilePathMock,
 }));
 
@@ -85,6 +105,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 
 import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
 
@@ -92,6 +113,15 @@ import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otl
 // hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
 // transcript/orchestrator.js mock factory, which closes over those consts.
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+
+// Event derivation is under test in this file; evidence stamping has its own tests
+// (claude-evidence-inputs.test.ts, OtlpAgentAdapter.test.ts). Assigned (not spied) so restoreAllMocks keeps it.
+(ClaudeCodeOtlpPlugin.prototype as unknown as {
+  extractHookContext: (input: { cwd: string; session_id: string; hook_event_name: string; prompt?: string }) => object;
+}).extractHookContext = (input) => ({
+  cwd: input.cwd, sessionId: input.session_id,
+  prompt: input.hook_event_name === 'UserPromptSubmit' ? input.prompt : undefined,
+});
 
 const forwardOtlpEventsToSpool = vi.fn(async (_events: Record<string, unknown>[], _agentName: string) => true);
 
@@ -164,6 +194,18 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     expect(vi.mocked(ensureOtlpProxy).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(forwardOtlpEventsToSpool).mock.invocationCallOrder[0]
     );
+  });
+
+  it('does nothing when analytics are disabled via preferences, even if the allowlist tracks the project', async () => {
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+      kind: 'ok',
+      value: { version: 1, enabled: false, excludedProjects: [] },
+    });
+    await plugin.processOtlpEvent(event('UserPromptSubmit'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(ensureCodeMieSsoAuthOrWait).not.toHaveBeenCalled();
+    expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });
 
@@ -904,6 +946,51 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
   });
 
+  it('forwards skill_name and a /skill description on SubagentStop for a marker-less fork the main transcript names (EPMCDME-16352)', async () => {
+    readSubagentMetaMock.mockResolvedValue({ spawnDepth: 1 });
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: 'forkme', pending: false });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'fork-1',
+        agent_transcript_path: '/tmp/agent-fork-1.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    // The hook's own transcript path travels as the candidate, so a path discovery cannot find resolves.
+    expect(resolveSubagentSkillMock).toHaveBeenCalledWith(
+      '/tmp/transcript.jsonl',
+      'fork-1',
+      expect.objectContaining({ agentId: 'fork-1', filePath: '/tmp/agent-fork-1.jsonl' })
+    );
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'forkme', description: '/forkme' });
+  });
+
+  it('marks a still-undecidable SubagentStop pending, without skill_name (usage is deferred)', async () => {
+    readSubagentMetaMock.mockResolvedValue({});
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: '', pending: true });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'fork-1',
+        agent_transcript_path: '/tmp/agent-fork-1.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openSubagentPassMock.mock.calls[0][1]).toMatchObject({ agentId: 'fork-1', pending: true });
+    expect(forwardedEvents()[0]).not.toHaveProperty('skill_name');
+  });
+
   it('does not add skill_name on SubagentStop for a regular (non-skill) agent dispatch', async () => {
     readSubagentMetaMock.mockResolvedValue({ spawnDepth: 0, description: 'Explore the repo' });
     const plugin = new ClaudeCodeOtlpPlugin();
@@ -951,6 +1038,19 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
+  });
+
+  it('forwards skill_name on SubagentStart for a marker-less fork the main transcript names (EPMCDME-16352)', async () => {
+    readForkedSkillMarkerMock.mockResolvedValue({});
+    resolveSubagentSkillMock.mockResolvedValueOnce({ skillName: 'forkme', pending: false });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({ hook_event_name: 'SubagentStart', agent_id: 'fork-1', agent_type: 'general-purpose' })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'forkme' });
   });
 
   it('does not add skill_name on SubagentStart for a regular agent (no forked-skill marker)', async () => {
@@ -1527,6 +1627,15 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(String(forwarded['prompt_body'])).toHaveLength(200);
   });
 
+  it('keeps UUID fragments and non-ticket tokens out of ticket_mentions', async () => {
+    await plugin.processOtlpEvent(
+      promptEvent('see 38a8bb8d-39d4-49b2-a43e-20c8e1f66c87 and SHA-256 then EPMCDME-15301'),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+
+    expect(forwardedEvents()[0]['ticket_mentions']).toEqual(['EPMCDME-15301']);
+  });
+
   it('finds a ticket mention that sits beyond the 200-char cut', async () => {
     await plugin.processOtlpEvent(promptEvent(`${'x '.repeat(150)}see ABC-99`), {
       ensureOtlpProxy,
@@ -1650,6 +1759,21 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     for (const key of ['command_name', 'story_marker', 'ticket_mentions', 'prompt_length']) {
       expect(forwarded).not.toHaveProperty(key);
     }
+  });
+
+  it('checks SSO against the session profile, not the config resolved from the current directory', async () => {
+    const sessionProfile = {
+      provider: 'ai-run-sso',
+      ssoUrl: 'https://prod.example',
+      baseUrl: 'https://prod.example/code-assistant-api',
+    };
+    vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledWith(sessionProfile, expect.anything());
+    // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
+    expect(resolveHookAuthProfile).toHaveBeenCalledWith();
   });
 
   it('emits no event when the SSO gate blocks the prompt', async () => {

@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
-import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import { readCopilotEventsTolerant } from '@/agents/plugins/copilot-cli/copilot-cli.storage-utils.js';
 import { extractCopilotUsage } from '@/agents/plugins/copilot-cli/copilot-cli.usage.js';
@@ -55,7 +55,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     if (process.env.CODEMIE_SESSION_ID) {
       return false;
     }
-    return isCopilotProjectTracked(input.cwd, await readCopilotConnectorScope(this.name));
+    return (await evaluateCopilotAnalyticsGate(this.name, input.cwd)).tracked;
   }
 
   protected async resolveAgentFields(): Promise<Record<string, unknown>> {
@@ -217,20 +217,28 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     authenticationFailure = true,
     loginOutcome?: DetachedLoginOutcome
   ): Extract<CliForwardDecision, { decision: 'block' }> {
-    const logMessage = authenticationFailure
-      ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
-      : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
+    // After a sign-in that just finished the login text already says so; "invalid" and "required" would contradict it.
+    const signedInRecently = authenticationFailure && loginOutcome === 'signed-in-recently';
+    const logMessage = signedInRecently
+      ? `CodeMie SSO credentials were rejected right after a sign-in finished (${reason ?? 'unknown reason'}).`
+      : authenticationFailure
+        ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
+        : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
 
     const userMessage = authenticationFailure
       ? describeLogin(loginOutcome).replace(/\n/g, ' ')
       : 'CodeMie hit an internal error and cannot process this event — check the CodeMie logs, then resend your prompt.';
+
+    const leadIn = signedInRecently
+      ? ''
+      : `${authenticationFailure ? 'CodeMie sign-in required' : 'CodeMie internal error'}. `;
 
     const hookSpecificOutput: CliBlockOutput =
       eventName === 'preToolUse'
         ? { permissionDecision: 'deny', permissionDecisionReason: userMessage }
         : {
             modifiedTransformedPrompt:
-              `${authenticationFailure ? 'CodeMie sign-in required' : 'CodeMie internal error'}. Reply only with: "${userMessage}" Do not use any tools.`,
+              `${leadIn}Reply only with: "${userMessage}" Do not use any tools.`,
           };
 
     return { decision: 'block', reason: logMessage, hookSpecificOutput };
@@ -258,12 +266,12 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   private async ensureProxyAuth() {
-    const workingDir = process.cwd();
-    const config = await ConfigLoader.load(workingDir);
+    // The session's profile, not the cwd's: the hook follows the agent into subdirectories (EPMCDME-16308).
+    const profile = await resolveHookAuthProfile();
     return ensureCodeMieSsoAuth({
-      provider: config.provider,
-      ssoUrl: config.codeMieUrl || config.baseUrl,
-      baseUrl: config.baseUrl,
+      provider: profile.provider,
+      ssoUrl: profile.ssoUrl,
+      baseUrl: profile.baseUrl,
     });
   }
 }

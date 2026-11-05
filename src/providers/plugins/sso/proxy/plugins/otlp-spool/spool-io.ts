@@ -1,117 +1,32 @@
-import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { OTEL_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
+import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { createStatus, readStatus, writeStatus, type SessionStatus } from './session-status.js';
-import { hooksOnlyForwardAllowed } from './spool-config.js';
+import { MAX_AGE_SEGMENTS, createStatus, pendingIsCarriedOnly, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
   decideProject,
   evaluateProjectPolicy,
-  hookEventProjectNames,
+  holdOrLose,
   hookRecordIsProject,
+  type HoldReason,
+  type LossReason,
   type SessionPolicy,
   type StreamPolicy,
 } from './session-project.js';
+import { readOrCreateEpoch } from './epoch.js';
+import { warnConflictStarted, warnDiscardOnce } from './spool-warnings.js';
+import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
+import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
+import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
+import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
 
 const NEWLINE = 0x0a;
 
-/** Sessions already told about a discard; bounded so a long-lived daemon cannot grow it without limit. */
-const MAX_WARNED_SESSIONS = 1000;
-const warnedDiscards = new Set<string>();
-
-function warnDiscardOnce(sessionId: string, ...args: unknown[]): void {
-  if (warnedDiscards.has(sessionId)) return;
-  if (warnedDiscards.size >= MAX_WARNED_SESSIONS) {
-    // Set iteration order is insertion order: drop the oldest entry, not everyone warned so far.
-    const oldest = warnedDiscards.values().next().value;
-    if (oldest !== undefined) warnedDiscards.delete(oldest);
-  }
-  warnedDiscards.add(sessionId);
-  logger.warn('[otlp-spool] session project conflict: unsent analytics discarded', ...sanitizeLogArgs(...args));
-}
-
-/** Single place that reports the none-or-bound -> conflict transition (live ingest and legacy scan). */
-function warnConflictStarted(sessionId: string, status: SessionStatus): void {
-  logger.warn(
-    '[otlp-spool] session switched project: only hooks recorded for the first project before the switch ' +
-      'can still be sent; hooks of other projects and all OTLP logs/metrics/traces of this session are not sent',
-    ...sanitizeLogArgs({
-      sessionId,
-      project: status.project ?? null,
-      otherNames: Math.max(0, (status.projectConflict?.length ?? 0) - (status.project ? 1 : 0)),
-      sealed: Boolean(status.projectSeal),
-    })
-  );
-}
-
-async function hooksFileState(sessionId: string): Promise<{ exists: boolean; size: number }> {
-  try {
-    return { exists: true, size: (await stat(streamFile(sessionId, 'hooks'))).size };
-  } catch {
-    return { exists: false, size: 0 };
-  }
-}
-
 /* ------------------------------------------------------- unlocked internals --- */
 // These assume the caller already holds the session lock.
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Range-read everything after `cursor`, up to `end` when given. Never touches the acknowledged prefix. */
-async function readRange(
-  sessionId: string,
-  stream: SpoolStream,
-  cursor: number,
-  end?: number
-): Promise<Buffer | null> {
-  let handle;
-  try {
-    handle = await open(streamFile(sessionId, stream), 'r');
-  } catch {
-    return null; // missing file => nothing pending
-  }
-  try {
-    const { size: fileSize } = await handle.stat();
-    const size = end === undefined ? fileSize : Math.min(fileSize, end);
-    if (size <= cursor) return null; // drained
-    const buffer = Buffer.allocUnsafe(size - cursor);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, cursor);
-    return bytesRead > 0 ? buffer.subarray(0, bytesRead) : null;
-  } finally {
-    await handle.close();
-  }
-}
-
-/** Project names of every hook on disk, acknowledged prefix included. Malformed lines are skipped. */
-async function readHookProjectNames(sessionId: string): Promise<string[]> {
-  let text: string;
-  try {
-    text = await readFile(streamFile(sessionId, 'hooks'), 'utf-8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-  const names: string[] = [];
-  for (const line of text.split('\n')) {
-    if (line.trim().length === 0) continue;
-    try {
-      const { hookEvent } = JSON.parse(line) as { hookEvent: string };
-      names.push(...hookEventProjectNames(JSON.parse(hookEvent)));
-    } catch {
-      // unusable record: carries no usable project
-    }
-  }
-  return names;
-}
 
 /**
  * Legacy recovery: scan the hooks already on disk once and bind or conflict.
@@ -152,6 +67,113 @@ export async function discardBacklogLocked(
 }
 
 /**
+ * A hold that reached its retention bound: drop the held backlog of `streams` with a named, visible
+ * loss reason (persisted as `lastLoss`, logged). Never silent. Mutates `status` only; caller writes.
+ */
+export async function recordLossLocked(
+  sessionId: string,
+  status: SessionStatus,
+  reason: LossReason,
+  streams: readonly SpoolStream[] = SPOOL_STREAMS,
+  now: number = Date.now()
+): Promise<number> {
+  const { bytes } = await discardBacklogLocked(sessionId, status, streams);
+  status.lastLoss = { reason, at: now, bytes };
+  logger.warn('[otlp-spool] held analytics dropped at the retention bound', ...sanitizeLogArgs({ sessionId, reason, bytes }));
+  return bytes;
+}
+
+/**
+ * A hook that could not stamp dropped `events` events of this session (no durable record, so nothing
+ * was spooled): make it visible as `stampLoss` instead of a warning in a hook process nobody reads.
+ * The specific bounded reason is kept; `lastLoss` (retention/delivery evidence) is never touched. The
+ * epoch exists before the status is first created, so a fresh OTLP-only session is never pre-epoch legacy.
+ */
+export async function recordStampLoss(sessionId: string, reason: string, events: number, now: number = Date.now()): Promise<void> {
+  const named = stampReasonToken(reason);
+  await withSessionLock(sessionId, async () => {
+    await readOrCreateEpoch();
+    const status = (await readStatus(sessionId)) ?? createStatus();
+    status.stampLoss = { reason: named, at: now, events };
+    await writeStatus(sessionId, status);
+    logger.warn('[otlp-spool] hook events dropped: evidence record unavailable', ...sanitizeLogArgs({ sessionId, reason, events }));
+  });
+}
+
+/** Any pending hook line carries the `evidence_v: 1` envelope marker. Caller holds the lock. */
+export async function pendingHooksMarkedLocked(sessionId: string, status: SessionStatus): Promise<boolean> {
+  const pending = await readRange(sessionId, 'hooks', status.cursors.hooks);
+  if (!pending) return false;
+  return pending
+    .toString('utf-8')
+    .split('\n')
+    .some((line) => {
+      try {
+        return (JSON.parse(line) as { evidence_v?: unknown }).evidence_v === 1;
+      } catch {
+        return false;
+      }
+    });
+}
+
+/**
+ * Head-of-line hold of one stream (a proof hold past the verified prefix, Task 13). Persists the
+ * first-hold time; `null` clears it. Past `heldRetentionMs` the stream's held backlog is dropped
+ * with the hold's reason (recorded loss). Takes the session lock: never call while holding it.
+ */
+export async function noteStreamHold(
+  sessionId: string,
+  stream: SpoolStream,
+  reason: HoldReason | null,
+  now: number = Date.now()
+): Promise<'held' | 'lost' | 'clear'> {
+  return withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return 'clear';
+    const previous = status.holds?.[stream];
+    if (reason === null) {
+      if (!previous) return 'clear';
+      clearHold(status, stream);
+      await writeStatus(sessionId, status);
+      return 'clear';
+    }
+    const decision = holdOrLose(reason, previous?.since, now, heldRetentionMs());
+    if (decision.action === 'lose') {
+      clearHold(status, stream);
+      await recordLossLocked(sessionId, status, decision.reason, [stream], now);
+    } else {
+      status.holds = { ...status.holds, [stream]: { reason, since: previous?.since ?? now } };
+    }
+    await writeStatus(sessionId, status);
+    return decision.action === 'lose' ? 'lost' : 'held';
+  });
+}
+
+/** Remove one hold; drops the empty `holds` object. */
+export function clearHold(status: SessionStatus, scope: HoldScope): void {
+  if (!status.holds?.[scope]) return;
+  delete status.holds[scope];
+  if (Object.keys(status.holds).length === 0) delete status.holds;
+}
+
+/**
+ * The forwarder's own evidence identity (spec item 7: "found by the forwarder's own key"): the
+ * daemon credentials' API URL and signed-in email, the same pair the hook stamps with
+ * (`resolveHookCredentials` mirrors the daemon's credential choice). `null` = no key can be built.
+ */
+export function forwarderIdentity(
+  credentials: SSOCredentials | JWTCredentials
+): { api_identity: string; owner_hash: string } | null {
+  const email = resolveEmailFromCredentials(credentials);
+  if (!email) return null;
+  try {
+    return { api_identity: apiIdentity(credentials.apiUrl), owner_hash: ownerHash(email) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
  * it demands and persists the status once when anything changed.
@@ -180,7 +202,7 @@ export async function applyProjectPolicyLocked(
     dirty ||= result.changed;
   }
   if (policy.otel.kind === 'discard') {
-    const result = await discardBacklogLocked(sessionId, status, OTEL_STREAMS);
+    const result = await discardBacklogLocked(sessionId, status, [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]);
     otelBytes = result.bytes;
     dirty ||= result.changed;
   }
@@ -258,10 +280,19 @@ export async function appendSpool(
   sessionId: string,
   stream: SpoolStream,
   data: string | Buffer,
-  projectNames?: string[]
-): Promise<void> {
+  projectNames?: string[],
+  /**
+   * Hooks only: these bytes were first held at this time (owner-pending handover); the age is carried, not reset. They are
+   * appended only when the pending hooks range is empty or entirely carried (so they stay its head) and fewer than
+   * `MAX_AGE_SEGMENTS` ranges are tracked; otherwise nothing is written and `false` is returned (the caller keeps the data).
+   */
+  carriedSince?: number
+): Promise<boolean> {
+  let appended = true;
   await withSessionLock(sessionId, async () => {
-    await mkdir(spoolRoot(), { recursive: true });
+    // The epoch exists before this version writes any session status: a new session is never pre-epoch.
+    await readOrCreateEpoch();
+    await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
 
     const path = streamFile(sessionId, stream);
     const exists = await fileExists(path);
@@ -274,6 +305,22 @@ export async function appendSpool(
       const status = (await readStatus(sessionId)) ?? createStatus();
       // The exact end of everything written so far: the end of the sealed prefix if this batch conflicts.
       const sizeBefore = exists ? (await stat(path)).size : 0;
+      // Age ranges describe offsets of the current incarnation, and only bytes that exist: a crashed append leaves a range
+      // past EOF, which must never age bytes written later.
+      const cursor = recreated ? 0 : status.cursors.hooks;
+      const live = (recreated ? [] : status.carriedAge?.hooks ?? [])
+        .map((seg) => ({ ...seg, end: Math.min(seg.end, sizeBefore) }))
+        .filter((seg) => seg.end > seg.start && seg.end > cursor);
+      if (carriedSince !== undefined) {
+        if (live.length >= MAX_AGE_SEGMENTS || !pendingIsCarriedOnly({ ...status, cursors: { ...status.cursors, hooks: cursor }, carriedAge: { hooks: live } }, sizeBefore)) {
+          appended = false;
+          return;
+        }
+        live.push({ start: sizeBefore, end: sizeBefore + Buffer.byteLength(data), since: Math.min(carriedSince, Date.now()) });
+      }
+      if (live.length > 0) status.carriedAge = { ...status.carriedAge, hooks: live };
+      else if (status.carriedAge) delete status.carriedAge.hooks;
+      if (status.carriedAge && Object.keys(status.carriedAge).length === 0) delete status.carriedAge;
       if (!status.projectScanned) {
         if (exists) {
           await resolveLegacyProjectLocked(sessionId, status);
@@ -290,11 +337,11 @@ export async function appendSpool(
       }
       await writeStatus(sessionId, status);
       if (!hadConflict && status.projectConflict) warnConflictStarted(sessionId, status);
-      await appendFile(path, data);
+      await appendFile(path, data, { mode: 0o600 });
       return;
     }
 
-    await appendFile(path, data);
+    await appendFile(path, data, { mode: 0o600 });
 
     const status = await readStatus(sessionId);
     if (!status) {
@@ -308,6 +355,7 @@ export async function appendSpool(
       await writeStatus(sessionId, status);
     }
   });
+  return appended;
 }
 
 /* --------------------------------------------------------------- consumers --- */
@@ -318,6 +366,8 @@ export interface PendingBytes {
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
   cursor: number;
   bytes: Buffer;
+  /** A `limit` was given and the window is full: bytes may follow it. */
+  more: boolean;
 }
 
 /**
@@ -325,11 +375,13 @@ export interface PendingBytes {
  *
  * The lock guarantees the snapshot never contains a partially written append,
  * so the protobuf payload handed to the backend is always whole.
+ * `limit` bounds the allocation to that many bytes (a window; the caller cuts it at an entry boundary).
  * Must NOT be called while already holding the session lock.
  */
 export async function snapshotPendingBytes(
   sessionId: string,
-  stream: SpoolStream
+  stream: SpoolStream,
+  limit?: number
 ): Promise<PendingBytes | null> {
   return withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -337,8 +389,8 @@ export async function snapshotPendingBytes(
     const gate = await gateStreamLocked(sessionId, status, stream);
     if (!gate) return null;
     const cursor = status.cursors[stream];
-    const bytes = await readRange(sessionId, stream, cursor);
-    return bytes ? { project: gate.project, cursor, bytes } : null;
+    const bytes = await readRange(sessionId, stream, cursor, limit === undefined ? undefined : cursor + limit);
+    return bytes ? { project: gate.project, cursor, bytes, more: limit !== undefined && bytes.length >= limit } : null;
   });
 }
 
@@ -409,5 +461,48 @@ export async function snapshotPendingHookRecords(
       dropped,
       filtered: Boolean(gate.onlyProject),
     };
+  });
+}
+
+export interface PendingNdjsonBatch {
+  /** Project the session is bound to; sent as `X-CodeMie-Project`. */
+  project: string;
+  /** Cursor the snapshot was taken from — pass it back when acknowledging. */
+  cursor: number;
+  /** Complete, newline-terminated NDJSON records that may be sent. */
+  records: string[];
+  /** Exact number of source bytes consumed, including the trailing newline of the last record. */
+  byteLength: number;
+}
+
+/**
+ * Consistent snapshot of the complete masked-JSON NDJSON records pending for one OTEL JSON stream.
+ * Cuts at the last newline byte so an incomplete trailing record stays pending.
+ * Must NOT be called while already holding the session lock.
+ */
+export async function snapshotPendingNdjsonRecords(
+  sessionId: string,
+  stream: SpoolStream
+): Promise<PendingNdjsonBatch | null> {
+  return withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return null;
+    const gate = await gateStreamLocked(sessionId, status, stream);
+    if (!gate) return null;
+
+    const cursor = status.cursors[stream];
+    const pending = await readRange(sessionId, stream, cursor, gate.limit);
+    if (!pending) return null;
+
+    const lastNewline = pending.lastIndexOf(NEWLINE);
+    if (lastNewline < 0) return null;
+
+    const complete = pending.subarray(0, lastNewline + 1);
+    const records = complete
+      .toString('utf-8')
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+
+    return { project: gate.project, cursor, records, byteLength: complete.length };
   });
 }

@@ -9,6 +9,7 @@ vi.mock('../../../../utils/config.js', () => ({
     load: vi.fn(),
     listProfiles: vi.fn(),
     getActiveProfileName: vi.fn(),
+    resolveProfileIdentity: vi.fn(),
   },
 }));
 
@@ -23,6 +24,9 @@ vi.mock('../daemon-manager.js', () => ({
   readState: vi.fn(),
   spawnDaemon: vi.fn(),
   stopDaemon: vi.fn(),
+  readConnectionRecord: vi.fn(),
+  writeConnectionRecord: vi.fn(),
+  seedConnectionRecord: vi.fn(),
 }));
 
 vi.mock('../health-check.js', () => ({
@@ -198,6 +202,42 @@ describe('proxy connect desktop', () => {
     );
   });
 
+  it('prints Failed to verify credentials and exits 1 when the credential lookup throws', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockRejectedValue(new Error('keychain locked')) };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to verify credentials: keychain locked')
+    );
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('No SSO credentials found')
+    );
+  });
+
   it('calls syncRegisteredSkills and syncPluginSkills when starting the daemon', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
@@ -365,6 +405,17 @@ describe('proxy connect desktop', () => {
   });
 });
 
+describe('proxy command registration', () => {
+  it('registers the analytics subcommand group (CR-004)', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const analytics = proxy.commands.find((c) => c.name() === 'analytics');
+    expect(analytics).toBeDefined();
+    const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
+    expect(subcommandNames).toEqual(['disable', 'enable', 'exclude', 'include', 'status']);
+  });
+});
+
 describe('proxy start', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -479,6 +530,104 @@ describe('proxy start', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Run: codemie profile login --url https://custom.example.com'
     );
+  });
+
+  describe('start writes the connection record', () => {
+    const validRecord = { version: 1 as const, profile: 'recorded', updatedAt: new Date().toISOString() };
+
+    const setupStart = async (record: typeof validRecord | null) => {
+      const { ConfigLoader } = await import('../../../../utils/config.js');
+      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+      const daemon = await import('../daemon-manager.js');
+      const { createProxyCommand } = await import('../index.js');
+
+      vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record);
+      vi.mocked(ConfigLoader.load).mockImplementation(async (_cwd, options) => ({
+        name: (options as { name?: string } | undefined)?.name ?? 'default',
+        provider: 'ai-run-sso',
+        baseUrl: 'https://example.com/api',
+      }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
+      vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+        return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+      } as unknown as typeof CodeMieSSO);
+      vi.mocked(daemon.spawnDaemon).mockImplementation(async opts => ({
+        url: 'http://127.0.0.1:4001',
+        profile: opts.profile,
+        port: 4001,
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      }));
+
+      return { daemon, command: createProxyCommand() };
+    };
+
+    it('writes the record when --profile is given, even if a valid record exists', async () => {
+      const { daemon, command } = await setupStart(validRecord);
+
+      await command.parseAsync(['start', '--profile', 'custom'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
+    });
+
+    it('writes the record when there is no --profile and no valid record', async () => {
+      const { daemon, command } = await setupStart(null);
+
+      await command.parseAsync(['start'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
+    });
+
+    it('leaves the record alone when there is no --profile and a valid record exists', async () => {
+      const { daemon, command } = await setupStart(validRecord);
+
+      await command.parseAsync(['start'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
+    });
+
+    it('seeds the record from the daemon already running and spawns nothing', async () => {
+      const { daemon, command } = await setupStart(validRecord);
+      const running = {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'default',
+        gatewayKey: 'local-key',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://example.com/api',
+        clientType: 'codemie-daemon',
+        startedAt: new Date().toISOString(),
+      };
+      vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: running });
+
+      await command.parseAsync(['start'], { from: 'user' });
+
+      expect(daemon.seedConnectionRecord).toHaveBeenCalledWith(running);
+      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+    });
+
+    it('rewrites the record for the running daemon when --profile is given, even if a valid record exists', async () => {
+      const { daemon, command } = await setupStart(validRecord);
+      const running = {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'custom',
+        gatewayKey: 'local-key',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://example.com/api',
+        clientType: 'codemie-daemon',
+        startedAt: new Date().toISOString(),
+      };
+      vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: running });
+
+      await command.parseAsync(['start', '--profile', 'custom'], { from: 'user' });
+
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(running, 'custom', 'codemie-daemon');
+      expect(daemon.seedConnectionRecord).not.toHaveBeenCalled();
+      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -892,9 +1041,10 @@ describe('proxy restart', () => {
   };
 
   const setup = async (
-    status: { running: boolean; state: typeof runningState | null },
+    status: { running: boolean; state: (typeof runningState & { projectBinding?: string }) | null },
     spawnedPort = 4001,
-    configName = 'work'
+    configName = 'work',
+    resolvedBinding = 'own'
   ) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -914,6 +1064,11 @@ describe('proxy restart', () => {
       baseUrl: 'https://example.com/api',
       codeMieProject: 'config-project',
     }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ConfigLoader.resolveProfileIdentity).mockImplementation(async (_cwd, name) => ({
+      state: resolvedBinding,
+      profileName: name ?? configName,
+      shared: {},
+    }) as unknown as Awaited<ReturnType<typeof ConfigLoader.resolveProfileIdentity>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
     } as unknown as typeof CodeMieSSO);
@@ -950,7 +1105,7 @@ describe('proxy restart', () => {
     exitSpy.mockRestore();
   });
 
-  it('re-spawns a running daemon with its recorded identity', async () => {
+  it('re-spawns a running daemon with its recorded identity and the profile\'s current project (AC12)', async () => {
     const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
 
     await command.parseAsync(['restart'], { from: 'user' });
@@ -966,10 +1121,41 @@ describe('proxy restart', () => {
       telemetryMode: 'claude-desktop',
       gatewayKey: 'k',
       model: 'm',
-      project: 'recorded-project',
+      // Re-read from the profile, not the recorded state: a profile that gained its own
+      // project since the daemon started bills it after the restart (EPMCDME-15411).
+      project: 'config-project',
+      projectBinding: 'own',
     });
     expect(errorOutput()).not.toContain('already running with different settings');
     expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:4001');
+  });
+
+  describe('a restart from another directory keeps the project (PR #758 review, finding 6)', () => {
+    it('a project recorded from a repo config (local) is kept, though the profile resolves elsewhere', async () => {
+      const { daemon, command } = await setup({ running: true, state: { ...runningState, projectBinding: 'local' } }, 4001, 'work', 'own');
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project', projectBinding: 'local' });
+    });
+
+    it('an unowned profile keeps the recorded project (state file from an older CLI, no binding)', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'unowned');
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project' });
+    });
+
+    it('a profile that is now off CodeMie drops the recorded project', async () => {
+      const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'none');
+      vi.mocked(ConfigLoader.load).mockResolvedValue({ name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api' } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].project).toBeUndefined();
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].projectBinding).toBe('none');
+    });
   });
 
   it('switches only the profile when --profile is given', async () => {
@@ -1106,5 +1292,77 @@ describe('proxy restart', () => {
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ clientType: 'claude-code-otlp' });
+  });
+
+  describe('restart writes the connection record', () => {
+    const validRecord = { version: 1 as const, profile: 'recorded', updatedAt: new Date().toISOString() };
+
+    it('defers the write of a running restart to after the port check', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState });
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
+    });
+
+    it('writes the restarted daemon with the recorded client type when there is no valid record', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState });
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledTimes(1);
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ profile: 'work', port: 4001 }),
+        'work',
+        'claude-desktop'
+      );
+    });
+
+    it('writes the switched profile when --profile is given, even if a valid record exists', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState });
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(validRecord);
+
+      await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
+
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ profile: 'other' }),
+        'other',
+        'claude-desktop'
+      );
+    });
+
+    it('leaves the record alone when there is no --profile and a valid record exists', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState });
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(validRecord);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when the new daemon could not rebind the recorded port', async () => {
+      const { daemon, command } = await setup({ running: true, state: runningState }, 54321);
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+
+      await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+      expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['--profile is given', ['restart', '--profile', 'other'], validRecord, true],
+      ['there is no valid record', ['restart'], null, true],
+      ['a valid record exists and there is no --profile', ['restart'], validRecord, false],
+    ])('decides the stopped-restart write when %s', async (_description, argv, record, expected) => {
+      const { DEFAULT_DAEMON_PORT } = await import('../connect-orchestrator.js');
+      const { daemon, command } = await setup({ running: false, state: null }, DEFAULT_DAEMON_PORT, 'default');
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record);
+
+      await command.parseAsync(argv, { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: expected });
+      expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
+    });
   });
 });

@@ -240,13 +240,11 @@ export class CodeMieProxy {
     });
   }
 
-  /**
-   * Stop the proxy server
-   */
-  async stop(): Promise<void> {
+  /** Stop the proxy; the plugins' final work (e.g. the session sync) stops at `bounds.deadlineMs` when given. */
+  async stop(bounds?: { deadlineMs?: number }): Promise<void> {
     // 1. Call onProxyStop lifecycle hooks (before stopping server)
     await this.runHook('onProxyStop', interceptor =>
-      interceptor.onProxyStop?.()
+      interceptor.onProxyStop?.(bounds)
     );
 
     // 2. Stop server
@@ -297,6 +295,7 @@ export class CodeMieProxy {
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
+        pid: process.pid,
       }));
       return;
     }
@@ -623,7 +622,7 @@ export class CodeMieProxy {
       retry: (requestBody) => this.httpClient.forward(targetUrl, {
         method,
         headers: context.headers,
-        body: requestBody,
+        body: requestBody || undefined,
       }),
       fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
     };

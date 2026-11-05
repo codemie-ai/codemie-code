@@ -69,7 +69,7 @@ interface HookGroup {
   [key: string]: unknown;
 }
 
-interface ClaudeSettings {
+export interface ClaudeSettings {
   // Parsed from user-edited JSON, so an event's value is not guaranteed to be an array.
   hooks?: Record<string, unknown>;
   env?: Record<string, string>;
@@ -104,12 +104,28 @@ type FixedCodemieEnvKey = Exclude<
 const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
   CLAUDE_CODE_ENABLE_TELEMETRY: '1',
   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
-  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
   OTEL_LOGS_EXPORTER: 'otlp',
   OTEL_METRICS_EXPORTER: 'otlp',
   OTEL_TRACES_EXPORTER: 'otlp',
   OTEL_LOG_TOOL_DETAILS: '1',
 };
+
+/**
+ * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
+ * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
+ * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
+ * to today's default with no `--force`, and a disconnect still clean it up.
+ */
+const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
+  OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
+};
+
+function isHistoricalCodemieValue(key: string, value: string): boolean {
+  return (
+    (CODEMIE_ENV_HISTORICAL_VALUES as Partial<Record<string, readonly string[]>>)[key]?.includes(value) ?? false
+  );
+}
 
 /**
  * True if `value` is (still) codemie's own value for `key`, without a live
@@ -121,7 +137,7 @@ const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
  * own (via `env`) — neither half alone is distinctive enough. `env` must
  * be a pre-mutation snapshot or the pairing check breaks mid-pass.
  */
-function isCodemieOwnedEnvValue(
+export function isCodemieOwnedEnvValue(
   key: (typeof CODEMIE_ENV_KEYS)[number],
   value: unknown,
   env: Record<string, unknown>
@@ -143,7 +159,7 @@ function isCodemieOwnedEnvValue(
     const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
     return typeof endpoint === 'string' && endpoint.endsWith('/v1/analytics/otlp');
   }
-  return CODEMIE_ENV_FIXED_VALUES[key] === value;
+  return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
 /**
@@ -253,7 +269,7 @@ export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
 export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
   'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
 
-async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
+export async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
     return {};
   }
@@ -475,9 +491,15 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    if (currentVal !== undefined && currentVal !== desiredVal) {
-      envConflicts.push(key);
+    if (currentVal === undefined || currentVal === desiredVal) {
+      continue;
     }
+    // A prior CodeMie version's own value for this key — migrated to today's default by
+    // this same write below, not a conflict requiring --force.
+    if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    envConflicts.push(key);
   }
 
   // A non-array value under ANY existing hooks event key (not just the ones we
@@ -686,7 +708,7 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries)';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
       }
       return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
@@ -768,4 +790,17 @@ export async function removeClaudeCodeOtlpConfig(
     ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
   );
   return { removed: true, path: settingsPath, mode: 'full' };
+}
+
+/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return false;
+  }
+  return Object.values(existing.hooks ?? {}).some(
+    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+  );
 }

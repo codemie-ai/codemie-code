@@ -4,10 +4,56 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-11-04
+
+### Added
+
+- Claude subscription type is classified, and CLI analytics are routed by evidence
+
+### Fixed
+
+- Each global profile now keeps its own CodeMie project, URL and integration
+- Managed and native sessions select the same CodeMie project
+- Claude analytics work again for oauth2-proxy SSO logins
+- Claude Desktop sessions survive proxy daemon restarts and failed deliveries
+- Metric deltas are deduplicated within a shared run window, and the sync rewrite is merged instead of overwritten
+- Hook SSO auth checks use the session's profile
+- Forked skills and slash commands are recognised in analytics
+- Stranded sessions are finalized and undelivered ones are delivered
+
+## [0.16.4] - 2026-11-02
+
+### Added
+
+- Claude Code analytics can be disabled globally or per project
+
+### Fixed
+
+- Git branch is now detected in repositories that have no commits yet
+- UUID fragments and model tokens are no longer mistaken for story mentions in analytics
+- Claude runs are baselined per record, and Codex calls are counted once their output appears
+- Native `-s` flags are preserved for Codex and Gemini
+- On shutdown only the agent is signalled, so its SessionEnd hook is no longer killed
+
+## [0.16.3] - 2026-10-30
+
+### Added
+
+- `codemie proxy restart` command, and update notes that match the installed version
+- Prompts are resumed automatically after SSO re-authentication
+
 ### Fixed
 
 - Codemie hooks run under PowerShell on Windows, and stale hook paths are healed automatically
 - Secrets are masked in forwarded OTLP hook events
+- Secrets are masked in forwarded native Claude Code telemetry (logs, metrics, traces), including secret-named attributes and JSON-encoded tool parameters
+- Hook output is no longer swallowed, so the agent receives the answer from `codemie hook`
+- Signals sent to the wrapper are forwarded to the agent before the proxy is stopped
+- `pasted_content` tags are stripped from Claude hook prompts in analytics
+
+### Changed
+
+- Claude Code analytics now sends native telemetry as OTLP/JSON so it can be masked. Existing users: run `codemie proxy connect --claude-code-otlp` and restart Claude Code; until then telemetry still goes out as unmasked protobuf
 
 ## [0.16.2] - 2026-10-28
 

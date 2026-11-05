@@ -420,6 +420,15 @@ describe('maskSecretsInText', () => {
     ['numeric password', 'password=123456', ['123456'], ['password=']], // gitleaks:allow
     ['pass= value that only starts with digits', 'pass=12ab34 ok', ['12ab34'], ['pass=', ' ok']], // gitleaks:allow
     ['pwd= word value', 'pwd=hunter2 ok', ['hunter2'], [' ok']], // gitleaks:allow
+    ['"api key:" with a space (QA report)', 'api key: q1w2e3r4t5y6i8!4', ['q1w2e3r4t5y6i8!4'], ['api key: ']], // gitleaks:allow
+    ['"API KEY =" with a space', 'set API KEY = q1w2e3r4t5y6i8!4 now', ['q1w2e3r4t5y6i8!4'], ['set API KEY = ', ' now']], // gitleaks:allow
+    ['"secret key:" with a space', 'the secret key: abcdef123456 stays private', ['abcdef123456'], ['the secret key: ', ' stays private']], // gitleaks:allow
+    ['"access key:" with a space', 'access key: zk39dkq0we ready', ['zk39dkq0we'], ['access key: ', ' ready']], // gitleaks:allow
+    ['"private key =" with a space', 'private key = zk39dkq0we done', ['zk39dkq0we'], ['private key = ', ' done']], // gitleaks:allow
+    ['"signing key:" with a space', 'signing key: zk39dkq0we done', ['zk39dkq0we'], ['signing key: ', ' done']], // gitleaks:allow
+    ['"master key:" with a space', 'master key: zk39dkq0we done', ['zk39dkq0we'], ['master key: ', ' done']], // gitleaks:allow
+    ['"encryption key:" with a space', 'encryption key: zk39dkq0we done', ['zk39dkq0we'], ['encryption key: ', ' done']], // gitleaks:allow
+    ['quoted value after "api key:"', 'api key: "p@ss w0rd!" end', ['p@ss w0rd!'], ['api key: ', ' end']], // gitleaks:allow
   ];
 
   // Text that names a secret-like word but holds none: it must come through untouched (AC4).
@@ -440,6 +449,13 @@ describe('maskSecretsInText', () => {
     'docker run -u 1000:1000 img',
     'git push -u origin main',
     'login --token $GH_TOKEN --token-file token.txt',
+    'api key: required',
+    'api key: missing',
+    'secret key: none',
+    'the api key rotation policy is monthly',
+    'rotate the secret key every 90 days',
+    'monkey: banana',
+    'turkey key: 12',
   ];
 
   it.each(benign)('leaves benign text unchanged: %s', (text) => {
