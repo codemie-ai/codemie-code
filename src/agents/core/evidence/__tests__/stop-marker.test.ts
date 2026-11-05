@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOrRead, recordKey, sweepRecords, evidenceDir, type EvidenceFields } from '../record-store.js';
+import { createOrRead, recordKey, stopAckFileName, sweepRecords, evidenceDir, type EvidenceFields } from '../record-store.js';
+import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isStopped, stopFileName, takeNotice, writeNotice, writeStop } from '../stop-marker.js';
 
 const DAY = 86_400_000;
@@ -66,6 +67,19 @@ describe('stop-marker', () => {
     expect(existsSync(markerPath())).toBe(false);
   });
 
+  it('sweep removes the acknowledgement with its marker, so a later marker for the key shows its notice again', async () => {
+    await writeStop(key, 'folder_changed', 's1');
+    expect(await takeNotice(key)).toBe('folder_changed');
+    const ack = join(evidenceDir(), stopAckFileName(key));
+    expect(existsSync(ack)).toBe(true);
+    const old = new Date(Date.now() - 400 * DAY);
+    utimesSync(markerPath(), old, old);
+    await sweepRecords({ pendingKeys: new Set(), pendingSessionIds: new Set() });
+    expect(existsSync(markerPath()) || existsSync(ack)).toBe(false);
+    await writeStop(key, 'folder_changed', 's1');
+    expect(await takeNotice(key)).toBe('folder_changed');
+  });
+
   it('sweep keeps the marker while its record exists', async () => {
     await createOrRead(key, fields);
     await writeStop(key, 'folder_changed', 's1');
@@ -83,6 +97,26 @@ describe('stop-marker', () => {
     expect(await isStopped(key)).toBe(true);
     expect(await takeNotice(key)).toBe('hold_expired');
     await writeNotice(key, 'folder_changed', 's1'); // never downgrades a stop
+    expect(await isStopped(key)).toBe(true);
+  });
+
+  it('concurrent notice acknowledgement and stop upgrade never leave the marker un-stopped (monotonic)', async () => {
+    for (let i = 0; i < 20; i++) {
+      rmSync(markerPath(), { force: true });
+      await writeNotice(key, 'hold_contract_unavailable', 's1');
+      await Promise.all([takeNotice(key), writeStop(key, 'hold_expired', 's1'), takeNotice(key)]);
+      expect(await isStopped(key)).toBe(true);
+    }
+  });
+
+  it('takeNotice waits for the marker lock and re-reads under it, so a stop written meanwhile survives', async () => {
+    await writeNotice(key, 'hold_contract_unavailable', 's1');
+    const lock = await acquirePidLock(`${markerPath()}.lock`, { mode: 'try' });
+    expect(lock).not.toBeNull();
+    const taking = takeNotice(key); // blocked on the lock; must not have read the notice-only copy yet
+    await writeStop(key, 'hold_expired', 's1'); // the upgrade never waits on the ack lock: a stop is never delayed or lost
+    await lock!.release();
+    await taking;
     expect(await isStopped(key)).toBe(true);
   });
 });

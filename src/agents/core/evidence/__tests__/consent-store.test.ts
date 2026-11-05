@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
-import { connectFolder, consentHolds, consentStorePath, disconnectFolder, resolveConsent } from '../consent-store.js';
+import { connectFolder, consentHolds, coveringEntries, consentStorePath, disconnectFolder, resolveConsent } from '../consent-store.js';
 
 let home: string;
 let work: string;
@@ -67,8 +67,69 @@ describe('consent-store', () => {
     expect(await consentHolds(ref, scope)).toBe(false);
   });
 
+  it('repeated connect keeps the reference; disconnect then reconnect issues a new one that the old reference never matches', async () => {
+    await connectFolder(scope, work);
+    const first = (await resolveConsent(scope, work))!;
+    await connectFolder(scope, work);
+    expect(await resolveConsent(scope, work)).toBe(first);
+    await disconnectFolder(scope, work);
+    await connectFolder(scope, work);
+    const second = (await resolveConsent(scope, work))!;
+    expect(second).not.toBe(first);
+    expect(await consentHolds(first, scope)).toBe(false);
+    expect(await consentHolds(second, scope)).toBe(true);
+  });
+
+  it('an older id-less entry keeps its reference and is not upgraded by connect; unrelated connections are untouched', async () => {
+    const other = join(home, 'other');
+    mkdirSync(other);
+    await connectFolder(scope, other);
+    const otherRef = (await resolveConsent(scope, other))!;
+    const raw = JSON.parse(readFileSync(consentStorePath(), 'utf-8')) as { entries: Array<Record<string, unknown>> };
+    delete raw.entries[0].id;
+    writeFileSync(consentStorePath(), JSON.stringify(raw));
+    const legacyRef = (await resolveConsent(scope, other))!;
+    expect(legacyRef).not.toBe(otherRef); // the id was part of the new reference
+    await connectFolder(scope, other); // idempotent: no upgrade
+    expect(await resolveConsent(scope, other)).toBe(legacyRef);
+    await connectFolder(scope, work);
+    await disconnectFolder(scope, work);
+    expect(await consentHolds(legacyRef, scope)).toBe(true);
+    await disconnectFolder(scope, other);
+    await connectFolder(scope, other);
+    expect(await consentHolds(legacyRef, scope)).toBe(false);
+  });
+
+  it('a malformed entry id makes the store unreadable (no consent)', async () => {
+    await connectFolder(scope, work);
+    const raw = JSON.parse(readFileSync(consentStorePath(), 'utf-8')) as { entries: Array<Record<string, unknown>> };
+    raw.entries[0].id = 7;
+    writeFileSync(consentStorePath(), JSON.stringify(raw));
+    expect(await resolveConsent(scope, work)).toBeUndefined();
+  });
+
   it('the store lives under the CodeMie home, outside any repository', () => {
     expect(consentStorePath().startsWith(join(home, '.codemie'))).toBe(true);
     expect(consentStorePath().startsWith(work)).toBe(false);
+  });
+
+  it('concurrent connects of different folders and a disconnect never lose an update (serialized read-modify-save)', async () => {
+    const folders = [1, 2, 3, 4, 5, 6].map((n) => { const f = join(work, `f${n}`); mkdirSync(f); return f; });
+    await connectFolder(scope, work);
+    await Promise.all([...folders.map((f) => connectFolder(scope, f)), disconnectFolder(scope, work)]);
+    expect(await resolveConsent(scope, work)).toBeUndefined(); // the revoke is not restored by a racing connect
+    for (const f of folders) expect(await resolveConsent(scope, f)).toBeTruthy();
+  });
+
+  it('a subfolder disconnect leaves the parent entry in force and names it via coveringEntries', async () => {
+    await connectFolder(scope, work);
+    const sub = join(work, 'sub');
+    expect(await disconnectFolder(scope, sub)).toBe(0);
+    const covering = await coveringEntries(scope, sub);
+    expect(covering.map((e) => e.project)).toEqual([scope.project]);
+    expect(await resolveConsent(scope, sub)).toBeTruthy();
+    expect(await coveringEntries({ ...scope, owner_hash: 'p'.repeat(64) }, sub)).toEqual([]);
+    expect(await disconnectFolder(scope, work)).toBe(1);
+    expect(await coveringEntries(scope, sub)).toEqual([]);
   });
 });

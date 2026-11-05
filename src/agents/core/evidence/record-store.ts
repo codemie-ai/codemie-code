@@ -85,6 +85,11 @@ export function stopFileName(key: string): string {
   return `${key}.stop.json`;
 }
 
+/** Notice-acknowledgement file for a stop marker; swept with it (never matches RECORD_RE or STOP_MARKER_RE). */
+export function stopAckFileName(key: string): string {
+  return `${key}.stop-ack.json`;
+}
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -316,7 +321,10 @@ async function sweepStopMarkers(
     } catch { /* unreadable marker: pinned by age only */ }
     try {
       if (pinned(key, sessionId)) continue;
-      if (now - (await stat(join(dir, name))).mtimeMs > idleMs + STOP_MARKER_MARGIN_MS) await unlink(join(dir, name));
+      if (now - (await stat(join(dir, name))).mtimeMs > idleMs + STOP_MARKER_MARGIN_MS) {
+        await unlink(join(dir, name));
+        await unlink(join(dir, stopAckFileName(key))).catch(() => undefined); // a later marker for this key must show its notice
+      }
     } catch { /* best effort */ }
   }
 }

@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { canonicalizePath, comparable, isPathInside } from '@/agents/core/project-allowlist.js';
+import { acquirePidLock } from '@/utils/pid-lock.js';
 import { atomicReplace } from './record-store.js';
 
 /*
@@ -21,6 +22,12 @@ export interface ConsentEntry {
   project: string;
   /** Canonical folder; every descendant folder resolving to the project is covered. */
   folder: string;
+  /**
+   * Connection incarnation, random per actual connect. Disconnect + reconnect gets a new one, so a session that froze an
+   * earlier connection's reference is never authorized by the new one. Absent on entries written before it existed
+   * (their reference is unchanged: they are not upgraded, and a reconnect after their removal gets an id).
+   */
+  id?: string;
 }
 
 export interface ConsentScope {
@@ -37,18 +44,25 @@ export function consentStorePath(): string {
 
 const sameProject = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** Stable, path-free reference frozen into the evidence record; changes with any of its four parts. */
+/** Stable, path-free reference frozen into the evidence record; changes with any of its parts and with each reconnect. */
 export function consentRef(e: ConsentEntry): string {
   const h = createHash('sha256');
-  for (const p of [comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase()]) h.update(`${p.length}:${p}|`);
+  const parts = [comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase()];
+  if (e.id) parts.push(e.id); // an id-less (older) entry keeps its previous reference
+  for (const p of parts) h.update(`${p.length}:${p}|`);
   return h.digest('hex').slice(0, 16);
 }
 
 function validEntry(v: unknown): v is ConsentEntry {
   if (!v || typeof v !== 'object') return false;
   const e = v as Record<string, unknown>;
+  if (e.id !== undefined && (typeof e.id !== 'string' || !e.id)) return false;
   return ['owner_hash', 'api_identity', 'project', 'folder'].every((k) => typeof e[k] === 'string' && (e[k] as string).length > 0);
 }
+
+/** Same connection target (not incarnation): owner, backend, project and canonical folder. */
+const sameTarget = (a: ConsentEntry, b: ConsentEntry): boolean =>
+  a.owner_hash === b.owner_hash && a.api_identity === b.api_identity && sameProject(a.project, b.project) && comparable(a.folder) === comparable(b.folder);
 
 async function load(): Promise<Loaded> {
   let raw: string;
@@ -112,31 +126,56 @@ export async function assertConnectableFolder(canonical: string): Promise<void> 
   }
 }
 
+/** Serializes every load-modify-save of the store across processes (a concurrent revoke must not be undone by a connect). */
+async function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lock = await acquirePidLock(`${consentStorePath()}.lock`, { mode: 'wait', budgetMs: 10_000 });
+  if (!lock) throw new ConfigurationError('The work-consent store is busy and was not changed. Retry in a moment.');
+  try {
+    return await fn();
+  } finally {
+    await lock.release();
+  }
+}
+
 /** Adds (idempotently) the entry; returns the canonical folder. Refuses to overwrite an unreadable store. */
 export async function connectFolder(scope: ConsentScope, folder: string): Promise<string> {
   const canonical = await canonicalizePath(folder);
   await assertConnectableFolder(canonical);
   if (!scope.project.trim()) throw new ConfigurationError('A CodeMie project is required to connect a folder.');
-  const store = await load();
-  if (store.kind !== 'ok') {
-    throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
-  }
-  const entry: ConsentEntry = { ...scope, project: scope.project.trim(), folder: canonical };
-  if (!store.entries.some((e) => consentRef(e) === consentRef(entry))) await save([...store.entries, entry]);
-  return canonical;
+  return withStoreLock(async () => {
+    const store = await load();
+    if (store.kind !== 'ok') {
+      throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
+    }
+    const entry: ConsentEntry = { ...scope, project: scope.project.trim(), folder: canonical, id: randomBytes(8).toString('hex') };
+    if (!store.entries.some((e) => sameTarget(e, entry))) await save([...store.entries, entry]);
+    return canonical;
+  });
 }
 
 /** Removes the folder's entries for this owner and backend (any project). Returns how many were removed. */
 export async function disconnectFolder(scope: Omit<ConsentScope, 'project'>, folder: string): Promise<number> {
   const canonical = await canonicalizePath(folder);
+  return withStoreLock(async () => {
+    const store = await load();
+    if (store.kind !== 'ok') {
+      throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
+    }
+    const kept = store.entries.filter(
+      (e) => !(e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && comparable(e.folder) === comparable(canonical))
+    );
+    const removed = store.entries.length - kept.length;
+    if (removed > 0) await save(kept);
+    return removed;
+  });
+}
+
+/** Entries of this owner and backend that still cover the folder (the folder itself or an ancestor), whatever the project. */
+export async function coveringEntries(scope: Omit<ConsentScope, 'project'>, folder: string): Promise<ConsentEntry[]> {
   const store = await load();
-  if (store.kind !== 'ok') {
-    throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
-  }
-  const kept = store.entries.filter(
-    (e) => !(e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && comparable(e.folder) === comparable(canonical))
+  if (store.kind !== 'ok') return [];
+  const canonical = await canonicalizePath(folder);
+  return store.entries.filter(
+    (e) => e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && isPathInside(canonical, e.folder)
   );
-  const removed = store.entries.length - kept.length;
-  if (removed > 0) await save(kept);
-  return removed;
 }
