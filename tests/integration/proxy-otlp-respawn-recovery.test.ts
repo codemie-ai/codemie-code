@@ -114,12 +114,19 @@ describe.skipIf(!existsSync(DAEMON_DIST))('OTLP endpoint after a daemon respawn 
       try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
     }
     for (const blocker of blockers) await release(blocker);
+    // The in-process logger keeps a write stream open in <CODEMIE_HOME>/logs; Windows
+    // cannot remove a directory that holds an open file, so release it first.
+    try {
+      const { logger } = await import('../../src/utils/logger.js');
+      await logger.close();
+    } catch { /* logger never opened a file */ }
     process.chdir(savedCwd);
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    if (root) rmSync(root, { recursive: true, force: true });
+    // Retries cover file handles a killed daemon releases a moment later on Windows.
+    if (root) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }, 30_000);
 
   // @case otlp-endpoint-respawn-recovery_TC_001

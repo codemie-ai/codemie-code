@@ -103,7 +103,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
     if (daemonPid > 0) {
       try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
     }
-    if (root) rmSync(root, { recursive: true, force: true });
+    // Retries cover file handles a killed daemon releases a moment later on Windows.
+    if (root) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
   // @case otlp-endpoint-respawn-recovery_TC_003
