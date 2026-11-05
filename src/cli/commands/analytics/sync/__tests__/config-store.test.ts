@@ -14,6 +14,7 @@ import {
   writeSyncSettings
 } from '../config-store.js';
 import { validateTriggerUrl } from '../trigger-url.js';
+import { encodeWebhook } from '../webhook-encoding.js';
 
 const FAKE_URL = 'https://example.invalid/webhook?sig=FAKE';
 const FAKE_GIT_REPO = 'https://example.invalid/team/analytics.git';
@@ -26,6 +27,34 @@ describe('getSyncSettingsPath', () => {
 });
 
 describe('validateInstallOptions', () => {
+  it('decodes --webhook-b64 into the same webhookUrl --webhook would store', () => {
+    const url = 'https://prod.example.invalid/workflows/x/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sig=FAKESIG';
+
+    expect(validateInstallOptions({ webhookB64: encodeWebhook(url) }).webhookUrl).toBe(url);
+  });
+
+  it.each([
+    ['characters outside base64url', 'abc+/=='],
+    ['an empty value', ''],
+    ['a value that does not round-trip', 'abcde']
+  ])('rejects a --webhook-b64 with %s, naming the flag', (_label, webhookB64) => {
+    expect(() => validateInstallOptions({ webhookB64 })).toThrow(SyncConfigError);
+    expect(() => validateInstallOptions({ webhookB64 })).toThrow(/--webhook-b64/);
+  });
+
+  it('rejects a --webhook-b64 that decodes to a non-https URL, without echoing the signature', () => {
+    const webhookB64 = encodeWebhook('http://h.example.invalid/p?sig=FAKESIG');
+
+    expect(() => validateInstallOptions({ webhookB64 })).toThrow(/https/);
+    expect(() => validateInstallOptions({ webhookB64 })).not.toThrow(/FAKESIG/);
+  });
+
+  it('rejects --webhook and --webhook-b64 together', () => {
+    const webhook = 'https://h.example.invalid/p';
+
+    expect(() => validateInstallOptions({ webhook, webhookB64: encodeWebhook(webhook) })).toThrow(/not both/);
+  });
+
   it('rejects neither --webhook nor --git-repo given, naming both flags', () => {
     expect(() => validateInstallOptions({})).toThrow(SyncConfigError);
     expect(() => validateInstallOptions({})).toThrow(/--webhook/);

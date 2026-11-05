@@ -775,9 +775,12 @@ command to register their daily job.
 **Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
 CLI), `--include-external <windows|always|never>` (default: windows).
 
-**Output:** Install command to stdout; everything else to stderr. Command contains trigger
-signature — **treat as secret**. On Windows where PowerShell script execution is blocked,
-`codemie.cmd` may split arguments at `&`; developers should run full command as single line.
+**Output:** Install command to stdout; everything else to stderr. The webhook is printed as
+`--webhook-b64 <value>` — the trigger URL encoded as base64url (`A-Z a-z 0-9 - _` only), so the
+command runs unchanged in bash/zsh, PowerShell (including through a `codemie.cmd` shim, which
+would otherwise split a raw URL at `&`) and cmd.exe (which would otherwise expand `%…%` runs in
+it). The value is not encryption: it still carries the trigger signature — **treat the whole
+line as secret**.
 
 **If developers see "unknown command":** have them run `codemie self-update`.
 
@@ -808,7 +811,8 @@ on macOS, a systemd user timer on Linux, Task Scheduler on Windows) that runs
 up a run missed while the machine was asleep or off — on Linux it also runs while the user
 is logged out, via `loginctl enable-linger`.
 
-**`install` options:** `--webhook <url>` (required, https), `--at <HH:MM>` (default
+**`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
+same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
 `03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
 `--include-external <windows|always|never>` (default `windows`). Install prints the run
 time, lookback, policy, the webhook host (signature masked), the email the reports will

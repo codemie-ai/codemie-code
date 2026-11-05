@@ -416,6 +416,7 @@ codemie analytics sync uninstall
 codemie analytics sync install [options]
 
   --webhook <url>             The team's https webhook URL that receives the daily report
+  --webhook-b64 <value>       The same URL encoded as base64url, as printed by `sync bootstrap` (instead of --webhook)
   --git-repo <url>            URL of a team git repository to push the daily report into
   --git-branch <name>         Branch to push to (default: the repository's default branch)
   --git-path <dir>            Repo-relative directory the report is pushed under (default: the repository root)
@@ -425,7 +426,11 @@ codemie analytics sync install [options]
   --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)
 ```
 
-At least one of `--webhook`/`--git-repo` is required; both may be given together, in which
+`--webhook-b64` exists so the command `bootstrap` prints survives every shell: a raw trigger
+URL's `&` and `%XX` runs break in PowerShell through a `.cmd` shim and in cmd.exe. It decodes
+to exactly the `--webhook` value and is validated the same way; giving both is an error.
+
+At least one of `--webhook`/`--webhook-b64`/`--git-repo` is required; both may be given together, in which
 case every run delivers to each configured target independently. `--git-repo` must not
 embed `user:token@`/`user:pass@` credentials — no token is ever requested or stored;
 pushing authenticates with the developer's own git setup (SSH key, credential helper, …).

@@ -3,6 +3,9 @@
  * flags. Pure, no I/O — not wired into the CLI yet; a future `bootstrap` command
  * (EPMCDME-16487) reuses it to print or run the equivalent install invocation.
  *
+ * The webhook is printed as `--webhook-b64 <base64url>` (see `webhook-encoding.ts`): its
+ * `&` and `%XX` runs cannot be quoted safely for PowerShell-through-`.cmd` and cmd.exe.
+ *
  * A flag whose value is `undefined` is omitted. Every other value must pass the
  * printable-value rule (see `assertPrintableValue`); it is then wrapped in double quotes,
  * unescaped. The resulting command is safe to pass to a shell as-is, because the
@@ -15,6 +18,7 @@
 import { SyncConfigError } from '@/utils/errors.js';
 
 import type { IncludeExternalPolicy } from './types.js';
+import { encodeWebhook } from './webhook-encoding.js';
 
 /** Flags accepted by `buildInstallCommand`, mirroring `codemie analytics sync install`'s
  * CLI options. At least one of `webhook` / `gitRepo` must be given. */
@@ -86,7 +90,7 @@ export function buildInstallCommand(opts: InstallCommandOptions): string {
   }
 
   const tokens = [
-    flag('--webhook', opts.webhook),
+    opts.webhook === undefined ? undefined : `--webhook-b64 ${encodeWebhook(opts.webhook)}`,
     flag('--git-repo', opts.gitRepo),
     flag('--git-branch', opts.gitBranch),
     flag('--git-path', opts.gitPath),

@@ -15,6 +15,7 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { writePrivateJson } from './private-file.js';
+import { decodeWebhook } from './webhook-encoding.js';
 import { redactSecrets } from './redact.js';
 import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
 
@@ -250,6 +251,17 @@ export function validateLookbackDays(lookbackDays: string | undefined): number |
   return parsed;
 }
 
+/** The raw webhook from `--webhook` or the decoded `--webhook-b64`; giving both throws. */
+function resolveWebhookOption(options: InstallOptions): string | undefined {
+  if (options.webhookB64 === undefined) {
+    return options.webhook;
+  }
+  if (options.webhook !== undefined) {
+    throw new SyncConfigError('Pass either --webhook or --webhook-b64, not both.');
+  }
+  return decodeWebhook(options.webhookB64);
+}
+
 /**
  * Validate raw `install` CLI flags into a `SyncSettings`. Performs no I/O. Throws
  * `SyncConfigError` naming the offending flag on the first invalid value. At least one of
@@ -260,7 +272,7 @@ export function validateLookbackDays(lookbackDays: string | undefined): number |
  * a later default change then applies to settings written without the flag.
  */
 export function validateInstallOptions(options: InstallOptions): SyncSettings {
-  const webhookUrl = validateWebhookUrl(options.webhook);
+  const webhookUrl = validateWebhookUrl(resolveWebhookOption(options));
   const git = validateGitSettings(options);
 
   if (webhookUrl === undefined && git === undefined) {

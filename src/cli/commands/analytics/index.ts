@@ -120,6 +120,7 @@ function createSyncInstallCommand(): Command {
       '--webhook <url>',
       "The team's https webhook URL that receives the daily report (one of two possible delivery targets, alongside --git-repo; at least one is required)"
     )
+    .option('--webhook-b64 <value>', 'The webhook URL encoded as base64url, as printed by `sync bootstrap` (use instead of --webhook)')
     .option('--git-repo <url>', 'URL of a team git repository to push the daily report into (the other possible delivery target)')
     .option('--git-branch <name>', 'Branch to push to (default: the repository\'s default branch)')
     .option('--git-path <dir>', 'Repo-relative directory the report is pushed under (default: the repository root)')

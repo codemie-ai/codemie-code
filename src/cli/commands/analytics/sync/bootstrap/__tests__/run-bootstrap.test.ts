@@ -32,6 +32,7 @@ vi.mock('inquirer', () => ({
 }));
 
 import { createRealBootstrapDeps, runBootstrap, setupCheckReport, UPDATE_HINT } from '../run-bootstrap.js';
+import { encodeWebhook } from '../../webhook-encoding.js';
 
 const VALID_WEBHOOK = 'https://contoso.example/trigger?sig=FAKESIG';
 
@@ -119,7 +120,7 @@ describe('runBootstrap — --webhook mode, success and failure', () => {
 
     expect(deps.out).toHaveBeenCalledTimes(1);
     expect(deps.out).toHaveBeenCalledWith(
-      `codemie analytics sync install --webhook "${VALID_WEBHOOK}" --include-external "always"`
+      `codemie analytics sync install --webhook-b64 ${encodeWebhook(VALID_WEBHOOK)} --include-external "always"`
     );
 
     const lines = errLines(deps);

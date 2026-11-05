@@ -37,6 +37,8 @@ export interface SyncSettings {
 /** Raw flags accepted by `codemie analytics sync install`. */
 export interface InstallOptions {
   webhook?: string;
+  /** `--webhook-b64`: the webhook URL as base64url, as printed by `bootstrap`. */
+  webhookB64?: string;
   gitRepo?: string;
   gitBranch?: string;
   gitPath?: string;
