@@ -131,6 +131,7 @@ export class DesktopSessionMetrics {
         provider: this.config.provider,
         project: session.project,
         repository: session.repository,
+        gitBranch: session.gitBranch,
         startTime: stretchStart,
         workingDirectory: session.workingDirectory
       },
