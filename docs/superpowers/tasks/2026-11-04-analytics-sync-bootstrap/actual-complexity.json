@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-05T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 39,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New bootstrap subsystem with several new abstractions: runner/dispatcher (run-bootstrap), 8-step guided wizard split across guided, guided-late-steps and guided-support, resumable state store, flow-package builder, shared setup-check, links, timezones, steps and types. It also refactors shared sync utilities: private-file was extracted from config-store for reuse, and trigger-url validation is shared by guided mode, --webhook mode and saved-webhook reuse. Install-command, webhook-target and the analytics CLI registration changed too, as did the build script copy-plugins.js, which ships the flow template." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the existing sync install command and the standalone codemie-analytics-collector (flow-template/zip logic ported from it). The work is security-sensitive: it handles the webhook sig secret (never echoed, redacted in errors), writes 0o600 private files with a chmod after write, and applies a strict trigger-URL rule (raw whitespace/control/non-ASCII checks, https plus sig, printable-value check before the URL is put into a printed install command). It also sets Flow_config on the parsed JSON rather than by string substitution. The edge-case validation suites go beyond the prior templates, so L." },
+    { "dimension": "file_change_estimate", "reason": "39 files changed, 4346 insertions. About 23 new files: the bootstrap module, 6 bootstrap test files, 5 Power Automate flow-template JSON files and the private-file module and its test. About 16 modified files: analytics index, config-store, install-command, webhook-target, trigger-url, 3 existing tests, docs, guides, package manifests and the build script. They span src/cli/commands/analytics/sync, bootstrap/, flow-template/, scripts/, docs/ and .ai-run/guides. XXL band (16+ files)." },
+    { "dimension": "affected_layers", "reason": "Interactive CLI UI (inquirer wizard plus non-interactive mode), Service (bootstrap orchestration, flow-package build), Persistence (resumable wizard state file and sync config file, no schema migration) and External (test-send to the Power Automate webhook; the flow package targets SharePoint and Teams). The build-time Infrastructure change is minor (copy-plugins.js copies the template). Four layers, no migration, so L." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk at L (4) includes the security bump: secret handling (webhook sig), private-file permissions and URL/command injection-surface validation that the existing install pattern did not fully cover.",
+    "Component Scope kept at XL (5) with the shared-utilities signal: private-file and trigger-url were extracted as shared sync utilities and the existing config-store, install-command and webhook-target were refactored (already at XL, so no further bump)."
+  ],
+  "split_recommendation": null
+}
