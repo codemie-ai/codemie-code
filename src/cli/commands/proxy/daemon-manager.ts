@@ -7,6 +7,7 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/processes.js';
 import { fetchProxyHealth } from './health-check.js';
+import { getEffectiveClientType } from './client-type.js';
 
 export interface DaemonState {
   pid: number;
@@ -34,7 +35,21 @@ export interface DaemonState {
   recoveryAttempts?: number;
 }
 
+/** The identity fields a daemon, a spawn request and a record all share. */
+export interface ClientIdentity {
+  clientType?: string;
+  telemetryMode?: DaemonState['telemetryMode'];
+}
+
+/** Identity of the last daemon start, persisted in proxy-connection.json (no secrets, URL, model, provider or project). */
+export interface ProxyConnectionRecord extends ClientIdentity {
+  version: 1;
+  profile: string;
+  updatedAt: string;
+}
+
 const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
+const CONNECTION_FILE = join(getCodemieHome(), 'proxy-connection.json');
 
 /** The `startedAt` a daemon writes into its state: the start of its own process. */
 export function daemonStartedAt(): string {
@@ -97,6 +112,157 @@ export async function writeState(
   await rename(tmp, stateFile);
 }
 
+/** Reads and parses the record file into a plain object; null (with a warning unless absent) otherwise. */
+async function readRecordObject(file: string): Promise<Record<string, unknown> | null> {
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn('[daemon-manager] Cannot read proxy-connection.json', ...sanitizeLogArgs(error));
+    }
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    logger.warn('[daemon-manager] Ignoring proxy-connection.json: not valid JSON', ...sanitizeLogArgs(error));
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    logger.warn('[daemon-manager] Ignoring proxy-connection.json: not a JSON object');
+    return null;
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+/** Validates the profile and keeps only well-typed identity fields, warning about each dropped one. */
+function normalizeConnectionRecord(data: Record<string, unknown>): ProxyConnectionRecord | null {
+  if (typeof data.profile !== 'string' || data.profile === '') {
+    logger.warn('[daemon-manager] Ignoring proxy-connection.json: missing or empty profile');
+    return null;
+  }
+
+  const record: ProxyConnectionRecord = {
+    version: 1,
+    profile: data.profile,
+    updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : ''
+  };
+
+  if (typeof data.clientType === 'string') {
+    record.clientType = data.clientType;
+  } else if (data.clientType !== undefined) {
+    logger.warn('[daemon-manager] Dropping proxy-connection.json field "clientType": not a string');
+  }
+
+  if (data.telemetryMode === 'none' || data.telemetryMode === 'claude-desktop') {
+    record.telemetryMode = data.telemetryMode;
+  } else if (data.telemetryMode !== undefined) {
+    logger.warn('[daemon-manager] Dropping proxy-connection.json field "telemetryMode": unsupported value');
+  }
+
+  return record;
+}
+
+/**
+ * Reads the proxy connection record. A missing file is `null`; so is anything that is not a
+ * JSON object with a non-empty string `profile` (with a warning giving the reason). Wrongly
+ * typed optional fields are dropped with a warning naming the field.
+ */
+export async function readConnectionRecord(
+  file: string = CONNECTION_FILE
+): Promise<ProxyConnectionRecord | null> {
+  const data = await readRecordObject(file);
+  return data ? normalizeConnectionRecord(data) : null;
+}
+
+let connectionTmpCounter = 0;
+
+/** The current record file as a plain object, or empty when missing or unreadable (silent). */
+async function readExistingRecord(file: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf-8'));
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Missing or unreadable — start from an empty record
+  }
+  return {};
+}
+
+/** Merges the daemon's identity over the existing record, keeping unknown fields. */
+function buildConnectionRecord(
+  existing: Record<string, unknown>,
+  state: DaemonState
+): Record<string, unknown> {
+  const { clientType: _clientType, telemetryMode: _telemetryMode, ...kept } = existing;
+  return {
+    ...kept,
+    version: 1,
+    profile: state.profile,
+    ...(state.clientType !== undefined ? { clientType: state.clientType } : {}),
+    ...(state.telemetryMode !== undefined ? { telemetryMode: state.telemetryMode } : {}),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Records the identity of a daemon start. `profile`/`clientType` are what the caller asked for;
+ * the write is refused (false) when the daemon state disagrees. Never throws.
+ */
+export async function writeConnectionRecord(
+  state: DaemonState,
+  profile: string,
+  clientType?: string,
+  file: string = CONNECTION_FILE
+): Promise<boolean> {
+  if (state.profile !== profile) {
+    logger.warn(
+      `[daemon-manager] Not recording proxy-connection.json: daemon profile "${state.profile}" differs from requested profile "${profile}"`
+    );
+    return false;
+  }
+  const daemonClientType = getEffectiveClientType(state);
+  if (clientType !== undefined && daemonClientType !== clientType) {
+    logger.warn(
+      `[daemon-manager] Not recording proxy-connection.json: daemon client type "${daemonClientType}" differs from requested client type "${clientType}"`
+    );
+    return false;
+  }
+
+  const tmp = `${file}.${process.pid}.${++connectionTmpCounter}.tmp`;
+  try {
+    const record = buildConnectionRecord(await readExistingRecord(file), state);
+    await writeFile(tmp, JSON.stringify(record, null, 2), 'utf-8');
+    await rename(tmp, file);
+    return true;
+  } catch (error) {
+    logger.warn('[daemon-manager] Failed to write proxy-connection.json', ...sanitizeLogArgs(error));
+    try {
+      await unlink(tmp);
+    } catch {
+      // Nothing to clean up
+    }
+    return false;
+  }
+}
+
+/** Creates the connection record from a running daemon when none (valid) exists yet. */
+export async function seedConnectionRecord(
+  state: DaemonState,
+  file: string = CONNECTION_FILE
+): Promise<void> {
+  if (await readConnectionRecord(file)) return;
+  if (await writeConnectionRecord(state, state.profile, state.clientType, file)) {
+    logger.info(`Seeding proxy-connection.json from the running daemon (profile: ${state.profile})`);
+  }
+}
+
 export async function clearState(stateFile: string = DEFAULT_STATE_FILE): Promise<void> {
   try {
     await unlink(stateFile);
@@ -132,6 +298,8 @@ export interface SpawnOptions {
   telemetryMode?: 'none' | 'claude-desktop';
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
+  /** Record this start in proxy-connection.json (default true). Not passed to the daemon. */
+  writeRecord?: boolean;
 }
 
 export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
@@ -159,6 +327,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
     ...(opts.syncCodeMieUrl ? ['--sync-codemie-url', opts.syncCodeMieUrl] : []),
   ];
 
+  // The gateway key is deliberately absent: sanitizeLogArgs redacts by key name and `gatewayKey` matches none of its patterns.
   logger.debug(
     '[daemon-manager] Spawning daemon',
     ...sanitizeLogArgs({
@@ -167,7 +336,6 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
       provider: opts.provider,
       profile: opts.profile,
       port: opts.port,
-      gatewayKey,
       model: opts.model,
       project: opts.project,
       clientType: opts.clientType,
@@ -183,7 +351,12 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
   for (let i = 0; i < 50; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
     const state = await readState(stateFile);
-    if (state && (await isDaemonAlive(state))) return state;
+    if (state && (await isDaemonAlive(state))) {
+      if (opts.writeRecord !== false) {
+        await writeConnectionRecord(state, opts.profile, opts.clientType);
+      }
+      return state;
+    }
   }
 
   throw new ToolExecutionError(

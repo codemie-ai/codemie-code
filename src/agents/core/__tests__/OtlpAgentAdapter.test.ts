@@ -26,6 +26,9 @@ const hasLocalConfigMock = vi.fn();
 const getCurrentCliVersionMock = vi.fn();
 const readPinnedProjectNameMock = vi.fn();
 const pinProjectNameMock = vi.fn();
+const loadLocalConfigProfileMock = vi.fn();
+const loadGlobalConfigProfileMock = vi.fn();
+const getStoredPlatformCredentialsMock = vi.fn();
 
 vi.mock('../hook-credentials.js', () => ({ resolveHookCredentials: resolveHookCredentialsMock }));
 vi.mock('../identity-resolver.js', async () => ({
@@ -33,7 +36,19 @@ vi.mock('../identity-resolver.js', async () => ({
   resolveIdentity: resolveIdentityMock,
 }));
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock, resolveProfileIdentity: vi.fn(async (...args: unknown[]) => ({ projectOrigin: await resolveProjectOriginMock(...args) })), isLocalProfile: vi.fn(async () => false) },
+  ConfigLoader: {
+    getActiveProfileName: getActiveProfileNameMock,
+    load: configLoadMock,
+    hasLocalConfig: hasLocalConfigMock,
+    resolveProfileIdentity: vi.fn(async (...args: unknown[]) => ({ projectOrigin: await resolveProjectOriginMock(...args) })),
+    isLocalProfile: vi.fn(async () => false),
+    loadLocalConfigProfile: loadLocalConfigProfileMock,
+    loadGlobalConfigProfile: loadGlobalConfigProfileMock,
+  },
+}));
+vi.mock('@/providers/core/codemie-auth-helpers.js', async () => ({
+  ...(await vi.importActual<typeof import('@/providers/core/codemie-auth-helpers.js')>('@/providers/core/codemie-auth-helpers.js')),
+  getStoredPlatformCredentials: getStoredPlatformCredentialsMock,
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('../session-project-pin.js', () => ({
@@ -46,8 +61,14 @@ vi.mock('@/utils/logger.js', () => ({
 const readStateMock = vi.fn();
 const checkStatusMock = vi.fn();
 const spawnDaemonMock = vi.fn();
+const readConnectionRecordMock = vi.fn();
+const writeConnectionRecordMock = vi.fn();
+const seedConnectionRecordMock = vi.fn();
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
   readState: readStateMock,
+  readConnectionRecord: readConnectionRecordMock,
+  writeConnectionRecord: writeConnectionRecordMock,
+  seedConnectionRecord: seedConnectionRecordMock,
   checkStatus: checkStatusMock,
   spawnDaemon: spawnDaemonMock,
   stopDaemon: vi.fn(),
@@ -243,10 +264,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
     it('writes exactly one JSON line to stdout when the blocking event cold-starts the daemon', async () => {
       configLoadMock.mockResolvedValue({ name: 'p', baseUrl: 'https://x.example.com/api', codeMieProject: 'proj-1' });
+      readConnectionRecordMock.mockResolvedValue({ version: 1, profile: 'p', clientType: 'fake', updatedAt: '' });
+      loadLocalConfigProfileMock.mockResolvedValue({ name: 'p' });
+      getStoredPlatformCredentialsMock.mockResolvedValue({ cookies: {}, apiUrl: 'https://api', timestamp: 0 });
       readStateMock.mockResolvedValue(null);
       checkStatusMock.mockResolvedValue({ running: false, state: null });
       spawnDaemonMock.mockResolvedValue({ pid: process.pid, port: 4001, url: 'http://127.0.0.1:4001', startedAt: new Date().toISOString() });
-      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/connect-orchestrator.js');
+      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/otlp-cold-start.js');
       const write = captureStdout();
 
       await adapter.processOtlpEvent(
@@ -810,6 +834,44 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwardToSpool).not.toHaveBeenCalled();
       expect(detectGitBranchMock).not.toHaveBeenCalled();
       expect(finalize).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('skipped cold start (no recorded proxy connection, working directory profile has no baseUrl)', () => {
+    it('writes nothing to stdout, finalizes false on a failed send, and re-sends the same batch with finalize(true) next time', async () => {
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        process.stdout.write(`${format(...args)}\n`);
+      });
+      readConnectionRecordMock.mockResolvedValue(null);
+      readStateMock.mockResolvedValue(null);
+      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/otlp-cold-start.js');
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        finalize,
+      });
+      // No proxy came up, so the spool refuses the batch; a later hook finds it accepted.
+      forwardToSpool.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      const realDeps = { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
+      const input = JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }] });
+
+      await adapter.processOtlpEvent(input, realDeps);
+
+      expect(spawnDaemonMock).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      expect(finalize).toHaveBeenLastCalledWith(false);
+
+      await adapter.processOtlpEvent(input, realDeps);
+
+      expect(forwardToSpool).toHaveBeenCalledTimes(2);
+      const [firstEvents] = forwardToSpool.mock.calls[0] as [Record<string, unknown>[]];
+      const [secondEvents] = forwardToSpool.mock.calls[1] as [Record<string, unknown>[]];
+      expect(secondEvents.map((event) => event['a'])).toEqual(firstEvents.map((event) => event['a']));
+      expect(finalize).toHaveBeenCalledTimes(2);
+      expect(finalize).toHaveBeenLastCalledWith(true);
+      expect(write).not.toHaveBeenCalled();
     });
   });
 

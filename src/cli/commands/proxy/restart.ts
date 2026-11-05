@@ -2,10 +2,15 @@ import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import type { ProjectBindingState } from '../../../utils/project-binding.js';
-import { checkStatus, stopDaemon, type DaemonState } from './daemon-manager.js';
+import { checkStatus, stopDaemon, writeConnectionRecord, type DaemonState } from './daemon-manager.js';
 import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { DEFAULT_DAEMON_PORT } from './connect-orchestrator.js';
-import { launchDaemon, prepareDaemonLaunch, spawnForProfile } from './launch-daemon.js';
+import {
+  launchDaemon,
+  prepareDaemonLaunch,
+  shouldWriteConnectionRecord,
+  spawnForProfile,
+} from './launch-daemon.js';
 
 export interface ProxyRestartOptions {
   profile?: string;
@@ -24,6 +29,7 @@ async function restartStopped(opts: ProxyRestartOptions): Promise<void> {
     port: DEFAULT_DAEMON_PORT,
     clientType: 'codemie-daemon',
     projectBinding,
+    writeRecord: await shouldWriteConnectionRecord(opts.profile),
   }));
 }
 
@@ -111,6 +117,8 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
       model: opts.profile ? undefined : state.model,
       project,
       projectBinding,
+      // Written below, only once the port check has passed: a rolled-back restart leaves no record.
+      writeRecord: false,
     });
   } catch (error) {
     throw spawnFailedError(state, error);
@@ -120,6 +128,10 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
     // Clients are configured for the recorded port; do not leave a daemon elsewhere.
     await stopDaemon();
     throw portMismatchError(state, daemonState.port);
+  }
+  // `profile` is the one the daemon was just spawned for (equal to daemonState.profile).
+  if (await shouldWriteConnectionRecord(opts.profile)) {
+    await writeConnectionRecord(daemonState, profile, state.clientType);
   }
   printRestarted(daemonState);
 }

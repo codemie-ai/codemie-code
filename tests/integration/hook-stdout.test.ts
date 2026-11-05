@@ -225,25 +225,48 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     });
 
     // Notification is forwarded as is: the SSO gate (and its browser sign-in) runs only on UserPromptSubmit.
-    // Without credentials the daemon holds a listener and answers 401 until the user signs in.
-    async function runColdOtlpHook(extraEnv: Record<string, string>): Promise<{ home: string; res: RunResult }> {
+    // The profile has no stored SSO credentials, so the daemon holds a listener and answers 401 until the user
+    // signs in. `recordedProfile` seeds the proxy-connection.json that `proxy connect` would have written;
+    // without it the hook falls back to the working directory's profile.
+    async function runColdOtlpHook(
+      extraEnv: Record<string, string>,
+      recordedProfile?: string,
+      activeProfile = 'hook-stdout-test'
+    ): Promise<{ home: string; res: RunResult }> {
       const home = freshHome();
       daemonHomes.push(home);
       writeFileSync(
         join(home, 'codemie-cli.config.json'),
         JSON.stringify({
           version: 2,
-          activeProfile: 'hook-stdout-test',
+          activeProfile,
           profiles: {
             'hook-stdout-test': {
               name: 'hook-stdout-test',
               provider: 'ai-run-sso',
               baseUrl: 'http://127.0.0.1:9/codemie-hook-stdout-test',
             },
+            'hook-stdout-other': {
+              name: 'hook-stdout-other',
+              provider: 'ai-run-sso',
+              baseUrl: 'http://127.0.0.1:9/codemie-hook-stdout-other',
+            },
           },
         }),
         'utf-8'
       );
+      if (recordedProfile) {
+        writeFileSync(
+          join(home, 'proxy-connection.json'),
+          JSON.stringify({
+            version: 1,
+            profile: recordedProfile,
+            clientType: 'claude-code-otlp',
+            updatedAt: new Date().toISOString(),
+          }),
+          'utf-8'
+        );
+      }
       const notification = JSON.stringify({
         hook_event_name: 'Notification',
         session_id: 'agent-session-under-test',
@@ -257,13 +280,8 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       return { home, res };
     }
 
-    it('starting the proxy writes nothing to stdout or stderr; the cold start is in the file log', async () => {
-      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' });
-
-      expect(res.stdout).toBe('');
-      expect(res.stderr).toBe('');
-      expect(fileLog(home)).toContain('[daemon-manager] Spawning daemon');
-      expect(existsSync(join(home, 'sso-login.lock'))).toBe(false);
+    /** The daemon the hook started holds its port: it answers /health and a 401 that names the login command. */
+    async function expectPortHeldAwaitingLogin(home: string): Promise<void> {
       const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as {
         port: number; pid: number; health: string;
       };
@@ -281,14 +299,63 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
         type: 'error',
         error: { type: 'authentication_error', message: expect.stringContaining('codemie profile login') },
       });
-    });
+    }
 
-    it('without CODEMIE_DEBUG the proxy status line still reaches the file log, and nothing reaches stdout or stderr', async () => {
-      const { home, res } = await runColdOtlpHook({});
+    // The only cases that take a real `codemie hook` process through spawnDaemon: a write to stdout or stderr
+    // there (the record write, the status line) would reach the agent's protocol channel.
+    it('with no recorded connection the cold start starts the working directory profile, writes nothing to stdout or stderr, holds the port and records the connection', async () => {
+      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' });
 
       expect(res.stdout).toBe('');
       expect(res.stderr).toBe('');
-      expect(fileLog(home)).toMatch(/\[INFO\][^\n]* Starting proxy\.\.\.\n/);
+      expect(fileLog(home)).toContain('[daemon-manager] Spawning daemon');
+      expect(fileLog(home)).toContain('Starting proxy (profile: hook-stdout-test)...');
+      expect(fileLog(home)).toContain('no recorded proxy connection');
+      expect(existsSync(join(home, 'sso-login.lock'))).toBe(false);
+      await expectPortHeldAwaitingLogin(home);
+      const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8')) as Record<string, unknown>;
+      expect(record).toMatchObject({ version: 1, profile: 'hook-stdout-test', clientType: 'claude-code-otlp' });
+    });
+
+    it('with a recorded connection the cold start restarts the recorded profile, warns that it has no SSO credentials, writes nothing to stdout or stderr and holds the port', async () => {
+      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' }, 'hook-stdout-test');
+
+      expect(res.stdout).toBe('');
+      expect(res.stderr).toBe('');
+      expect(fileLog(home)).toMatch(/\[WARN\][^\n]*\[ensureOtlpProxy\] no SSO credentials \(profile: hook-stdout-test, global scope\)/);
+      expect(fileLog(home)).toContain('[ensureOtlpProxy] cold start (profile: hook-stdout-test, global scope)');
+      expect(fileLog(home)).toContain('Starting proxy (profile: hook-stdout-test)...');
+      expect(fileLog(home)).not.toContain('no recorded proxy connection');
+      expect(existsSync(join(home, 'sso-login.lock'))).toBe(false);
+      await expectPortHeldAwaitingLogin(home);
+    });
+
+    // The bug of EPMCDME-16321: the restart followed the working directory's profile, not the one the user connected.
+    it('restarts the daemon on the recorded profile even though the working directory profile is another one', async () => {
+      const { home, res } = await runColdOtlpHook({}, 'hook-stdout-test', 'hook-stdout-other');
+
+      expect(res.stdout).toBe('');
+      expect(res.stderr).toBe('');
+      const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as { profile: string; targetUrl: string };
+      expect(state.profile).toBe('hook-stdout-test');
+      expect(state.targetUrl).toContain('codemie-hook-stdout-test');
+      const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8')) as { profile: string };
+      expect(record.profile).toBe('hook-stdout-test');
+    });
+
+    it('without a recorded connection the daemon still starts on the working directory profile', async () => {
+      const { home } = await runColdOtlpHook({}, undefined, 'hook-stdout-other');
+
+      const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as { profile: string };
+      expect(state.profile).toBe('hook-stdout-other');
+    });
+
+    it('without CODEMIE_DEBUG the proxy status line still reaches the file log, and nothing reaches stdout or stderr', async () => {
+      const { home, res } = await runColdOtlpHook({}, 'hook-stdout-test');
+
+      expect(res.stdout).toBe('');
+      expect(res.stderr).toBe('');
+      expect(fileLog(home)).toMatch(/\[INFO\][^\n]* Starting proxy \(profile: hook-stdout-test\)\.\.\.\n/);
       expect(fileLog(home)).not.toContain('[DEBUG]');
     });
   });

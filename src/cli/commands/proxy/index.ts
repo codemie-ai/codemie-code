@@ -2,9 +2,16 @@ import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { checkStatus, readState, stopDaemon, writeState } from './daemon-manager.js';
+import {
+  checkStatus,
+  readState,
+  seedConnectionRecord,
+  stopDaemon,
+  writeConnectionRecord,
+  writeState,
+} from './daemon-manager.js';
 import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
-import { launchDaemon } from './launch-daemon.js';
+import { launchDaemon, shouldWriteConnectionRecord } from './launch-daemon.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
@@ -149,13 +156,22 @@ export function createProxyCommand(): Command {
         const { running, state } = await checkStatus();
         if (running && state) {
           if (daemonMatchesRequest(state, requestedDaemon)) {
+            if (opts.profile) {
+              await writeConnectionRecord(state, state.profile, state.clientType);
+            } else {
+              await seedConnectionRecord(state);
+            }
             console.log(chalk.green(`✓ Proxy already running at ${state.url}  (profile: ${state.profile})`));
             return;
           }
           throw new ConfigurationError(formatDaemonConflict(state));
         }
 
-        const daemonState = await launchDaemon(config, profile, { port: requestedPort, projectBinding });
+        const daemonState = await launchDaemon(config, profile, {
+          port: requestedPort,
+          projectBinding,
+          writeRecord: await shouldWriteConnectionRecord(opts.profile),
+        });
 
         console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
       } catch (error) {

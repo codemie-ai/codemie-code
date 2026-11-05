@@ -51,6 +51,14 @@ codemie hook --agent <adapter-name>        (src/cli/commands/hook.ts)
         ▼
 OtlpAgentAdapter.processOtlpEvent(rawEvent, deps)   (base class, fixed flow)
         │ parseHookInput → isTracked → ensureOtlpProxy
+        │   (no running daemon: restarts it from ~/.codemie/proxy-connection.json,
+        │    not from the cwd profile; with no record it falls back to the cwd
+        │    profile and the start creates the record;
+        │    clientType/telemetryMode come from the record; an absent value is
+        │    left unset, not guessed; project comes from the loaded config;
+        │    missing SSO credentials only warn: the daemon starts, holds the port
+        │    and answers 401 until login; a live daemon is adopted and Claude
+        │    Code's OTLP endpoint is re-pointed at it)
         ▼
 evaluate(input) → ForwardDecision          (§3: shape every adapter follows)
         │
