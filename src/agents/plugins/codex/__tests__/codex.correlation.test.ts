@@ -8,7 +8,8 @@ vi.mock('../../../../utils/logger.js', () => ({
 }));
 
 import { logger } from '../../../../utils/logger.js';
-import { findRolloutForRun, recordRolloutCorrelation } from '../codex.correlation.js';
+import { findRolloutForRun } from '../codex.correlation.js';
+import { recordTranscriptCorrelation } from '../../../core/session/no-transcript-correlation.js';
 import type { SessionDescriptor } from '../../../core/session/discovery-types.js';
 
 interface FakeRollout {
@@ -65,7 +66,7 @@ describe('codex rollout correlation', () => {
 
   async function endRun(adapter: ReturnType<typeof fakeAdapter>, sessionId: string, startedAt: number) {
     const rollout = await findRolloutForRun(adapter, { sessionId, startedAt, cwd });
-    if (rollout) await recordRolloutCorrelation(sessionId, rollout.filePath);
+    if (rollout) await recordTranscriptCorrelation(sessionId, rollout.filePath);
     return rollout?.filePath;
   }
 
@@ -159,7 +160,7 @@ describe('codex rollout correlation', () => {
   it('does not overwrite an existing agentSessionFile that points to a different rollout', async () => {
     await writeSessionRecord('run-x', '/codex/rollout-original.jsonl');
 
-    await recordRolloutCorrelation('run-x', '/codex/rollout-other.jsonl');
+    await recordTranscriptCorrelation('run-x', '/codex/rollout-other.jsonl');
 
     expect(await readAgentSessionFile('run-x')).toBe('/codex/rollout-original.jsonl');
     expect(logger.warn).toHaveBeenCalled();
@@ -168,7 +169,7 @@ describe('codex rollout correlation', () => {
   it('fills an empty agentSessionFile', async () => {
     await writeSessionRecord('run-y');
 
-    await recordRolloutCorrelation('run-y', '/codex/rollout-y.jsonl');
+    await recordTranscriptCorrelation('run-y', '/codex/rollout-y.jsonl');
 
     expect(await readAgentSessionFile('run-y')).toBe('/codex/rollout-y.jsonl');
   });

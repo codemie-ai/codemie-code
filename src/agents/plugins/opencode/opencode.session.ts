@@ -2,14 +2,14 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, dirname, sep } from 'path';
 import { existsSync } from 'fs';
-import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult, type SessionDiscoveryOptions, type SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
+import { type SessionAdapter, type ParsedSession, type AggregatedResult, type SessionDiscoveryOptions, type SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type {
   OpenCodeSession,
   OpenCodeMessage,
 } from './opencode-message-types.js';
-import { getOpenCodeSessionsPath, getOpenCodeDbPath, getAgentOpenCodeStoragePath } from './opencode.paths.js';
+import { getOpenCodeSessionsPath, getOpenCodeDbPath } from './opencode.paths.js';
 import type { Session } from '../../core/session/types.js';
 import {
   isSqliteAvailable,
@@ -19,6 +19,8 @@ import {
   readRowTimesFromDb,
 } from './opencode.sqlite-reader.js';
 import { loadPartsForMessage } from './opencode.storage-utils.js';
+import { SessionStore } from '../../core/session/SessionStore.js';
+import { runSessionIds, locateRun, locatedRun, mergeRunResults, failedRunSession, dbSessionDescriptor, processRunSession, type LocatedRun, type RunSessionProcessing } from './opencode.run-session.js';
 import { logger } from '../../../utils/logger.js';
 import { OpenCodeMetricsProcessor } from './session/processors/opencode.metrics-processor.js';
 import { OpenCodeConversationsProcessor } from './session/processors/opencode.conversations-processor.js';
@@ -170,6 +172,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         openCodeSessionId: session.id,
         openCodeVersion: session.version,
         storageType: 'file',
+        parentId: session.parentID,
       };
 
       return {
@@ -193,10 +196,9 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * Parse a session from SQLite database.
    * Reads session, messages, and all parts in bulk from opencode.db.
    *
-   * @param openCodeSessionId - OpenCode's own `ses_*` id when known. The plugin
-   *   Stop hook supplies it via ProcessingContext.agentSessionId; the in-process
-   *   SessionEnd path cannot (OpenCode's id does not exist when the CodeMie
-   *   session record is created), so selection falls back to a cwd match.
+   * @param openCodeSessionId - OpenCode's own `ses_*` id of the run's session: the plugin Stop
+   *   hook's, else the one `processSession` selected for the record; absent, a `ses_*` `sessionId`
+   *   (a discovered descriptor's) is read itself.
    */
   private async parseSessionFromDb(
     dbPath: string,
@@ -206,13 +208,10 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     try {
       logger.debug(`[opencode-adapter] Parsing session ${sessionId} from SQLite: ${dbPath}`);
 
-      const sessions = await readSessionsFromDb(dbPath, { maxAgeDays: 1 });
-      const session = this.selectSessionFromDb(sessions, openCodeSessionId);
+      const id = openCodeSessionId ?? (sessionId.startsWith('ses_') ? sessionId : undefined);
+      const [session] = id ? await readSessionsFromDb(dbPath, { id }) : [];
       if (!session) {
         throw new Error(`Session ${sessionId} not found in SQLite DB: ${dbPath}`);
-      }
-      if (session.id !== openCodeSessionId) {
-        logger.debug(`[opencode-adapter] Mapped CodeMie session ${sessionId} → OpenCode session ${session.id}`);
       }
 
       // Read messages using OpenCode session ID (not CodeMie UUID)
@@ -245,6 +244,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         openCodeVersion: session.version,
         partsMap,
         storageType: 'sqlite',
+        parentId: session.parentID,
         // gitBranch is overlaid by processSession from ProcessingContext when
         // available; the metrics processor falls back to detecting it from
         // projectPath.
@@ -262,42 +262,6 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       logger.error(`[opencode-adapter] Failed to parse SQLite session ${sessionId}:`, error);
       throw error;
     }
-  }
-
-  /**
-   * Pick which OpenCode session a set of DB rows refers to.
-   *
-   * Ordering matters: the previous implementation used
-   * `sessions.find(s => s.id === sessionId) ?? sessions[0]` where `sessionId`
-   * is a CodeMie UUID. That match can never succeed, so it always degraded to
-   * "newest session in any directory" — silently attributing another
-   * repository's session to this one.
-   *
-   * @param sessions - Rows already sorted newest-first by readSessionsFromDb
-   */
-  private selectSessionFromDb(
-    sessions: OpenCodeSession[],
-    openCodeSessionId?: string
-  ): OpenCodeSession | undefined {
-    // 1. Exact match on OpenCode's own id (plugin Stop path).
-    if (openCodeSessionId?.startsWith('ses_')) {
-      const exact = sessions.find(s => s.id === openCodeSessionId);
-      if (exact) return exact;
-    }
-
-    // 2. Newest session started in this working directory (in-process SessionEnd path).
-    const cwd = process.cwd().replace(/\/+$/, '');
-    const byCwd = sessions.find(s => s.directory.replace(/\/+$/, '') === cwd);
-    if (byCwd) return byCwd;
-
-    // 3. Newest session overall — may belong to another repository.
-    if (sessions.length > 0) {
-      logger.warn(
-        `[opencode-adapter] No OpenCode session matched id=${openCodeSessionId ?? 'n/a'} or cwd=${cwd}; ` +
-        `falling back to newest session ${sessions[0].id} (directory=${sessions[0].directory})`
-      );
-    }
-    return sessions[0];
   }
 
   /**
@@ -396,7 +360,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Process session with all registered processors.
+   * Process the record's run with all registered processors: each OpenCode session of the run in
+   * turn, under its own `ses_*` id, the results summed.
    */
   async processSession(
     filePath: string,
@@ -406,71 +371,19 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     try {
       logger.debug(`[opencode-adapter] Processing session ${sessionId} with ${this.processors.length} processors`);
 
-      // 1. Parse session once.
-      //    context.agentSessionId is OpenCode's ses_* id on the plugin Stop path
-      //    and the CodeMie UUID on the in-process SessionEnd path; the adapter
-      //    distinguishes them by prefix.
-      const parsedSession = await this.parseSessionFile(
-        filePath,
-        sessionId,
-        context.agentSessionId
-      );
-
-      // Carry the branch resolved by the CLI through to the processors so every
-      // MetricDelta is attributed to a branch (the aggregator groups on it).
-      if (context.gitBranch && parsedSession.metadata) {
-        (parsedSession.metadata as Record<string, unknown>).gitBranch = context.gitBranch;
-      }
-
-      // 2. Run processors in priority order
-      const processorResults: Record<string, {
-        success: boolean;
-        message?: string;
-        recordsProcessed?: number;
-      }> = {};
-      const failedProcessors: string[] = [];
-      let totalRecords = 0;
-
-      for (const processor of this.processors) {
-        try {
-          if (!processor.shouldProcess(parsedSession)) {
-            logger.debug(`[opencode-adapter] Processor ${processor.name} skipped`);
-            continue;
-          }
-
-          logger.debug(`[opencode-adapter] Running processor: ${processor.name}`);
-          const result = await processor.process(parsedSession, context);
-
-          processorResults[processor.name] = {
-            success: result.success,
-            message: result.message,
-            recordsProcessed: result.metadata?.recordsProcessed as number | undefined
-          };
-
-          if (!result.success) {
-            failedProcessors.push(processor.name);
-            logger.warn(`[opencode-adapter] Processor ${processor.name} failed: ${result.message}`);
-          }
-
-          const recordsProcessed = result.metadata?.recordsProcessed as number | undefined;
-          if (typeof recordsProcessed === 'number') {
-            totalRecords += recordsProcessed;
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          logger.error(`[opencode-adapter] Processor ${processor.name} threw:`, error);
-          processorResults[processor.name] = { success: false, message: errorMessage };
-          failedProcessors.push(processor.name);
-        }
-      }
-
-      return {
-        success: failedProcessors.length === 0,
-        processors: processorResults,
-        totalRecords,
-        failedProcessors,
-        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs)
+      const openCodeSessionIds = await runSessionIds(filePath, sessionId, context);
+      const processing: RunSessionProcessing = {
+        parse: (file, id, openCodeSessionId) => this.parseSessionFile(file, id, openCodeSessionId),
+        processors: this.processors,
       };
+      const results: AggregatedResult[] = [];
+      for (const openCodeSessionId of openCodeSessionIds) {
+        const sessionContext = openCodeSessionId ? { ...context, agentSessionId: openCodeSessionId } : context;
+        const run = processRunSession(processing, filePath, sessionId, sessionContext, openCodeSessionId);
+        // A run's lone session fails the call as before; one of several fails only its own result
+        results.push(openCodeSessionIds.length === 1 ? await run : await run.catch((error) => failedRunSession(openCodeSessionId, error)));
+      }
+      return mergeRunResults(results);
     } catch (error) {
       logger.error(`[opencode-adapter] Session processing failed:`, error);
       throw error;
@@ -478,18 +391,24 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * The transcript of a record that names none, by its agent's own SessionEnd lookup — in the
-   * storage of the RECORD's agent (codemie-code's private one, or the user's), not this process's.
+   * The transcripts of a record's run by the shared selection — in the storage of the RECORD's
+   * agent (codemie-code's private one, or the user's), not this process's.
    */
   async locateTranscript(record: Session): Promise<string[]> {
-    const storagePath = getAgentOpenCodeStoragePath(record.agentName);
-    const sessions = await this.discoverSessions(
-      record.agentName === 'codemie-code'
-        ? { maxAgeDays: 1 }
-        : { maxAgeDays: 1, limit: 1, cwd: record.workingDirectory },
-      storagePath
-    );
-    return sessions[0] ? [sessions[0].filePath] : [];
+    const { sessions } = await locateRun(record, this.discoverSessions.bind(this));
+    return [...new Set(sessions.map((session) => session.filePath))];
+  }
+
+  /**
+   * The transcript of the record `sessionId`'s run with its OpenCode session ids and upper bound, so
+   * processing takes those sessions without selecting again; none when the record is gone or no
+   * session qualifies.
+   */
+  async locateSessionTranscript(sessionId: string): Promise<LocatedRun | undefined> {
+    const record = await new SessionStore().loadSession(sessionId);
+    if (!record) return undefined;
+    const { sessions, recordsBeforeMs } = await locateRun(record, this.discoverSessions.bind(this));
+    return locatedRun(sessions, recordsBeforeMs);
   }
 
   /**
@@ -512,14 +431,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
           limit: options?.limit,
         });
 
-        const descriptors: SessionDescriptor[] = sessions.map(session => ({
-          sessionId: session.id,
-          filePath: dbPath,  // Point to DB file for parseSessionFile routing
-          projectPath: session.directory,
-          createdAt: session.time?.created ?? 0,
-          updatedAt: typeof session.time?.updated === 'number' ? session.time.updated : undefined,
-          agentName: 'opencode',
-        }));
+        const descriptors = sessions.map((session) => dbSessionDescriptor(session, dbPath));
 
         // Already ordered by time_created DESC in SQL; re-sort defensively for
         // the sqlite3 CLI fallback path.
@@ -625,7 +537,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
               projectPath: session.directory,
               createdAt: createdAt ?? 0,
               updatedAt: typeof updatedAt === 'number' ? updatedAt : undefined,
-              agentName: 'opencode'
+              agentName: 'opencode',
+              ...(session.parentID && { parentId: session.parentID }),
             });
 
           } catch (error) {

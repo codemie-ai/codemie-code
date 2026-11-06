@@ -20,6 +20,7 @@ import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { AgentMetadata } from '@/agents/core/types.js';
 import { logger } from '@/utils/logger.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { readPiRunLedger } from './pi.extension.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { PiMetricsProcessingContext } from './session/processors/pi.metrics-processor.js';
@@ -339,26 +340,18 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  try {
-    const { getStoredAnalyticsCredentials } = await import('@/providers/core/codemie-auth-helpers.js');
-    const credentials = (await getStoredAnalyticsCredentials(ssoUrl, env))?.credentials;
-    if (!credentials?.cookies) {
-      logger.debug('[pi-incremental-sync] No SSO credentials available, skipping upload');
-      return null;
-    }
-    const cookies = Object.entries(credentials.cookies)
-      .map(([name, value]) => `${name}=${value}`)
-      .join('; ');
-    return {
-      apiBaseUrl: syncApiUrl,
-      cookies,
-      clientType: 'codemie-pi',
-      version,
-      dryRun: false,
-      sessionId,
-    };
-  } catch (error) {
-    logger.debug('[pi-incremental-sync] Failed to build upload context:', error);
+  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies) {
+    logger.debug('[pi-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
+  return {
+    apiBaseUrl: syncApiUrl,
+    cookies,
+    credentialsSuperseded,
+    clientType: 'codemie-pi',
+    version,
+    dryRun: false,
+    sessionId,
+  };
 }

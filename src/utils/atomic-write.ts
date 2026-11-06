@@ -3,6 +3,11 @@ import * as path from 'path';
 import { randomBytes } from 'node:crypto';
 import { ConfigurationError } from './errors.js';
 
+// Windows reports a rename over a file that is being replaced as one of these codes.
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_MAX_ATTEMPTS = 10;
+const RENAME_RETRY_STEP_MS = 20;
+
 export interface AtomicJsonWriteOptions {
   /** Refuse to replace an existing, non-empty file whose content is not valid JSON. */
   refuseUnparsable?: boolean;
@@ -16,6 +21,21 @@ async function realTarget(filePath: string): Promise<string> {
     return await fs.realpath(filePath);
   } catch {
     return filePath;
+  }
+}
+
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code ?? '';
+      if (process.platform !== 'win32' || attempt >= RENAME_MAX_ATTEMPTS || !RENAME_RETRY_CODES.has(code)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_STEP_MS * attempt));
+    }
   }
 }
 
@@ -56,7 +76,7 @@ export async function writeJsonFileAtomic(
   const tempPath = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode });
-    await fs.rename(tempPath, target);
+    await renameWithRetry(tempPath, target);
   } catch (error) {
     await fs.unlink(tempPath).catch(() => undefined);
     throw error;

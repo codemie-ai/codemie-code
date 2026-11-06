@@ -20,8 +20,9 @@ import { realpath as fsRealpath } from 'fs/promises';
 import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { CodexSessionAdapter } from './codex.session.js';
-import { recordRolloutCorrelation } from './codex.correlation.js';
+import { recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 export interface StartCodexIncrementalSyncOptions {
   /** CodeMie session id (file naming key). */
@@ -94,7 +95,7 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
         // The first matching tick names the rollout on the record, so a run killed later can
         // still be finalized over its own rollout
         if (!linkedSessions.has(options.sessionId)
-          && await recordRolloutCorrelation(options.sessionId, descriptor.filePath)) {
+          && await recordTranscriptCorrelation(options.sessionId, descriptor.filePath)) {
           linkedSessions.add(options.sessionId);
         }
 
@@ -175,28 +176,20 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  try {
-    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const credentials = (await getStoredAnalyticsCredentials(ssoUrl, env))?.credentials;
-    if (!credentials?.cookies) {
-      logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
-      return null;
-    }
-    const cookies = Object.entries(credentials.cookies)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
-    return {
-      apiBaseUrl: syncApiUrl,
-      cookies,
-      clientType: 'codemie-codex',
-      version,
-      dryRun: false,
-      sessionId,
-    };
-  } catch (error) {
-    logger.debug('[codex-incremental-sync] Failed to build upload context:', error);
+  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies) {
+    logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
+  return {
+    apiBaseUrl: syncApiUrl,
+    cookies,
+    credentialsSuperseded,
+    clientType: env?.CODEMIE_CLIENT_TYPE || 'codemie-codex',
+    version,
+    dryRun: false,
+    sessionId,
+  };
 }
 
 async function safeRealpath(p: string): Promise<string> {

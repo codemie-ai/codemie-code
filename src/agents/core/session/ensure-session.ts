@@ -1,5 +1,6 @@
 import { logger } from '../../../utils/logger.js';
 import { processStartedAt } from '../../../utils/processes.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY } from './types.js';
 
 /**
  * Ensure session metadata file exists for SessionSyncer.
@@ -49,6 +50,9 @@ export async function ensureSessionFile(
     const codemieUrl = env.CODEMIE_URL;
     const clientType = env.CODEMIE_CLIENT_TYPE;
     const model = env.CODEMIE_MODEL;
+    // The launch flags the SessionStart record would carry, so the run window resolves the same way
+    const resumeSessionId = env[RESUME_SESSION_ENV_KEY];
+    const continuesPriorSession = env[CONTINUE_SESSION_ENV_KEY] === '1';
 
     // A live record owned by this process (it runs in the wrapper): it ends by the agent's
     // onSessionEnd, or — if the wrapper dies first — as a stranded record of a later start.
@@ -68,6 +72,8 @@ export async function ensureSessionFile(
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
       activeDurationMs: 0,
+      ...(resumeSessionId && { resumeSessionId }),
+      ...(continuesPriorSession && { continuesPriorSession: true as const }),
       correlation: {
         status: 'matched' as const,
         agentSessionId: sessionId,

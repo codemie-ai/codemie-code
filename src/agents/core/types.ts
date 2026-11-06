@@ -780,6 +780,12 @@ export interface AgentAdapter {
   extractNativeResumeId?(args: string[]): string | undefined;
 
   /**
+   * Whether the launch continues the agent's earlier session without naming it (e.g. `--continue`).
+   * Agents without such a form may omit this capability.
+   */
+  continuesNativeSession?(args: string[]): boolean;
+
+  /**
    * Additional installation steps that run regardless of agent installation status
    * Called after checking if agent is installed, before or after actual installation
    *

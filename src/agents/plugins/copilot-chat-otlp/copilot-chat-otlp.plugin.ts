@@ -173,8 +173,11 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     authenticationFailure = true,
     loginOutcome?: DetachedLoginOutcome
   ): Extract<ChatForwardDecision, { decision: 'block' }> {
+    // After a sign-in that just finished the login text already says so; "invalid" would contradict it.
     const message = authenticationFailure
-      ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).\n${describeLogin(loginOutcome)}`
+      ? loginOutcome === 'signed-in-recently'
+        ? describeLogin(loginOutcome)
+        : `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).\n${describeLogin(loginOutcome)}`
       : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}). Fix the issue, then re-send your prompt.`;
 
     const hookSpecificOutput: ChatBlockOutput =

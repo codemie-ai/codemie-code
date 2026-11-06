@@ -61,7 +61,8 @@ import {
   startCodexIncrementalSync,
   stopCodexIncrementalSync,
 } from './codex.incremental-sync.js';
-import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation.js';
+import { findRolloutForRun } from './codex.correlation.js';
+import { recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { mkdir } from 'fs/promises';
 
 /**
@@ -368,8 +369,9 @@ export const CodexPluginMetadata: AgentMetadata = {
         } else {
           logger.debug(`[codex] Processing rollout: ${rollout.sessionId}`);
 
-          // Must land before SessionEnd renames the record to completed_{id}.json.
-          await recordRolloutCorrelation(sessionId, rollout.filePath);
+          // Must land before SessionEnd renames the record to completed_{id}.json. Without it the run reports
+          // hadLog=false and costUSD=0, and the native loader treats the rollout as untracked.
+          await recordTranscriptCorrelation(sessionId, rollout.filePath);
 
           const context = {
             sessionId,

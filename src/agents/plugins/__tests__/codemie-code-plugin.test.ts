@@ -5,7 +5,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { join } from 'path';
 
 // Mock BaseAgentAdapter to avoid dependency tree
 vi.mock('../../core/BaseAgentAdapter.js', () => ({
@@ -71,8 +70,8 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
 }));
 
 // Use vi.hoisted for mock functions referenced in vi.mock factories
-const { mockDiscoverSessionsCC, mockProcessSessionCC } = vi.hoisted(() => ({
-  mockDiscoverSessionsCC: vi.fn(),
+const { mockLocateSessionTranscriptCC, mockProcessSessionCC } = vi.hoisted(() => ({
+  mockLocateSessionTranscriptCC: vi.fn(),
   mockProcessSessionCC: vi.fn(),
 }));
 
@@ -80,7 +79,7 @@ const { mockDiscoverSessionsCC, mockProcessSessionCC } = vi.hoisted(() => ({
 vi.mock('../opencode/opencode.session.js', () => ({
   OpenCodeSessionAdapter: vi.fn(function () {
     return {
-      discoverSessions: mockDiscoverSessionsCC,
+      locateSessionTranscript: mockLocateSessionTranscriptCC,
       processSession: mockProcessSessionCC,
     };
   }),
@@ -309,10 +308,8 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     vi.clearAllMocks();
   });
 
-  it('uses clientType codemie-code in context', async () => {
-    mockDiscoverSessionsCC.mockResolvedValue([
-      { sessionId: 'test-session', filePath: '/path/to/session' },
-    ]);
+  it('uses clientType codemie-code in context; the event carries the CodeMie id and the located transcript', async () => {
+    mockLocateSessionTranscriptCC.mockResolvedValue({ transcript: '/path/to/session', sessionIds: ['ses_run'] });
     mockProcessEvent.mockResolvedValue(undefined);
 
     const env = {
@@ -332,15 +329,16 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     );
   });
 
-  it('discovers the session in codemie-code private OpenCode storage, not the user own', async () => {
-    mockDiscoverSessionsCC.mockResolvedValue([]);
+  it('locates the transcript of its own record\'s run; none located → an empty transcript_path under the CodeMie id', async () => {
+    mockLocateSessionTranscriptCC.mockResolvedValue(undefined);
     mockProcessEvent.mockResolvedValue(undefined);
 
     await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, { CODEMIE_SESSION_ID: 'test-456' } as NodeJS.ProcessEnv);
 
-    expect(mockDiscoverSessionsCC).toHaveBeenCalledWith(
-      expect.objectContaining({ maxAgeDays: 1 }),
-      join('/mock/.codemie', 'opencode-storage', 'opencode', 'storage')
+    expect(mockLocateSessionTranscriptCC).toHaveBeenCalledWith('test-456');
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'test-456', transcript_path: '' }),
+      expect.anything()
     );
   });
 
@@ -355,7 +353,7 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
   });
 
   it('handles errors gracefully', async () => {
-    mockDiscoverSessionsCC.mockResolvedValue([]);
+    mockLocateSessionTranscriptCC.mockResolvedValue(undefined);
     mockProcessEvent.mockRejectedValue(new Error('hook error'));
 
     const env = {

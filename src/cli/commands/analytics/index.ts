@@ -9,9 +9,11 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AnalyticsAggregator } from './aggregator.js';
 import { AnalyticsFormatter } from './formatter.js';
-import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions } from './types.js';
+import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions, RootAnalytics } from './types.js';
+import type { CostSummary, SessionCostIndex } from './cost/types.js';
 import type { ExportFormat } from './report/output-target.js';
 import { logger } from '../../../utils/logger.js';
+import { parseDateOnly } from '@/utils/date-filter.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
@@ -57,8 +59,8 @@ function applyCommonOptions(command: Command): Command {
     .option('--project <pattern>', 'Filter by project path (basename, partial, or full path)')
     .option('--agent <name>', 'Filter by agent name (claude, gemini, etc.)')
     .option('--branch <name>', 'Filter by git branch')
-    .option('--from <date>', 'Filter sessions from date (YYYY-MM-DD)')
-    .option('--to <date>', 'Filter sessions to date (YYYY-MM-DD)')
+    .option('--from <date>', 'Start date, inclusive (YYYY-MM-DD, UTC)')
+    .option('--to <date>', 'End date, inclusive: the whole day (YYYY-MM-DD, UTC)')
     .option('--last <duration>', 'Filter sessions from last duration (e.g., 7d, 24h)')
     .option('-v, --verbose', 'Show detailed session-level breakdown')
     .option('--export [format]', 'Write report: html (default), json, or both')
@@ -68,6 +70,20 @@ function applyCommonOptions(command: Command): Command {
     .option('--report', `Deprecated: use --export instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
     .option('--report-format <format>', `Deprecated: use --export [format] instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
     .option('--report-output <path>', `Deprecated: use -o/--output instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`);
+}
+
+/**
+ * The session counts over the sessions the report keeps: a dropped empty session is priced in neither
+ * count. The total cost stays the source's: a dropped session has no tokens, so no cost.
+ */
+function keptCostSummary(summary: CostSummary, index: SessionCostIndex, analytics: RootAnalytics): CostSummary {
+  const kept = new Set(analytics.projects.flatMap((p) => p.branches.flatMap((b) => b.sessions.map((s) => s.sessionId))));
+  const priced = [...kept].filter((id) => index.get(id)?.priced === true);
+  return {
+    ...summary,
+    pricedSessions: priced.length,
+    totalSessions: kept.size,
+  };
 }
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
@@ -171,7 +187,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     const formatter = new AnalyticsFormatter(options.verbose);
     formatter.displayRoot(analytics);
     formatter.displayProjects(analytics.projects);
-    formatter.displayCost(costResult.summary);
+    formatter.displayCost(keptCostSummary(costResult.summary, costResult.index, analytics));
 
     // Write the report (--export [format] / -o / --open).
     if (exportFormat) {
@@ -306,7 +322,7 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
 
   // Parse date filters
   if (options.from) {
-    const fromDate = parseDate(options.from);
+    const fromDate = parseDateOnly(options.from, 'from');
     if (!fromDate) {
       console.warn(chalk.yellow(`Warning: Invalid --from date "${options.from}", ignoring filter`));
     } else {
@@ -315,7 +331,7 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
   }
 
   if (options.to) {
-    const toDate = parseDate(options.to);
+    const toDate = parseDateOnly(options.to, 'to');
     if (!toDate) {
       console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
     } else {
@@ -335,20 +351,6 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
   }
 
   return filter;
-}
-
-/**
- * Parse date string (YYYY-MM-DD) to Date object
- */
-function parseDate(dateStr: string): Date | null {
-  // Enforce the documented YYYY-MM-DD shape. Without this, `new Date()` accepts ambiguous
-  // inputs (MM/DD/YYYY, prose dates) with format-dependent timezone handling, silently
-  // producing a wrong filter window instead of triggering the caller's "invalid date" warning.
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return null;
-  }
-  const date = new Date(dateStr);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 /**

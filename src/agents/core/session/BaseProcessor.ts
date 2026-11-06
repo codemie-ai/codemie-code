@@ -7,6 +7,7 @@
  */
 
 import type { ParsedSession } from './BaseSessionAdapter.js';
+import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 /**
  * Processing context passed to all processors.
@@ -19,6 +20,8 @@ export interface ProcessingContext {
   cookies: string;
   /** API key for localhost development (user-id header) */
   apiKey?: string;
+  /** Reports whether a newer sign-in replaced the cookies that were sent, so a rejection is not recorded */
+  credentialsSuperseded?: CredentialsSupersededCheck;
   /** Client type identifier */
   clientType: string;
   /** Client version */
@@ -119,6 +122,8 @@ export interface ProcessingResult {
         totalSyncAttempts?: number;
         conversationId?: string;
         lastSyncAt?: number;
+        /** The highest synced `history_index` of each conversation id the sync sent. */
+        historyIndexByConversation?: Record<string, number>;
       };
     };
     [key: string]: unknown;

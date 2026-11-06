@@ -12,6 +12,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
+import { resolveCodemieBinary, rewriteHooksCommandTree } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -69,7 +70,7 @@ interface HookGroup {
   [key: string]: unknown;
 }
 
-interface ClaudeSettings {
+export interface ClaudeSettings {
   // Parsed from user-edited JSON, so an event's value is not guaranteed to be an array.
   hooks?: Record<string, unknown>;
   env?: Record<string, string>;
@@ -137,7 +138,7 @@ function isHistoricalCodemieValue(key: string, value: string): boolean {
  * own (via `env`) — neither half alone is distinctive enough. `env` must
  * be a pre-mutation snapshot or the pairing check breaks mid-pass.
  */
-function isCodemieOwnedEnvValue(
+export function isCodemieOwnedEnvValue(
   key: (typeof CODEMIE_ENV_KEYS)[number],
   value: unknown,
   env: Record<string, unknown>
@@ -269,7 +270,7 @@ export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
 export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
   'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
 
-async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
+export async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
     return {};
   }
@@ -319,6 +320,20 @@ function isHookGroup(group: unknown): group is HookGroup {
 
 function isCodemieCommand(h: unknown): boolean {
   return isHookEntry(h) && h.command.includes(CODEMIE_COMMAND_MARKER);
+}
+
+/**
+ * Pin codemie's own hook commands to an absolute, shell-safe `codemie` path. A bare `codemie` fails
+ * under Git Bash when only `codemie.cmd` exists (Connect installs). User hooks are left untouched.
+ * Returns true if anything changed. EPMCDME-15907.
+ */
+export async function localizeCodemieHookCommands(hooksBlock: Record<string, unknown>): Promise<boolean> {
+  const binary = await resolveCodemieBinary();
+  const entries = Object.values(hooksBlock)
+    .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+    .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
+    .filter(isCodemieCommand);
+  return rewriteHooksCommandTree(entries, binary, process.platform === 'win32');
 }
 
 /**
@@ -653,6 +668,8 @@ export async function writeClaudeCodeOtlpConfig(
   for (const eventName of HOOK_EVENTS) {
     hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
+
+  await localizeCodemieHookCommands(hooks);
 
   // --- Merge env block ---
   const mergedEnv: Record<string, string> = {

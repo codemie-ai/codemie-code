@@ -19,9 +19,10 @@ export function isOtherGeneration(record: Session | null | undefined, nativeSess
 
 /**
  * The SessionStart a generation's first written event stands in for: the generation starts where
- * the one it follows ended, and its transcript records count from there.
+ * the one it follows ended, and its transcript records count from there. The agent's home is the
+ * previous generation's: the event was not sent by the launch that knows it.
  */
-export function generationStartEvent(event: BaseHookEvent, startTime: number): SessionStartEvent {
+export function generationStartEvent(event: BaseHookEvent, startTime: number, previous: Session): SessionStartEvent {
   return {
     hook_event_name: 'SessionStart',
     source: 'late-start',
@@ -30,6 +31,7 @@ export function generationStartEvent(event: BaseHookEvent, startTime: number): S
     permission_mode: event.permission_mode,
     ...(event.cwd && { cwd: event.cwd }),
     startTime,
+    ...(previous.agentHome && { agent_home: previous.agentHome }),
   };
 }
 
@@ -62,7 +64,7 @@ export async function ensureOwnGeneration(
   const { createSessionRecordOverUnclosed } = await import('../hook.js');
   // ponytail: the exact start is the SessionStart that could not write; the previous generation's end is its lower bound
   const startTime = record.endTime ?? (await lastRecordedActivityAt(record));
-  await createSessionRecordOverUnclosed(generationStartEvent(event, startTime), sessionId, config, options, Date.now());
+  await createSessionRecordOverUnclosed(generationStartEvent(event, startTime, record), sessionId, config, options, Date.now());
   const current = await readLiveRecord(sessionId);
   if (current && !isOtherGeneration(current, event.session_id)) return 'created';
   logger.warn(
