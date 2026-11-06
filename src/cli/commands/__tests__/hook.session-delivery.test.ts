@@ -447,9 +447,13 @@ describe('SessionEnd with endTimeFromActivity (the synthetic end)', () => {
 
   it('a record written by the ensureSessionFile safety net ends with an endTime and loads as a session_end', async () => {
     const sessionId = newId();
-    const env = { CODEMIE_AGENT: 'claude', CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_URL: HOST, CODEMIE_REPOSITORY: 'org/repo' } as NodeJS.ProcessEnv;
+    const env = { CODEMIE_AGENT: 'claude', CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_URL: HOST, CODEMIE_REPOSITORY: 'org/repo', CODEMIE_CLIENT_TYPE: 'codemie-cli', CODEMIE_MODEL: 'claude-sonnet-4-5' } as NodeJS.ProcessEnv;
     await ensureSessionFile(sessionId, env, 'claude');
     const placeholder = readRecord(sessionId);
+    // @case cli-analytics-ensuresessionfile-fallback-writes_TC_003
+    expect(placeholder.codemieUrl).toBe(HOST);
+    expect(placeholder.clientType).toBe('codemie-cli');
+    expect(placeholder.model).toBe('claude-sonnet-4-5');
     expect(placeholder.endTime).toBeUndefined();
     expect(placeholder.status).toBe('active');
 
@@ -457,6 +461,7 @@ describe('SessionEnd with endTimeFromActivity (the synthetic end)', () => {
 
     const done = readRecord(sessionId, 'completed_');
     expect(done.status).toBe('completed');
+    expect(done).toMatchObject({ codemieUrl: HOST, clientType: 'codemie-cli', model: 'claude-sonnet-4-5' });
     expect(done.endTime).toBeTypeOf('number');
     expect(done.endTime!).toBeGreaterThanOrEqual(done.startTime);
     const [loaded] = new MetricsDataLoader(sessionsDir).loadSessions({ sessionId });
@@ -2597,7 +2602,9 @@ describe('SessionStart source=clear closes the previous generation', () => {
     });
 
     try {
-      await onFakeClock(() => processEvent(clearStart(), config(session)));
+      // Real clock: the lock frees after one 25 ms poll, so no clock needs faking. A fake clock
+      // advanced in fixed steps burns the 2 s close budget on slow file I/O and marks it dropped.
+      await processEvent(clearStart(), config(session));
     } finally {
       vi.mocked(writeFile).mockImplementation(actual.writeFile);
     }
