@@ -12,6 +12,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
+import { resolveCodemieBinary, rewriteHooksCommandTree } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -319,6 +320,20 @@ function isHookGroup(group: unknown): group is HookGroup {
 
 function isCodemieCommand(h: unknown): boolean {
   return isHookEntry(h) && h.command.includes(CODEMIE_COMMAND_MARKER);
+}
+
+/**
+ * Pin codemie's own hook commands to an absolute, shell-safe `codemie` path. A bare `codemie` fails
+ * under Git Bash when only `codemie.cmd` exists (Connect installs). User hooks are left untouched.
+ * Returns true if anything changed. EPMCDME-15907.
+ */
+export async function localizeCodemieHookCommands(hooksBlock: Record<string, unknown>): Promise<boolean> {
+  const binary = await resolveCodemieBinary();
+  const entries = Object.values(hooksBlock)
+    .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+    .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
+    .filter(isCodemieCommand);
+  return rewriteHooksCommandTree(entries, binary, process.platform === 'win32');
 }
 
 /**
@@ -653,6 +668,8 @@ export async function writeClaudeCodeOtlpConfig(
   for (const eventName of HOOK_EVENTS) {
     hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
+
+  await localizeCodemieHookCommands(hooks);
 
   // --- Merge env block ---
   const mergedEnv: Record<string, string> = {
