@@ -1522,7 +1522,8 @@ describe('nextRecordStart', () => {
     const other = join(home, 'other');
     mkdirSync(repo);
     mkdirSync(other);
-    symlinkSync(repo, join(home, 'repo-link'));
+    // 'junction' avoids the Windows symlink privilege requirement; ignored elsewhere
+    symlinkSync(repo, join(home, 'repo-link'), 'junction');
     const earlier = record({ agentName, startTime: t0, ownerPid: process.pid, workingDirectory: repo });
     save(earlier);
     save(record({ agentName, startTime: t0 + HOUR, ownerPid: process.pid, workingDirectory: join(home, 'repo-link') }));
