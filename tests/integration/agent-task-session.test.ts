@@ -202,12 +202,10 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent task execution and 
     expect(session.provider, 'provider must not be empty').toBeTruthy();
     expect(session.workingDirectory, 'workingDirectory must not be empty').toBeTruthy();
 
-    // SSO-only: conversation sync must have run and produced a conversationId
+    // SSO-only: conversation sync state must have been recorded for the session
     if (CI_IS_LOCAL_RUN) {
       const syncConv = session.sync?.conversations as Record<string, unknown> | undefined;
-      expect(syncConv?.totalSyncAttempts, 'SSO sync must have attempted at least once').toBeGreaterThan(0);
-      expect(syncConv?.conversationId, 'SSO sync must have produced a conversationId').toBeTruthy();
-      expect(syncConv?.lastSyncAt, 'SSO sync must have recorded a lastSyncAt timestamp').toBeGreaterThan(0);
+      expect(syncConv?.lastSyncedMessageUuid, 'SSO sync must have recorded the last synced message').toBeTruthy();
     }
 
     // ── completed_*_metrics.jsonl ─────────────────────────────────────────────

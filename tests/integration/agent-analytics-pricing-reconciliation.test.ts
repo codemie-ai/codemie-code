@@ -36,6 +36,9 @@ import { getCodemieTestUrl } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/** Image-generation catalog ids, intentionally outside the per-token rate card. */
+const IMAGE_GENERATION_MODEL_IDS: ReadonlySet<string> = new Set(['gemini-nano-banana-2.1']);
+
 /**
  * Fetch the live model catalog in a throwaway CHILD process, not in-process.
  *
@@ -88,8 +91,14 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-pricing-r
     const codeMieUrl = getCodemieTestUrl();
     const enabledModels = fetchLiveCatalog(codeMieUrl).filter((m) => m.enabled);
 
+    // Router aliases (sy-signal-*, *-router-*) carry no `deployment_name`: they are not billed
+    // themselves, the model they dispatch to is, and that model has its own catalog row.
+    // Image-generation models are priced per image, not per text token, so they have no row in
+    // the flat per-token rate card.
     const unresolved = enabledModels
       .map((m) => m.deployment_name)
+      .filter((deploymentName): deploymentName is string => Boolean(deploymentName))
+      .filter((deploymentName) => !IMAGE_GENERATION_MODEL_IDS.has(deploymentName))
       .filter((deploymentName) => resolvePrice(deploymentName) === null);
 
     expect(unresolved, `Unpriced catalog models: ${unresolved.join('\n')}`).toEqual([]);
