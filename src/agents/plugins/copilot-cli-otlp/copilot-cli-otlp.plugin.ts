@@ -217,20 +217,28 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     authenticationFailure = true,
     loginOutcome?: DetachedLoginOutcome
   ): Extract<CliForwardDecision, { decision: 'block' }> {
-    const logMessage = authenticationFailure
-      ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
-      : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
+    // After a sign-in that just finished the login text already says so; "invalid" and "required" would contradict it.
+    const signedInRecently = authenticationFailure && loginOutcome === 'signed-in-recently';
+    const logMessage = signedInRecently
+      ? `CodeMie SSO credentials were rejected right after a sign-in finished (${reason ?? 'unknown reason'}).`
+      : authenticationFailure
+        ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
+        : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
 
     const userMessage = authenticationFailure
       ? describeLogin(loginOutcome).replace(/\n/g, ' ')
       : 'CodeMie hit an internal error and cannot process this event — check the CodeMie logs, then resend your prompt.';
+
+    const leadIn = signedInRecently
+      ? ''
+      : `${authenticationFailure ? 'CodeMie sign-in required' : 'CodeMie internal error'}. `;
 
     const hookSpecificOutput: CliBlockOutput =
       eventName === 'preToolUse'
         ? { permissionDecision: 'deny', permissionDecisionReason: userMessage }
         : {
             modifiedTransformedPrompt:
-              `${authenticationFailure ? 'CodeMie sign-in required' : 'CodeMie internal error'}. Reply only with: "${userMessage}" Do not use any tools.`,
+              `${leadIn}Reply only with: "${userMessage}" Do not use any tools.`,
           };
 
     return { decision: 'block', reason: logMessage, hookSpecificOutput };

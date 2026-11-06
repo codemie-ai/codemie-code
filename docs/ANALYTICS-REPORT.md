@@ -50,12 +50,14 @@ Discovered sessions that CodeMie did not launch are **excluded by default**; see
 
 - **stranded session** — a session record still `active` whose owner process (the CodeMie wrapper that launched it, recorded as `ownerPid` + its start time) is gone — killed, crashed or closed with its terminal. The next CodeMie start of any agent finalizes it: a synthetic session end (`reason: interrupted`) at its last recorded activity, after a final flush of its transcript; no inactivity threshold applies.
 - **undelivered session** — a `completed` session whose end metric or pending data has not reached CodeMie yet; it keeps its live name `<id>.json` (the file name is the queue) and is renamed `completed_<id>.json` only once delivered. A later CodeMie start against the same CodeMie host delivers it through its own send path (at most 3 attempts). An attempt counts when a request reached the server or the attempt ran out of its time; one the server answered with rejected credentials (401, or an SSO login page instead of JSON) is not counted — the record waits for a re-login, and the analytics auth is marked invalid until one succeeds.
-- **dropped session** — a session that left the delivery queue (renamed `completed_*`) with its end metric unsent or some of its data undelivered: after its last delivery attempt, a finalize that keeps failing, a line past its sync-attempt cap, or a `/clear` that moved the generation aside before its delivery finished. Its record carries `droppedAt` (epoch ms). A record closed locally by design — another CodeMie host, no CodeMie host, a Claude Desktop record a CLI start closed for its daemon (`desktop-daemon-gone`), a legacy record — is never marked; a Claude Desktop record the daemon renames after its last delivery attempt is (the daemon's counted attempts follow the same rule: a send met by rejected credentials, or one with no stored cookies, is not one).
+- **dropped session** — a session that left the delivery queue (renamed `completed_*`) with its end metric unsent or some of its data undelivered: after its last delivery attempt, a finalize that keeps failing, a line past its sync-attempt cap, a `/clear` that moved the generation aside before its delivery finished, or a GitHub Copilot CLI record closed by its attempt limit with its transcript unsent. Its record carries `droppedAt` (epoch ms). A record closed locally by design — another CodeMie host, no CodeMie host, a Claude Desktop record a CLI start closed for its daemon (`desktop-daemon-gone`), a legacy record — is never marked; a Claude Desktop record the daemon renames after its last delivery attempt is (the daemon's counted attempts follow the same rule: a send met by rejected credentials, or one with no stored cookies, is not one).
 - **exit notice** — when the CodeMie wrapper exits, after its own session record is handled, it prints at most two lines to stderr (and writes them to the log); a clean exit prints nothing, and a hook never prints:
   - its own record is still `<id>.json`: `CodeMie: this session's analytics are not delivered yet; they will be sent at the next codemie start. Nothing is lost.`
   - records marked `droppedAt` since this wrapper started (its start pass, its exit, its hooks' `/clear`): ``CodeMie: analytics of <N> session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.``
 - **generation** — the part of a Claude Code session before a `/clear`: `/clear` keeps the session id, so each earlier part is kept as `completed_<id>-<gen>.json` (with its `_metrics.jsonl` / `_conversation.jsonl`), `<gen>` being that part's Claude session id; `--session <uuid>` selects the session and its generations.
 - **run window** — a record's own slice of a shared transcript: from its `startTime` up to (not including) the `startTime` of the next CodeMie record over the same transcript. A transcript record outside the window belongs to another record and produces no metric delta. The `recordId` dedupe and the run window live in the shared metrics writer, so every agent gets them: a delta whose `recordId` is already in the record's metrics file, or whose time falls outside the window, is dropped (a delta with no usable time is kept). A hook process knows no later record, so its window has no upper bound.
+
+  For Copilot CLI, a resumed or continued `copilot` run's tools, lines, tokens and conversation turns are counted over the same native log from this run's start up to the next CodeMie record's start (its run window); the Cost view prices the run inside that window, and **Priced sessions** counts the sessions the report keeps.
 - **legacy record** — an `active` record written before owners were recorded (no `ownerPid`): finalized locally once idle for more than 72 hours, nothing sent.
 - **Claude Desktop end reasons** — a Desktop session always ends at its last activity, never at the moment it is finalized: **`reason: desktop-inactive-timeout`** — no activity for 5 minutes; **`reason: desktop-daemon-stop`** — the CodeMie daemon stopped; **`reason: desktop-daemon-restart`** — the CodeMie daemon found it at its start, left `active` by a daemon that is gone; **`reason: desktop-daemon-gone`** — a CodeMie CLI start closed it locally because its daemon was gone (left `<id>.json` for the daemon to deliver at its next start). A record of another CodeMie host (its `codemieUrl`) is never delivered by a CodeMie daemon of another host: an active one of a gone daemon is closed locally as `desktop-daemon-gone` and left for a daemon of that host, a completed one is left as it is. A Desktop session with new activity after its end is reopened under the same record and ends again.
 
@@ -167,7 +169,7 @@ Estimated API-equivalent spend (token usage × model pricing). If you use Claude
 Key elements:
 
 - **Coverage banner** — tells you how many sessions were successfully priced and which agents have full, partial, or missing token data
-- **Coverage by agent table** — per-agent breakdown of total sessions, priced sessions, sessions with a native log, and coverage status
+- **Coverage by agent table** — per-agent breakdown of total sessions, priced sessions, sessions with a native log, and coverage status. A Copilot CLI run shares its native log with the runs that resumed it.
 - **Cost by agent** — doughnut chart
 - **Cost by model** — horizontal bar chart of USD spend per model
 - **Most expensive sessions** — top 10 ranked by cost, with per-session token breakdown (input, output, cached)
@@ -312,7 +314,7 @@ Finding a native log is not the same as counting it. Every discovered session is
 
 | Provenance | Meaning | In the report by default? |
 |---|---|---|
-| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its transcript carries a `codemie_session_start` ownership marker. | ✅ Yes |
+| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its ownership marker — a sidecar in `~/.codemie/sessions`, one per session and transcript — says so; transcripts written by earlier versions carry a `codemie_session_start` line instead. | ✅ Yes |
 | `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
 | `native-unmanaged` | Reserved for agents CodeMie can only ever read analytics for and never launches. No agent currently carries this tag. | ✅ Yes |
 
@@ -362,8 +364,8 @@ Export flags:
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
-  --from <YYYY-MM-DD>       Start date (inclusive)
-  --to   <YYYY-MM-DD>       End date (inclusive)
+  --from <YYYY-MM-DD>       Start date (inclusive, UTC calendar day)
+  --to   <YYYY-MM-DD>       End date (inclusive: the whole UTC day, through 23:59:59.999Z)
   --project <pattern>       Filter by project name (basename, partial, or full path)
   --agent <name>            Filter by agent: claude, gemini, codex, etc.
   --branch <name>           Filter by git branch
@@ -381,7 +383,7 @@ The report-generation flags shown above are the complete set. Any other flag nam
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external` and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 
-**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
+**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>` (both over the sessions the report keeps, so an empty session it drops is counted in neither), and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
 
 The date filters control which sessions are **embedded** in the report; the client-side range presets (Today / 7d / 30d / 90d) then let the report viewer narrow further within that data.
 

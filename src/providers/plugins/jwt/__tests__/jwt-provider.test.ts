@@ -28,7 +28,7 @@ vi.mock('inquirer', () => ({ default: { prompt: promptMock } }));
 
 import { JWTModelProxy } from '../jwt.models.js';
 import { JWTTemplate } from '../jwt.template.js';
-import { JWTBearerSetupSteps } from '../jwt.setup-steps.js';
+import { JWTBearerSetupSteps, selectJwtProfileProject } from '../jwt.setup-steps.js';
 import {
   resolveJwtToken,
   resolveJwtTokenEnvVar,
@@ -225,10 +225,21 @@ describe('JWTTemplate.exportEnvVars', () => {
 // jwt.setup-steps.ts
 // ---------------------------------------------------------------------------
 describe('JWTBearerSetupSteps.getCredentials', () => {
+  const savedToken = process.env.CODEMIE_JWT_TOKEN;
+  beforeEach(() => {
+    delete process.env.CODEMIE_JWT_TOKEN;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    if (savedToken === undefined) delete process.env.CODEMIE_JWT_TOKEN;
+    else process.env.CODEMIE_JWT_TOKEN = savedToken;
+  });
+
   it('gathers the base URL and defaults to the standard token env var', async () => {
     promptMock
       .mockResolvedValueOnce({ baseUrl: 'https://my.codemie.com' })
-      .mockResolvedValueOnce({ customEnvVar: false });
+      .mockResolvedValueOnce({ customEnvVar: false })
+      .mockResolvedValueOnce({ source: 'skip' });
 
     const creds = await JWTBearerSetupSteps.getCredentials();
 
@@ -245,7 +256,8 @@ describe('JWTBearerSetupSteps.getCredentials', () => {
     promptMock
       .mockResolvedValueOnce({ baseUrl: 'https://x.com/' })
       .mockResolvedValueOnce({ customEnvVar: true })
-      .mockResolvedValueOnce({ envVar: 'MY_CUSTOM_TOKEN' });
+      .mockResolvedValueOnce({ envVar: 'MY_CUSTOM_TOKEN' })
+      .mockResolvedValueOnce({ source: 'skip' });
 
     const creds = await JWTBearerSetupSteps.getCredentials();
 
@@ -253,7 +265,57 @@ describe('JWTBearerSetupSteps.getCredentials', () => {
     expect(jwtConfig.tokenEnvVar).toBe('MY_CUSTOM_TOKEN');
     // Trailing slash is stripped when the suffix is appended.
     expect(creds.baseUrl).toBe('https://x.com/code-assistant-api');
-    expect(promptMock).toHaveBeenCalledTimes(3);
+    expect(promptMock).toHaveBeenCalledTimes(4);
+    expect(creds.additionalConfig?.codeMieProject).toBeUndefined();
+  });
+});
+
+describe('selectJwtProfileProject (EPMCDME-15411, AC11)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('lists projects with the token from the chosen env var against the URL typed in this run', async () => {
+    const prompt = vi.fn().mockResolvedValueOnce({ useEnv: true });
+    const select = vi.fn(async () => ({ project: 'p1', userEmail: 'u' }));
+    const project = await selectJwtProfileProject('https://a.example.com/code-assistant-api', 'MY_TOKEN', {
+      prompt: prompt as never, select: select as never, env: { MY_TOKEN: ' tok ' },
+    });
+    expect(project).toBe('p1');
+    expect(select).toHaveBeenCalledWith({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
+  });
+
+  it('a pasted token is used once and not returned or stored', async () => {
+    const prompt = vi.fn()
+      .mockResolvedValueOnce({ source: 'paste' })
+      .mockResolvedValueOnce({ pasted: 'pasted-token' });
+    const select = vi.fn(async () => ({ project: 'p2', userEmail: 'u' }));
+    const project = await selectJwtProfileProject('https://a.example.com/code-assistant-api', 'CODEMIE_JWT_TOKEN', {
+      prompt: prompt as never, select: select as never, env: {},
+    });
+    expect(project).toBe('p2');
+    expect(prompt.mock.calls[1][0][0]).toMatchObject({ type: 'password' });
+  });
+
+  it('skip or a failed list saves no project', async () => {
+    const skip = await selectJwtProfileProject('https://a', 'T', {
+      prompt: vi.fn().mockResolvedValueOnce({ source: 'skip' }) as never, select: vi.fn() as never, env: {},
+    });
+    expect(skip).toBeUndefined();
+    const failed = await selectJwtProfileProject('https://a', 'T', {
+      prompt: vi.fn().mockResolvedValueOnce({ useEnv: true }) as never,
+      select: vi.fn(async () => { throw new Error('401'); }) as never,
+      env: { T: 'tok' },
+    });
+    expect(failed).toBeUndefined();
+  });
+
+  it('buildConfig carries the picked project', () => {
+    const config = JWTBearerSetupSteps.buildConfig(
+      { baseUrl: 'https://a/code-assistant-api', additionalConfig: { codeMieUrl: 'https://a', codeMieProject: 'p1', jwtConfig: {} } },
+      'm'
+    );
+    expect(config.codeMieProject).toBe('p1');
   });
 });
 

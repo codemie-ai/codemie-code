@@ -7,6 +7,7 @@ import { resolveEmailFromCredentials } from '../identity-resolver.js';
 import { loadHookConfig, resolveSessionProject } from '../event-fields/identity-fields.js';
 import { apiIdentity, ownerHash } from './api-identity.js';
 import { launchMode, type RoutingResult } from './routing.js';
+import { parseProjectBinding, PROJECT_BINDING_ENV, type ProjectBindingState } from '@/utils/project-binding.js';
 import { createOrRead, readRecord, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
 import type { PendingFields } from './owner-pending.js';
 import { credentialFingerprint } from '@/providers/core/credential-owner.js';
@@ -49,6 +50,7 @@ async function hookTimeFields(
     repo_key: rawOrigin ? repoKeyFromRemote(rawOrigin) : undefined,
     api_identity: api,
     profile: hookConfig?.config.name,
+    projectBinding: projectBindingFor(project),
   };
 }
 
@@ -79,14 +81,23 @@ async function projectSource(
 ): Promise<EvidenceFields['project_source']> {
   if (!project || !hookConfig || hookConfig.config.codeMieProject !== project) return 'none';
   try {
-    const isLocalProfile = await ConfigLoader.isLocalProfile(configDir, hookConfig.config.name);
-    const native = launchMode(process.env) === 'native';
-    const origin = await ConfigLoader.resolveProjectOrigin(configDir, isLocalProfile, native);
-    // A managed launch's project may sit on the selected profile record itself, outside any workspace.
-    return origin === 'none' && !native ? 'profile' : origin;
+    const { projectOrigin: origin } = await ConfigLoader.resolveProfileIdentity(configDir, hookConfig.config.name);
+    // The project may sit on the selected profile record itself, outside any workspace.
+    return origin === 'none' ? 'profile' : origin;
   } catch {
     return 'none';
   }
+}
+
+/**
+ * The launcher's binding state, only when it was computed for the project being stamped
+ * (the launcher's own CODEMIE_PROJECT); otherwise omitted.
+ */
+function projectBindingFor(project: string | undefined): ProjectBindingState | undefined {
+  const binding = parseProjectBinding(process.env[PROJECT_BINDING_ENV]);
+  if (!binding) return undefined;
+  const launched = process.env['CODEMIE_PROJECT']?.trim() || undefined;
+  return launched === project ? binding : undefined;
 }
 
 /**

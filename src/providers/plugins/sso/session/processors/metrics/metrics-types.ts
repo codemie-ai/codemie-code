@@ -4,6 +4,8 @@
  * Type definitions for metrics sync API integration
  */
 
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
 /**
  * Base identity fields shared by all metric types
  */
@@ -163,4 +165,5 @@ export interface MetricsApiConfig {
   deadlineMs?: number;
   /** Aborts the request in flight and the backoff at once; stopping throws SyncStoppedError('aborted'). */
   abortSignal?: AbortSignal;
+  credentialsSuperseded?: CredentialsSupersededCheck; // True when a newer sign-in replaced the cookies that were sent
 }

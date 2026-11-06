@@ -6,10 +6,10 @@
  * boundary and is stubbed, the file renames are real.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, utimesSync, symlinkSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, utimesSync, symlinkSync } from 'fs';
 import * as fsPromises from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import type { Session } from '../types.js';
 import type { BaseHookEvent } from '../../types.js';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
@@ -48,7 +48,8 @@ const {
   LEGACY_IDLE_MS,
   ABANDON_WAIT_MS,
 } = await import('../stale-session-reconciliation.js');
-const { nextRecordStart } = await import('../next-record-start.js');
+const { nextRecordStart, nextRecordStarts } = await import('../next-record-start.js');
+const { noticeDeliveryAtExit } = await import('../exit-notice.js');
 const { processEvent } = await import('@/cli/commands/hook.js');
 
 const HOUR = 60 * 60 * 1000;
@@ -381,6 +382,188 @@ describe('reconcileOtherSessions', () => {
 
     expect(existsSync(join(sessionsDir, `${stranded.sessionId}.json`))).toBe(false);
     expect(load(stranded.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: start + 300_000 });
+  });
+
+  it('a killed copilot-cli run with no transcript ends uncorrelated: completed, failed correlation under its CodeMie id', async () => {
+    const resumed = 'abababab-abab-4bab-8bab-abababababab';
+    const killed = record({ agentName: 'copilot-cli', correlation: { status: 'matched', retryCount: 0, agentSessionId: resumed } });
+    save(killed);
+    const previousCopilotHome = process.env.COPILOT_HOME;
+    process.env.COPILOT_HOME = join(home, 'copilot');
+    const hook = { processEvent: vi.fn(processEvent) };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousCopilotHome === undefined) delete process.env.COPILOT_HOME;
+      else process.env.COPILOT_HOME = previousCopilotHome;
+    }
+
+    const ended = load(killed.sessionId, 'completed_');
+    expect(ended).toMatchObject({ status: 'completed', correlation: { status: 'failed', agentSessionId: killed.sessionId } });
+    expect(ended.correlation.agentSessionFile).toBeUndefined();
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: killed.sessionId, transcript_path: '' });
+  });
+
+  it('an exhausted copilot-cli record whose named transcript exists keeps its correlation and ends under the native id', async () => {
+    const native = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    const transcript = join(home, 'events.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const exhausted = record({
+      agentName: 'copilot-cli', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript },
+    });
+    save(exhausted);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(exhausted.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript });
+    expect(load(exhausted.sessionId).droppedAt).toBeTypeOf('number');
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+  });
+
+  it.each([
+    ['another host, past its attempts', { finalizeAttempts: 3, codemieUrl: 'https://other.example.com' }],
+    ['a regular attempt', { finalizeAttempts: 2 }],
+  ])('a copilot-cli record whose transcript exists is not marked dropped on %s', async (_case, overrides) => {
+    const transcript = join(home, 'events.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const unmarked = record({
+      agentName: 'copilot-cli',
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: transcript },
+      ...overrides,
+    });
+    save(unmarked);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent).toHaveBeenCalledTimes(1);
+    expect(load(unmarked.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it.each([
+    ['its end metric unsent', {}],
+    ['its end metric sent', { endMetricSentAt: 1 }],
+  ])('an exhausted copilot-cli record whose close throws, %s, is counted once as dropped', async (_case, overrides) => {
+    const transcript = join(home, 'events.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const failing = record({
+      agentName: 'copilot-cli', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: transcript },
+      ...overrides,
+    });
+    save(failing);
+    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const startedAt = Date.now();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    await noticeDeliveryAtExit('own', startedAt, true);
+
+    expect(load(failing.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    stderr.mockRestore();
+  });
+
+  it('a stranded record of another agent ends interrupted whatever reason it holds', async () => {
+    save(record({ reason: 'exit' }));
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ reason: 'interrupted' });
+  });
+
+  it('an exhausted copilot-cli record whose named transcript is gone ends uncorrelated under its CodeMie id', async () => {
+    const exhausted = record({
+      agentName: 'copilot-cli', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: join(home, 'gone.jsonl') },
+    });
+    save(exhausted);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(exhausted.sessionId).correlation).toMatchObject({ status: 'failed', agentSessionId: exhausted.sessionId });
+    expect(load(exhausted.sessionId).droppedAt).toBeUndefined();
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: exhausted.sessionId, transcript_path: '' });
+  });
+
+  it('an exhausted record of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
+    const exhausted = record({
+      agentName: 'pi', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-pi' },
+    });
+    save(exhausted);
+    const transcript = join(home, 'pi-session.jsonl');
+    writeFileSync(transcript, '{}\n');
+    writeFileSync(join(sessionsDir, `${exhausted.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: transcript })}\n`);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(exhausted.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: 'native-pi' });
+    expect(load(exhausted.sessionId).droppedAt).toBeUndefined();
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-pi', transcript_path: '' });
+  });
+
+  describe('an exhausted resumed copilot-cli record naming no transcript', () => {
+    const resumed = 'efefefef-efef-4fef-8fef-efefefefefef';
+    const exhaustedRecord = () => record({
+      agentName: 'copilot-cli', finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: resumed },
+    });
+    const finalize = async () => {
+      const previousCopilotHome = process.env.COPILOT_HOME;
+      process.env.COPILOT_HOME = join(home, 'copilot');
+      const hook = { processEvent: vi.fn(processEvent) };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      try {
+        await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+        const sent = fetchSpy.mock.calls.map(([url, init]) => ({ url: String(url), body: String(init?.body ?? '') }));
+        return { event: hook.processEvent.mock.calls[0][0], sent };
+      } finally {
+        fetchSpy.mockRestore();
+        if (previousCopilotHome === undefined) delete process.env.COPILOT_HOME;
+        else process.env.COPILOT_HOME = previousCopilotHome;
+      }
+    };
+
+    it('stores the transcript it locates, ends under the resumed id, sends nothing of the transcript', async () => {
+      const killed = exhaustedRecord();
+      save(killed);
+      const transcript = join(home, 'copilot', 'session-state', resumed, 'events.jsonl');
+      mkdirSync(join(home, 'copilot', 'session-state', resumed), { recursive: true });
+      const at = new Date(killed.startTime + 1000).toISOString();
+      writeFileSync(transcript, `${JSON.stringify({ type: 'user.message', timestamp: at, data: { text: 'TRANSCRIPT_BODY' } })}\n${JSON.stringify({ type: 'assistant.message', timestamp: at, data: { model: 'gpt-5.5', outputTokens: 5 } })}\n`);
+
+      const { event, sent } = await finalize();
+
+      // The record may send its end metric; nothing of the transcript: no conversation, no metric delta
+      expect(sent.map(({ url, body }) => [url, JSON.parse(body).name])).toEqual([['http://127.0.0.1:4000/v1/metrics', 'codemie_cli_session_total']]);
+      expect(sent[0].body).not.toContain('TRANSCRIPT_BODY');
+      expect(load(killed.sessionId, 'completed_').correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: resumed, agentSessionFile: transcript });
+      expect(event).toMatchObject({ session_id: resumed, transcript_path: '' });
+      expect(event).not.toHaveProperty('transcript_paths');
+      expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
+    });
+
+    it('with no events.jsonl ends uncorrelated under its CodeMie id', async () => {
+      const killed = exhaustedRecord();
+      save(killed);
+
+      const { event } = await finalize();
+
+      const ended = load(killed.sessionId, 'completed_');
+      expect(ended.correlation).toMatchObject({ status: 'failed', agentSessionId: killed.sessionId });
+      expect(ended.correlation.agentSessionFile).toBeUndefined();
+      expect(event).toMatchObject({ session_id: killed.sessionId, transcript_path: '' });
+    });
   });
 
   it('skips a record whose reconcile lock another live process holds', async () => {
@@ -868,6 +1051,243 @@ describe('a failed flush through the real hook pipeline', () => {
   });
 });
 
+describe('a copilot-cli record whose transcript lookup could not conclude', () => {
+  const canDeny = process.platform !== 'win32' && process.getuid?.() !== 0;
+  const native = 'abababab-abab-4bab-8bab-abababababab';
+  const correlation = { status: 'matched' as const, retryCount: 0, agentSessionId: native };
+
+  /** A record whose search cannot list its Copilot home's session-state. */
+  function unlistableRoot(): { record: Partial<Session>; deny: () => void; allow: () => void } {
+    const root = join(home, 'copilot', 'session-state');
+    mkdirSync(root, { recursive: true });
+    return {
+      record: { agentName: 'copilot-cli', agentHome: join(home, 'copilot'), correlation },
+      deny: () => chmodSync(root, 0o300),
+      allow: () => chmodSync(root, 0o755),
+    };
+  }
+
+  async function startPass(hook: Partial<{ processEvent: typeof processEvent }>): Promise<string[]> {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+      return fetchSpy.mock.calls.map(([, init]) => String(init?.body ?? ''));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }
+
+  it.skipIf(!canDeny)('a regular attempt leaves it active, correlation untouched, counter spent, nothing sent; the next candidate still runs', async () => {
+    const { record: copilot, deny, allow } = unlistableRoot();
+    const stuck = record(copilot);
+    const next = record({ startTime: stuck.startTime - HOUR });
+    save(stuck);
+    save(next);
+    const hook = pipeline();
+
+    deny();
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      allow();
+    }
+
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation });
+    expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
+    expect(hook.processEvent.mock.calls.map(([event]) => event.session_id)).toEqual(['native-1']);
+  });
+
+  it.skipIf(!canDeny)('repeated starts end it at the exhausted path: completed, correlation untouched under its native id, nothing of the transcript sent', async () => {
+    const { record: copilot, deny, allow } = unlistableRoot();
+    const stuck = record(copilot);
+    save(stuck);
+    const hook = { processEvent: vi.fn(processEvent) };
+    let sent: string[];
+
+    deny();
+    try {
+      for (const attempts of [1, 2, 3]) {
+        expect(await startPass(hook)).toEqual([]);
+        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: attempts, correlation });
+      }
+      expect(hook.processEvent.mock.calls).toEqual([]);
+
+      sent = await startPass(hook);
+    } finally {
+      allow();
+    }
+
+    expect(sent.map((body) => JSON.parse(body).name)).toEqual(['codemie_cli_session_total']);
+    expect(sent[0]).not.toContain(join(home, 'copilot'));
+
+    const ended = load(stuck.sessionId, 'completed_');
+    expect(ended.status).toBe('completed');
+    expect(ended.correlation).toEqual(correlation);
+    expect(ended.droppedAt).toBeTypeOf('number');
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
+  });
+
+  it.skipIf(!canDeny)('its named transcript that cannot be checked is not gone: an attempt throws, the exhausted one keeps the file named', async () => {
+    const dir = join(home, 'named');
+    mkdirSync(dir);
+    const named = { ...correlation, agentSessionFile: join(dir, 'events.jsonl') };
+    const stuck = record({ agentName: 'copilot-cli', correlation: named });
+    save(stuck);
+    const hook = pipeline();
+
+    chmodSync(dir, 0o000);
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+      expect(hook.processEvent.mock.calls).toEqual([]);
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+
+      save({ ...stuck, finalizeAttempts: 3 });
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+
+    expect(load(stuck.sessionId).correlation).toEqual(named);
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+  });
+
+  it('a stored home that is gone: a regular attempt leaves it active, correlation untouched', async () => {
+    const stuck = record({ agentName: 'copilot-cli', agentHome: join(home, 'unmounted'), correlation });
+    save(stuck);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation });
+    expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
+  });
+
+  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the exhausted one ends it, correlation untouched', async () => {
+    const agentHome = join(home, 'copilot');
+    mkdirSync(agentHome);
+    const named = { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') };
+    const stuck = record({ agentName: 'copilot-cli', agentHome, correlation: named });
+    save(stuck);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+
+    save({ ...stuck, finalizeAttempts: 3 });
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(stuck.sessionId).correlation).toEqual(named);
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+  });
+
+  it.each([[0], [3]])('its named transcript gone while the stored root exists ends uncorrelated, %i attempts spent', async (finalizeAttempts) => {
+    const agentHome = join(home, 'copilot');
+    mkdirSync(join(agentHome, 'session-state'), { recursive: true });
+    const stuck = record({
+      agentName: 'copilot-cli', agentHome, finalizeAttempts,
+      correlation: { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') },
+    });
+    save(stuck);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(load(stuck.sessionId).correlation).toEqual({ status: 'failed', retryCount: 0, agentSessionId: stuck.sessionId });
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: stuck.sessionId, transcript_path: '' });
+  });
+
+  it.skipIf(!canDeny)('its named transcript with no read permission: a regular attempt leaves it active, correlation untouched', async () => {
+    const file = join(home, 'events.jsonl');
+    writeFileSync(file, '{}\n');
+    const named = { ...correlation, agentSessionFile: file };
+    const stuck = record({ agentName: 'copilot-cli', correlation: named });
+    save(stuck);
+    const hook = pipeline();
+
+    chmodSync(file, 0o000);
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      chmodSync(file, 0o644);
+    }
+
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+  });
+
+  it.skipIf(!canDeny)('an exhausted record of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
+    const { record: copilot, deny, allow } = unlistableRoot();
+    const unknown = { ...correlation, agentSessionId: 'unknown' };
+    const stuck = record({ ...copilot, finalizeAttempts: 3, correlation: unknown });
+    save(stuck);
+    const hook = pipeline();
+
+    deny();
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      allow();
+    }
+
+    expect(load(stuck.sessionId).correlation).toEqual(unknown);
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: stuck.sessionId, transcript_path: '' });
+  });
+
+  it.skipIf(!canDeny)('finalizeOwnRecord throws to the wrapper step with the record active, correlation untouched, its lock released', async () => {
+    const { record: copilot, deny, allow } = unlistableRoot();
+    const own = record({ ...copilot, ownerPid: process.pid, ownerStartedAt: processStartedAt() });
+    save(own);
+    const hook = pipeline();
+
+    deny();
+    try {
+      await expect(finalizeOwnRecord(own.sessionId, { env: launchEnv, deadlineMs: Date.now() + 10_000, pipeline: hook })).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      allow();
+    }
+
+    expect(load(own.sessionId)).toMatchObject({ status: 'active', correlation });
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(existsSync(join(sessionsDir, `${own.sessionId}.reconcile.lock`))).toBe(false);
+  });
+
+  it('another agent whose adapter\'s lookup throws: a caught error is an empty result, no correlation rewrite', async () => {
+    const { CodexSessionAdapter } = await import('../../../plugins/codex/codex.session.js');
+    const spy = vi.spyOn(CodexSessionAdapter.prototype, 'locateTranscript').mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    const other = record({ agentName: 'codex', correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-codex' } });
+    save(other);
+    const hook = pipeline();
+
+    try {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(load(other.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: 'native-codex' });
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-codex', transcript_path: '' });
+  });
+
+  it('the plugin\'s SessionStart stores the run\'s home on the record', async () => {
+    const { CopilotCliPluginMetadata } = await import('../../../plugins/copilot-cli/copilot-cli.plugin.js');
+    const id = uuid();
+    const cwd = process.cwd();
+    process.chdir(home);
+    try {
+      await CopilotCliPluginMetadata.lifecycle!.onSessionStart!(id, { CODEMIE_PROVIDER: 'ai-run-sso', COPILOT_HOME: '/run/copilot-home' });
+    } finally {
+      process.chdir(cwd);
+    }
+
+    expect(load(id).agentHome).toBe(resolve(home, '/run/copilot-home'));
+  });
+});
+
 describe('finalizeOwnRecord', () => {
   it('ends an own record still active through the synthetic end', async () => {
     const own = record({ ownerPid: process.pid, ownerStartedAt: processStartedAt() });
@@ -878,6 +1298,22 @@ describe('finalizeOwnRecord', () => {
 
     expect(hook.processEvent).toHaveBeenCalledTimes(1);
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ endTimeFromActivity: true, session_id: 'native-1' });
+  });
+
+  it('ends an own copilot-cli record with no transcript under its CodeMie id, its correlation failed', async () => {
+    const own = record({
+      agentName: 'copilot-cli', ownerPid: process.pid, ownerStartedAt: processStartedAt(),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'abababab-abab-4bab-8bab-abababababab', agentSessionFile: join(home, 'gone.jsonl') },
+    });
+    save(own);
+    const hook = pipeline();
+
+    await finalizeOwnRecord(own.sessionId, { env: launchEnv, deadlineMs: Date.now() + 10_000, pipeline: hook });
+
+    const saved = load(own.sessionId);
+    expect(saved.correlation).toMatchObject({ status: 'failed', agentSessionId: own.sessionId });
+    expect(saved.correlation.agentSessionFile).toBeUndefined();
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: own.sessionId, transcript_path: '' });
   });
 
   it('delivers an own completed but undelivered record and counts the attempt', async () => {
@@ -1014,6 +1450,27 @@ describe('nextRecordStart', () => {
     expect(vi.mocked(fsPromises.readFile).mock.calls.map(([p]) => String(p))).not.toContain(marker);
   });
 
+  it('a batch gives each record the later start over its own transcript; a record with no later sibling gets none', async () => {
+    const t0 = Date.now() - 3 * HOUR;
+    const minute = 60 * 1000;
+    const a = claudeRecord(t0, '/transcripts/batch-a.jsonl');
+    const b = claudeRecord(t0 + 30 * minute, '/transcripts/batch-b.jsonl');
+    const alone = claudeRecord(t0 + 5 * minute, '/transcripts/batch-c.jsonl');
+    [
+      a, b, alone,
+      claudeRecord(t0 + 60 * minute, '/transcripts/batch-a.jsonl'),
+      // An earlier record over b's transcript: it bounds nothing of b's
+      claudeRecord(t0 + 15 * minute, '/transcripts/batch-b.jsonl'),
+      claudeRecord(t0 + 90 * minute, '/transcripts/batch-b.jsonl'),
+    ].forEach((r) => save(r));
+
+    const bounds = await nextRecordStarts([a, b, alone]);
+
+    expect(bounds.get(a.sessionId)).toBe(t0 + 60 * minute);
+    expect(bounds.get(b.sessionId)).toBe(t0 + 90 * minute);
+    expect(bounds.get(alone.sessionId)).toBeUndefined();
+  });
+
   it('parses a file again only when its mtime changed', async () => {
     const t0 = Date.now() - 3 * HOUR;
     const earlier = claudeRecord(t0, '/transcripts/d.jsonl');
@@ -1045,6 +1502,18 @@ describe('nextRecordStart', () => {
 
     expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
     expect(await nextRecordStart(unknown)).toBeUndefined();
+  });
+
+  it('bounds a copilot-cli run by a later run that continued its native session under its own id', async () => {
+    const t0 = Date.now() - 3 * HOUR;
+    const file = '/home/u/.copilot/session-state/copilot-native-a/events.jsonl';
+    const copilot = (startTime: number, agentSessionId: string) =>
+      record({ agentName: 'copilot-cli', startTime, ownerPid: process.pid, correlation: { status: 'matched', retryCount: 0, agentSessionId, agentSessionFile: file } });
+    const a = copilot(t0, 'copilot-native-a');
+    save(a);
+    save(copilot(t0 + HOUR, 'codemie-run-c'));
+
+    expect(await nextRecordStart(a)).toBe(t0 + HOUR);
   });
 
   it.each(['opencode', 'codemie-code'])('bounds a %s record by the later one in the same directory reached through a symlink', async (agentName) => {

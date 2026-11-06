@@ -11,19 +11,22 @@
 import { mkdir } from 'fs/promises';
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 
-import { dirname } from 'path';
+import { basename, dirname } from 'path';
 import type {
   SessionProcessor,
   ProcessingContext,
   ProcessingResult,
 } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import type { RunWindow } from '../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
+import { persistedHistoryIndexOf } from '../../../../core/session/conversation-checkpoint.js';
 import { CODEMIE_ASSISTANT_ID, CONVERSATION_PROCESSOR_NAME } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '../../../../../utils/logger.js';
+import { FULL_SESSION_UUID } from '../../copilot-cli.constants.js';
 
 interface CopilotTurnRecord {
   role?: 'user' | 'assistant';
@@ -283,6 +286,40 @@ function buildTurns(messages: unknown[]): CopilotConversationTurn[] {
   return turns;
 }
 
+/**
+ * The run's own turns and the history index of the last turn before its window (the prior runs'
+ * checkpoint), so `history_index` stays numbered over the full transcript. An untimed turn lies only
+ * in the whole-session window.
+ */
+function selectRunTurns(
+  turns: CopilotConversationTurn[],
+  window: RunWindow | undefined
+): { turns: CopilotConversationTurn[]; priorHistoryIndex: number } {
+  if (!window || (window.startTime === -Infinity && window.upperBound === undefined)) {
+    return { turns, priorHistoryIndex: -1 };
+  }
+  const own: CopilotConversationTurn[] = [];
+  let priorHistoryIndex = -1;
+  for (const turn of turns) {
+    const time = parseTimestampMs(turn.user?.timestamp);
+    if (time === undefined) continue;
+    if (time < window.startTime) priorHistoryIndex = Math.max(priorHistoryIndex, turn.historyIndex);
+    else if (window.upperBound === undefined || time < window.upperBound) own.push(turn);
+  }
+  return { turns: own, priorHistoryIndex };
+}
+
+/**
+ * The native session of a `session-state/<uuid>/events.jsonl` transcript, lower-cased as copilot names
+ * the directory: a `--continue` run's transcript belongs to the session it continued, not to the run.
+ */
+function transcriptSessionId(transcriptPath: string | undefined): string | undefined {
+  if (!transcriptPath || basename(transcriptPath) !== 'events.jsonl') return undefined;
+  const dir = dirname(transcriptPath);
+  if (basename(dirname(dir)) !== 'session-state' || !FULL_SESSION_UUID.test(basename(dir))) return undefined;
+  return basename(dir).toLowerCase();
+}
+
 export class CopilotCliConversationsProcessor implements SessionProcessor {
   readonly name = 'copilot-cli-conversations';
   readonly priority = 2;
@@ -293,7 +330,7 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
   }
 
   async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
-    const conversationId = context.agentSessionId?.trim();
+    const conversationId = transcriptSessionId(context.agentSessionFile) ?? context.agentSessionId?.trim();
     if (!conversationId) {
       logger.warn(`[${this.name}] Missing agentSessionId for session ${session.sessionId}; skipping conversation sync`);
       return {
@@ -303,7 +340,7 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
       };
     }
 
-    const turns = buildTurns(session.messages);
+    const { turns, priorHistoryIndex } = selectRunTurns(buildTurns(session.messages), session.runWindow);
     if (turns.length === 0) {
       return {
         success: true,
@@ -321,7 +358,7 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
     const sessionStore = new SessionStore();
     const sessionMetadata = await sessionStore.loadSession(session.sessionId);
 
-    let lastHistoryIndex = sessionMetadata?.sync?.conversations?.lastSyncedHistoryIndex ?? -1;
+    let lastHistoryIndex = Math.max(persistedHistoryIndexOf(sessionMetadata?.sync?.conversations, conversationId), priorHistoryIndex);
     for (const payload of existingPayloads) {
       if (payload.payload.conversationId !== conversationId) continue;
       for (const idx of payload.historyIndices) {

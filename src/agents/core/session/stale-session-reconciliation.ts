@@ -205,8 +205,8 @@ async function hasCredentials(record: Session, env: NodeJS.ProcessEnv): Promise<
     logger.info(`[reconcile] Analytics auth for ${marker.baseUrl} marked invalid (${marker.reason}); its records wait for a re-login`);
     return false;
   }
-  const { endMetricCookieHeader } = await import('@/cli/commands/hook/end-metric.js');
-  return (await endMetricCookieHeader(env.CODEMIE_URL ?? '', recordHookConfig(record, env, { deliver: true }))) !== undefined;
+  const { endMetricCookieAuth } = await import('@/cli/commands/hook/end-metric.js');
+  return (await endMetricCookieAuth(env.CODEMIE_URL ?? '', await recordHookConfig(record, env, { deliver: true }))) !== undefined;
 }
 
 /** This launch's env, and its credential answer looked up once per provider for the pass that holds it. */
@@ -388,6 +388,18 @@ async function closeWithoutAttempt(record: Session, options: AttemptOptions): Pr
 }
 
 /**
+ * Marks a copilot-cli record closing past its attempts with its transcript unsent: its lookup could not
+ * conclude, or a transcript is there and this close does not flush it. No pending data shows this, since the
+ * failed passes wrote none. A record left uncorrelated had no transcript to lose.
+ */
+async function markTranscriptUnsent(sessionId: string): Promise<void> {
+  const record = await readLiveRecord(sessionId);
+  if (!record || record.correlation?.status === 'failed') return;
+  await new SessionStore().saveSession({ ...record, droppedAt: Date.now() });
+  logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent; marked dropped`);
+}
+
+/**
  * The synthetic end of a stranded / legacy record, delivered when this launch can. True when a
  * finalize past its attempts failed and the record was closed locally instead.
  */
@@ -400,8 +412,9 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
   }
   logger.info(`[reconcile] ${id}: ${kind} ${record.agentName} record; finalizing${deliver ? ' and delivering' : ' locally'}`);
   const event = await syntheticSessionEnd(record, { flush: !exhausted });
+  if (exhausted && deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id);
   try {
-    await pipeline.processEvent(event, recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
+    await pipeline.processEvent(event, await recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
     if (!exhausted) throw error;
     await closeExhaustedLocally(id, error, options, deliver);
@@ -439,7 +452,7 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
           }
         } else {
           logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
-          await pipeline.deliverSession(id, recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
+          await pipeline.deliverSession(id, await recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
         }
       } else {
         closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
@@ -585,7 +598,7 @@ export async function finalizeOwnRecord(sessionId: string, ctx: OwnRecordContext
     if (record.status === 'active') {
       logger.info(`[reconcile] Own record ${sessionId} still active at exit; finalizing it`);
       const event = await syntheticSessionEnd(record, { flush: true });
-      await pipeline.processEvent(event, recordHookConfig(record, ctx.env, { deliver: true, deadlineMs: ctx.deadlineMs }));
+      await pipeline.processEvent(event, await recordHookConfig(record, ctx.env, { deliver: true, deadlineMs: ctx.deadlineMs }));
     } else if (record.status === 'completed' && hasSendPath(ctx.env) && (await launch.hasCredentials(record))) {
       await attemptRecord(record, {
         kind: 'undelivered',

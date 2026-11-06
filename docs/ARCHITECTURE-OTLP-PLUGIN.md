@@ -51,6 +51,14 @@ codemie hook --agent <adapter-name>        (src/cli/commands/hook.ts)
         ▼
 OtlpAgentAdapter.processOtlpEvent(rawEvent, deps)   (base class, fixed flow)
         │ parseHookInput → isTracked → ensureOtlpProxy
+        │   (no running daemon: restarts it from ~/.codemie/proxy-connection.json,
+        │    not from the cwd profile; with no record it falls back to the cwd
+        │    profile and the start creates the record;
+        │    clientType/telemetryMode come from the record; an absent value is
+        │    left unset, not guessed; project comes from the loaded config;
+        │    missing SSO credentials only warn: the daemon starts, holds the port
+        │    and answers 401 until login; a live daemon is adopted and Claude
+        │    Code's OTLP endpoint is re-pointed at it)
         ▼
 evaluate(input) → ForwardDecision          (§3: shape every adapter follows)
         │
@@ -261,7 +269,9 @@ Applies to adapters whose `extractHookContext` returns `OtlpHookContext.evidence
 - **Atomic publication.** Temp file, then `fs.link` to the final name; the loser of a race reads the winner back. Mode 0600.
 - **Never repaired.** The first hook writes the record and it is then frozen. A mismatched key, other schema, corrupt file or oversized field yields `stamp_invalid`; the hook never rewrites it. Later hooks only read it and `touch` `last_used` at most once per day. A resumed session with a changed project, organization or routing still sends the original evidence.
 - **Envelope marker.** Stamped hook lines carry `evidence_v: 1` on the spool line (`OtlpHookSpoolData`), never in event bodies. The marker is sticky once a pending line has it; a marked line without a valid record is `stamp_invalid` under every capability.
-- **Source rules.** Organization comes from the key `oauthAccount.organizationName` in Claude's `.claude.json` (the value is never logged), and only when that login is what the session pays with (`oauthAccountPays`: no cloud-provider flag, API key, auth token, OAuth token or `apiKeyHelper` in the effective env, first-party endpoint); otherwise none, so the session is Unknown unless CodeMie routing is proven. A managed hook resolves config for the launcher-exported `CODEMIE_PROFILE_NAME`, not the active profile. `project_source` is `linked_folder` for a genuine `.codemie` link, `profile` for a managed launch's profile project, and `none` for a native session whose project comes only from the global scope (the backend then routes by registered repository, then default). Project is resolved once at stamping (env, pin, config) and frozen; an empty project sends no `X-CodeMie-Project` header. `repo_key` is the credential-free `host[:port]/path` form (`repoKeyFromRemote`), mirroring the backend normalization. Untracked projects stamp and spool nothing.
+- **Source rules.** Organization comes from the key `oauthAccount.organizationName` in Claude's `.claude.json` (the value is never logged), and only when that login is what the session pays with (`oauthAccountPays`: no cloud-provider flag, API key, auth token, OAuth token or `apiKeyHelper` in the effective env, first-party endpoint); otherwise none, so the session is Unknown unless CodeMie routing is proven. A managed hook resolves config for the launcher-exported `CODEMIE_PROFILE_NAME`, not the active profile. Managed and native select the project the same way for the same selected profile: `project_source` is `linked_folder` when the selected profile is a local one with a local `.codemie` workspace project, `profile` for the profile's own or the global workspace project (a workspace-only `.codemie` link does not replace a selected global profile's project), and `none` when no project exists (the backend then routes by registered repository, then default). `none` also remains for a project that differs from the resolved config project (an env or pinned value) and when the config or origin lookup fails; that is unchanged. A session's project is frozen at its first stamp, so only sessions started after this selection rule applies change project. Project is resolved once at stamping (env, pin, config) and frozen; an empty project sends no `X-CodeMie-Project` header. `repo_key` is the credential-free `host[:port]/path` form (`repoKeyFromRemote`), mirroring the backend normalization. Untracked projects stamp and spool nothing.
+
+- **Client source versus destination origin.** `project_source` describes the CLI's config evidence, not the backend's final routing decision. An env or pinned value matching the selected config project can retain that config's source; without a configured project, or with a different value, it stays `none`. A project stored directly on the selected profile can have source `profile` even without a workspace object. The backend resolves and stores the final `project_origin`, including `registered_repository`, `default_project`, `personal` and `legacy_project`, and exposes it through analytics responses and filters. These server decisions do not belong in the CLI evidence enum.
 
 ### 7.2 Routing proof and URL roles
 

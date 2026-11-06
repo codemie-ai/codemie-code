@@ -34,6 +34,7 @@ vi.mock('../../codemie-code-hooks/index.js', () => ({
 }));
 
 const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
+const { OpenCodeSessionAdapter } = await import('../opencode.session.js');
 
 function baseEnv(): NodeJS.ProcessEnv {
   return {
@@ -79,7 +80,6 @@ describe('OpenCode onSessionStart', () => {
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.sessionId).toBe('codemie-uuid-1');
-    expect(options.cwd).toBe(process.cwd());
     expect(options.buildContext().clientType).toBe('codemie-opencode');
   });
 
@@ -244,6 +244,20 @@ describe('OpenCode onSessionEnd', () => {
     expect(event.session_id).toBe('codemie-uuid-1');
     expect(event.reason).toBe('exit');
     expect(config.clientType).toBe('codemie-opencode');
+  });
+
+  it('carries the CodeMie id and the located transcript, so processing takes every session of the run', async () => {
+    const locate = vi.spyOn(OpenCodeSessionAdapter.prototype, 'locateSessionTranscript')
+      .mockResolvedValue({ transcript: '/data/opencode/opencode.db', sessionIds: ['ses_run'] });
+    try {
+      await OpenCodePluginMetadata.lifecycle!.onSessionEnd!(0, baseEnv());
+    } finally {
+      locate.mockRestore();
+    }
+
+    const [event] = processEvent.mock.calls[0];
+    expect(event.session_id).toBe('codemie-uuid-1');
+    expect(event.transcript_path).toBe('/data/opencode/opencode.db');
   });
 
   it('reports a non-zero exit code in the reason', async () => {

@@ -2,7 +2,7 @@
  * MetricsSyncProcessor against a local HTTP server: the aggregated payload it uploads.
  * @group unit
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { MetricsSyncProcessor } from '../metrics-sync-processor.js';
+import * as metricsApiClient from '../metrics-api-client.js';
 import { logger } from '../../../../../../../utils/logger.js';
 import type { ParsedSession } from '../../../BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../BaseProcessor.js';
@@ -59,7 +60,10 @@ describe('MetricsSyncProcessor', () => {
     try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
   });
 
-  async function syncDeltas(deltas: Array<ReturnType<typeof delta>>) {
+  async function syncDeltas(
+    deltas: Array<ReturnType<typeof delta>>,
+    contextExtras: Partial<ProcessingContext> = {}
+  ) {
     writeFileSync(join(home, 'sessions', `${SESSION_ID}.json`), JSON.stringify({
       sessionId: SESSION_ID,
       agentName: 'claude',
@@ -81,7 +85,8 @@ describe('MetricsSyncProcessor', () => {
       cookies: 'session=abc',
       clientType: 'codemie-cli',
       version: '1.0.0',
-      dryRun: false
+      dryRun: false,
+      ...contextExtras
     } as ProcessingContext;
 
     return new MetricsSyncProcessor().process(
@@ -121,5 +126,33 @@ describe('MetricsSyncProcessor', () => {
 
     expect(result.success).toBe(true);
     expect(bodies.map(body => JSON.parse(body).attributes.llm_model)).toEqual(['model-X']);
+  });
+
+  describe('credentials-superseded check', () => {
+    let senderSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      senderSpy = vi.spyOn(metricsApiClient, 'MetricsSender');
+    });
+
+    afterEach(() => {
+      senderSpy.mockRestore();
+    });
+
+    it('hands the context check to the metrics sender', async () => {
+      const credentialsSuperseded = async (): Promise<boolean> => true;
+
+      await syncDeltas([delta('a-1', 'pending', { models: ['m'] })], { credentialsSuperseded });
+
+      expect(senderSpy).toHaveBeenCalledTimes(1);
+      expect(senderSpy.mock.calls[0][0]).toMatchObject({ credentialsSuperseded });
+    });
+
+    it('leaves the sender check absent when the context has none', async () => {
+      await syncDeltas([delta('a-1', 'pending', { models: ['m'] })]);
+
+      expect(senderSpy).toHaveBeenCalledTimes(1);
+      expect((senderSpy.mock.calls[0][0] as { credentialsSuperseded?: unknown }).credentialsSuperseded).toBeUndefined();
+    });
   });
 });

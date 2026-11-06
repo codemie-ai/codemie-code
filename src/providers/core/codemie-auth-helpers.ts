@@ -37,6 +37,11 @@ export function ensureApiBase(rawUrl: string): string {
   return base;
 }
 
+/** Inverse of ensureApiBase(): the CodeMie URL a `.../code-assistant-api` API base belongs to. */
+export function codeMieUrlFromApiBase(apiBase: string): string {
+  return apiBase.replace(/\/+$/, '').replace(/\/code-assistant-api(\/.*)?$/i, '');
+}
+
 export function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
   const headers: Record<string, string> = {
@@ -117,7 +122,7 @@ function originOf(url: string): string {
   }
 }
 
-function isCodeMiePlatformProvider(provider: string | undefined): boolean {
+export function isCodeMiePlatformProvider(provider: string | undefined): boolean {
   return provider === ProviderName.AI_RUN_SSO || provider === ProviderName.BEARER_AUTH;
 }
 
@@ -271,7 +276,9 @@ export async function getStoredAnalyticsCredentials(
 
 /* eslint-disable no-redeclare */
 export interface UserInfoRequestOptions {
+  /** Request limits; the launch-time project list uses short ones. */
   timeout?: number;
+  maxRetries?: number;
   /** false: a 3xx answer fails the lookup instead of being followed (the cookies never leave the first origin). */
   followRedirects?: boolean;
   /** Unattended callers only need `email`; skip the interactive login's `applications*` shape check. */
@@ -299,6 +306,7 @@ export async function fetchCodeMieUserInfo(
 
   const client = new HTTPClient({
     timeout: options.timeout ?? 10000,
+    maxRetries: options.maxRetries ?? 3,
     followRedirects: options.followRedirects ?? true,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: isTlsVerificationEnabled()
@@ -330,27 +338,41 @@ export async function fetchCodeMieUserInfo(
   return userInfo;
 }
 
-export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{ project: string; userEmail: string }> {
-  if (!authResult.apiUrl || !authResult.cookies) {
-    throw new ConfigurationError('API URL or cookies not found in authentication result');
+/** Bearer-token auth for project selection (JWT profiles): the token is only sent to `apiUrl`. */
+export interface BearerProjectAuth {
+  apiUrl: string;
+  jwtToken: string;
+}
+
+/** Accessible projects of the account (member + admin), deduped and sorted case-insensitively. */
+export function accountProjects(userInfo: CodeMieUserInfo): string[] {
+  const all = [...new Set([...(userInfo.applications || []), ...(userInfo.applications_admin || [])])];
+  return all.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+export async function selectCodeMieProject(
+  authResult: SSOAuthResult | BearerProjectAuth
+): Promise<{ project: string; userEmail: string }> {
+  let userInfo: CodeMieUserInfo;
+  if ('jwtToken' in authResult) {
+    if (!authResult.apiUrl || !authResult.jwtToken) {
+      throw new ConfigurationError('API URL or token not provided for project selection');
+    }
+    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.jwtToken);
+  } else {
+    if (!authResult.apiUrl || !authResult.cookies) {
+      throw new ConfigurationError('API URL or cookies not found in authentication result');
+    }
+    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.cookies);
   }
 
-  const userInfo = await fetchCodeMieUserInfo(
-    authResult.apiUrl,
-    authResult.cookies
-  );
-
-  const applications = userInfo.applications || [];
-  const applicationsAdmin = userInfo.applications_admin || [];
-  const allProjects = [...new Set([...applications, ...applicationsAdmin])];
+  const allProjects = accountProjects(userInfo);
 
   if (allProjects.length === 0) {
     throw new ConfigurationError('No projects found for your account. Please contact your administrator.');
   }
 
-  const sortedProjects = allProjects.sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: 'base' })
-  );
+  const sortedProjects = allProjects;
 
   let project: string;
   if (sortedProjects.length === 1) {
@@ -377,4 +399,47 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{
   }
 
   return { project, userEmail: userInfo.username };
+}
+
+/** Credentials for listing a profile's projects, bound to the host they were issued for. */
+export type ProjectListAuth =
+  | { apiUrl: string; cookies: Record<string, string> }
+  | { apiUrl: string; jwtToken: string };
+
+/**
+ * Credentials and target for listing a profile's CodeMie projects at launch.
+ * The list is fetched only from the host the credentials were issued for:
+ * - ai-run-sso: stored cookies for the profile's own `baseUrl` (no shared-URL
+ *   fallback), sent to `ensureApiBase(baseUrl)`;
+ * - bearer-auth (JWT): the profile's token, sent to `ensureApiBase(baseUrl)`;
+ * - subscription providers: stored analytics credentials for the resolved
+ *   CodeMie URL (never the vendor `baseUrl`), sent to the host they were issued for.
+ * Returns undefined when no usable credential exists for that host.
+ */
+export async function resolveProjectListAuth(config: {
+  provider?: string;
+  baseUrl?: string;
+  codeMieUrl?: string;
+  jwtToken?: string;
+}): Promise<ProjectListAuth | undefined> {
+  if (isCodeMiePlatformProvider(config.provider)) {
+    if (!config.baseUrl || isLoopbackUrl(config.baseUrl)) return undefined;
+    const apiUrl = ensureApiBase(config.baseUrl);
+    if (config.provider === ProviderName.BEARER_AUTH) {
+      return config.jwtToken ? { apiUrl, jwtToken: config.jwtToken } : undefined;
+    }
+    const found = await lookupStoredCredentials({ provider: config.provider, baseUrl: config.baseUrl });
+    if (!found?.credentials.cookies) return undefined;
+    return { apiUrl, cookies: found.credentials.cookies };
+  }
+
+  if (!config.codeMieUrl) return undefined;
+  const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
+  const credentials = await new CodeMieSSO().getStoredCredentials(config.codeMieUrl);
+  if (!credentials?.cookies) return undefined;
+  // The credentials are looked up by this profile's own resolved CodeMie URL, and are sent to the
+  // API they were issued with (their apiUrl, else that URL). HTTPClient drops them on a
+  // cross-origin redirect.
+  const apiUrl = ensureApiBase(credentials.apiUrl || config.codeMieUrl);
+  return { apiUrl, cookies: credentials.cookies };
 }

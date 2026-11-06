@@ -126,6 +126,8 @@ function readTrackedLogPaths(): Set<string> {
  * Lazy-built ownership index: union of
  *   (a) the transcript paths a correlation record names (`agentSessionFile`, `runtimeCheckpoint.transcriptPath`)
  *   (b) transcriptPath values from sidecar marker files (*-codemie-marker.json)
+ * Sidecars of either naming scheme are read — `<path hash>-<codemieSessionId>-codemie-marker.json`
+ * and the earlier `<transcript basename>-codemie-marker.json` — since each names its transcript inside.
  * Cached for the lifetime of the process — analytics runs are short-lived.
  */
 let ownershipIndexCache: Set<string> | null = null;
@@ -208,7 +210,9 @@ export const realNativeDeps: NativeLoaderDeps = {
     if (!ownershipIndexCache) ownershipIndexCache = buildOwnershipIndex();
     if (ownershipIndexCache.has(safeRealPath(filePath))) return true;
 
-    // CR-002: bounded transcript scan (4 KB) for legacy sessions without sidecar
+    // Bounded transcript scan: transcripts written by earlier versions carry an in-band
+    // `codemie_session_start` line instead of a sidecar, recognised only within the scanned head
+    // (the first 4 KB, at most 10 lines). Nothing written today adds one.
     try {
       const fd = openSync(filePath, 'r');
       const buf = Buffer.alloc(4096);

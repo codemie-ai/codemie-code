@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-11-05
+
+### Added
+
+- The Claude plugin ships codemie-html-report 0.3 and codemie-humanizer 2.0
+
+### Fixed
+
+- Date-only `--from` / `--to` analytics filters use UTC day bounds
+- `--json` invocations keep start-up output off stdout
+- A run's analytics metrics and conversation are scoped to its own sessions and run window
+- Hooks restart the proxy daemon on the recorded profile
+- SSO re-authentication no longer opens the browser twice
+- The OTLP endpoint stays valid across proxy daemon respawns, and the pinned port is held while SSO credentials are missing
+
+## [0.16.5] - 2026-11-04
+
+### Added
+
+- Claude subscription type is classified, and CLI analytics are routed by evidence
+
+### Fixed
+
+- Each global profile now keeps its own CodeMie project, URL and integration
+- Managed and native sessions select the same CodeMie project
+- Claude analytics work again for oauth2-proxy SSO logins
+- Claude Desktop sessions survive proxy daemon restarts and failed deliveries
+- Metric deltas are deduplicated within a shared run window, and the sync rewrite is merged instead of overwritten
+- Hook SSO auth checks use the session's profile
+- Forked skills and slash commands are recognised in analytics
+- Stranded sessions are finalized and undelivered ones are delivered
+
 ## [0.16.4] - 2026-11-02
 
 ### Added

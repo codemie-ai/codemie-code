@@ -62,7 +62,8 @@ const enrichResult = {
   index: new Map([['s1', costEntry]]),
   summary: { totalCostUSD: 0.01, pricedSessions: 1, totalSessions: 1, unpricedModels: [], estimatedModels: [] },
 };
-const analyticsResult = { totalSessions: 1, projects: [] };
+// The report keeps s1: the cost summary displayed is over the kept sessions
+const analyticsResult = { totalSessions: 1, projects: [{ branches: [{ sessions: [{ sessionId: 's1' }] }] }] };
 const payloadResult = { meta: { totals: { sessions: 1, pricedSessions: 1 } }, sessions: [] };
 
 function mockSource(sessions = [rawSession]) {
@@ -95,7 +96,7 @@ describe('runAnalytics CLI metadata wiring', () => {
       expect.anything(),
       expect.objectContaining({
         periodStart: new Date('2026-07-01').toISOString(),
-        periodEnd: new Date('2026-07-21').toISOString(),
+        periodEnd: '2026-07-21T23:59:59.999Z',
       })
     );
   });
@@ -240,13 +241,13 @@ describe('analytics CLI contract (unify-analytics-cost-command T6)', () => {
     }
   });
 
-  it('CR-009 displayCost receives the enrichCosts summary for a bare run (no export/open)', async () => {
+  it('CR-009 displayCost receives the enrichCosts summary over the kept sessions for a bare run (no export/open)', async () => {
     const { runAnalytics } = await import('../index.js');
     await runAnalytics({} as never, mockSourceForContract() as never);
     expect(displayCostMock).toHaveBeenCalledWith(enrichResult.summary);
   });
 
-  it('CR-009 displayCost receives the enrichCosts summary for --export json', async () => {
+  it('CR-009 displayCost receives the enrichCosts summary over the kept sessions for --export json', async () => {
     const { runAnalytics } = await import('../index.js');
     await runAnalytics({ export: 'json' } as never, mockSourceForContract() as never);
     expect(displayCostMock).toHaveBeenCalledWith(enrichResult.summary);

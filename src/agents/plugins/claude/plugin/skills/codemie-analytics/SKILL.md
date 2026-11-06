@@ -180,7 +180,8 @@ path — save it, you will reference it in every subsequent step.
 **Do not `cat`, `Read`, or print the saved JSON files into the conversation.**
 Raw API responses can be hundreds of KB. Use Step 2.5 to inspect structure instead.
 
-Temp files are not cleaned up automatically.
+Temp files are not cleaned up automatically; Step 3b asks the user whether to delete them once
+the report is built.
 
 ### Common filter flags
 
@@ -315,49 +316,43 @@ reports/2026-05-07-leaderboard/leaderboard.html
 reports/2026-05-07-spending/spending.html
 ```
 
-### Step 3a — Write the HTML
+### Step 3a — Hand off to codemie-html-report
 
 Invoke the **`codemie-html-report`** skill. Pass:
 
 1. **The schemas** inspected in Step 2.5 — field names and structure.
 2. **The user's intent** — e.g. "leaderboard dashboard with tier distribution".
 3. **Timestamp context** — `_envelope` lines in schemas include `data_as_of`.
-4. **Output path** — e.g. `$REPORT_DIR/leaderboard.html`.
+4. **The data folder** — `$OUT`, holding the JSON files saved in Step 2.
+5. **Output path** — e.g. `$REPORT_DIR/leaderboard.html`.
 
-The HTML skill writes the file using `/*__CSS__*/` for styles and
-**`/*__DATA:name__*/` placeholders for all embedded JS data arrays**:
+Ask it to build the page per codemie-html-report's `references/analytics.md`, which owns the
+data placeholders, the style placeholder and the order of the build scripts.
 
-```html
-<script>
-  const LEADERBOARD = /*__DATA:leaderboard__*/;
-  const SUMMARIES   = /*__DATA:summaries__*/;
-</script>
-```
+The layout references below give structure and data only. CSS, fonts and Chart.js come from the
+codemie-html-report build, which overrides any instruction in them to inline CSS or load a CDN.
 
-Each placeholder name maps to a saved file in `$OUT` (without the `.json` extension).
+### Step 3b — Temp file cleanup
 
-### Step 3b — Inject data
+After codemie-html-report has built the report, **always ask the user**:
 
-**After the HTML file exists**, run the shared `inject-data.js` from the `codemie-html-report`
-skill. It matches each JSON file in `$OUT` to a `/*__DATA:name__*/` placeholder by filename
-(without `.json`) and replaces it in-place.
+> The report is ready at `<path>`. The `temp/` directory (`$OUT`) contains the raw
+> API response files used to build it (~N files). Would you like to delete it?
 
-**Do not run inject-data.js before the HTML file is written.**
+These files can hold per-user spending and leaderboard data. If the user says **yes**,
+delete the temp directory:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-data.js \
-  "$REPORT_DIR/<report>.html" "$OUT"
+rm -rf "$OUT"
+# e.g. rm -rf "reports/2026-05-07-executive-spending/temp"
 ```
 
-Placeholder names must exactly match the JSON filenames — `/*__DATA:leaderboard-top__*/`
-is only replaced when `leaderboard-top.json` exists in `$OUT`.
+Confirm deletion:
+```
+✓ Temp files deleted → reports/2026-05-07-executive-spending/temp
+```
 
-Expected output:
-```
-  ✓ injected leaderboard-top
-  ✓ injected summaries
-✓ 2 data block(s) injected into reports/2026-05-07-<name>/<report>.html
-```
+If the user says **no**, leave the files in place and tell them the path.
 
 ---
 
@@ -527,8 +522,8 @@ charts, data structure, and modal design to use, ensuring consistency across use
 
 | Report type | Reference file | When to use |
 |-------------|---------------|-------------|
-| Leaderboard dashboard | [`${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md) | Any request for leaderboard rankings, AI champions, top performers, tier distribution |
-| People spending dashboard | [`${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md) | Any request to track LiteLLM costs for a specific list of users (cohort, team, bootcamp, project) |
+| Leaderboard dashboard | [`${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md) | Any request for leaderboard rankings, AI champions, top performers, tier distribution |
+| People spending dashboard | [`${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md`](${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md) | Any request to track LiteLLM costs for a specific list of users (cohort, team, bootcamp, project) |
 
 ---
 
@@ -572,7 +567,7 @@ If the command returns an auth error, HTTP 401/403/404, or "No CodeMie credentia
 > claude -f
 > ```
 
-**Full workflow** (see `${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md` for all details):
+**Full workflow** (see `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md` for all details):
 
 1. **Parse the list** from Excel/CSV using `openpyxl`. Skip header and TOTAL rows.
 2. **Fetch 3 LiteLLM accounts per user** using Python `asyncio` + `aiohttp` (semaphore 25,
@@ -620,10 +615,10 @@ node $CLI cli-insights-users --time-period last_30_days --per-page 500 --output 
 - Budget warnings: flag rows where `spend / max_budget > 0.8` (warn) and `> 1.0` (error).
 - For the **leaderboard dashboard**, combine `leaderboard` + `leaderboard-summary` +
   `leaderboard-tiers` + `leaderboard-dimensions` to build a comprehensive view. Then follow
-  `${CLAUDE_PLUGIN_ROOT}/references/leaderboard-dashboard-report.md` for the exact HTML structure.
+  `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/leaderboard-dashboard-report.md` for the exact HTML structure.
 - For a **people spending dashboard**, fetch LiteLLM directly with Python async (3 accounts
   per user), then enrich with leaderboard + CLI insights. Follow
-  `${CLAUDE_PLUGIN_ROOT}/references/people-spending-dashboard-report.md` for the exact HTML structure.
+  `${CLAUDE_PLUGIN_ROOT}/skills/codemie-analytics/references/people-spending-dashboard-report.md` for the exact HTML structure.
 - For a **single user deep-dive**, combine `leaderboard-user <email>` with
   `cli-insights-user <name>` for the full picture (champion score + CLI activity).
 - If the CLI prints an auth error, forward its message verbatim — it already tells the user

@@ -3,6 +3,7 @@ import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { analyticsAuthMarkedInvalid } from '@/agents/core/session/stale-session-reconciliation.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { PROXY_STORE_READ_DEADLINE_MS, readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import type {
   DesktopTelemetryRuntimeConfig,
@@ -29,7 +30,7 @@ export class DesktopSessionMetrics {
    */
   async canDeliver(): Promise<boolean> {
     const urls = [this.credentialsUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
-    return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookies()) !== '';
+    return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookieAuth()).cookies !== '';
   }
 
   /** `abortSignal` marks the requests of one delivery attempt, so a rejection of its credentials is told apart. */
@@ -38,9 +39,11 @@ export class DesktopSessionMetrics {
     discovered?: LocalTelemetryDiscoveredSession,
     abortSignal?: AbortSignal
   ): Promise<ProcessingContext> {
+    const { cookies, credentialsSuperseded } = await this.loadCookieAuth();
     return {
       apiBaseUrl: this.config.syncApiUrl || this.config.targetApiUrl,
-      cookies: await this.loadCookies(),
+      cookies,
+      credentialsSuperseded,
       clientType: this.config.clientType,
       version: this.config.version,
       dryRun: false,
@@ -51,24 +54,16 @@ export class DesktopSessionMetrics {
     };
   }
 
-  private async loadCookies(): Promise<string> {
-    let cookies = '';
+  private async loadCookieAuth(): Promise<Awaited<ReturnType<typeof readCookieAuth>>> {
     const credentialsUrl = this.credentialsUrl;
-
-    try {
-      const credentials = await new CodeMieSSO().getStoredCredentials(credentialsUrl);
-      if (credentials?.cookies) {
-        cookies = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-      }
-    } catch (error) {
-      logger.debug('[desktop-telemetry] Failed to load SSO credentials', {
-        credentialsUrl,
-        error: error instanceof Error ? error.message : String(error)
-      });
+    const auth = await readCookieAuth(
+      () => new CodeMieSSO().getStoredCredentials(credentialsUrl),
+      { deadlineMs: PROXY_STORE_READ_DEADLINE_MS }
+    );
+    if (auth.readTimedOut) {
+      logger.warn('[desktop-telemetry] The credential store did not answer in time; sending without credentials');
     }
-    return cookies;
+    return auth;
   }
 
   async sendSessionStartMetric(
@@ -136,6 +131,7 @@ export class DesktopSessionMetrics {
         provider: this.config.provider,
         project: session.project,
         repository: session.repository,
+        gitBranch: session.gitBranch,
         startTime: stretchStart,
         workingDirectory: session.workingDirectory
       },
@@ -155,6 +151,7 @@ export class DesktopSessionMetrics {
     return new MetricsSender({
       baseUrl: context.apiBaseUrl,
       cookies: context.cookies,
+      credentialsSuperseded: context.credentialsSuperseded,
       version: this.config.version,
       clientType: this.config.clientType,
       retryAttempts: 2,

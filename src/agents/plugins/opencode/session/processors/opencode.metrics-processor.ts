@@ -137,6 +137,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         openCodeVersion: metadata.openCodeVersion as string | undefined,
         partsMap: metadata.partsMap as Record<string, OpenCodePart[]> | undefined,
         storageType: metadata.storageType as 'sqlite' | 'file' | undefined,
+        parentId: metadata.parentId as string | undefined,
       };
 
       // Branch attribution: the aggregator groups deltas by gitBranch and emits
@@ -287,8 +288,8 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         const text = await this.extractUserPromptText(
           msg, storagePath, openCodeSessionId, sessionMetadata.partsMap
         );
-        if (!text) continue;
-
+        // A child session's user messages are the parent agent's prompts to its subagent
+        if (!text || sessionMetadata.parentId) continue;
         deltas.push({ ...base(recordId, timestamp), userPrompts: [{ count: 1, text }] });
         continue;
       }

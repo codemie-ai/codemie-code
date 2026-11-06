@@ -1,9 +1,9 @@
 import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
-import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
-import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
+import { ensureOtlpProxy } from './proxy/otlp-cold-start.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
@@ -23,10 +23,13 @@ import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } fro
 import type { PidLock } from '@/utils/pid-lock.js';
 import { isSessionFileLockTimeout } from '@/utils/errors.js';
 import { buildProcessingContext } from './hook/processing-context.js';
+import { loadAnalyticsCookies } from './hook/analytics-cookies.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { existsSync } from 'fs';
+import { isCompletedRecord, loadSessionRecord, recordLocatedTranscript, recordStartMetricSessionId } from './hook/session-record-updates.js';
+import { isSharedTranscriptStore } from '@/agents/core/session/session-origin-audit.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -47,6 +50,11 @@ export interface SessionStartEvent extends BaseHookEvent {
    * generation ended. Never read from a parsed payload
    */
   startTime?: number;
+  /**
+   * The agent's data home for this run, stored on the record as `agentHome`; set by the plugin's
+   * in-process start or a synthesized one. Never read from a parsed payload
+   */
+  agent_home?: string;
 }
 
 /**
@@ -131,6 +139,12 @@ export interface HookProcessingConfig {
    * stays `active` and the next start's pass retries it (the start pass counts its attempts)
    */
   holdsReconcileLock?: boolean;
+  /**
+   * A transcript pass that throws rethrows, so a SessionEnd stops before its status write: the record stays
+   * `active` for the wrapper's own-record step and the next start. A session file lock timeout is still
+   * reported by the pass. For a caller that holds no reconcile lock.
+   */
+  rethrowFlushFailure?: boolean;
   /** Finalize the record locally only: no end metric, no sync, no rename */
   localOnly?: boolean;
 }
@@ -227,7 +241,7 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
   // Create session record with correlation information
   await createSessionRecordOverUnclosed(event, sessionId, config, endOptions, lockDeadlineMs);
   // Send session start metrics when CodeMie analytics auth is configured
-  await sendSessionStartMetrics(event, sessionId, event.session_id, config);
+  await sendSessionStartMetrics(event, sessionId, event.session_id, config, endOptions, lockDeadlineMs);
   // Sync CodeMie skills to Claude Code (.claude/skills/)
   await syncSkillsToClaude(event.cwd || process.cwd());
 }
@@ -289,17 +303,17 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   }
 
   try {
-    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
-    let record = await new SessionStore().loadSession(sessionId);
+    let record = await loadSessionRecord(sessionId);
     if (record && isOtherGeneration(record, event.session_id)) {
       if (!(await establishOwnGenerationLocked(event, sessionId, record, config, options))) {
         return;
       }
-      record = await new SessionStore().loadSession(sessionId);
+      record = await loadSessionRecord(sessionId);
     }
 
     // Re-checked under the lock: a record another process already completed is only delivered
     if (record?.status !== 'completed') {
+      if (record) await recordLocatedTranscript(record, event.transcript_path);
       if (!(await finalizeSession(event, sessionId, config, options))) {
         return;
       }
@@ -341,7 +355,7 @@ async function establishOwnGenerationLocked(
   const aside = await setAsideUnclosed(event.session_id, sessionId, config, options);
   if (aside.outcome === 'closed') {
     const startTime = aside.previousEnd ?? previous.endTime ?? (await lastRecordedActivityAt(previous));
-    await createSessionRecord(generationStartEvent(event, startTime), sessionId, config);
+    await createSessionRecord(generationStartEvent(event, startTime, previous), sessionId, config);
   }
   if (aside.outcome !== 'kept' && !isOtherGeneration(await readLiveRecord(sessionId), event.session_id) && existsSync(getSessionPath(sessionId))) {
     return true;
@@ -452,6 +466,7 @@ function logProcessingResult(
  * @param config - Optional configuration object (if not provided, reads from environment variables).
  *   With `holdsReconcileLock` (the start pass, the wrapper's own-record step) a failed flush throws, so
  *   a SessionEnd stops before its status write and the record stays `active` for a later attempt;
+ *   so does a throw of the pass under `rethrowFlushFailure`, a session file lock timeout excepted;
  *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
  * @param options - The hook's bounds and mode, applied to the processing context; absent → the context stays unbounded
  * @param finalPass - `{ finalPass }`, set only by SessionEnd: the session's last processing pass
@@ -551,11 +566,14 @@ async function performIncrementalSync(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:${hookName}] Session processing failed: ${errorMessage}`);
+    // Rethrown to a caller that repeats the pass: any failure under the reconcile lock, any but a session file
+    // lock timeout under `rethrowFlushFailure`. A lock timeout is otherwise reported in the result. Anything
+    // else stops here: a hook must not block agent execution or user prompts.
     if (config?.holdsReconcileLock) {
       throw error;
     }
     if (isSessionFileLockTimeout(error)) lockTimedOut = true;
-    // Don't throw - hook should not block agent execution or user prompts
+    else if (config?.rethrowFlushFailure) throw error;
   }
   return { lastRecordAt, lockTimedOut };
 }
@@ -698,7 +716,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
  */
 async function handleStop(event: BaseHookEvent, sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<void> {
   const generation = await ensureOwnGeneration(event, sessionId, config, options);
-  if (generation === 'deferred' || generation === 'closed') {
+  if (generation === 'deferred' || generation === 'closed' || (await isCompletedRecord(sessionId, 'Stop'))) {
     return;
   }
   // Accumulate active duration FIRST (marks end of active period)
@@ -829,13 +847,13 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     }
 
     // Deferred ownership marker: covers sessions where transcript_path was empty at
-    // SessionStart (transcript file not yet created). appendTranscriptMarker is idempotent —
-    // it skips if the per-Claude-session sidecar already exists.
+    // SessionStart (transcript file not yet created). writeOwnershipMarker is idempotent —
+    // it skips if the sidecar for this session and transcript already exists.
     if (
       event.transcript_path &&
       (normalizedEventName === 'UserPromptSubmit' || normalizedEventName === 'Stop')
     ) {
-      const { appendTranscriptMarker, isExternalOrigin } = await import(
+      const { writeOwnershipMarker, isExternalOrigin } = await import(
         '../../agents/core/session/session-origin-audit.js'
       );
       const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -843,7 +861,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
       // Never (re-)stamp a transcript that's flagged external-resume — doing so would
       // re-adopt it into the local analytics ownership index (native-loader.ts).
       if (!isExternalOrigin(session)) {
-        appendTranscriptMarker(event.transcript_path, sessionId, agentName);
+        writeOwnershipMarker(event.transcript_path, sessionId, agentName);
       }
     }
 
@@ -923,7 +941,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const existing = await sessionStore.loadSession(sessionId);
     if (existing && existing.status === 'active' && existing.endTime === undefined) {
       const {
-        appendTranscriptMarker: writeMarker,
+        writeOwnershipMarker: writeMarker,
         appendAuditEvent: writeAudit,
         isExternalOrigin,
       } = await import('../../agents/core/session/session-origin-audit.js');
@@ -939,7 +957,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         ...existing.correlation,
         status: 'matched',
         ...(event.session_id && { agentSessionId: event.session_id }),
-        ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
+        ...(event.transcript_path && !isSharedTranscriptStore(event.transcript_path) && { agentSessionFile: event.transcript_path }),
       };
       // Preserve an already-set origin; only derive from env for pre-existing records that
       // predate this field. An established origin must never flip on re-entry.
@@ -962,7 +980,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       return;
     }
 
-    const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
+    const { writeOwnershipMarker, appendAuditEvent, isExternalOrigin } = await import(
       '../../agents/core/session/session-origin-audit.js'
     );
     const origin =
@@ -981,6 +999,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const codemieUrl = getConfigValue('CODEMIE_URL', config);
     const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
+    // Only an in-process start reads the launch's resume id: never the agent child or its hooks
+    const resumeSessionId = config?.env?.[RESUME_SESSION_ENV_KEY];
+    const continuesPriorSession = config?.env?.[CONTINUE_SESSION_ENV_KEY] === '1';
 
     // Create session record with correlation already matched
     const startTime = event.startTime ?? Date.now();
@@ -995,15 +1016,18 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(model && { model }),
       startTime,
       workingDirectory,
+      ...(event.agent_home && { agentHome: event.agent_home }),
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
+      ...(resumeSessionId && { resumeSessionId }),
+      ...(continuesPriorSession && { continuesPriorSession: true as const }),
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
-        agentSessionFile: event.transcript_path,
+        agentSessionFile: isSharedTranscriptStore(event.transcript_path) ? undefined : event.transcript_path,
         retryCount: 0
       },
       // A resumed Claude transcript already holds earlier records: the first processing run
@@ -1024,7 +1048,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // Never stamp a transcript that's flagged external-resume — doing so would re-adopt it
     // into the local analytics ownership index (native-loader.ts) and undo the exclusion.
     if (session.correlation.agentSessionFile && !isExternalOrigin(session)) {
-      appendTranscriptMarker(
+      writeOwnershipMarker(
         session.correlation.agentSessionFile,
         sessionId,
         agentName,
@@ -1185,8 +1209,10 @@ async function moveUnclosedGeneration(sessionId: string, options: SessionEndOpti
  * @param sessionId - The CodeMie session ID (for file operations)
  * @param agentSessionId - The agent's session ID (for API)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param options - The hook's mode and abort signal; the start-id lock wait stops on the abort
+ * @param lockDeadlineMs - The SessionStart's lock budget: the start-id write waits for the lock no later than this
  */
-async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions, lockDeadlineMs: number): Promise<void> {
   try {
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
@@ -1255,23 +1281,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     }
 
     // Load SSO credentials if not provided in config
-    let cookieHeader = config?.cookies || '';
-    if (!cookieHeader && ssoUrl) {
-      try {
-        const { getStoredAnalyticsCredentials } = await import('../../providers/core/codemie-auth-helpers.js');
-        const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
-          provider: getConfigValue('CODEMIE_PROVIDER', config),
-        }))?.credentials;
-
-        if (credentials?.cookies) {
-          cookieHeader = Object.entries(credentials.cookies)
-            .map(([key, value]) => `${key}=${value}`)
-            .join('; ');
-        }
-      } catch (error) {
-        logger.debug('[hook:SessionStart] Failed to load SSO credentials:', error);
-      }
-    }
+    const { cookies: cookieHeader, credentialsSuperseded } = await loadAnalyticsCookies('[hook:SessionStart]', ssoUrl, config);
 
     if (!cookieHeader) {
       if (syncApiUrl) {
@@ -1294,6 +1304,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     const sender = new MetricsSender({
       baseUrl: apiUrl,
       cookies: cookieHeader,
+      credentialsSuperseded,
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,
@@ -1324,6 +1335,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       mcpSummary,         // MCP configuration summary
       extensionsSummary   // Extensions scan summary
     );
+    await recordStartMetricSessionId(sessionId, agentSessionId, options, lockDeadlineMs);
 
     logger.info('[hook:SessionStart] Session start metrics sent successfully');
   } catch (error) {
@@ -1431,9 +1443,8 @@ async function closeGenerationLocked(
       logger.info(`[hook] New generation: delivering the undelivered previous generation of ${sessionId}`);
       await deliverSessionRecord(sessionId, nativeSessionId(live), live.reason, config, bounded);
     }
-    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     // A close whose status write failed completed nothing and left the record live: closed locally before any move
-    const after = await new SessionStore().loadSession(sessionId);
+    const after = await loadSessionRecord(sessionId);
     previousEnd = after && after.status !== 'completed' ? await closeUnclosedLocally(after, config) : after?.endTime;
     if (after && after.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
     if (Date.now() >= deadlineMs) {
@@ -1646,8 +1657,9 @@ export function createHookCommand(): Command {
         // Parse JSON
         try {
           event = JSON.parse(input) as BaseHookEvent;
-          // The field is the synthesized start's, never a client's
+          // The fields are the synthesized start's and the in-process plugin's, never a client's
           delete (event as Partial<SessionStartEvent>).startTime;
+          delete (event as Partial<SessionStartEvent>).agent_home;
         } catch (parseError: unknown) {
           const parseMsg = parseError instanceof Error ? parseError.message : String(parseError);
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);

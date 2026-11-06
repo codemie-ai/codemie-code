@@ -17,7 +17,7 @@
  * so metrics/SSO code paths return early without any HTTP call.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -41,11 +41,7 @@ function completedPath(sessionId: string): string {
   return getCodemiePath('sessions', `completed_${sessionId}.json`);
 }
 
-function markerPath(claudeSessionId: string): string {
-  return getCodemiePath('sessions', `${claudeSessionId}-codemie-marker.json`);
-}
-
-function cleanupSession(sessionId: string, claudeSessionId?: string): void {
+function cleanupSession(sessionId: string, _claudeSessionId?: string): void {
   for (const p of [getSessionPath(sessionId), completedPath(sessionId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
@@ -55,9 +51,11 @@ function cleanupSession(sessionId: string, claudeSessionId?: string): void {
     const c = getCodemiePath('sessions', `completed_${sessionId}${suffix}`);
     if (existsSync(c)) rmSync(c, { force: true });
   }
-  if (claudeSessionId) {
-    const m = markerPath(claudeSessionId);
-    if (existsSync(m)) rmSync(m, { force: true });
+  const sessions = getCodemiePath('sessions');
+  if (existsSync(sessions)) {
+    for (const f of readdirSync(sessions).filter((f) => f.endsWith('-codemie-marker.json') && f.includes(sessionId))) {
+      rmSync(join(sessions, f), { force: true });
+    }
   }
 }
 

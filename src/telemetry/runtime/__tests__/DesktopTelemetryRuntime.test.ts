@@ -96,6 +96,8 @@ import { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS } from '@/utils/pid-lock.js';
 import { processStartedAt } from '@/utils/processes.js';
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
+import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
 import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
 import type {
@@ -350,6 +352,7 @@ describe('DesktopTelemetryRuntime', () => {
     vi.setSystemTime(T0);
     await resetCodemieHome();
     transcripts.clear();
+    mockGetStoredCredentials.mockReset();
     sentDeltas = [];
     desktopSessions = new Map();
     mockSendSessionStart.mockResolvedValue(undefined);
@@ -388,7 +391,85 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       const [sessionArg] = mockSendSessionEnd.mock.calls[0];
-      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code', gitBranch: 'branch-codemie-code' });
+    });
+  });
+
+  describe('cookie auth', () => {
+    function lastSenderOptions(): { cookies: string; credentialsSuperseded?: (sent: string) => Promise<boolean> } {
+      const calls = vi.mocked(MetricsSender).mock.calls;
+      return calls[calls.length - 1][0] as never;
+    }
+
+    it('reads cookies from the SSO store for the configured URL', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://api.example.com');
+      expect(lastSenderOptions().cookies).toBe('session=abc123');
+    });
+
+    it('passes a supersession check to the session START sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      expect(await credentialsSuperseded!('session=abc123')).toBe(false);
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('passes a supersession check to the session END sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('hands the supersession check to the session syncer in the context', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      mockSync.mockClear();
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const [, context] = mockSync.mock.calls[0];
+      expect(context.cookies).toBe('session=abc123');
+      expect(context.credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await context.credentialsSuperseded('session=abc123')).toBe(true);
+    });
+
+    it('bounds the long-lived runtime\'s store read by the longer proxy deadline', async () => {
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const delays = timers.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(PROXY_STORE_READ_DEADLINE_MS);
+      expect(delays).not.toContain(STORE_READ_DEADLINE_MS);
+      timers.mockRestore();
+    });
+
+    it('sends no metrics when there are no stored cookies', async () => {
+      mockGetStoredCredentials.mockResolvedValue(null);
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      expect(MetricsSender).not.toHaveBeenCalled();
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
     });
   });
 
@@ -1981,6 +2062,16 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       expect(readFileSync(recordFile).equals(finalizedBytes)).toBe(true);
       await held.release();
+    });
+  });
+
+  describe('daemon profile project (EPMCDME-15411, AC12)', () => {
+    it('resolves the project of the daemon\'s own profile by name, not the active profile', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      vi.mocked(ConfigLoader.load).mockClear();
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter(), { ...config, profile: 'daemon-profile' });
+      expect(vi.mocked(ConfigLoader.load)).toHaveBeenCalledWith(expect.any(String), { name: 'daemon-profile' });
     });
   });
 
