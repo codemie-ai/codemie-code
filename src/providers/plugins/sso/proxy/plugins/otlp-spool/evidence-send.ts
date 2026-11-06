@@ -1,3 +1,4 @@
+import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { buildAttributionHeaders } from '../header-injection.plugin.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
@@ -42,6 +43,11 @@ export async function sendGuard(key: string, record: EvidenceRecord): Promise<bo
     if (prefs.kind !== 'ok') return false;
     if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
       await writeStop(key, 'generation_changed', record.session_id);
+      return false;
+    }
+    // A consented session whose project cannot travel as a raw header must never fall back to personal storage by omission.
+    if (record.consent_ref && rawProjectHeader(record.project ?? '') === undefined) {
+      await writeStop(key, 'consent_project_unsupported', record.session_id);
       return false;
     }
     if (record.consent_ref && !(await consentHolds(record.consent_ref, scopeOf(record)))) {

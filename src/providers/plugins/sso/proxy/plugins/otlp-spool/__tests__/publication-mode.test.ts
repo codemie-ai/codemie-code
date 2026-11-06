@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publicationMode } from '../publication-mode.js';
@@ -30,6 +30,19 @@ describe('durable publication protocol', () => {
   it.each(['legacy', 'evidence'] as const)('pins safe %s fallback across backend upgrades and a restarted caller', async (capability) => {
     expect(await publicationMode('key', record, state(capability), routed)).toBe(capability);
     expect(await publicationMode('key', { ...record }, state('evidence', ['1']), routed)).toBe(capability);
+  });
+
+  it('concurrent first selections publish one whole mode file and leave no temp file', async () => {
+    const modes = await Promise.all([
+      publicationMode('race', record, state('evidence', ['1']), routed),
+      publicationMode('race', record, state('legacy'), routed),
+    ]);
+    // Which caller publishes first is scheduling-dependent; either durable winner must bind both callers.
+    const winner = JSON.parse(await readFile(join(evidenceDir(), publicationModeFileName('race')), 'utf8')) as string;
+    expect(['contract', 'legacy']).toContain(winner);
+    expect(modes[0]).toBe(winner); // the evidence-capable backend can serve either mode
+    expect(modes[1]).toBe(winner === 'legacy' ? 'legacy' : null); // a legacy backend cannot serve a contract winner
+    expect((await readdir(evidenceDir())).filter((n) => n.endsWith('.tmp'))).toEqual([]);
   });
 
   it('never downgrades a contract-bound session, including records created before negotiation existed', async () => {

@@ -175,8 +175,32 @@ async function listRecordFiles(): Promise<string[]> {
   }
 }
 
+/** Whether any owner has a readable record for this session (an owner-less outage hook cannot compute the key). Never throws. */
+export async function hasRecordForSession(sessionId: string): Promise<boolean> {
+  return (await recordForSession(sessionId)) !== undefined;
+}
+
+/**
+ * The profile a session's record froze (undefined when the record has none), or `not-recorded`. Narrowed to one backend so another
+ * login's record is never read as this one's. For hook-time evidence captured while the owner is unknown.
+ */
+export async function frozenProfileOf(sessionId: string, apiIdentity: string): Promise<{ profile?: string } | 'not-recorded'> {
+  const r = await recordForSession(sessionId, apiIdentity);
+  return r ? { profile: typeof r.profile === 'string' ? r.profile : undefined } : 'not-recorded';
+}
+
+async function recordForSession(sessionId: string, apiIdentity?: string): Promise<{ profile?: unknown } | undefined> {
+  for (const name of await listRecordFiles()) {
+    try {
+      const r = JSON.parse(await readFile(join(evidenceDir(), name), 'utf-8')) as { session_id?: unknown; api_identity?: unknown; profile?: unknown };
+      if (r.session_id === sessionId && (apiIdentity === undefined || r.api_identity === apiIdentity)) return r;
+    } catch { /* unreadable: not proof */ }
+  }
+  return undefined;
+}
+
 /** Publish via temp + hard link (EEXIST = lost the race); `wx` fallback where link is unsupported. */
-async function publish(finalPath: string, content: string): Promise<'won' | 'lost'> {
+export async function publish(finalPath: string, content: string, opts: { strict?: boolean } = {}): Promise<'won' | 'lost'> {
   const tmp = `${finalPath}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(tmp, content, { mode: 0o600 });
   try {
@@ -184,6 +208,7 @@ async function publish(finalPath: string, content: string): Promise<'won' | 'los
     return 'won';
   } catch (err) {
     if (code(err) === 'EEXIST') return 'lost';
+    if (opts.strict) throw err; // atomic-only (stop marker, publication mode): never expose a partial final file
     // ponytail: wx fallback can expose a partially written file to readers; losers retry the read.
     try {
       await writeFile(finalPath, content, { flag: 'wx', mode: 0o600 });

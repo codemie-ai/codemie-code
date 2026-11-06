@@ -19,11 +19,18 @@ const TEXT: Record<StopReason, string> = {
   hold_expired: 'the analytics backend stayed unavailable for too long.',
   hold_contract_unavailable: 'the analytics backend is not ready for this client yet; data is held and will be retried.',
   hold_state_unknown: 'the analytics backend could not be reached to confirm it is ready; data is held and will be retried.',
+  hold_personal_unsupported: 'the analytics backend cannot store personal analytics for this account yet; data is held and will be retried.',
+  hold_project_unavailable: 'the connected project is not available for analytics on the backend right now; data is held and will be retried.',
+  hold_destination_unsupported: 'the connected project name cannot be used as an analytics destination by the backend; data is held and will be retried.',
   consent_invalid: 'the analytics backend rejected the folder consent.',
+  consent_project_unsupported: 'the connected project name cannot be sent to the analytics backend (only Latin-1 text is supported); reconnect the folder with a supported project.',
   requires_session: 'the analytics backend rejected the request.',
   unspecified: 'publishing stopped.',
 };
 
+/** Notices of a hold that can still recover: Claude keeps working and nothing says to restart. */
+const HOLD_ONLY: ReadonlySet<StopReason> = new Set<StopReason>(['hold_contract_unavailable', 'hold_state_unknown', 'hold_personal_unsupported', 'hold_project_unavailable', 'hold_destination_unsupported']);
+
 export function stopNoticeText(reason: StopReason): string {
-  return `CodeMie analytics paused for this session: ${TEXT[reason]} ${reason === 'hold_contract_unavailable' || reason === 'hold_state_unknown' ? 'Claude keeps working.' : GUIDE}`;
+  return `CodeMie analytics paused for this session: ${TEXT[reason]} ${HOLD_ONLY.has(reason) ? 'Claude keeps working.' : GUIDE}`;
 }

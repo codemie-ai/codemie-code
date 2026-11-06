@@ -93,12 +93,18 @@ export async function expireCarriedAgeLocked(sessionId: string, status: SessionS
  * range is dropped (recorded) and the stream continues with whatever arrived after it. Takes the
  * session lock: never call while holding it.
  */
-export async function deliveryGate(sessionId: string, stream: SpoolStream, now: number = Date.now()): Promise<'go' | 'wait'> {
+export async function deliveryGate(
+  sessionId: string,
+  stream: SpoolStream,
+  now: number = Date.now(),
+  onHoldExpired?: () => Promise<void>
+): Promise<'go' | 'wait'> {
   // Common case first, without the lock: nothing recorded for this stream.
   const peek = await readStatus(sessionId);
   const carried = stream === 'hooks' && Boolean(peek?.carriedAge?.hooks?.length);
   if (!peek?.delivery?.[stream] && !carried) return 'go';
-  return withSessionLock(sessionId, async () => {
+  let holdExpired = false;
+  const verdict = await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
     if (!status) return 'go';
     if (carried && (await expireCarriedAgeLocked(sessionId, status, now))) await writeStatus(sessionId, status);
@@ -113,10 +119,13 @@ export async function deliveryGate(sessionId: string, stream: SpoolStream, now: 
     if (now - rec.since >= heldRetentionMs()) {
       expireDeliveryLocked(sessionId, status, stream, rec, now);
       await writeStatus(sessionId, status);
+      holdExpired = rec.reason === 'destination_hold';
       return 'go';
     }
     return now < rec.nextAt ? 'wait' : 'go';
   });
+  if (holdExpired) await onHoldExpired?.();
+  return verdict;
 }
 
 /**
@@ -131,7 +140,7 @@ export async function noteDeliveryFailure(
   failure: { reason: DeliveryLossReason; detail?: string },
   range: { cursor: number; end: number },
   now: number = Date.now()
-): Promise<'noted' | 'lost' | 'stale'> {
+): Promise<'noted' | 'lost' | 'hold_lost' | 'stale'> {
   return withSessionLock(sessionId, async () => {
     const { cursor } = range;
     const status = await readStatus(sessionId);
@@ -158,7 +167,7 @@ export async function noteDeliveryFailure(
     const lost = now - rec.since >= heldRetentionMs();
     if (lost) expireDeliveryLocked(sessionId, status, stream, rec, now);
     await writeStatus(sessionId, status);
-    return lost ? 'lost' : 'noted';
+    return lost ? (rec.reason === 'destination_hold' ? 'hold_lost' : 'lost') : 'noted';
   });
 }
 
@@ -172,7 +181,7 @@ export function deliveryFailureOf(o: SendOutcome): { reason: DeliveryLossReason;
   const cause = o.reason ?? o.kind;
   if (cause === 'credentials_stale' || cause === 'not_sendable') return undefined;
   if (['http_400', 'http_413', 'http_422'].includes(cause)) return { reason: 'delivery_rejected', detail: cause };
-  if (o.detail) return { reason: 'destination_unavailable', detail: o.detail };
+  if (o.detail) return { reason: o.hold ? 'destination_hold' : 'destination_unavailable', detail: o.detail };
   if (cause === 'response_unverified' || cause === 'response_malformed' || cause === 'response_too_large') return { reason: 'response_unverified', detail: cause };
   return { reason: 'delivery_failed', detail: cause };
 }
@@ -182,12 +191,13 @@ export async function recordUnacknowledged(
   sessionId: string,
   stream: SpoolStream,
   outcome: SendOutcome,
-  range: { cursor: number; end: number }
+  range: { cursor: number; end: number },
+  onHoldExpired?: () => Promise<void>
 ): Promise<void> {
   const failure = deliveryFailureOf(outcome);
   if (!failure) return;
   try {
-    await noteDeliveryFailure(sessionId, stream, failure, range);
+    if ((await noteDeliveryFailure(sessionId, stream, failure, range)) === 'hold_lost') await onHoldExpired?.();
   } catch (err) {
     logger.debug('[otlp-forwarder] delivery failure not recorded', ...sanitizeLogArgs({ sessionId, stream, err: err instanceof Error ? err.message : String(err) }));
   }

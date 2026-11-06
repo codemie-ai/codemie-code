@@ -9,6 +9,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { ConfigurationError } from '@/utils/errors.js';
+import { rawProjectHeader } from '@/utils/header-value.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   addProjectPath,
@@ -299,6 +300,9 @@ async function connectWorkFolder(path: string | undefined, opts: ConnectorOption
     const project = (opts.project ?? (await resolveSessionProject(canonical, undefined))).trim();
     if (!project) {
       throw new ConfigurationError('No CodeMie project resolved for this folder. Pass --project <name>.');
+    }
+    if (rawProjectHeader(project) === undefined) {
+      throw new ConfigurationError(`Project "${project}" cannot be used for a connected work folder: its name has characters the analytics protocol cannot send (only Latin-1 text is supported). Use a project with a supported name.`);
     }
     const identity = await requireIdentity();
     console.log(`Folder:  ${canonical}`);

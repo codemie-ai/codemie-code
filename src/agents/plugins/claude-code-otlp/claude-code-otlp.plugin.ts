@@ -42,9 +42,9 @@ import { evaluateClaudeAnalyticsGate } from './claude-code-otlp.gate.js';
 import { readClaudeAnalyticsPreferences } from './claude-code-otlp.preferences.js';
 import { stopNoticeText } from './claude-code-otlp.notice.js';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
-import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { hasRecordForSession, readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { isStopped, takeNotice, writeStop, type StopReason } from '@/agents/core/evidence/stop-marker.js';
-import { consentHolds } from '@/agents/core/evidence/consent-store.js';
+import { scopeViolation } from '@/agents/core/evidence/session-scope.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import type { OtlpAdapterDeps } from '@/agents/core/types.js';
 import {
@@ -197,8 +197,15 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   protected override async transitionGate(hookInput: HookInput): Promise<'continue' | 'stop'> {
     try {
       const id = await currentEvidenceIdentity();
-      if (!id) return 'continue'; // no owner yet: the stamp path holds or reports it
       const sessionId = hookInput.session_id;
+      if (!id) {
+        // No owner to key a record by. Only a fresh session, one already held for its owner, or one with a record may go on
+        // (held for replay, which re-checks it); an unknown mid-session scope never gets a record made from an outage.
+        this.identityUnverifiedAtGate = true;
+        const source = readOptionalString(hookInput, 'source');
+        const fresh = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
+        return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasRecordForSession(sessionId)) ? 'continue' : 'stop';
+      }
       const key = recordKey(id.api_identity, id.owner_hash, sessionId);
       if (await isStopped(key)) {
         await this.queueNotice(key);
@@ -216,23 +223,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       }
       const record = found.record;
       if (record.funding_route === undefined) return 'continue'; // recorded before the new contract: legacy, unchanged
-      const prefs = await readClaudeAnalyticsPreferences();
-      if (prefs.kind !== 'ok') return 'stop';
-      if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
-        return this.stopSession(key, 'generation_changed', sessionId);
-      }
-      // Same canonical form as the consent store and the backend (trim, case-insensitive); never skipped on a source difference.
-      const canon = (p: string): string => p.trim().toLowerCase();
-      if (canon(await resolveProjectAtCwd(hookInput.cwd, record.profile)) !== canon(record.project ?? '')) {
-        return this.stopSession(key, 'folder_changed', sessionId);
-      }
-      if (record.consent_ref) {
-        const scope = { owner_hash: id.owner_hash, api_identity: id.api_identity, project: record.project ?? '' };
-        if (!(await consentHolds(record.consent_ref, scope, hookInput.cwd))) {
-          const reason = (await consentHolds(record.consent_ref, scope)) ? 'folder_changed' : 'consent_revoked';
-          return this.stopSession(key, reason, sessionId);
-        }
-      }
+      const violation = await this.recordViolation(record, hookInput.cwd);
+      if (violation === 'unreadable') return 'stop';
+      if (violation) return this.stopSession(key, violation, sessionId);
       await this.queueNotice(key); // e.g. a first-hold notice the daemon wrote
       return 'continue';
     } catch (err) {
@@ -240,6 +233,44 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       return 'stop';
     }
   }
+
+  /** Why this hook's folder/generation/consent no longer fits the recorded session; 'unreadable' = preferences cannot be read. */
+  private async recordViolation(record: EvidenceRecord, cwd: string): Promise<StopReason | 'unreadable' | undefined> {
+    if (record.funding_route === undefined) return undefined;
+    const prefs = await readClaudeAnalyticsPreferences();
+    if (prefs.kind !== 'ok') return 'unreadable';
+    return scopeViolation(record, {
+      cwd,
+      projectAtCwd: await resolveProjectAtCwd(cwd, record.profile),
+      generation: prefs.value.collectionGeneration,
+    });
+  }
+
+  /**
+   * The identity lookup failed at the gate, so no record could be checked there; a later successful lookup (the stamp)
+   * may then name an existing session. Re-run the same checks against that record before anything is spooled.
+   */
+  protected override async recordGate(context: OtlpHookContext, record: EvidenceRecord): Promise<'continue' | 'stop'> {
+    if (!this.identityUnverifiedAtGate) return 'continue';
+    try {
+      const key = recordKey(record.api_identity, record.owner_hash, record.session_id);
+      if (await isStopped(key)) { // the gate could not read this stop without the owner; a stopped session spools nothing
+        await this.queueNotice(key);
+        return 'stop';
+      }
+      const violation = await this.recordViolation(record, context.cwd);
+      if (!violation) return 'continue';
+      if (violation !== 'unreadable') {
+        await this.stopSession(key, violation, record.session_id);
+      }
+    } catch (err) {
+      logger.debug(`[${this.name}] record check failed: ${err instanceof Error ? err.name : 'error'}`);
+    }
+    return 'stop';
+  }
+
+  /** Set when the gate could not establish the owner; the stamp's record is then checked by `recordGate`. */
+  private identityUnverifiedAtGate = false;
 
   /**
    * Excluded / out-of-scope hooks collect nothing and start nothing. The one exception is a privacy-stop marker for

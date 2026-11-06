@@ -111,7 +111,7 @@ describe('decodeResponse: publication contract statuses', () => {
   it('an unknown 422 keeps the existing rejected handling', () => {
     expect(decodeResponse(422, 'application/json', json({ reason: 'whatever' }), true)).toEqual({ kind: 'failed', reason: 'http_422' });
   });
-  it.each(['publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled'])(
+  it.each(['publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled', 'destination_unsupported'])(
     '503 %s holds', (reason) => {
       expect(decodeResponse(503, 'application/json', json({ reason, disposition: 'hold' }), true)).toMatchObject({ kind: 'retry', detail: reason, hold: true });
     });

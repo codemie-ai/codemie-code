@@ -30,6 +30,7 @@ export type HoldReason = (typeof HOLD_REASONS)[number];
 export const DELIVERY_LOSS_REASONS = [
   'delivery_rejected',
   'destination_unavailable',
+  'destination_hold',
   'response_unverified',
   'delivery_failed',
 ] as const;

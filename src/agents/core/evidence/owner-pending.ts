@@ -26,6 +26,9 @@ export interface PendingOwnerEntry {
   session_id: string;
   first_at: number;
   fields: PendingFields;
+  /** Hook-time folder and the project it resolved to (ignoring the session pin), so replay can re-check an existing record's scope. */
+  cwd?: string;
+  project_at_cwd?: string;
   events: Record<string, unknown>[];
 }
 

@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { evidenceDir, publicationModeFileName, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
+import { evidenceDir, publicationModeFileName, publish, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { advertisesContract, type PolicyState } from './policy-cache.js';
 
@@ -36,9 +36,9 @@ export async function publicationMode(
     if (!mode) return null;
     try {
       await mkdir(evidenceDir(), { recursive: true, mode: 0o700 });
-      await writeFile(path, JSON.stringify(mode), { flag: 'wx', mode: 0o600 });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+      await publish(path, JSON.stringify(mode), { strict: true }); // atomic create-once; no link support = no mode (fail closed)
+    } catch {
+      return null;
     }
     // A concurrent winner is authoritative. Partial/corrupt files fail closed, without repair or fallback.
     mode = await readMode(path);

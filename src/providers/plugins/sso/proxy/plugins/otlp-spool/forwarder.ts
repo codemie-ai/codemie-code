@@ -121,6 +121,20 @@ async function stopSession(ctx: EvidenceContext, reason: Parameters<typeof write
   }
 }
 
+/** First-hold notice per 503 hold cause (create-once: the first hold of a session is the one the user is told about). */
+const HOLD_NOTICE: Record<string, Parameters<typeof writeNotice>[1]> = {
+  publication_contract_unavailable: 'hold_contract_unavailable',
+  personal_storage_unsupported: 'hold_personal_unsupported',
+  project_unavailable: 'hold_project_unavailable',
+  project_analytics_not_enabled: 'hold_project_unavailable',
+  destination_unsupported: 'hold_destination_unsupported',
+};
+
+/** A backend hold that reached its original retention bound suspends the session (nothing more is published) with a notice. */
+function holdExpiredStop(ctx: EvidenceContext | undefined): (() => Promise<void>) | undefined {
+  return ctx?.newContract ? () => stopSession(ctx, 'hold_expired') : undefined;
+}
+
 const isAuthFailure = (response: WireResponse): boolean =>
   response.status === 401 ||
   response.status === 403 ||
@@ -193,7 +207,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
         await stopSession(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
       } else if (outcome.hold) {
-        await writeNotice(ctx.key, 'hold_contract_unavailable', ctx.record.session_id).catch(() => undefined);
+        await writeNotice(ctx.key, HOLD_NOTICE[outcome.detail ?? ''] ?? 'hold_contract_unavailable', ctx.record.session_id).catch(() => undefined);
       }
     }
     // Legacy JSON exports are independent records; retain main's payload-rejection policy.
@@ -227,7 +241,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     );
     outcome = { kind: 'retry', reason: 'request_error' };
   }
-  await recordUnacknowledged(sessionId, stream, outcome, req.range);
+  await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
   return outcome;
 }
 
@@ -331,7 +345,7 @@ async function forwardHooks(
   credentials: SSOCredentials | JWTCredentials,
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
-  if ((await deliveryGate(sessionId, 'hooks')) === 'wait') return 'idle';
+  if ((await deliveryGate(sessionId, 'hooks', Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
   const batch = await snapshotPendingHookRecords(sessionId);
   if (!batch) {
     return 'idle';
@@ -402,7 +416,7 @@ async function forwardOtelStream(
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
   let last: SendOutcome | 'idle' = 'idle';
-  if ((await deliveryGate(sessionId, stream)) === 'wait') return last;
+  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return last;
   for (let window = 0; window < (evidence ? MAX_OTEL_WINDOWS : 1); window++) {
     const pending = await snapshotPendingBytes(sessionId, stream, evidence ? MAX_SNAPSHOT_BYTES : undefined);
     if (!pending) return last;
@@ -440,7 +454,7 @@ async function forwardOtelJsonStream(
   credentials: SSOCredentials | JWTCredentials,
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
-  if ((await deliveryGate(sessionId, stream)) === 'wait') return 'idle';
+  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
   const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
   if (!batch) {
     return 'idle';

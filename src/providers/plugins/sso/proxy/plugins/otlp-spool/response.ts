@@ -31,7 +31,7 @@ export const FINAL_422_REASONS: readonly string[] = [
 ];
 /** 503 reasons that hold (within the retention window) instead of retrying as a transient failure. */
 export const HOLD_503_REASONS: readonly string[] = [
-  'publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled',
+  'publication_contract_unavailable', 'personal_storage_unsupported', 'project_unavailable', 'project_analytics_not_enabled', 'destination_unsupported',
 ];
 
 export const MAX_RESPONSE_BYTES = 64 * 1024;

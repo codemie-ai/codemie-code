@@ -187,6 +187,37 @@ describe('new-contract forwarding', () => {
     expect(writeStopMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['publication_contract_unavailable', 'hold_contract_unavailable'],
+    ['personal_storage_unsupported', 'hold_personal_unsupported'],
+    ['project_unavailable', 'hold_project_unavailable'],
+    ['project_analytics_not_enabled', 'hold_project_unavailable'],
+    ['destination_unsupported', 'hold_destination_unsupported'],
+  ])('503 hold %s raises its own first-hold notice, without a stop', async (reason, notice) => {
+    fetchMock.mockImplementation(async () => respond(503, { reason, disposition: 'hold' }));
+    await run();
+    expect(writeNoticeMock).toHaveBeenCalledWith(expect.any(String), notice, 's1');
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(writeStopMock).not.toHaveBeenCalled();
+  });
+
+  it('a consented session whose frozen project cannot travel as a raw header sends nothing and stops, never omitting consent', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, project: 'Проект', consent_ref: 'abcdef0123456789' } });
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(writeStopMock).toHaveBeenCalledWith(expect.any(String), 'consent_project_unsupported', 's1');
+  });
+
+  it('a Latin-1 project name still sends its raw project and consent', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, project: 'Café', consent_ref: 'abcdef0123456789' } });
+    const cafeLine = line.replace('Proj A', 'Café');
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...batch, project: 'Café', records: [cafeLine], byteLength: Buffer.byteLength(cafeLine) + 1 });
+    fetchMock.mockImplementation(async () => respond(200, {}, echo('project', 'Café')));
+    await run();
+    expect(sentHeaders()).toHaveProperty('X-CodeMie-Project', 'Café');
+    expect(sentHeaders()['X-CodeMie-Work-Consent']).toBe('explicit-folder');
+  });
+
   it('a stopped session sends nothing, backlog included', async () => {
     isStoppedMock.mockResolvedValue(true);
     await run();

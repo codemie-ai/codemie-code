@@ -177,6 +177,50 @@ describe('hook-side transitions', () => {
     expect((t.plugin as unknown as { pendingNotice?: string }).pendingNotice).toBeUndefined();
   });
 
+  describe('identity outage (no owner to key a record by)', () => {
+    const recordGate = (t: Awaited<ReturnType<typeof setup>>, rec: object) =>
+      (t.plugin as unknown as { recordGate(c: object, r: object): Promise<string> }).recordGate({ cwd: hook().cwd }, rec);
+
+    it('only a fresh session, a held session or one with a record goes on; an unknown mid-session scope is not parked', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }))).toBe('continue');
+      expect(await t.gate(hook({ session_id: 'unknown' }))).toBe('stop');
+      await t.record();
+      expect(await t.gate(hook())).toBe('continue'); // has a record: parked, re-checked at replay or stamp
+    });
+
+    it('the record the stamp later returns is re-checked: a folder move during the outage stops with a marker', async () => {
+      const t = await setup();
+      const created = await t.record();
+      identityMock.mockResolvedValue(null);
+      await t.gate(hook());
+      projectMock.mockResolvedValue('other');
+      expect(await recordGate(t, (created as { record: object }).record)).toBe('stop');
+      expect(await t.sm.isStopped(t.key())).toBe(true);
+    });
+
+    it('an already stopped record spools nothing even when its folder, generation and consent still match', async () => {
+      const t = await setup();
+      const rec = (await t.record() as { record: object }).record;
+      await t.sm.writeStop(t.key(), 'consent_revoked', 's1');
+      identityMock.mockResolvedValue(null);
+      await t.gate(hook());
+      expect(await recordGate(t, rec)).toBe('stop');
+    });
+
+    it('an unmoved folder continues; with no outage at the gate the post-stamp check is not run', async () => {
+      const t = await setup();
+      const rec = (await t.record() as { record: object }).record;
+      projectMock.mockResolvedValue('other');
+      expect(await recordGate(t, rec)).toBe('continue'); // gate resolved the owner: already checked there
+      identityMock.mockResolvedValue(null);
+      await t.gate(hook());
+      projectMock.mockResolvedValue('proj');
+      expect(await recordGate(t, rec)).toBe('continue');
+    });
+  });
+
   it('a marker that cannot be written spools nothing', async () => {
     const t = await setup();
     mkdirSync(join(home, 'analytics', 'state'), { recursive: true });

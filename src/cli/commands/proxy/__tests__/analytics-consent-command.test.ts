@@ -63,6 +63,19 @@ describe('connect-folder / disconnect-folder actions', () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it('a project name the raw header cannot carry is refused with an explanation before any consent is saved', async () => {
+    await run(['connect-folder', work, '--project', 'Проект', '--yes']);
+    expect(process.exitCode).toBe(1);
+    expect(said(err)).toContain('Latin-1');
+    expect((await store()).entries).toHaveLength(0);
+  });
+
+  it('a Latin-1 project name that already works is still connected', async () => {
+    await run(['connect-folder', work, '--project', 'Café', '--yes']);
+    expect(process.exitCode).toBe(0);
+    expect((await store()).entries).toHaveLength(1);
+  });
+
   it('without --yes and without a TTY it refuses (exit 1) and the store is untouched', async () => {
     process.stdin.isTTY = false as never;
     await run(['connect-folder', work, '--project', 'Proj-A']);

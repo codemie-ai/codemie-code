@@ -4,10 +4,10 @@ import { AnalyticsSourceError } from '@/utils/errors.js';
 import { maskSecretsDeep } from '@/utils/security.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
-import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
+import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
-import type { EvidenceRecord } from './evidence/record-store.js';
+import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
 import { enqueuePendingOwner } from './evidence/owner-pending.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
@@ -193,6 +193,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         };
       }
       record = stamp.record;
+      if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
     const [commonFields, agentFields] = await Promise.all([
       this.resolveCommonFields(context, record),
@@ -203,6 +204,15 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
     };
+  }
+
+  /**
+   * Profile to resolve the folder's project with: the one an already-recorded session froze (so an active-profile switch
+   * is not read as a folder move), else the current one (a fresh session freezes it at replay).
+   */
+  private async scopeProfile(fields: { session_id: string; api_identity: string; profile?: string }): Promise<string | undefined> {
+    const frozen = await frozenProfileOf(fields.session_id, fields.api_identity);
+    return frozen === 'not-recorded' ? fields.profile : frozen.profile;
   }
 
   /**
@@ -225,6 +235,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         api_identity: pending.fields.api_identity,
         session_id: pending.fields.session_id,
         fields: pending.fields,
+        cwd: context.cwd,
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields)),
         events: payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       }, now);
     } catch (error) {
@@ -258,6 +270,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Runs after the allowlist gate and before the daemon or any spool write. `stop`: nothing is spooled for this hook. */
   protected async transitionGate(_input: TInput): Promise<'continue' | 'stop'> {
+    return 'continue';
+  }
+
+  /** Runs on the record the stamp returned, before anything is built or spooled. `stop`: nothing is spooled for this hook. */
+  protected async recordGate(_context: OtlpHookContext, _record: EvidenceRecord): Promise<'continue' | 'stop'> {
     return 'continue';
   }
 

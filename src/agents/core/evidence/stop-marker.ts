@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acquirePidLock } from '@/utils/pid-lock.js';
-import { atomicReplace, evidenceDir, stopAckFileName, stopFileName } from './record-store.js';
+import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
+import { atomicReplace, evidenceDir, publish, stopAckFileName, stopFileName } from './record-store.js';
 
 export { stopFileName };
 
@@ -15,7 +16,7 @@ export { stopFileName };
 export const STOP_REASONS = [
   'collection_disabled', 'folder_changed', 'consent_revoked', 'consent_missing', 'resume_unknown',
   'generation_changed', 'scope_excluded', 'response_unverified', 'contract_unsupported',
-  'hold_expired', 'hold_contract_unavailable', 'hold_state_unknown', 'consent_invalid', 'requires_session', 'unspecified',
+  'hold_expired', 'hold_contract_unavailable', 'hold_state_unknown', 'hold_personal_unsupported', 'hold_project_unavailable', 'hold_destination_unsupported', 'consent_invalid', 'consent_project_unsupported', 'requires_session', 'unspecified',
 ] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 
@@ -38,22 +39,16 @@ const bounded = (r: string): StopReason => ((STOP_REASONS as readonly string[]).
 async function create(key: string, reason: StopReason, sessionId: string, stop: boolean): Promise<void> {
   const marker: MarkerFile = { schema: 1, reason: bounded(reason), session_id: sessionId.slice(0, 200), at: Date.now(), stop };
   await mkdir(evidenceDir(), { recursive: true, mode: 0o700 });
-  try {
-    await writeFile(pathOf(key), JSON.stringify(marker), { flag: 'wx', mode: 0o600 });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-    // Only a notice-only marker may be upgraded to a stop (a hold that expired); a stop is never relaxed or re-reasoned.
-    if (stop) {
-      let existing: Partial<MarkerFile> | undefined;
-      try { existing = JSON.parse(await readFile(pathOf(key), 'utf-8')) as Partial<MarkerFile>; } catch { return; }
-      if (existing.stop === false) await upgradeToStop(key, marker);
-    }
-  }
+  // Temp file + hard link: the marker is never observable half-written, so a concurrent stop always sees a whole one.
+  if ((await publish(pathOf(key), JSON.stringify(marker), { strict: true })) === 'won' || !stop) return;
+  await upgradeToStop(key, marker);
 }
 
 /** Short wait: hooks run inside a tight budget; the ack file is tiny so contention is brief. */
 const LOCK_BUDGET_MS = 3_000;
 const lockOf = (key: string): string => `${pathOf(key)}.lock`;
+/** Serializes notice -> stop upgrades only; separate from the acknowledgement lock so a stalled acknowledgement never blocks a stop. */
+const upgradeLockOf = (key: string): string => `${pathOf(key)}.upgrade.lock`;
 
 /**
  * Notice -> stop upgrade. The marker file is written only here (and create-once above); takeNotice records the
@@ -61,7 +56,18 @@ const lockOf = (key: string): string => `${pathOf(key)}.lock`;
  * stop=false, lock or no lock. The upgraded marker has a new `at`, so its reason notice is pending again.
  */
 async function upgradeToStop(key: string, marker: MarkerFile): Promise<void> {
-  await atomicReplace(pathOf(key), JSON.stringify(marker));
+  // Decide and replace under the lock, on a fresh read: two overlapping upgrades (or a stale read) can never overwrite an
+  // accepted stop, so the first stop's reason stays. Only a notice-only (or unreadable, e.g. emptied by an older build) marker is replaced.
+  const lock = await acquirePidLock(upgradeLockOf(key), { mode: 'wait', budgetMs: LOCK_BUDGET_MS, pidOnlyLiveness: true }).catch(() => null);
+  if (!lock) throw new Error('stop marker busy'); // a stop that cannot be recorded is reported, never dropped
+  try {
+    let existing: Partial<MarkerFile> | undefined;
+    try { existing = JSON.parse(await readFile(pathOf(key), 'utf-8')) as Partial<MarkerFile>; } catch { /* unreadable */ }
+    // Its bounded Windows rename retry handles readers briefly holding the old marker open.
+    if (!existing || existing.stop === false) await writeJsonFileAtomic(pathOf(key), marker);
+  } finally {
+    await lock.release();
+  }
 }
 
 /** Create-once: a later stop never changes the first reason or re-arms an already shown notice. Throws when it cannot be written. */
