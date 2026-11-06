@@ -206,7 +206,7 @@ async function hasCredentials(record: Session, env: NodeJS.ProcessEnv): Promise<
     return false;
   }
   const { endMetricCookieAuth } = await import('@/cli/commands/hook/end-metric.js');
-  return (await endMetricCookieAuth(env.CODEMIE_URL ?? '', recordHookConfig(record, env, { deliver: true }))) !== undefined;
+  return (await endMetricCookieAuth(env.CODEMIE_URL ?? '', await recordHookConfig(record, env, { deliver: true }))) !== undefined;
 }
 
 /** This launch's env, and its credential answer looked up once per provider for the pass that holds it. */
@@ -414,7 +414,7 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
   const event = await syntheticSessionEnd(record, { flush: !exhausted });
   if (exhausted && deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id);
   try {
-    await pipeline.processEvent(event, recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
+    await pipeline.processEvent(event, await recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
     if (!exhausted) throw error;
     await closeExhaustedLocally(id, error, options, deliver);
@@ -452,7 +452,7 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
           }
         } else {
           logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
-          await pipeline.deliverSession(id, recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
+          await pipeline.deliverSession(id, await recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
         }
       } else {
         closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
@@ -598,7 +598,7 @@ export async function finalizeOwnRecord(sessionId: string, ctx: OwnRecordContext
     if (record.status === 'active') {
       logger.info(`[reconcile] Own record ${sessionId} still active at exit; finalizing it`);
       const event = await syntheticSessionEnd(record, { flush: true });
-      await pipeline.processEvent(event, recordHookConfig(record, ctx.env, { deliver: true, deadlineMs: ctx.deadlineMs }));
+      await pipeline.processEvent(event, await recordHookConfig(record, ctx.env, { deliver: true, deadlineMs: ctx.deadlineMs }));
     } else if (record.status === 'completed' && hasSendPath(ctx.env) && (await launch.hasCredentials(record))) {
       await attemptRecord(record, {
         kind: 'undelivered',

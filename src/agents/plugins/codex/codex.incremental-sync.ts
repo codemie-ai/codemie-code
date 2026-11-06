@@ -185,7 +185,7 @@ async function buildUploadContext(
     apiBaseUrl: syncApiUrl,
     cookies,
     credentialsSuperseded,
-    clientType: 'codemie-codex',
+    clientType: env?.CODEMIE_CLIENT_TYPE || 'codemie-codex',
     version,
     dryRun: false,
     sessionId,

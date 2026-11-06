@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from 'fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'os';
 import { basename, join } from 'path';
 import { Readable } from 'node:stream';
@@ -805,6 +806,35 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const moved = JSON.parse(readFileSync(movedPath, 'utf-8')) as Session;
     expect(moved.startTime).toBe(Date.parse('2026-10-01T09:00:00Z'));
     expect(readRecord(id, 'completed_').startTime).toBe(Date.parse('2026-10-01T10:00:00Z'));
+  });
+
+  it('a later launch delivers a record under the record\'s client and branch, not its own client and the checkout\'s branch', async () => {
+    execFileSync('git', ['init', '-q', '-b', 'checkout-branch'], { cwd: home });
+    const session = baseRecord({
+      status: 'completed',
+      endTime: Date.parse('2026-10-01T10:30:00Z'),
+      clientType: 'codemie-claude-acp',
+      gitBranch: 'record-branch',
+    });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    vi.stubEnv('CODEMIE_CLIENT_TYPE', 'codemie-codex');
+    const clientHeaders: Record<string, string> = {};
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      const metric = JSON.parse(String((init as RequestInit).body)) as Captured;
+      requests.push(metric);
+      clientHeaders[metric.name] = ((init as RequestInit).headers as Record<string, string>)['X-CodeMie-Client'];
+      return ok();
+    });
+    const launch = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_CLIENT_TYPE: 'codemie-codex' };
+
+    await reconcileOtherSessions({ env: launch, ownSessionId: 'own' }).done;
+
+    const [end] = endMetrics();
+    expect(clientHeaders.codemie_cli_session_total).toBe('codemie-claude-acp');
+    expect(end.attributes.branch).toBe('record-branch');
+    expect(clientHeaders.codemie_cli_tool_usage_total).toBe('codemie-claude-acp');
+    expect(requests.find((r) => r.name === 'codemie_cli_tool_usage_total')?.attributes.codemie_client).toBe('codemie-claude-acp');
   });
 });
 
