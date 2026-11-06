@@ -265,8 +265,44 @@ function fromPerTurn(events: CopilotEvent[]): CopilotUsageMessage[] {
   }));
 }
 
+/**
+ * Whole-session tier 0 — `session.usage_record` (Copilot >= 1.0.92): one record per API request, summed per
+ * model. Request counts are distinct `apiCallId`s, so they match the backend's API-call count.
+ */
+function fromDistinctUsageRecords(events: CopilotEvent[]): CopilotUsageMessage[] {
+  const byModel = new Map<string, { usage: CopilotUsageBuckets; ids: Set<string> }>();
+  for (const event of events) {
+    if (event.type !== 'session.usage_record' || !event.data) continue;
+    const record = (event.data as CopilotUsageRecordData).usage ?? (event.data as CopilotUsageBuckets & { model?: string; apiCallId?: string });
+    if (!record.model || !record.apiCallId) continue;
+    const entry = byModel.get(record.model) ?? { usage: {}, ids: new Set<string>() };
+    if (entry.ids.has(record.apiCallId)) continue;
+    entry.ids.add(record.apiCallId);
+    for (const bucket of USAGE_BUCKETS) {
+      entry.usage[bucket] = (entry.usage[bucket] ?? 0) + (record[bucket] ?? 0);
+    }
+    byModel.set(record.model, entry);
+  }
+  return [...byModel.entries()].map(([model, entry]) => ({ model, usage: entry.usage, requests: entry.ids.size }));
+}
+
 export function extractCopilotUsage(events: CopilotEvent[]): CopilotUsageExtract {
   const shutdown = lastShutdown(events);
+
+  const records = fromDistinctUsageRecords(events);
+  if (records.length > 0) {
+    // A resumed session upgraded mid-way has older requests only in the shutdown rollup:
+    // use the rollup for any model where it counts more requests than the records do.
+    const rollup = new Map((shutdown ? fromShutdown(shutdown) : []).map((m) => [m.model, m]));
+    const merged = records.map((m) => {
+      const fallback = rollup.get(m.model);
+      return fallback && (fallback.requests ?? 0) > (m.requests ?? 0) ? fallback : m;
+    });
+    for (const [model, entry] of rollup) {
+      if (!merged.some((m) => m.model === model)) merged.push(entry);
+    }
+    return { messages: merged, premiumRequests: shutdown?.totalPremiumRequests, partial: false };
+  }
 
   if (shutdown) {
     const messages = fromShutdown(shutdown);
