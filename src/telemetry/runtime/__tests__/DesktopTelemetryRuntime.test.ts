@@ -391,7 +391,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       const [sessionArg] = mockSendSessionEnd.mock.calls[0];
-      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code', gitBranch: 'branch-codemie-code' });
     });
   });
 

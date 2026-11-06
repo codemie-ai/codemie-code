@@ -163,6 +163,7 @@ describe('hook command stored-credentials wiring', () => {
         provider: 'ai-run-sso',
         startTime: Date.now() - 1000,
         workingDirectory: process.cwd(),
+        gitBranch: 'record-branch',
         status: 'active',
         activeDurationMs: 0,
         correlation: { status: 'matched', agentSessionId: `agent-${sessionId}`, agentSessionFile: join(TMP, 'x.jsonl'), retryCount: 0 },
@@ -258,6 +259,7 @@ describe('hook command stored-credentials wiring', () => {
     expect(metricsSenderOptions).toHaveLength(1);
     expect(metricsSenderOptions[0]).toMatchObject({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
     expect(sendSessionEnd).toHaveBeenCalledTimes(1);
+    expect(sendSessionEnd.mock.calls[0][0]).toMatchObject({ gitBranch: 'record-branch' });
   });
 
   it('SessionEnd with preset cookies uses them and carries no callback', async () => {

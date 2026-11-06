@@ -145,7 +145,8 @@ export async function sendSessionEndMetrics(
         model,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory,
-        ...(session.repository && { repository: session.repository })
+        ...(session.repository && { repository: session.repository }),
+        ...(session.gitBranch && { gitBranch: session.gitBranch })
       },
       session.workingDirectory,
       status,

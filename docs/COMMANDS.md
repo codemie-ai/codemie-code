@@ -766,8 +766,8 @@ codemie log --level error               # Show only errors
 codemie log --profile work              # Filter by profile
 
 # Date filtering
-codemie log --from 2026-02-01           # From specific date
-codemie log --to 2026-02-04             # Until specific date
+codemie log --from 2026-02-01           # From specific date (UTC, inclusive)
+codemie log --to 2026-02-04             # Until specific date (UTC, includes the whole day)
 codemie log --last 7d                   # Last 7 days
 codemie log --last 24h                  # Last 24 hours
 codemie log --last 30m                  # Last 30 minutes
@@ -1275,6 +1275,8 @@ codemie --version
 
 A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
 
+A command run with `--json` (for example `codemie proxy analytics status --json`) also runs pending migrations silently (file log only) and skips the update check and the what's-new notice, so on every run, including the first one in an empty `CODEMIE_HOME`, its stdout carries only the JSON.
+
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default
 - First invocation may take up to 5 seconds (network check)
@@ -1392,9 +1394,11 @@ codemie analytics [options]
 - `--project <pattern>` - Filter by project path (basename, partial, or full path)
 - `--agent <name>` - Filter by agent name (claude, gemini, etc.)
 - `--branch <name>` - Filter by git branch
-- `--from <date>` - Filter sessions from date (YYYY-MM-DD)
-- `--to <date>` - Filter sessions to date (YYYY-MM-DD)
+- `--from <date>` - Start date, inclusive (YYYY-MM-DD)
+- `--to <date>` - End date, inclusive: includes the entire day (YYYY-MM-DD)
 - `--last <duration>` - Filter sessions from last duration (e.g., 7d, 24h)
+
+Dates are UTC calendar days and must be real calendar dates (`2026-02-30` is rejected). Sessions are matched on their start time. For a date-only `--to`, the report's `periodEnd` is `23:59:59.999Z` of that day.
 
 **Output Options:**
 - `-v, --verbose` - Show detailed session-level breakdown
@@ -1428,8 +1432,8 @@ codemie log <subcommand> [options] # Execute subcommand
 - `--agent <name>` - Filter by agent (claude, gemini, etc.)
 - `--profile <name>` - Filter by profile name
 - `--level <level>` - Filter by log level (debug, info, warn, error)
-- `--from <date>` - Filter from date (YYYY-MM-DD)
-- `--to <date>` - Filter to date (YYYY-MM-DD)
+- `--from <date>` - Filter from date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
+- `--to <date>` - Filter to date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
 - `--last <duration>` - Filter last duration (e.g., 7d, 24h, 30m)
 - `--grep <pattern>` - Search pattern (supports regex)
 - `-n, --lines <number>` - Number of lines to show (default: 50)
