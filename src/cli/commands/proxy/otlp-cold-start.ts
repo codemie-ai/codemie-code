@@ -28,7 +28,7 @@ import { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } from './connect
  * blocks a start: a daemon without credentials holds its port and answers 401 until the user signs in.
  */
 async function ssoCredentialsProblem(config: LoadedConfig, name: string): Promise<string | undefined> {
-  return assertSsoCredentials(config.baseUrl as string, name, config.codeMieUrl)
+  return assertSsoCredentials(config.baseUrl as string, name, config.codeMieUrl, config.provider)
     .then(() => undefined, (error: Error) => error.message);
 }
 
