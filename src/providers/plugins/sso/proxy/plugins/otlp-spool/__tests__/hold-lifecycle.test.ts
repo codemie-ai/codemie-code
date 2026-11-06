@@ -53,7 +53,7 @@ describe('backend 503 hold lifecycle', () => {
   it('the request crossing the original bound reports the expiry once; a changing reason does not restart the clock', async () => {
     const { recordUnacknowledged } = await import('../delivery-state.js');
     const { readStatus } = await import('../session-status.js');
-    const expired = vi.fn(async () => undefined);
+    const expired = vi.fn(async () => true);
     await recordUnacknowledged(SESSION, 'hooks', hold, range, expired);
     vi.setSystemTime(T0 + DAY / 2);
     await recordUnacknowledged(SESSION, 'hooks', ordinary, range, expired);
@@ -66,7 +66,7 @@ describe('backend 503 hold lifecycle', () => {
 
   it('an ordinary 503 expiry never reports a hold expiry', async () => {
     const { recordUnacknowledged } = await import('../delivery-state.js');
-    const expired = vi.fn(async () => undefined);
+    const expired = vi.fn(async () => true);
     await recordUnacknowledged(SESSION, 'hooks', ordinary, range, expired);
     vi.setSystemTime(T0 + DAY + MIN);
     await recordUnacknowledged(SESSION, 'hooks', ordinary, range, expired);
@@ -76,7 +76,7 @@ describe('backend 503 hold lifecycle', () => {
   it('the gate before a request also reports an expired hold', async () => {
     const { recordUnacknowledged, deliveryGate } = await import('../delivery-state.js');
     await recordUnacknowledged(SESSION, 'hooks', hold, range);
-    const expired = vi.fn(async () => undefined);
+    const expired = vi.fn(async () => true);
     expect(await deliveryGate(SESSION, 'hooks', T0 + MIN, expired)).toBe('wait');
     expect(expired).not.toHaveBeenCalled();
     expect(await deliveryGate(SESSION, 'hooks', T0 + DAY + MIN, expired)).toBe('go');

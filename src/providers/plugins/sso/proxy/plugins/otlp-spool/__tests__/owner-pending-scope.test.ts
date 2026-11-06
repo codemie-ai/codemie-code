@@ -130,13 +130,30 @@ describe('owner-pending replay scope', () => {
     expect(await m.hooksBytes()).toBe(0);
   });
 
-  it('a session recorded before the new contract stays legacy and is not scope-stopped', async () => {
+  const legacy = { funding_route: undefined, negotiate_publication: undefined, collection_generation: undefined };
+  it('a session recorded without a frozen generation cannot prove continuity: stopped, held content dropped, never upgraded', async () => {
     const m = await mods();
-    await m.existing({ funding_route: undefined, negotiate_publication: undefined, collection_generation: undefined });
-    await m.hold(1, 'other', { funding_route: undefined, negotiate_publication: undefined, collection_generation: undefined });
+    await m.existing(legacy);
+    await m.hold(1, 'work', legacy); // even the recorded folder: there is no evidence the collection setting did not change
+    await m.run();
+    expect(await m.sm.isStopped(m.key)).toBe(true);
+    expect(await m.hooksBytes()).toBe(0);
+    expect(await m.queued()).toBe(0);
+    const found = await (await import('@/agents/core/evidence/record-store.js')).readRecord(m.key);
+    expect(found?.kind === 'existing' && found.record.funding_route === undefined && found.record.collection_generation === undefined).toBe(true);
+  });
+
+  it('a record with a frozen generation but no funding claim is not rejected for the absent claim; scope changes still stop it', async () => {
+    const noClaim = { funding_route: undefined, negotiate_publication: undefined };
+    const m = await mods();
+    await m.existing(noClaim);
+    await m.hold(1, 'work', noClaim);
     await m.run();
     expect(await m.sm.isStopped(m.key)).toBe(false);
     expect(await m.hooksBytes()).toBeGreaterThan(0);
+    await m.hold(2, 'other', noClaim);
+    await m.run();
+    expect(await m.sm.isStopped(m.key)).toBe(true);
   });
 
   describe('captured through the real hook-time producer', () => {

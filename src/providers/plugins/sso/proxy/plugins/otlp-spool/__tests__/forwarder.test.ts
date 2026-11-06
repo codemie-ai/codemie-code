@@ -692,6 +692,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     schema: 1, session_id: 's1', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven',
     organization: 'Acme', project: 'Proj A', project_source: 'linked_folder', repo_key: 'git.example.com/a/b',
     api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0,
+    collection_generation: 0, // scope evidence without a funding claim: the legacy wire protocol with provable privacy continuity
   };
   const policyV1 = { organizations: ['Acme'], version: 'v1' };
   const usable = (policy: unknown) => ({ policy, capability: 'evidence', usable: !!policy, refreshDue: !policy });

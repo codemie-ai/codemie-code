@@ -14,13 +14,18 @@ export interface ScopeFacts {
 /** Same canonical form as the consent store and the backend (trim, case-insensitive). */
 const canon = (p: string): string => p.trim().toLowerCase();
 
+/** A frozen collection generation is the evidence that the session's scope was recorded; the funding claim is a separate wire fact. */
+export const hasScopeEvidence = (record: EvidenceRecord): boolean => record.collection_generation !== undefined;
+
 /**
  * Why a recorded session must stop for content seen under `facts`, or undefined when it still holds.
- * One rule for the live transition gate and the owner-pending replay. A record from before the new contract is legacy: unchanged.
+ * One rule for the live transition gate, the post-stamp check, the owner-pending replay, the tick and the forwarder.
+ * A record without a frozen generation cannot prove privacy continuity (collection toggle, folder, consent): it suspends;
+ * nothing is invented for it and it is never upgraded.
  */
 export async function scopeViolation(record: EvidenceRecord, facts: ScopeFacts): Promise<StopReason | undefined> {
-  if (record.funding_route === undefined) return undefined;
-  if (facts.generation !== (record.collection_generation ?? 0)) return 'generation_changed';
+  if (!hasScopeEvidence(record)) return 'scope_unproven';
+  if (facts.generation !== record.collection_generation) return 'generation_changed';
   if (canon(facts.projectAtCwd) !== canon(record.project ?? '')) return 'folder_changed';
   if (record.consent_ref) {
     const scope = { owner_hash: record.owner_hash, api_identity: record.api_identity, project: record.project ?? '' };

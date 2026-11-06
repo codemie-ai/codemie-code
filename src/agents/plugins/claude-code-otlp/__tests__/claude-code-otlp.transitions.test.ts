@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -141,11 +141,23 @@ describe('hook-side transitions', () => {
     expect(await t.gate(hook({ cwd: join(tmpdir(), 'other-repo') }))).toBe('stop');
   });
 
-  it('a session recorded before the new contract stays legacy and is not stopped by scope checks', async () => {
+  it('a session recorded without a frozen generation cannot prove continuity: stopped with a one-shot notice, never upgraded', async () => {
     const t = await setup();
     await t.record({ funding_route: undefined, collection_generation: undefined });
-    projectMock.mockResolvedValue('other');
+    expect(await t.gate(hook())).toBe('stop'); // even in the recorded folder
+    expect(await t.sm.isStopped(t.key())).toBe(true);
+    const marker = JSON.parse(readFileSync(join(t.rs.evidenceDir(), t.sm.stopFileName(t.key())), 'utf8')) as { reason: string; stop: boolean };
+    expect(marker).toMatchObject({ reason: 'scope_unproven', stop: true });
+    const found = await t.rs.readRecord(t.key());
+    expect(found?.kind === 'existing' && found.record.funding_route === undefined && found.record.collection_generation === undefined).toBe(true);
+  });
+
+  it('a record with a frozen generation and no funding claim is judged on its scope, not rejected for the absent claim', async () => {
+    const t = await setup();
+    await t.record({ funding_route: undefined, negotiate_publication: undefined });
     expect(await t.gate(hook())).toBe('continue');
+    projectMock.mockResolvedValue('other');
+    expect(await t.gate(hook())).toBe('stop');
   });
 
   it('a stop is surfaced once as a user systemMessage, no project or path text; Claude is not blocked', async () => {

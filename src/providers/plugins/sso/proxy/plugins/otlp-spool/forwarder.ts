@@ -36,6 +36,8 @@ import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { beginSend, endSend, stopOrRecordIntent, tryStop } from './stop-intent.js';
+import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
@@ -112,13 +114,9 @@ function echoVerified(echo: WireResponse['echo'], ctx: EvidenceContext): boolean
   return dest === 'project' && !!echo.boundProject && echo.boundProject.toLowerCase() === (ctx.record.project ?? '').toLowerCase();
 }
 
-/** Persist the stop; if even that fails the next sendGuard/tick still refuses, so a failure is only logged. */
-async function stopSession(ctx: EvidenceContext, reason: Parameters<typeof writeStop>[1]): Promise<void> {
-  try {
-    await writeStop(ctx.key, reason, ctx.record.session_id);
-  } catch (err) {
-    logger.warn('[otlp-forwarder] stop marker not written', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));
-  }
+/** Persist the stop; a failed marker write is kept as a stop intent that blocks every later send and retries (stop-intent.ts). */
+async function stopSession(ctx: EvidenceContext, reason: Parameters<typeof writeStop>[1]): Promise<'marker' | 'intent' | 'volatile'> {
+  return stopOrRecordIntent(ctx.key, reason, ctx.record.session_id);
 }
 
 /** First-hold notice per 503 hold cause (create-once: the first hold of a session is the one the user is told about). */
@@ -131,8 +129,8 @@ const HOLD_NOTICE: Record<string, Parameters<typeof writeNotice>[1]> = {
 };
 
 /** A backend hold that reached its original retention bound suspends the session (nothing more is published) with a notice. */
-function holdExpiredStop(ctx: EvidenceContext | undefined): (() => Promise<void>) | undefined {
-  return ctx?.newContract ? () => stopSession(ctx, 'hold_expired') : undefined;
+function holdExpiredStop(ctx: EvidenceContext | undefined): (() => Promise<boolean>) | undefined {
+  return ctx?.newContract ? () => tryStop(ctx.key, 'hold_expired', ctx.record.session_id) : undefined;
 }
 
 const isAuthFailure = (response: WireResponse): boolean =>
@@ -151,7 +149,12 @@ interface SendRequest {
   project: string;
   range: { cursor: number; end: number; filtered: boolean };
   evidence?: EvidenceContext;
+  /** The recorded session's privacy guard for every attempt, whatever the wire headers (an evidence context is one too). */
+  guard?: RecordGuard;
 }
+
+/** A recorded session's key and frozen record: all  needs. */
+export interface RecordGuard { key: string; record: EvidenceRecord }
 
 function requestHeaders(req: SendRequest): Record<string, string> {
   if (req.evidence && req.evidence.wireMode !== 'legacy') return evidenceHeaders(req.sessionId, req.evidence);
@@ -175,10 +178,17 @@ async function send(req: SendRequest): Promise<SendOutcome> {
   // window between the locked snapshot and the wire, it does not close it. A sealed session passes
   // it for its hooks prefix only. `null` = no longer sendable, nothing is fetched (the next
   // snapshot applies the policy under the lock).
-  const attempt = async (): Promise<WireResponse | null> =>
-    (await isSendAllowed(sessionId, stream, req.project, req.range)) && (!req.evidence || (await sendGuard(req.evidence.key, req.evidence.record)))
-      ? postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req))
-      : null;
+  // A new-contract attempt first makes its write-ahead checkpoint durable (no checkpoint = no request), see stop-intent.ts.
+  let stopUnrecorded = false;
+  const attempt = async (): Promise<WireResponse | null> => {
+    const guard = req.evidence ?? req.guard;
+    if (!(await isSendAllowed(sessionId, stream, req.project, req.range)) || (guard && !(await sendGuard(guard.key, guard.record)))) return null;
+    if (req.evidence?.newContract && !(await beginSend(req.evidence.key, sessionId))) return null;
+    return postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req));
+  };
+  const stopped = async (ctx: EvidenceContext, reason: Parameters<typeof writeStop>[1]): Promise<void> => {
+    if ((await stopSession(ctx, reason)) === 'volatile') stopUnrecorded = true;
+  };
 
   // A 422 publication_contract_unsupported gets exactly one capability refresh before it is final.
   let contractRefreshed = false;
@@ -202,9 +212,9 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       if (outcome.kind === 'ok' && !echoVerified(response.echo, ctx)) {
         // Never acknowledged, and never retried into more unverified publication: the session stops with a notice.
         outcome = { kind: 'failed', reason: 'response_unverified' };
-        await stopSession(ctx, 'response_unverified');
+        await stopped(ctx, 'response_unverified');
       } else if (outcome.final) {
-        await stopSession(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
+        await stopped(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
       } else if (outcome.hold) {
         await writeNotice(ctx.key, HOLD_NOTICE[outcome.detail ?? ''] ?? 'hold_contract_unavailable', ctx.record.session_id).catch(() => undefined);
@@ -242,6 +252,8 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     outcome = { kind: 'retry', reason: 'request_error' };
   }
   await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
+  // Outcome processed (acknowledged, held or retried): the checkpoint is released unless a required stop is recorded nowhere durable.
+  if (req.evidence?.newContract) await endSend(req.evidence.key, sessionId, stopUnrecorded);
   return outcome;
 }
 
@@ -343,7 +355,8 @@ async function forwardHooks(
   sessionId: string,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  evidence?: EvidenceContext
+  evidence?: EvidenceContext,
+  guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
   if ((await deliveryGate(sessionId, 'hooks', Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
   const batch = await snapshotPendingHookRecords(sessionId);
@@ -384,7 +397,7 @@ async function forwardHooks(
     sessionId, stream: 'hooks', url: `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`,
     body: payload.ndjson, contentType: 'application/x-ndjson', credentials, project: batch.project,
     range: { cursor: batch.cursor, end: batch.cursor + consumed, filtered: batch.filtered === true },
-    evidence,
+    evidence, guard,
   });
   if (!acknowledged(result)) {
     return result;
@@ -413,7 +426,8 @@ async function forwardOtelStream(
   stream: OtelStream,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  evidence?: EvidenceContext
+  evidence?: EvidenceContext,
+  guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
   let last: SendOutcome | 'idle' = 'idle';
   if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return last;
@@ -435,7 +449,7 @@ async function forwardOtelStream(
       sessionId, stream, url: `${baseUrl}${OTEL_ENDPOINTS[stream]}`, body: bytes,
       contentType: 'application/x-protobuf', credentials, project: pending.project,
       range: { cursor: pending.cursor, end: pending.cursor + bytes.length, filtered: false },
-      evidence,
+      evidence, guard,
     });
     if (!acknowledged(result)) return result;
 
@@ -452,7 +466,8 @@ async function forwardOtelJsonStream(
   stream: OtelJsonStream,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  evidence?: EvidenceContext
+  evidence?: EvidenceContext,
+  guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
   if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
   const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
@@ -479,7 +494,7 @@ async function forwardOtelJsonStream(
       if (proof.hold) return 'idle';
     }
     const result = await send({ sessionId, stream, url, body: record, contentType: 'application/json', credentials,
-      project: batch.project, range, evidence });
+      project: batch.project, range, evidence, guard });
     if (!acknowledged(result)) return result;
     cursor += recordByteLength;
     await acknowledge(sessionId, stream, cursor, recordByteLength, result);
@@ -488,6 +503,22 @@ async function forwardOtelJsonStream(
   return { kind: 'ok' };
 }
 const authExpired = (r: SendOutcome | 'idle'): boolean => r !== 'idle' && r.kind === 'auth-expired';
+
+/**
+ * A session sent without an evidence context answers to its record, if it has one (no record = the unstamped legacy path,
+ * unchanged). Returns the guard every attempt re-checks, `null` when the scope does not hold now, `undefined` when unrecorded.
+ */
+async function recordedGuard(sessionId: string, endpoint: AnalyticsEndpoint): Promise<RecordGuard | null | undefined> {
+  const id = endpoint.identity;
+  if (!id) return undefined;
+  const key = recordKey(id.api_identity, id.owner_hash, sessionId);
+  const found = await readRecord(key);
+  if (!found) return undefined;
+  if (found.kind !== 'existing' && found.kind !== 'created') return null;
+  // A lost/unreadable sendMode must not strip the contract from a recorded contract session.
+  if (found.record.funding_route !== undefined) return null;
+  return (await sendGuard(key, found.record)) ? { key, record: found.record } : null;
+}
 
 /**
  * Forward everything a session has pending to the CodeMie analytics backend.
@@ -519,6 +550,7 @@ export async function forwardSession(
 
   const status = await withSessionLock(sessionId, () => readStatus(sessionId));
   let evidence: EvidenceContext | undefined;
+  let guard: RecordGuard | undefined;
   if (status?.sendMode === 'evidence') {
     const ctx = await evidenceContext(sessionId, baseUrl, credentials, endpoint, classification);
     if (!ctx) {
@@ -526,9 +558,17 @@ export async function forwardSession(
       return;
     }
     evidence = ctx;
+  } else {
+    // A legacy-mode send still answers to a recorded session's privacy continuity, at the start and again before EACH request.
+    const recorded = await recordedGuard(sessionId, endpoint);
+    if (recorded === null) {
+      logger.debug('[otlp-forwarder] recorded scope does not hold, nothing sent', ...sanitizeLogArgs({ sessionId }));
+      return;
+    }
+    guard = recorded;
   }
 
-  const hooksResult = await forwardHooks(sessionId, baseUrl, credentials, evidence);
+  const hooksResult = await forwardHooks(sessionId, baseUrl, credentials, evidence, guard);
   if (authExpired(hooksResult)) {
     markCredentialsStale();
     return;
@@ -539,7 +579,7 @@ export async function forwardSession(
   }
 
   for (const stream of OTEL_STREAMS) {
-    const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials, evidence);
+    const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials, evidence, guard);
     if (authExpired(result)) {
       markCredentialsStale();
       return;
@@ -547,7 +587,7 @@ export async function forwardSession(
   }
 
   for (const stream of OTEL_JSON_STREAMS) {
-    const result = await forwardOtelJsonStream(sessionId, stream, baseUrl, credentials, evidence);
+    const result = await forwardOtelJsonStream(sessionId, stream, baseUrl, credentials, evidence, guard);
     if (authExpired(result)) {
       markCredentialsStale();
       return;

@@ -222,7 +222,6 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         return this.stopSession(key, 'resume_unknown', sessionId);
       }
       const record = found.record;
-      if (record.funding_route === undefined) return 'continue'; // recorded before the new contract: legacy, unchanged
       const violation = await this.recordViolation(record, hookInput.cwd);
       if (violation === 'unreadable') return 'stop';
       if (violation) return this.stopSession(key, violation, sessionId);
@@ -236,7 +235,6 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   /** Why this hook's folder/generation/consent no longer fits the recorded session; 'unreadable' = preferences cannot be read. */
   private async recordViolation(record: EvidenceRecord, cwd: string): Promise<StopReason | 'unreadable' | undefined> {
-    if (record.funding_route === undefined) return undefined;
     const prefs = await readClaudeAnalyticsPreferences();
     if (prefs.kind !== 'ok') return 'unreadable';
     return scopeViolation(record, {

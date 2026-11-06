@@ -24,6 +24,7 @@ const TEXT: Record<StopReason, string> = {
   hold_destination_unsupported: 'the connected project name cannot be used as an analytics destination by the backend; data is held and will be retried.',
   consent_invalid: 'the analytics backend rejected the folder consent.',
   consent_project_unsupported: 'the connected project name cannot be sent to the analytics backend (only Latin-1 text is supported); reconnect the folder with a supported project.',
+  scope_unproven: 'this session began before analytics recorded its collection scope, so its folder and consent cannot be proven and none of it is published.',
   requires_session: 'the analytics backend rejected the request.',
   unspecified: 'publishing stopped.',
 };

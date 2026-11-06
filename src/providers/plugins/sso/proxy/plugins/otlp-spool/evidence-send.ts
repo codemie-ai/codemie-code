@@ -7,6 +7,8 @@ import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.j
 import { getPolicyState, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { consentHolds } from '@/agents/core/evidence/consent-store.js';
+import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
+import { stopIntentPending } from './stop-intent.js';
 import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import { publicationMode, type PublicationMode } from './publication-mode.js';
@@ -36,12 +38,16 @@ export interface EvidenceContext {
  * that would send under another scope). Unreadable evidence is no send, never open.
  */
 export async function sendGuard(key: string, record: EvidenceRecord): Promise<boolean> {
-  if (await isStopped(key)) return false;
-  if (record.funding_route === undefined) return true; // legacy-recorded session: unchanged
+  if ((await isStopped(key)) || (await stopIntentPending(key, record.session_id))) return false;
   try {
+    // No frozen generation = no proof of privacy continuity, whatever the wire protocol or funding claim: suspended.
+    if (!hasScopeEvidence(record)) {
+      await writeStop(key, 'scope_unproven', record.session_id);
+      return false;
+    }
     const prefs = await readClaudeAnalyticsPreferences();
     if (prefs.kind !== 'ok') return false;
-    if (prefs.value.collectionGeneration !== (record.collection_generation ?? 0)) {
+    if (prefs.value.collectionGeneration !== record.collection_generation) {
       await writeStop(key, 'generation_changed', record.session_id);
       return false;
     }

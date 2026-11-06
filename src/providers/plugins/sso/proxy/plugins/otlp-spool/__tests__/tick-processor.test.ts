@@ -427,6 +427,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       project_source: project ? 'profile' : 'none',
       api_identity,
       owner_hash,
+      collection_generation: 0, // recorded scope evidence without a funding claim: legacy wire, privacy continuity provable
     });
     expect(result.kind).toBe('created');
   }

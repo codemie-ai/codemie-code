@@ -55,9 +55,9 @@ async function hookTimeFields(
     api_identity: api,
     profile: hookConfig?.config.name,
     projectBinding: projectBindingFor(project),
-    ...(inputs.funding_route !== undefined
-      ? { funding_route: inputs.funding_route, collection_generation: inputs.collection_generation ?? 0, negotiate_publication: true as const }
-      : {}),
+    ...(inputs.funding_route !== undefined ? { funding_route: inputs.funding_route, negotiate_publication: true as const } : {}),
+    // The generation is scope evidence in its own right (a new-contract stamp always has one); never invented for a stamp without it.
+    ...(inputs.funding_route !== undefined || inputs.collection_generation !== undefined ? { collection_generation: inputs.collection_generation ?? 0 } : {}),
   };
 }
 

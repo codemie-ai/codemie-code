@@ -16,7 +16,7 @@ export { stopFileName };
 export const STOP_REASONS = [
   'collection_disabled', 'folder_changed', 'consent_revoked', 'consent_missing', 'resume_unknown',
   'generation_changed', 'scope_excluded', 'response_unverified', 'contract_unsupported',
-  'hold_expired', 'hold_contract_unavailable', 'hold_state_unknown', 'hold_personal_unsupported', 'hold_project_unavailable', 'hold_destination_unsupported', 'consent_invalid', 'consent_project_unsupported', 'requires_session', 'unspecified',
+  'hold_expired', 'hold_contract_unavailable', 'hold_state_unknown', 'hold_personal_unsupported', 'hold_project_unavailable', 'hold_destination_unsupported', 'consent_invalid', 'consent_project_unsupported', 'scope_unproven', 'requires_session', 'unspecified',
 ] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 

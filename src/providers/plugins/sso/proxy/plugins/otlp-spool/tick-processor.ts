@@ -2,7 +2,9 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
-import { isStopped, writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { isStopped, writeNotice } from '@/agents/core/evidence/stop-marker.js';
+import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
+import { holdsCheckpoint, owedStop, tryStop } from './stop-intent.js';
 import { advertisesContract } from './policy-cache.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
@@ -41,15 +43,6 @@ type TickEvidenceDecision = SessionEvidenceDecision | { action: 'suppress' };
 async function stickyPersonalOf(key: string): Promise<boolean> {
   const v = await readVerdictState(key);
   return v.state === 'unreadable' || (v.state === 'ok' && v.verdict.class === 'personal');
-}
-
-/** A stop marker is the owner of "never publish again"; a write failure only means the hold continues and is retried. */
-async function stopQuietly(key: string, reason: Parameters<typeof writeStop>[1], sessionId: string): Promise<void> {
-  try {
-    await writeStop(key, reason, sessionId);
-  } catch (err) {
-    logger.debug('[otlp-tick] stop marker not written', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
-  }
 }
 
 /**
@@ -96,12 +89,22 @@ async function applySessionEvidenceLocked(
   const id = forwarderIdentity(credentials);
   const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
   const heldSince = status.holds?.session?.since;
+  const found = key ? await readRecord(key) : undefined;
+  // A recorded session without a frozen generation cannot prove privacy continuity: suspended whatever the wire protocol.
+  const unproven = (found?.kind === 'existing' || found?.kind === 'created') && !hasScopeEvidence(found.record);
+  if (key && unproven) await tryStop(key, 'scope_unproven', sessionId); // the marker carries the one-shot notice; unproven stays stopped if this fails
+  // A stop whose marker is still unwritten (status.stopIntent) is retried here and keeps the session stopped meanwhile.
+  const owed = key ? owedStop(key, status) : undefined; // an intent, or a previous process's unresolved send checkpoint
+  if (key && owed && (await tryStop(key, owed, sessionId))) {
+    delete status.stopIntent;
+    if (!holdsCheckpoint(key)) delete status.sendCheckpoint; // a previous process's checkpoint is resolved by the marker
+  }
   let decision: TickEvidenceDecision = evaluateSessionEvidence({
     hasHooks: hooksGroupPresent(spool),
     marked: status.evidenceMarked === true,
-    record: key ? await readRecord(key) : undefined,
+    record: found,
     capability: policy?.capability ?? 'unknown',
-    stopped: key ? await isStopped(key) : false,
+    stopped: unproven || (key ? (await isStopped(key)) || owed !== undefined : false),
     contractAdvertised: policy ? advertisesContract(policy) : false,
     // An unreadable verdict may hide a sticky Personal: treated as Personal (fail closed, never legacy).
     stickyPersonal: key ? await stickyPersonalOf(key) : false,
@@ -140,10 +143,14 @@ async function applySessionEvidenceLocked(
       }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };
+  } else if (decision.action === 'lose' && decision.reason === 'publication_contract_unavailable' && key &&
+    !(await tryStop(key, 'hold_expired', sessionId))) {
+    // The required stop is not recorded: the hold stays and the backlog is kept (nothing sends); the next tick retries.
+    decision = { action: 'hold', reason: decision.reason };
+    status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
   } else {
     clearHold(status, 'session');
     if (decision.action === 'lose') {
-      if (decision.reason === 'publication_contract_unavailable' && key) await stopQuietly(key, 'hold_expired', sessionId);
       await recordLossLocked(sessionId, status, decision.reason, undefined, now);
     } else {
       status.sendMode = decision.action === 'send_evidence' ? 'evidence' : 'legacy';
