@@ -3,6 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
 
 vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
@@ -31,6 +32,19 @@ vi.mock('../daemon-manager.js', () => ({
 
 vi.mock('../health-check.js', () => ({
   checkProxyHealth: vi.fn(),
+}));
+
+vi.mock('../connectors/claude-code-otlp-endpoint.js', () => ({
+  checkClaudeCodeOtlpEndpoint: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../analytics-connectors.js', () => ({
+  hasActiveAnalyticsConnector: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../delivery-health.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../delivery-health.js')>()),
+  collectDeliveryHealth: vi.fn().mockResolvedValue({ status: 'unknown', pendingBytes: 0 }),
 }));
 
 vi.mock('../connectors/desktop.js', () => ({
@@ -1019,6 +1033,190 @@ describe('proxy status', () => {
     expect(lines).toContain('  API Key: local-key');
     expect(lines).toContain('  Profile: work');
     consoleLogSpy.mockRestore();
+  });
+
+  describe('Analytics line', () => {
+    const analyticsState = {
+      pid: process.pid,
+      port: 4001,
+      url: 'http://127.0.0.1:4001',
+      profile: 'work',
+      gatewayKey: 'local-key',
+      startedAt: new Date().toISOString(),
+    };
+    let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+    async function runStatus(args: string[]): Promise<string[]> {
+      const { createProxyCommand } = await import('../index.js');
+      await createProxyCommand().parseAsync(args, { from: 'user' });
+      return consoleLogSpy.mock.calls.map((call) => String(call[0]));
+    }
+
+    async function arrange(options: {
+      connectorActive: boolean;
+      delivery: { status: 'healthy' | 'unhealthy' | 'unknown'; reason?: string; pendingBytes: number };
+      reply?: { credentials: 'ok' | 'stale' };
+    }): Promise<void> {
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { checkProxyHealth } = await import('../health-check.js');
+      const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
+      const { collectDeliveryHealth } = await import('../delivery-health.js');
+      vi.mocked(checkStatus).mockResolvedValue({ running: true, state: analyticsState });
+      vi.mocked(checkProxyHealth).mockResolvedValue({
+        healthy: true,
+        level: 'shallow',
+        code: 'ok',
+        ...(options.reply ? { analytics: options.reply } : {}),
+      });
+      vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(options.connectorActive);
+      vi.mocked(collectDeliveryHealth).mockResolvedValue(
+        options.delivery as Awaited<ReturnType<typeof collectDeliveryHealth>>
+      );
+    }
+
+    beforeEach(() => {
+      consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      consoleLogSpy.mockRestore();
+    });
+
+    it('prints a green healthy line after Uptime when a connector is active', async () => {
+      await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
+
+      const lines = await runStatus(['status']);
+
+      const uptimeIndex = lines.findIndex((line) => line.startsWith('  Uptime:'));
+      expect(uptimeIndex).toBeGreaterThan(-1);
+      expect(lines[uptimeIndex + 1]).toBe(`Analytics: ${chalk.green('healthy')}`);
+      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
+
+      const { checkProxyHealth } = await import('../health-check.js');
+      const { collectDeliveryHealth } = await import('../delivery-health.js');
+      expect(checkProxyHealth).toHaveBeenCalledWith(expect.objectContaining({ expectedPid: analyticsState.pid }));
+      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, { credentials: 'ok' });
+    });
+
+    it('prints the analytics line before the Claude Code OTLP warning', async () => {
+      await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
+      const { checkClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
+      vi.mocked(checkClaudeCodeOtlpEndpoint).mockResolvedValueOnce({
+        configured: 'http://127.0.0.1:9999',
+        expected: 'http://127.0.0.1:4001',
+        matches: false,
+      } as Awaited<ReturnType<typeof checkClaudeCodeOtlpEndpoint>>);
+
+      const lines = await runStatus(['status']);
+
+      const analyticsIndex = lines.findIndex((line) => line.startsWith('Analytics:'));
+      const warningIndex = lines.findIndex((line) => line.includes('Warning:'));
+      expect(analyticsIndex).toBeGreaterThan(-1);
+      expect(warningIndex).toBeGreaterThan(analyticsIndex);
+    });
+
+    it.each([
+      ['credentials_expired', 'credentials expired', 'codemie profile login'],
+      ['auth_rejected', 'analytics auth rejected', 'codemie profile login'],
+      ['identity_mismatch', 'analytics identity mismatch', 'codemie proxy restart'],
+      ['send_failed', 'sending to analytics failed', 'codemie proxy analytics status'],
+    ])('prints a yellow unhealthy line and a Run tip for %s', async (reason, label, run) => {
+      await arrange({
+        connectorActive: true,
+        delivery: { status: 'unhealthy', reason, pendingBytes: 10 },
+        reply: { credentials: 'stale' },
+      });
+
+      const lines = await runStatus(['status']);
+
+      const index = lines.indexOf(`Analytics: ${chalk.yellow(`unhealthy (${label})`)}`);
+      expect(index).toBeGreaterThan(-1);
+      expect(lines[index + 1]).toBe(`  Run: ${run}`);
+    });
+
+    it('prints a dim unknown line with a restart tip when the daemon sent no analytics block', async () => {
+      await arrange({ connectorActive: true, delivery: { status: 'unknown', pendingBytes: 0 } });
+
+      const lines = await runStatus(['status']);
+
+      const index = lines.indexOf(`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`);
+      expect(index).toBeGreaterThan(-1);
+      expect(lines[index + 1]).toBe('  Run: codemie proxy restart');
+      const { collectDeliveryHealth } = await import('../delivery-health.js');
+      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
+    });
+
+    it('hides the line when nothing is connected, even if the spool holds unsent data', async () => {
+      await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
+
+      const lines = await runStatus(['status']);
+
+      expect(lines.some((line) => line.startsWith('Analytics:'))).toBe(false);
+      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
+    });
+
+    it('hides the line and keeps the default output unchanged when nothing is connected or pending', async () => {
+      await arrange({ connectorActive: false, delivery: { status: 'unhealthy', reason: 'send_failed', pendingBytes: 0 } });
+
+      const lines = await runStatus(['status']);
+
+      expect(lines).toEqual([
+        `Status:  ${chalk.green('running, healthy')}`,
+        '  URL:     http://127.0.0.1:4001',
+        '  Port:    4001',
+        '  API Key: local-key',
+        '  Profile: work',
+        lines[5],
+      ]);
+      expect(lines[5]).toMatch(/^ {2}Uptime: {2}\d+s$/);
+    });
+
+    it('adds analytics to the JSON payload when a connector is active', async () => {
+      await arrange({
+        connectorActive: true,
+        delivery: { status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 5 },
+        reply: { credentials: 'stale' },
+      });
+
+      const lines = await runStatus(['status', '--json']);
+
+      const payload = JSON.parse(lines.join('\n'));
+      expect(payload.analytics).toEqual({ status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 5 });
+      expect(payload.status).toBe('healthy');
+      expect(payload.apiKey).toBe('local-key');
+      expect(payload.level).toBe('shallow');
+    });
+
+    it('omits analytics from the JSON payload when nothing is connected', async () => {
+      await arrange({ connectorActive: false, delivery: { status: 'unknown', pendingBytes: 0 } });
+
+      const lines = await runStatus(['status', '--json']);
+
+      expect(JSON.parse(lines.join('\n'))).not.toHaveProperty('analytics');
+    });
+
+    it('omits analytics from the JSON payload when nothing is connected, even if the spool holds unsent data', async () => {
+      await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
+
+      const lines = await runStatus(['status', '--json']);
+
+      expect(JSON.parse(lines.join('\n'))).not.toHaveProperty('analytics');
+    });
+
+    it('leaves the stopped output untouched and collects nothing', async () => {
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { checkProxyHealth } = await import('../health-check.js');
+      const { collectDeliveryHealth } = await import('../delivery-health.js');
+      vi.mocked(checkProxyHealth).mockClear();
+      vi.mocked(collectDeliveryHealth).mockClear();
+      vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+
+      expect(await runStatus(['status'])).toEqual(['Status: stopped']);
+      consoleLogSpy.mockClear();
+      expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
+      expect(checkProxyHealth).not.toHaveBeenCalled();
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
+    });
   });
 });
 

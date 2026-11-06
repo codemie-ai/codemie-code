@@ -62,8 +62,24 @@ export function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrl
   return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
 }
 
-function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): boolean {
+export function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): boolean {
   return signedInAt !== null && Number.isFinite(marker.detectedAt) && marker.detectedAt < signedInAt;
+}
+
+/**
+ * Read-only view of the marker the gate would act on: it must match the profile's URLs and must not
+ * predate the latest sign-in for `source`. Unlike the gate it never clears an outdated marker, so
+ * status commands can report on it without changing state.
+ */
+export async function applicableAuthMarker(
+  source: PlatformUrlSource,
+  candidateUrls: Array<string | undefined>
+): Promise<AnalyticsAuthStatus | null> {
+  const marker = await getAnalyticsAuthStatus();
+  if (!marker || !markerAppliesToProfile(marker, candidateUrls)) {
+    return null;
+  }
+  return isOlderThan(marker, await getLastSignInAt(source)) ? null : marker;
 }
 
 /**

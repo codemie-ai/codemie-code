@@ -39,12 +39,10 @@ import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import {
-  collectClaudeAnalyticsStatus,
-  collectCopilotAnalyticsStatus,
-  formatClaudeAnalyticsStatus,
-  formatCopilotAnalyticsStatus,
-} from './analytics-status.js';
+import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector } from './analytics-connectors.js';
+import { checkStatus } from './daemon-manager.js';
+import { checkProxyHealth } from './health-check.js';
+import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
 
 type AnalyticsConnectorId =
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
@@ -141,8 +139,9 @@ async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: s
     const reason = hooksMissing ? 'hooks-not-installed' : 'reason' in decision ? decision.reason : 'unknown';
     const advice = adviceForReason(connectorId, reason, target);
     console.log(chalk.yellow(`Note: ${target} is NOT tracked${advice ? ` — ${advice.description}` : ` (${reason})`}.`));
-    if (advice?.nextStep) {
-      console.log(chalk.yellow(`  Next step: ${advice.nextStep}`));
+    const nextStep = advice?.command ?? advice?.action;
+    if (nextStep) {
+      console.log(chalk.yellow(`  Next step: ${nextStep}`));
     }
   } catch (error) {
     logger.debug(
@@ -263,16 +262,36 @@ async function includeProject(path: string | undefined, opts: ConnectorOptions):
   });
 }
 
+/** Delivery health of the running daemon, or `null` when it is stopped. */
+async function collectStatusDelivery(): Promise<DeliveryHealth | null> {
+  const { running, state } = await checkStatus();
+  if (!running || !state) {
+    return null;
+  }
+  const health = await checkProxyHealth({ port: state.port, gatewayKey: state.gatewayKey, expectedPid: state.pid });
+  return collectDeliveryHealth(state, health.analytics);
+}
+
 async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<void> {
   await withErrorHandling(async () => {
     const connectorId = resolveAnalyticsConnector(opts);
-    if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
-      const status = await collectClaudeAnalyticsStatus(process.cwd());
-      console.log(opts.json ? JSON.stringify(status, null, 2) : formatClaudeAnalyticsStatus(status));
+    const connector = ANALYTICS_CONNECTORS.find((entry) => entry.id === connectorId);
+    if (!connector) {
+      throw new ConfigurationError(`Unknown analytics connector: ${connectorId}`);
+    }
+    // Delivery is shared by every connector, so it is shown when any connector is connected, not
+    // only the selected one; leftover unsent data alone never makes it visible.
+    const [status, anyConnectorActive] = await Promise.all([
+      connector.collect(process.cwd()),
+      hasActiveAnalyticsConnector(),
+    ]);
+    const delivery = anyConnectorActive ? await collectStatusDelivery() : null;
+    if (opts.json) {
+      console.log(JSON.stringify({ ...status, delivery }, null, 2));
       return;
     }
-    const status = await collectCopilotAnalyticsStatus(connectorId, process.cwd());
-    console.log(opts.json ? JSON.stringify(status, null, 2) : formatCopilotAnalyticsStatus(status));
+    const sections = anyConnectorActive ? [...formatDeliveryLines(delivery), connector.format(status)] : [connector.format(status)];
+    console.log(sections.join('\n'));
   });
 }
 
