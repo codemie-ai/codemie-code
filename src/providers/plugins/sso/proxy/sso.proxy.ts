@@ -295,6 +295,7 @@ export class CodeMieProxy {
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
+        pid: process.pid,
       }));
       return;
     }
@@ -621,7 +622,7 @@ export class CodeMieProxy {
       retry: (requestBody) => this.httpClient.forward(targetUrl, {
         method,
         headers: context.headers,
-        body: requestBody,
+        body: requestBody || undefined,
       }),
       fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
     };

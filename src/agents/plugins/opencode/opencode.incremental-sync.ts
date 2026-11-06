@@ -15,19 +15,15 @@
  * Mirrors codex.incremental-sync.ts.
  */
 
-import { realpath as fsRealpath } from 'fs/promises';
 import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
 import { logger } from '../../../utils/logger.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 export interface StartOpenCodeIncrementalSyncOptions {
-  /** CodeMie session id (file naming key). */
+  /** CodeMie session id (file naming key); its record's run selects the OpenCode session. */
   sessionId: string;
-  /** ms-since-epoch lower bound used to ignore stale sessions. */
-  startedAt: number;
-  /** Working directory to match the OpenCode session's directory against. */
-  cwd: string;
   /** OpenCode agent metadata (passed straight to OpenCodeSessionAdapter). */
   metadata: AgentMetadata;
   /** Builds a fresh ProcessingContext on each tick (cookies/version may rotate). */
@@ -44,15 +40,15 @@ export interface StartOpenCodeIncrementalSyncOptions {
 
 /**
  * 60s rather than Codex's 30s: the Stop hook and this timer both write
- * {id}_metrics.jsonl, and MetricsSyncProcessor rewrites that file atomically
- * while MetricsWriter appends to it. A slower tick narrows the window in which
- * an appended delta can be lost to an interleaved rewrite.
+ * {id}_metrics.jsonl. MetricsWriter appends and MetricsSyncProcessor rewrites
+ * that file under its lock, the rewrite re-reading it first, so no delta is lost
+ * to an interleaved write; a slower tick only means fewer passes over a transcript
+ * and fewer uploads.
  */
 const DEFAULT_INTERVAL_MS = 60_000;
 
 /** Lower bound for the override, so a bad value cannot spin on the live DB. */
 const MIN_INTERVAL_MS = 5_000;
-const STARTED_AT_GRACE_MS = 10_000;
 
 const activeTimers = new Map<string, NodeJS.Timeout>();
 const tickInFlight = new Map<string, boolean>();
@@ -79,65 +75,7 @@ export function startOpenCodeIncrementalSync(options: StartOpenCodeIncrementalSy
     tickInFlight.set(options.sessionId, true);
 
     try {
-      const adapter = new OpenCodeSessionAdapter(options.metadata);
-      // cwd is pushed into the SQL predicate, so this never scans other repos'
-      // sessions out of the user's shared opencode.db.
-      const sessions = await adapter.discoverSessions({
-        maxAgeDays: 1,
-        limit: 10,
-        cwd: options.cwd,
-      });
-      if (sessions.length === 0) return;
-
-      const cwdReal = await safeRealpath(options.cwd);
-
-      for (const descriptor of sessions) {
-        if (descriptor.createdAt < options.startedAt - STARTED_AT_GRACE_MS) continue;
-
-        const projectPath = descriptor.projectPath;
-        if (!projectPath) continue;
-        if ((await safeRealpath(projectPath)) !== cwdReal) continue;
-
-        const tickContext = options.buildContext();
-
-        try {
-          const result = await adapter.processSession(
-            descriptor.filePath,
-            options.sessionId,
-            { ...tickContext, agentSessionId: descriptor.sessionId }
-          );
-          logger.debug(
-            `[opencode-incremental-sync] tick ok session=${options.sessionId} records=${result.totalRecords}`
-          );
-        } catch (error) {
-          logger.error('[opencode-incremental-sync] processSession failed:', error);
-        }
-
-        if (options.ssoUrl && options.syncApiUrl) {
-          try {
-            const uploadContext = await buildUploadContext(
-              options.sessionId,
-              options.ssoUrl,
-              options.env,
-              options.syncApiUrl,
-              options.cliVersion,
-              tickContext.clientType
-            );
-            if (uploadContext) {
-              const { SessionSyncer } = await import('../../../providers/plugins/sso/session/SessionSyncer.js');
-              const syncer = new SessionSyncer();
-              const syncResult = await syncer.sync(options.sessionId, uploadContext);
-              logger.debug(
-                `[opencode-incremental-sync] upload ${syncResult.success ? 'ok' : 'partial'}: ${syncResult.message}`
-              );
-            }
-          } catch (error) {
-            logger.error('[opencode-incremental-sync] upload failed:', error);
-          }
-        }
-
-        return; // Only the most recent matching session per tick.
-      }
+      await syncOnce(options);
     } catch (error) {
       logger.error('[opencode-incremental-sync] tick failed:', error);
     } finally {
@@ -160,6 +98,46 @@ export function startOpenCodeIncrementalSync(options: StartOpenCodeIncrementalSy
   );
 }
 
+/**
+ * One tick: re-parse each of the record's run's own sessions (the SessionEnd's selection), bounded by
+ * the run's upper bound like the SessionEnd, then upload.
+ */
+async function syncOnce(options: StartOpenCodeIncrementalSyncOptions): Promise<void> {
+  const adapter = new OpenCodeSessionAdapter(options.metadata);
+  const located = await adapter.locateSessionTranscript(options.sessionId);
+  if (!located) return;
+  const tickContext = { ...options.buildContext(), recordsBeforeMs: located.recordsBeforeMs };
+
+  // Each located session id: processing takes it as one of the run's sessions without selecting again
+  for (const agentSessionId of located.sessionIds) {
+    try {
+      const result = await adapter.processSession(located.transcript, options.sessionId, { ...tickContext, agentSessionId });
+      logger.debug(`[opencode-incremental-sync] tick ok session=${options.sessionId} (${agentSessionId}) records=${result.totalRecords}`);
+    } catch (error) {
+      logger.error('[opencode-incremental-sync] processSession failed:', error);
+    }
+  }
+
+  if (!options.ssoUrl || !options.syncApiUrl) return;
+  try {
+    const uploadContext = await buildUploadContext(
+      options.sessionId,
+      options.ssoUrl,
+      options.env,
+      options.syncApiUrl,
+      options.cliVersion,
+      tickContext.clientType
+    );
+    if (uploadContext) {
+      const { SessionSyncer } = await import('../../../providers/plugins/sso/session/SessionSyncer.js');
+      const syncResult = await new SessionSyncer().sync(options.sessionId, uploadContext);
+      logger.debug(`[opencode-incremental-sync] upload ${syncResult.success ? 'ok' : 'partial'}: ${syncResult.message}`);
+    }
+  } catch (error) {
+    logger.error('[opencode-incremental-sync] upload failed:', error);
+  }
+}
+
 export function stopOpenCodeIncrementalSync(sessionId: string): void {
   const timer = activeTimers.get(sessionId);
   if (!timer) return;
@@ -178,34 +156,18 @@ async function buildUploadContext(
   version = '0.0.0',
   clientType = 'codemie-opencode'
 ): Promise<ProcessingContext | null> {
-  try {
-    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const credentials = (await getStoredAnalyticsCredentials(ssoUrl, env))?.credentials;
-    if (!credentials?.cookies) {
-      logger.debug('[opencode-incremental-sync] No SSO credentials available, skipping upload');
-      return null;
-    }
-    const cookies = Object.entries(credentials.cookies)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
-    return {
-      apiBaseUrl: syncApiUrl,
-      cookies,
-      clientType,
-      version,
-      dryRun: false,
-      sessionId,
-    };
-  } catch (error) {
-    logger.debug('[opencode-incremental-sync] Failed to build upload context:', error);
+  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies) {
+    logger.debug('[opencode-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
-}
-
-async function safeRealpath(p: string): Promise<string> {
-  try {
-    return await fsRealpath(p);
-  } catch {
-    return p;
-  }
+  return {
+    apiBaseUrl: syncApiUrl,
+    cookies,
+    credentialsSuperseded,
+    clientType,
+    version,
+    dryRun: false,
+    sessionId,
+  };
 }

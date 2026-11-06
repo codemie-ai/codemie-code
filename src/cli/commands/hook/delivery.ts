@@ -3,9 +3,10 @@ import { getSessionMetricsPath, getSessionConversationPath } from '@/agents/core
 import { markDroppedIfUndelivered } from '@/agents/core/session/stale-session-reconciliation.js';
 import { hasSendPath } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
+import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { syncApplies } from './config-value.js';
-import { sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
+import { applySessionEndOptions, sessionEndDeadlineMs, sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
 import { buildProcessingContext } from './processing-context.js';
 import { sendSessionEndMetrics } from './end-metric.js';
 
@@ -48,7 +49,11 @@ export async function deliverSessionRecord(
   if (await isDeliveryDone(sessionId, config)) {
     // A line past its sync-attempt cap counts as done: it leaves the queue unsent
     if (syncApplies(config)) await markDroppedIfUndelivered(sessionId);
-    await renameSessionFiles(sessionId);
+    // A hook process waits for the file locks no longer than the SessionEnd budget, never the 10 s per-lock wait
+    const syncDeadlineMs = options.hookProcess ? sessionEndDeadlineMs(options) : options.deadlineMs;
+    if (!await renameSessionFiles(sessionId, lockBoundsOf({ syncDeadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }))) {
+      logger.warn(`[hook:SessionEnd] Session ${sessionId} not renamed; kept live for a later start pass`);
+    }
   } else {
     logger.info(`[hook:SessionEnd] Session ${sessionId} is not completed or not fully delivered yet; kept as ${sessionId}.json for a later run`);
   }
@@ -83,7 +88,7 @@ export function nativeSessionId(record: { sessionId: string; correlation?: { age
  * for the stranded path), the end metric is sent or does not apply, and — for a matched record
  * whose sync applies — no metric line is pending / retryable and no conversation payload is waiting.
  */
-async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
+export async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
   const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
   const record = await new SessionStore().loadSession(sessionId);
   if (!record) return false;
@@ -92,39 +97,26 @@ async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig):
   if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return false;
   // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
+  return hasNoPendingData(sessionId);
+}
 
+/** No metric line pending / retryable and no conversation payload waiting; false when they cannot be read. */
+async function hasNoPendingData(sessionId: string): Promise<boolean> {
   try {
-    const { readJSONL } = await import('../../../providers/plugins/sso/session/utils/jsonl-reader.js');
+    const { readJSONLTolerant } = await import('../../../agents/core/session/utils/jsonl-reader.js');
     const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');
-    const deltas = await readJSONL<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId));
+    const deltas = await readJSONLTolerant<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId), '[hook:SessionEnd]');
     if (deltas.some(isDeltaSendCandidate)) {
       return false;
     }
     const { isSendCandidate } = await import('../../../providers/plugins/sso/session/processors/conversations/payload-queue.js');
-    const payloads = await readJSONL<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId));
+    const payloads = await readJSONLTolerant<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId), '[hook:SessionEnd]');
     return !payloads.some(isSendCandidate);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`[hook:SessionEnd] Cannot read the pending data of ${sessionId}; kept undelivered: ${msg}`);
     return false;
   }
-}
-
-/**
- * Default budget (ms) for the SessionEnd API sync. Claude Code kills the hook
- * process quickly at exit, so the sync must stop sending and defer leftovers
- * instead of blocking teardown.
- * Override via CODEMIE_SESSION_END_SYNC_BUDGET_MS (invalid or non-positive
- * values fall back to this default).
- */
-const DEFAULT_SESSION_END_SYNC_BUDGET_MS = 2000;
-
-function resolveSessionEndSyncBudgetMs(): number {
-  const parsed = Number.parseInt(process.env.CODEMIE_SESSION_END_SYNC_BUDGET_MS ?? '', 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_SESSION_END_SYNC_BUDGET_MS;
-  }
-  return parsed;
 }
 
 /**
@@ -155,13 +147,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, c
 
     // Bound the sync. Sync loops check the deadline between items, the clients abort a
     // request in flight at it; the rest stays pending for a later run.
-    const callerBounded = !options.hookProcess && (options.deadlineMs !== undefined || options.abortSignal !== undefined);
-    const budgetDeadlineMs = Date.now() + resolveSessionEndSyncBudgetMs();
-    context.syncDeadlineMs = callerBounded
-      ? options.deadlineMs
-      : Math.min(budgetDeadlineMs, options.deadlineMs ?? budgetDeadlineMs);
-    context.abortSignal = options.abortSignal;
-    context.hookProcess = options.hookProcess === true;
+    applySessionEndOptions(context, options);
 
     // Use SessionSyncer service (same as plugin)
     const { SessionSyncer } = await import(

@@ -736,6 +736,92 @@ describe('enrichCosts', () => {
   });
 });
 
+describe('enrichCosts — copilot run windows', () => {
+  const copilotRun = (sessionId: string, startTime?: number) =>
+    ({ sessionId, startEvent: { agentName: 'copilot-cli', data: { startTime } }, deltas: [] });
+
+  function recordingDeps(windows: Array<{ sessionId: string; run?: unknown }>): EnricherDeps {
+    return {
+      ...baseDeps,
+      loadAgentSessionFile: async () => '/copilot/session-state/shared/events.jsonl',
+      parseNative: async (_agentName, _filePath, sessionId, run) => {
+        windows.push({ sessionId, run });
+        return null;
+      },
+      // The later run over the same transcript exists on disk but is not in the loaded set
+      nextRecordStarts: async (sessionIds) => new Map(sessionIds.map((id) => [id, id === 'earlier' ? 5_000 : undefined])),
+    };
+  }
+
+  it('a run whose later sibling the report filtered out is bounded by the next record on disk', async () => {
+    const windows: Array<{ sessionId: string; run?: unknown }> = [];
+
+    await enrichCosts([copilotRun('earlier', 1_000)] as never[], recordingDeps(windows));
+
+    expect(windows).toEqual([{ sessionId: 'earlier', run: { startTime: 1_000, upperBound: 5_000 } }]);
+  });
+
+  it('runs with no loaded sibling resolve their disk bounds in one batch call naming every run', async () => {
+    const windows: Array<{ sessionId: string; run?: unknown }> = [];
+    const batches: string[][] = [];
+    const deps: EnricherDeps = {
+      ...recordingDeps(windows),
+      // Each run over its own native session, so neither is the other's sibling
+      loadAgentSessionFile: async (r) => `/copilot/session-state/${(r as { sessionId: string }).sessionId}/events.jsonl`,
+      nextRecordStarts: async (sessionIds) => {
+        batches.push(sessionIds);
+        return new Map([['first', 7_000]]);
+      },
+    };
+
+    await enrichCosts([copilotRun('first', 1_000), copilotRun('second', 2_000)] as never[], deps);
+
+    expect(batches.map((ids) => [...ids].sort())).toEqual([['first', 'second']]);
+    expect(windows).toContainEqual({ sessionId: 'first', run: { startTime: 1_000, upperBound: 7_000 } });
+    expect(windows).toContainEqual({ sessionId: 'second', run: { startTime: 2_000, upperBound: undefined } });
+  });
+
+  it('a run is bounded by a filtered-out record on disk that starts before its loaded sibling', async () => {
+    const windows: Array<{ sessionId: string; run?: unknown }> = [];
+    const batches: string[][] = [];
+    const deps: EnricherDeps = {
+      ...recordingDeps(windows),
+      // X starts at 2_000 over the same log, between A and C, but the report filtered it out
+      nextRecordStarts: async (sessionIds) => {
+        batches.push(sessionIds);
+        return new Map([['A', 2_000], ['C', undefined]]);
+      },
+    };
+
+    await enrichCosts([copilotRun('A', 1_000), copilotRun('C', 3_000)] as never[], deps);
+
+    expect(batches.map((ids) => [...ids].sort())).toEqual([['A', 'C']]);
+    expect(windows).toContainEqual({ sessionId: 'A', run: { startTime: 1_000, upperBound: 2_000 } });
+    expect(windows).toContainEqual({ sessionId: 'C', run: { startTime: 3_000, upperBound: undefined } });
+  });
+
+  it('deps without nextRecordStarts parse a run with no loaded sibling with no upper bound', async () => {
+    const windows: Array<{ sessionId: string; run?: unknown }> = [];
+    const { nextRecordStarts: _omitted, ...deps } = recordingDeps(windows);
+
+    await enrichCosts([copilotRun('earlier', 1_000)] as never[], deps);
+
+    expect(windows).toEqual([{ sessionId: 'earlier', run: { startTime: 1_000, upperBound: undefined } }]);
+  });
+
+  it('a run with no start time is not parsed over a window and stays unpriced with the reason', async () => {
+    const windows: Array<{ sessionId: string; run?: unknown }> = [];
+
+    const { index } = await enrichCosts([copilotRun('no-start')] as never[], recordingDeps(windows));
+
+    expect(windows).toEqual([]);
+    expect(index.get('no-start')).toMatchObject({
+      priced: false,
+      usageUnavailableReason: 'No start time on the CodeMie record of this Copilot run — its window of the shared session is unknown',
+    });
+  });
+});
+
 describe('enrichCosts — dispatch cost attribution', () => {
   it('attributes cost, tokens, and tools to a dispatch when subagent matches by toolUseId', async () => {
     const subagentMessages = [
@@ -1217,6 +1303,34 @@ describe('realDeps.loadAgentSessionFile', () => {
       );
 
       expect(await realDeps.loadAgentSessionFile({ sessionId: id } as never)).toBe('/transcripts/gen-alpha.jsonl');
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves the runtimeCheckpoint transcript of a record whose agentSessionFile is gone', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'cost-enricher-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const id = 'eddd66b2-0e73-4167-841c-9263207870ae';
+      const livePath = join(home, 'folder-b.jsonl');
+      writeFileSync(livePath, '');
+      writeFileSync(
+        join(home, 'sessions', `${id}.json`),
+        JSON.stringify({
+          correlation: { agentSessionFile: join(home, 'folder-a-gone.jsonl') },
+          runtimeCheckpoint: { transcriptPath: livePath },
+        })
+      );
+
+      expect(await realDeps.loadAgentSessionFile({ sessionId: id } as never)).toBe(livePath);
     } finally {
       if (previousHome === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previousHome;

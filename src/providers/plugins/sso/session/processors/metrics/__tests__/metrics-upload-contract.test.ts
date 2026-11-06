@@ -15,8 +15,9 @@
  * assertions pin the CURRENT contract.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -239,6 +240,37 @@ describe('MetricsSender upload contract', () => {
     expect(server.captured).toHaveLength(2);
   }, 15000);
 
+  describe('session end branch', () => {
+    // A git hook exports GIT_DIR and friends, which would point git at the outer repository.
+    beforeEach(() => {
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith('GIT_')) vi.stubEnv(key, undefined);
+      }
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const sentBranch = async (gitBranch?: string): Promise<unknown> => {
+      execFileSync('git', ['init', '--initial-branch=detected-branch'], { cwd: home });
+      server = new MockServer();
+      await server.start(jsonOk);
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
+      await sender.sendSessionEnd({ ...makeSession(home), gitBranch }, home, { status: 'completed' }, 4321);
+      return JSON.parse(server.last.body).attributes.branch;
+    };
+
+    it('sends the branch of the record, not the one checked out at send time', async () => {
+      expect(await sentBranch('record-branch')).toBe('record-branch');
+      expect(server!.last.headers['x-codemie-branch']).toBe('record-branch');
+    });
+
+    it('sends the detected branch when the record has none', async () => {
+      expect(await sentBranch()).toBe('detected-branch');
+    });
+  });
+
   it('classifies a 401 as an auth failure: throws and writes the analytics-auth-status marker', async () => {
     server = new MockServer();
     await server.start((_req, res) => {
@@ -373,7 +405,9 @@ describe('MetricsSender upload contract', () => {
 
       const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
 
-      await expect(sender.sendSessionMetric(usageMetric)).rejects.toThrow(/Failed after 0 retries/);
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      expect((error as Error).message).toMatch(/Failed after 0 retries/);
+      expect((error as Error).cause).toMatchObject({ statusCode: 503 });
       expect(server.captured).toHaveLength(1);
     });
 

@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import stripAnsi from 'strip-ansi';
 import { ConfigLoader } from '../../../../utils/config.js';
 
 vi.mock('../../../utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -149,5 +150,115 @@ describe('analytics --agent copilot-cli --last 24h --export json', () => {
 
     expect(r.sessions.map((s) => s.sessionId)).toEqual(['claude-1']);
     expect(r.meta.agents).toEqual(['claude']);
+  });
+});
+
+describe('analytics cost over copilot runs and kept sessions', () => {
+  /** A native session two runs share: cr-a's usage before the resume at 10 s, cr-c's after it. */
+  function resumedSession(base: number): string {
+    const at = (ms: number) => new Date(base + ms).toISOString();
+    const usageRecord = (ms: number, inputTokens: number, outputTokens: number) => ({
+      type: 'session.usage_record', timestamp: at(ms),
+      data: { usage: { model: 'gpt-5.4', inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } },
+    });
+    const dir = join(copilotHome, 'session-state', 'cr-native');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'events.jsonl');
+    writeFileSync(file, [
+      { type: 'session.start', timestamp: at(0), data: { sessionId: 'cr-native', context: { cwd: '/work/app' } } },
+      usageRecord(2000, 100, 10), usageRecord(3000, 100, 10),
+      { type: 'session.resume', timestamp: at(10_000), data: { context: { cwd: '/work/app' } } },
+      usageRecord(12_000, 1000, 5), usageRecord(13_000, 1000, 5), usageRecord(14_000, 1000, 5),
+      { type: 'session.shutdown', timestamp: at(20_000), data: { totalPremiumRequests: 0,
+        modelMetrics: { 'gpt-5.4': { requests: { count: 5 }, usage: { inputTokens: 3200, outputTokens: 35, cacheReadTokens: 0, cacheWriteTokens: 0 } } } } },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    return file;
+  }
+
+  it('prices a resumed copilot run from its own window of the shared native session, not into the session it resumed', async () => {
+    const base = NOW - HOUR / 2;
+    const file = resumedSession(base);
+    record('cr-a', 'copilot-cli', base, { turns: 1, nativeFile: file });
+    record('cr-c', 'copilot-cli', base + 9000, { turns: 1, nativeFile: file });
+
+    const r = await report('copilot-cli');
+    const by = (id: string) => r.sessions.find((s) => s.sessionId === id)!;
+
+    expect(by('cr-a').tokens).toMatchObject({ input: 200, output: 20, total: 220 });
+    expect(by('cr-c').tokens).toMatchObject({ input: 3000, output: 15, total: 3015 });
+  });
+
+  it('bounds the earlier run by the later record on disk when the report filter leaves that record out', async () => {
+    const base = NOW - HOUR / 2;
+    const file = resumedSession(base);
+    // UUID ids: the disk scan reads CodeMie record files only
+    const [earlier, later] = ['aaaaaaaa-0000-4000-8000-00000000000a', 'aaaaaaaa-0000-4000-8000-00000000000c'];
+    record(earlier, 'copilot-cli', base, { turns: 1, nativeFile: file });
+    record(later, 'copilot-cli', base + 9000, { turns: 1, nativeFile: file });
+    const { runAnalytics } = await import('../index.js');
+    const { SessionsSource } = await import('../sources/sessions-source.js');
+    const out = join(outDir, 'earlier.json');
+
+    await runAnalytics({ session: earlier, export: 'json', output: out } as never, new SessionsSource());
+
+    const r = JSON.parse(readFileSync(out, 'utf-8')) as Report;
+    expect(r.sessions.map((s) => s.sessionId)).toEqual([earlier]);
+    expect(r.sessions[0].tokens).toMatchObject({ input: 200, output: 20, total: 220 });
+  });
+
+  it('"Priced sessions" counts only the sessions the report keeps: no empty matched record, no non-session JSON', async () => {
+    rmSync(join(codemieHome, 'sessions'), { recursive: true, force: true });
+    rmSync(join(copilotHome, 'session-state'), { recursive: true, force: true });
+    record('k-priced', 'copilot-cli', NOW - 2 * HOUR, { turns: 1, nativeFile: nativeSession('k-priced', NOW - 2 * HOUR, { turns: 1, tokens: true }) });
+    // Matched, but its transcript holds no activity and no usage: the report drops it
+    record('k-empty', 'copilot-cli', NOW - 3 * HOUR, { turns: 0, nativeFile: nativeSession('k-empty', NOW - 3 * HOUR, { turns: 0, tokens: false }) });
+    writeFileSync(join(codemieHome, 'sessions', 'settings.json'), JSON.stringify({ theme: 'dark' }));
+    const { runAnalytics } = await import('../index.js');
+    const { SessionsSource } = await import('../sources/sessions-source.js');
+
+    // No filter: the native agent logs under a scratch home, not the real one
+    vi.stubEnv('HOME', outDir);
+    try {
+      await runAnalytics({} as never, new SessionsSource());
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const lines = vi.mocked(console.log).mock.calls.map((call) => stripAnsi(String(call[0])));
+    expect(lines).toContain('Priced sessions: 1/1');
+  });
+
+  it('"Total cost" carries the cost of a kept session priced for one model and unpriced for another', async () => {
+    rmSync(join(codemieHome, 'sessions'), { recursive: true, force: true });
+    rmSync(join(copilotHome, 'session-state'), { recursive: true, force: true });
+    const startMs = NOW - 2 * HOUR;
+    const at = (ms: number) => new Date(startMs + ms).toISOString();
+    const dir = join(copilotHome, 'session-state', 'k-mixed');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'events.jsonl');
+    const usage = (inputTokens: number) => ({ inputTokens, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    writeFileSync(file, [
+      { type: 'session.start', timestamp: at(0), data: { sessionId: 'k-mixed', context: { cwd: '/work/app' } } },
+      { type: 'user.message', timestamp: at(1000), data: { text: 'hi' } },
+      { type: 'assistant.message', timestamp: at(2000), data: { model: 'gpt-5.4', outputTokens: 0 } },
+      { type: 'session.shutdown', timestamp: at(60_000), data: { totalPremiumRequests: 1, modelMetrics: {
+        'gpt-5.4': { requests: { count: 1 }, usage: usage(1_000_000) },
+        'unpriced-model-zz': { requests: { count: 1 }, usage: usage(1000) },
+      } } },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    record('k-mixed', 'copilot-cli', startMs, { turns: 1, nativeFile: file });
+    const { runAnalytics } = await import('../index.js');
+    const { SessionsSource } = await import('../sources/sessions-source.js');
+
+    vi.stubEnv('HOME', outDir);
+    try {
+      await runAnalytics({} as never, new SessionsSource());
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const lines = vi.mocked(console.log).mock.calls.map((call) => stripAnsi(String(call[0])));
+    expect(lines).toContain('Total cost: $2.50');
+    expect(lines).toContain('Unpriced models: unpriced-model-zz');
   });
 });

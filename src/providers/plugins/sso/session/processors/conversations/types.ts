@@ -4,6 +4,8 @@
  * Type definitions for conversation payloads and API client.
  */
 
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
 /**
  * Conversation sync status constants
  */
@@ -88,6 +90,8 @@ export interface ConversationApiConfig {
   deadlineMs?: number;
   /** Aborts the request in flight and the backoff at once; stopping throws SyncStoppedError('aborted'). */
   abortSignal?: AbortSignal;
+  /** True when a newer sign-in replaced the cookies that were sent; a rejection of those cookies then leaves the marker alone. */
+  credentialsSuperseded?: CredentialsSupersededCheck;
 }
 
 /**

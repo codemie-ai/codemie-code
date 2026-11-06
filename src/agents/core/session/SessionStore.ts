@@ -316,9 +316,9 @@ export class SessionStore {
   /**
    * Map external/local-client session identifiers to CodeMie session ids in one directory scan.
    * Lets long-running pollers resolve known sessions with loadSession() instead of rescanning
-   * every session file per lookup.
+   * every session file per lookup. `keep` leaves out records another process owns.
    */
-  async indexSessionsByExternalId(agentName: string): Promise<Map<string, string>> {
+  async indexSessionsByExternalId(agentName: string, keep?: (session: Session) => boolean): Promise<Map<string, string>> {
     const index = new Map<string, string>();
     const sessionsDir = getCodemiePath('sessions');
     if (!existsSync(sessionsDir)) {
@@ -334,7 +334,12 @@ export class SessionStore {
         try {
           const session = JSON.parse(await readFile(filePath, 'utf-8')) as Session;
           const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
-          if (session.agentName === agentName && externalSessionId && !index.has(externalSessionId)) {
+          if (
+            session.agentName === agentName
+            && (!keep || keep(session))
+            && externalSessionId
+            && !index.has(externalSessionId)
+          ) {
             index.set(externalSessionId, session.sessionId);
           }
         } catch (error) {

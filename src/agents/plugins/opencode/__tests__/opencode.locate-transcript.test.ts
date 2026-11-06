@@ -1,7 +1,8 @@
 /**
  * OpenCodeSessionAdapter.locateTranscript resolves the storage from the RECORD's agent, never
  * from this process's environment: a codemie-code record is found in codemie-code's private
- * storage from another agent's wrapper, an opencode record in the user's XDG_DATA_HOME.
+ * storage from another agent's wrapper, an opencode record in the user's XDG_DATA_HOME. In file
+ * storage the run's session is selected by the record's directory and run window.
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
@@ -30,25 +31,30 @@ let codemieHome: string;
 let projectDir: string;
 const previousHome = process.env.CODEMIE_HOME;
 
-function writeStoredSession(storageRoot: string, id: string, directory: string): string {
+function writeStoredSession(storageRoot: string, id: string, directory: string, created = Date.now() - 60_000): string {
   const dir = join(storageRoot, 'opencode', 'storage', 'session', 'project-1');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${id}.json`);
-  writeFileSync(path, JSON.stringify({ id, directory, time: { created: Date.now() - 60_000, updated: Date.now() } }));
+  writeFileSync(path, JSON.stringify({ id, directory, time: { created, updated: Date.now() } }));
   return path;
 }
 
-function record(agentName: string) {
+function record(agentName: string, sessionId = 'cccccccc-0000-4000-8000-000000000001', startTime = Date.now() - 120_000) {
   return {
-    sessionId: 'cccccccc-0000-4000-8000-000000000001',
+    sessionId,
     agentName,
     provider: 'ai-run-sso',
-    startTime: Date.now() - 120_000,
+    startTime,
     workingDirectory: projectDir,
     status: 'active' as const,
     activeDurationMs: 0,
-    correlation: { status: 'matched' as const, retryCount: 0, agentSessionId: 'cccccccc-0000-4000-8000-000000000001' },
+    correlation: { status: 'matched' as const, retryCount: 0, agentSessionId: sessionId },
   };
+}
+
+function saveRecord(stored: ReturnType<typeof record>): void {
+  mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
+  writeFileSync(join(codemieHome, 'sessions', `${stored.sessionId}.json`), JSON.stringify(stored));
 }
 
 beforeEach(() => {
@@ -89,5 +95,20 @@ describe('OpenCodeSessionAdapter.locateTranscript', () => {
     } finally {
       process.env.XDG_DATA_HOME = userDataHome;
     }
+  });
+
+  it('in file storage (no opencode.db) names the run\'s own session only', async () => {
+    const now = Date.now();
+    const own = record('opencode', 'cccccccc-0000-4000-8000-000000000002', now - 120_000);
+    saveRecord(own);
+    saveRecord(record('opencode', 'cccccccc-0000-4000-8000-000000000003', now - 50_000));
+    const ownPath = writeStoredSession(userDataHome, 'ses_own', projectDir, now - 100_000);
+    writeStoredSession(userDataHome, 'ses_elsewhere', codemieHome, now - 90_000);
+    writeStoredSession(userDataHome, 'ses_before', projectDir, now - 200_000);
+    writeStoredSession(userDataHome, 'ses_later_run', projectDir, now - 40_000);
+
+    const located = await new OpenCodeSessionAdapter(OpenCodePluginMetadata).locateSessionTranscript(own.sessionId);
+
+    expect(located).toMatchObject({ transcript: ownPath, sessionIds: ['ses_own'] });
   });
 });

@@ -24,8 +24,13 @@ import {
   readState,
   spawnDaemon,
   stopDaemon,
+  writeConnectionRecord,
+  type ClientIdentity,
   type DaemonState,
 } from './daemon-manager.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
+import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState } from '../../../utils/project-binding.js';
+import { getEffectiveClientType } from './client-type.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
@@ -55,7 +60,6 @@ import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
-import { isProcessAliveStrict } from '@/utils/processes.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { isNonInteractiveEnvironment } from '@/utils/interactive.js';
@@ -159,6 +163,8 @@ export interface RequestedDaemonConfig {
   profile: string;
   port: number;
   project?: string;
+  /** Binding state of `project`, recorded in the daemon state (not part of matching). */
+  projectBinding?: ProjectBindingState;
   clientType: string;
   provider?: string;
   targetUrl?: string;
@@ -174,14 +180,6 @@ export interface RequestedDaemonConfig {
 export function normalizeDaemonModel(model: string | undefined): string | undefined {
   const trimmed = model?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-export function getEffectiveClientType(
-  state: NonNullable<Awaited<ReturnType<typeof readState>>>
-): string {
-  return state.clientType ?? (state.telemetryMode === 'claude-desktop'
-    ? 'claude-desktop'
-    : 'codemie-daemon');
 }
 
 /**
@@ -285,21 +283,47 @@ export async function resolveSsoProxyConfig(
   );
 }
 
+/**
+ * Throwing, non-exiting credential check: safe on hook paths (no console, no process.exit).
+ * Expired credentials read as missing.
+ */
+export async function assertSsoCredentials(
+  baseUrl: string,
+  profileName: string,
+  codeMieUrl?: string
+): Promise<void> {
+  let loginUrl: string | null = null;
+  try {
+    const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
+    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    if (!creds) {
+      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+    }
+  } catch (err) {
+    throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
+  }
+  // Thrown outside the try so the missing-login error is never re-wrapped.
+  if (loginUrl !== null) {
+    throw new ConfigurationError(
+      `No SSO credentials found for profile '${profileName}'.\n` +
+      `  Run: codemie profile login --url ${loginUrl}`
+    );
+  }
+}
+
 export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
   codeMieUrl?: string
 ): Promise<void> {
   try {
-    const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
-    if (!creds) {
-      console.error(chalk.red(`✗ No SSO credentials found for profile '${profileName}'.`));
-      console.error(`  Run: codemie profile login --url ${resolveProfileCodeMieUrl(baseUrl, codeMieUrl)}`);
-      process.exit(1);
-    }
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
   } catch (err) {
-    console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
+    const [firstLine, ...rest] = (err as Error).message.split('\n');
+    console.error(chalk.red(`✗ ${firstLine}`));
+    for (const line of rest) {
+      console.error(line);
+    }
     process.exit(1);
   }
 }
@@ -390,14 +414,19 @@ async function rollbackDaemon(): Promise<void> {
  * Ensure a single daemon matching `requested` is running and healthy, spawning
  * or restarting it as needed (the reconciled strict-match lifecycle, spec §3.2).
  */
-async function ensureDaemon(
+export async function ensureDaemon(
   requested: RequestedDaemonConfig,
-  identity: DaemonIdentity,
+  spawnIdentity: ClientIdentity,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
   force?: boolean,
-  verbose?: boolean
+  verbose?: boolean,
+  writeRecord = true
 ): Promise<{ state: DaemonState; startedInThisRun: boolean }> {
   let { running, state } = await checkStatus();
+  // Connect has no explicit port option: preserve a matching daemon's actual fallback port.
+  if (running && state && daemonMatchesRequest(state, { ...requested, port: state.port })) {
+    requested = { ...requested, port: state.port };
+  }
   const matches = Boolean(running && state && daemonMatchesRequest(state, requested));
 
   let unhealthy = false;
@@ -428,17 +457,19 @@ async function ensureDaemon(
 
   let startedInThisRun = false;
   if (!running || !state) {
-    logger.status('Starting proxy...');
+    logger.status(`Starting proxy (profile: ${config.name ?? 'default'})...`);
     state = await spawnDaemon({
       targetUrl: config.baseUrl as string,
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
-      port: DEFAULT_DAEMON_PORT,
+      port: requested.port,
       project: config.codeMieProject,
-      ...identity.spawnOptions,
+      ...(requested.projectBinding ? { projectBinding: requested.projectBinding } : {}),
+      ...spawnIdentity,
       syncApiUrl: config.ssoConfig?.apiUrl,
       syncCodeMieUrl: config.codeMieUrl,
+      writeRecord,
     });
     startedInThisRun = true;
     logger.success(verbose ? `Proxy started at ${state.url}` : 'Proxy started');
@@ -447,47 +478,25 @@ async function ensureDaemon(
   return { state, startedInThisRun };
 }
 
-export async function ensureOtlpProxy(agentName: string): Promise<void> {
-  const state = await readState();
+export type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
 
-  if (state && isProcessAliveStrict(state.pid)) {
-    return;
-  }
-
-  const cwd = process.cwd();
-
-  const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
-
-  const config = await ConfigLoader.load(
-    cwd,
-    activeProfileName ? { name: activeProfileName } : undefined
-  );
-
-  // Hook invocations run as a background side effect on every tracked project;
-  // an unconfigured baseUrl must skip cold start silently (not throw, unlike
-  // connectTargets' interactive ConfigurationError) so it never fails the hook.
-  if (!config.baseUrl?.trim()) {
-    return;
-  }
-
-  const daemonConfig = {
-    clientType: agentName,
-    port: DEFAULT_DAEMON_PORT,
-    profile: config.name ?? 'default',
+export function buildRequestedConfig(
+  profile: string,
+  clientType: string,
+  config: LoadedConfig,
+  projectBinding?: ProjectBindingState,
+  port: number = DEFAULT_DAEMON_PORT
+): RequestedDaemonConfig {
+  return {
+    profile,
+    port,
     project: config.codeMieProject,
+    projectBinding,
+    clientType,
     provider: config.provider ?? 'ai-run-sso',
-    syncApiUrl: config.ssoConfig?.apiUrl,
-    syncCodeMieUrl: config.codeMieUrl,
     targetUrl: config.baseUrl,
-    model: normalizeDaemonModel(config.model)
-  }
-
-  const daemonIdentity = {
-    clientType: agentName,
-    spawnOptions: { clientType: agentName },
-  } as DaemonIdentity;
-
-  await ensureDaemon(daemonConfig, daemonIdentity, config);
+    model: normalizeDaemonModel(config.model),
+  };
 }
 
 /** One per-target write outcome, collected for the summary (spec §3.4). */
@@ -568,11 +577,17 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
   }
 }
 
+/** `Project:` text for connect output: the project with its binding (shared fallback marked). */
+function projectDisplay(binding: ProjectBindingState | undefined, project: string | undefined): string {
+  return describeProjectBinding(binding, project) ?? (project ? sanitizeDisplayText(project) : '(not configured)');
+}
+
 async function runVscodeByok(
   state: DaemonState,
   insiders: boolean,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  verbose: boolean
+  verbose: boolean,
+  projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
     const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
@@ -593,7 +608,7 @@ async function runVscodeByok(
       console.log(`  Config:  ${result.configPath}`);
       console.log(`  Gateway: ${state.url}`);
       console.log(`  Models:  ${result.modelCount}`);
-      console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
+      console.log(`  Project: ${projectDisplay(projectBinding, config.codeMieProject)}`);
     }
 
     if (result.requiresSecretConfiguration) {
@@ -801,7 +816,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let startedInThisRun = false;
   let state: DaemonState;
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
+  let profile: string;
+  let clientType: string | undefined;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let projectBinding: ProjectBindingState | undefined;
   try {
     // Without a TTY the confirmation cannot be shown; --silent is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
@@ -825,7 +843,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       );
     }
 
-    const profile = config.name ?? 'default';
+    profile = config.name ?? 'default';
+    projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
     // Resolved once so the confirmation header and the post-start table show the same URL.
     otlpDisplay = targets.claudeCodeOtlp
       ? {
@@ -876,17 +895,17 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     ]);
 
     const identity = deriveDaemonIdentity(activeTargets);
-    const requested: RequestedDaemonConfig = {
-      profile,
-      port: DEFAULT_DAEMON_PORT,
-      project: config.codeMieProject,
-      clientType: identity.clientType,
-      provider: config.provider ?? 'ai-run-sso',
-      targetUrl: config.baseUrl,
-      model: normalizeDaemonModel(config.model),
-    };
+    clientType = identity.clientType;
 
-    const ensured = await ensureDaemon(requested, identity, config, Boolean(opts.force), verbose);
+    // The record is written after wiring succeeds (below), not at spawn time.
+    const ensured = await ensureDaemon(
+      buildRequestedConfig(profile, identity.clientType, config, projectBinding),
+      identity.spawnOptions,
+      config,
+      Boolean(opts.force),
+      verbose,
+      false
+    );
     state = ensured.state;
     startedInThisRun = ensured.startedInThisRun;
   } catch (error) {
@@ -906,7 +925,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     results.push(await runClaudeDesktop(state, verbose));
   }
   if (activeTargets.vscode) {
-    results.push(await runVscodeByok(state, insiders, config, verbose));
+    results.push(await runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
     results.push(await runVscodeClaudeCode(state, insiders));
@@ -935,6 +954,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);
+
+  // Record the connection only once something was actually wired, so a connect that
+  // configured nothing never redirects hook cold starts. A refused write only warns.
+  if (results.some((r) => r.ok)) {
+    await writeConnectionRecord(state, profile, clientType);
+  }
 
   // Spec §3.4: print the per-target summary after all requested targets run,
   // unconditionally — a single-target success gets the summary block too.

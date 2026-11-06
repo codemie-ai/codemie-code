@@ -14,6 +14,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
 
 /**
@@ -100,12 +101,12 @@ export class GeminiMetricsProcessor implements SessionProcessor {
    */
   private async processMessages(
     session: ParsedSession,
-    _context: ProcessingContext
+    context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
-      const deltas = this.transformMessagesToDeltas(session, _context);
+      const deltas = this.transformMessagesToDeltas(session, context);
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -115,16 +116,18 @@ export class GeminiMetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
       }
 
-      logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+      logger.info(`[${this.name}] Generated ${deltas.length} deltas, wrote ${appended.written}`);
 
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: deltas.length }
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
+        metadata: { recordsProcessed: appended.written, deltasWritten: appended.written }
       };
 
     } catch (error) {

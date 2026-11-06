@@ -19,6 +19,7 @@ import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { stripClear } from '../strip-clear.js';
 import { takeMessagesBefore } from './messages-before.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { collectRunPromptsAndInvocations, PROMPTS_RECORD_SUFFIX } from './run-prompts.js';
 
 interface RunOptions {
@@ -94,25 +95,28 @@ export class MetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
       }
 
-      logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+      logger.info(`[${this.name}] Generated ${deltas.length} deltas, wrote ${appended.written}`);
 
       // Return sync updates for the adapter to persist
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
         metadata: {
-          recordsProcessed: deltas.length,
-          syncUpdates: deltas.length > 0 ? {
+          recordsProcessed: appended.written,
+          deltasWritten: appended.written,
+          syncUpdates: {
             metrics: {
               processedRecordIds: Array.from(existingProcessedIds),
               lastProcessedTimestamp: Date.now(),
-              totalDeltas: deltas.length
+              totalDeltas: appended.written
             }
-          } : undefined
+          }
         }
       };
 

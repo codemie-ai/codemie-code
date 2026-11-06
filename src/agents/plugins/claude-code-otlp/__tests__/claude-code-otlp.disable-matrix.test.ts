@@ -5,7 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
@@ -65,6 +65,8 @@ vi.mock('../transcript/subagent-usage.js', () => ({
   subagentFilePath: vi.fn((transcriptPath: string, agentId: string) => `${transcriptPath}:${agentId}`),
 }));
 vi.mock('../event-fields/session-env-fields.js', () => ({
+  // The organization reader (claude-org.ts) shares this helper; no Claude account file exists in the temp home.
+  readJsonFile: vi.fn(async () => null),
   resolveSessionEnvFields: vi.fn(async () => ({
     provider: 'anthropic',
     api_host: 'api.anthropic.com',
@@ -202,6 +204,23 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: true }));
     await fire('/work/a');
     expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+  });
+
+  it('corrupt preferences stop forwarding and are never rewritten by the hook', async () => {
+    await writeSettings(['/work/a']);
+    await fire('/work/a');
+    // Control: the same project forwards while the preferences are intact.
+    expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+    expect(ensureOtlpProxy).toHaveBeenCalled();
+    resetCalls();
+
+    const prefsFile = join(tempDir, '.codemie', 'claude-analytics.json');
+    await mkdir(dirname(prefsFile), { recursive: true });
+    await writeFile(prefsFile, '{ "enabled": tru', 'utf-8');
+
+    await fire('/work/a');
+    expectNothingStarted();
+    expect(await readFile(prefsFile, 'utf-8')).toBe('{ "enabled": tru');
   });
 
   /**

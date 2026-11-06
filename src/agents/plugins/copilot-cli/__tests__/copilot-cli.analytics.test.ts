@@ -5,11 +5,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
 import { CopilotCliPluginMetadata } from '../copilot-cli.plugin.js';
+import { CopilotCliMetricsProcessor } from '../session/processors/copilot-cli.metrics-processor.js';
+import { enrichCosts, realDeps } from '../../../../cli/commands/analytics/cost/cost-enricher.js';
+import { readCopilotEvents, readCopilotEventsTolerant } from '../copilot-cli.storage-utils.js';
+import { logger } from '../../../../utils/logger.js';
 import type { AgentConfig } from '../../../core/types.js';
 
 const processEventMock = vi.fn();
@@ -39,6 +43,42 @@ const user = (at: number): Ev => ({ type: 'user.message', timestamp: iso(at), da
 const assistant = (at: number): Ev => ({ type: 'assistant.message', timestamp: iso(at), data: { model: 'gpt-5.4', outputTokens: 5 } });
 const toolStart = (id: string, at: number): Ev => ({ type: 'tool.execution_start', timestamp: iso(at), data: { toolCallId: id, toolName: 'view', arguments: { path: '/x.ts' } } });
 const toolDone = (id: string, at: number): Ev => ({ type: 'tool.execution_complete', timestamp: iso(at), data: { toolCallId: id, success: true } });
+const resume = (at: number): Ev => ({ type: 'session.resume', timestamp: iso(at), data: { resumeTime: iso(at), context: { cwd, gitRoot: cwd, branch: 'main' } } });
+
+// Probe-shaped events of copilot 1.0.105: per-request usage records and per-call tool telemetry
+const MODEL = 'gpt-5.5-2026-04-24';
+const prompt = (at: number, text: string): Ev => ({ type: 'user.message', timestamp: iso(at), data: { text } });
+const reply = (at: number, outputTokens?: number): Ev => ({ type: 'assistant.message', timestamp: iso(at), data: { model: MODEL, outputTokens } });
+const usageRecord = (at: number, inputTokens: number, outputTokens: number): Ev => ({
+  type: 'session.usage_record', timestamp: iso(at),
+  data: { usage: { model: MODEL, inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, initiator: 'user' } },
+});
+const viewCall = (id: string, at: number): Ev[] => [
+  toolStart(id, at),
+  { type: 'tool.execution_complete', timestamp: iso(at + 10), data: { toolCallId: id, success: true,
+    toolTelemetry: { properties: { command: 'view' }, restrictedProperties: {}, metrics: { resultLength: 16 } } } },
+];
+const patchCall = (id: string, at: number, patch: string, files: string[], added: string[], linesAdded: number): Ev[] => [
+  { type: 'tool.execution_start', timestamp: iso(at), data: { toolCallId: id, toolName: 'apply_patch', arguments: patch } },
+  { type: 'tool.execution_complete', timestamp: iso(at + 10), data: { toolCallId: id, success: true, toolTelemetry: {
+    restrictedProperties: { filePaths: JSON.stringify(files), movedFromPaths: '[]', addedPaths: JSON.stringify(added), deletedPaths: '[]' },
+    metrics: { linesAdded, linesRemoved: 0 },
+  } } },
+];
+const shutdown = (at: number, data: Record<string, unknown>): Ev => ({ type: 'session.shutdown', timestamp: iso(at), data });
+
+/** Run A (T0+0 … T0+330) killed after its apply_patch; run C resumes the session at T0+1000 and shuts it down. */
+function killResumeEvents(native: string, x: string): Ev[] {
+  return [
+    start(native, 0), prompt(100, 'first ALPHA'), usageRecord(200, 100, 10), reply(210), ...viewCall('a1', 220),
+    usageRecord(300, 200, 20), reply(310), ...patchCall('a2', 320, '*** Begin Patch\n*** Add File: x.txt\n+ALPHA\n*** End Patch\n', [x], [x], 2),
+    resume(1000), prompt(1100, 'second BRAVO'), usageRecord(1200, 300, 30), reply(1210), ...viewCall('c1', 1220),
+    usageRecord(1300, 400, 40), reply(1310), ...patchCall('c2', 1320, '*** Begin Patch\n*** Update File: x.txt\n@@\n ALPHA\n+BRAVO\n*** End Patch\n', [x], [], 1),
+    usageRecord(1400, 500, 50), reply(1410),
+    shutdown(1500, { shutdownType: 'routine', totalPremiumRequests: 3, codeChanges: { linesAdded: 3, linesRemoved: 0, filesModified: [x] },
+      modelMetrics: { [MODEL]: { requests: { count: 5 }, usage: { inputTokens: 1500, outputTokens: 150, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } } } }),
+  ];
+}
 
 function writeNative(id: string, events: Ev[], sessionCwd = cwd): string {
   const dir = join(copilotHome, 'session-state', id);
@@ -49,17 +89,20 @@ function writeNative(id: string, events: Ev[], sessionCwd = cwd): string {
   return file;
 }
 
-function writeRecord(id: string): void {
+/** A live record as SessionStart writes it: `agentSessionId` is the id the run goes under. */
+function writeRecord(id: string, agentSessionId = id, startTime = T0): void {
   mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
   writeFileSync(
     join(codemieHome, 'sessions', `${id}.json`),
-    JSON.stringify({ sessionId: id, agentName: 'copilot-cli', provider: 'ai-run-sso', workingDirectory: cwd, startTime: T0, status: 'active',
-      correlation: { status: 'matched', agentSessionId: id, agentSessionFile: '', retryCount: 0 } })
+    JSON.stringify({ sessionId: id, agentName: 'copilot-cli', provider: 'ai-run-sso', workingDirectory: cwd, startTime, status: 'active',
+      correlation: { status: 'matched', agentSessionId, agentSessionFile: '', retryCount: 0 } })
   );
 }
 
 const readRecord = (id: string) =>
-  JSON.parse(readFileSync(join(codemieHome, 'sessions', `${id}.json`), 'utf-8')) as { correlation: { agentSessionFile: string; agentSessionId: string } };
+  JSON.parse(readFileSync(join(codemieHome, 'sessions', `${id}.json`), 'utf-8')) as {
+    correlation: { status: string; agentSessionFile?: string; agentSessionId: string };
+  };
 
 const lifecycle = CopilotCliPluginMetadata.lifecycle!;
 const config = {} as AgentConfig;
@@ -110,6 +153,21 @@ describe('copilot-cli launch args (--session-id pinning)', () => {
 });
 
 describe('copilot-cli SessionStart', () => {
+  const resumedNative = '99999999-9999-4999-8999-999999999999';
+
+  it.each([
+    ['--resume <uuid> / -r <uuid> / --session-id <uuid>', resumedNative, resumedNative],
+    ['--resume <upper-case uuid>', 'ABCDEF01-ABCD-4ABC-8ABC-ABCDEF012345', 'abcdef01-abcd-4abc-8abc-abcdef012345'],
+    ['--continue (no session named)', '', 'sid-run'],
+    ['--resume <id prefix>', '99999999', 'sid-run'],
+    ['--resume <session name>', 'my-session', 'sid-run'],
+  ])('the run goes under the resumed native id only on a full UUID: %s', async (_form, resumeId, expected) => {
+    await lifecycle.onSessionStart!('sid-run', { CODEMIE_RESUME_SESSION_ID: resumeId });
+
+    expect((processEventMock.mock.calls[0][0] as { session_id: string }).session_id).toBe(expected);
+    expect((processEventMock.mock.calls[0][1] as { sessionId: string }).sessionId).toBe('sid-run');
+  });
+
   it('hands processEvent the wrapper owner from the env, so the record stores it', async () => {
     await lifecycle.onSessionStart!('sid-owner', { CODEMIE_WRAPPER_PID: '4242', CODEMIE_WRAPPER_STARTED_AT: '1790000000000' });
 
@@ -118,9 +176,142 @@ describe('copilot-cli SessionStart', () => {
       expect.objectContaining({ ownerPid: 4242, ownerStartedAt: 1_790_000_000_000 }),
     );
   });
+
+  it.each([
+    ['an absolute COPILOT_HOME', '/run/copilot-home', resolve('/run/copilot-home')],
+    ['a relative COPILOT_HOME, against the launch directory', 'rel/copilot-home', resolve(process.cwd(), 'rel/copilot-home')],
+  ])('sends the run\'s home on the event: %s', async (_form, value, expected) => {
+    await lifecycle.onSessionStart!('sid-home', { COPILOT_HOME: value });
+
+    expect((processEventMock.mock.calls[0][0] as { agent_home: string }).agent_home).toBe(expected);
+  });
+
+  it('a blank COPILOT_HOME sends the default home', async () => {
+    await lifecycle.onSessionStart!('sid-home', { COPILOT_HOME: '  ' });
+
+    expect((processEventMock.mock.calls[0][0] as { agent_home: string }).agent_home).toBe(join(homedir(), '.copilot'));
+  });
 });
 
 describe('copilot-cli SessionEnd correlation', () => {
+  const canDeny = process.platform !== 'win32' && process.getuid?.() !== 0;
+
+  async function endingDenied(id: string, mode: number): Promise<void> {
+    const root = join(copilotHome, 'session-state');
+    mkdirSync(root, { recursive: true });
+    chmodSync(root, mode);
+    try {
+      await endSession(id);
+    } finally {
+      chmodSync(root, 0o755);
+    }
+  }
+
+  it.skipIf(!canDeny)('a window search that could not conclude: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+    const id = '33333333-3333-4333-8333-333333333333';
+    writeRecord(id);
+    const before = readRecord(id).correlation;
+
+    await endingDenied(id, 0o300);
+
+    expect(readRecord(id).correlation).toEqual(before);
+    expect(processEventMock).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(!canDeny)('a direct check that could not conclude: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+    const id = '44444444-4444-4444-8444-444444444444';
+    const resumed = '55555555-5555-4555-8555-555555555555';
+    writeRecord(id, resumed);
+    const before = readRecord(id).correlation;
+
+    await endingDenied(id, 0o000);
+
+    expect(readRecord(id).correlation).toEqual(before);
+    expect(processEventMock).not.toHaveBeenCalled();
+  });
+
+  it('looks under the record\'s agentHome, not the environment\'s COPILOT_HOME', async () => {
+    const id = '66666666-6666-4666-8666-666666666666';
+    const resumed = '77777777-7777-4777-8777-777777777777';
+    const file = writeNative(resumed, [start(resumed)]);
+    writeRecord(id, resumed);
+    const path = join(codemieHome, 'sessions', `${id}.json`);
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), agentHome: copilotHome }));
+
+    await endSession(id, join(copilotHome, 'another-home'));
+
+    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: resumed, transcript_path: file });
+  });
+
+  describe.each([
+    ['a pinned run', undefined],
+    ['a resumed run', '88888888-8888-4888-8888-888888888888'],
+  ])('%s with a stored home', (_form, resumed) => {
+    const id = '12121212-1212-4212-8212-121212121212';
+
+    function launchWithHome(): void {
+      writeRecord(id, resumed ?? id);
+      const path = join(codemieHome, 'sessions', `${id}.json`);
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf-8')), agentHome: copilotHome }));
+      launch(id, resumed ? ['--resume', resumed] : []);
+    }
+
+    it('no session-state: no uncorrelated rewrite, no SessionEnd from this path', async () => {
+      launchWithHome();
+      const before = readRecord(id).correlation;
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toEqual(before);
+      expect(processEventMock).not.toHaveBeenCalled();
+    });
+
+    it('session-state with no transcript: not correlated and ends under its CodeMie id', async () => {
+      launchWithHome();
+      mkdirSync(join(copilotHome, 'session-state'));
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toMatchObject({ status: 'failed', agentSessionId: id });
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
+    });
+  });
+
+  describe.each([
+    ['a pinned run', [], '13131313-1313-4313-8313-131313131313'],
+    ['an unpinned run', ['--continue'], 'located-by-window'],
+  ])('%s whose stored native id cannot name a session directory', (_form, args, ownDir) => {
+    const id = '13131313-1313-4313-8313-131313131313';
+
+    /** An `events.jsonl` where the stored id resolves, older than the run so that only the id can reach it. */
+    function launchWithStored(stored: string): void {
+      writeNative(stored, [start('elsewhere', -60_000)]);
+      writeRecord(id, stored);
+      launch(id, args);
+    }
+
+    it.each(['../x', '..', '.', 'unknown'])('%s: not read, not correlated, ends under the CodeMie id', async (stored) => {
+      launchWithStored(stored);
+
+      await endSession(id);
+
+      const { correlation } = readRecord(id);
+      expect(correlation).toMatchObject({ status: 'failed', agentSessionId: id });
+      expect(correlation.agentSessionFile).toBeUndefined();
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
+    });
+
+    it.each(['../x', '..', '.', 'unknown'])('%s: its own transcript is correlated and the record names the CodeMie id', async (stored) => {
+      launchWithStored(stored);
+      const own = writeNative(ownDir, [start(ownDir, 100)]);
+
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toMatchObject({ status: 'matched', agentSessionId: id, agentSessionFile: own });
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: own });
+    });
+  });
+
   it('gives two concurrent managed sessions in one cwd their own native session, ignoring a newer standalone one', async () => {
     const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -142,7 +333,7 @@ describe('copilot-cli SessionEnd correlation', () => {
     expect(transcripts).toEqual([fileA, fileB]);
   });
 
-  it('claims nothing when the managed launch produced no native session, even if a standalone one exists', async () => {
+  it('claims nothing when the managed launch produced no native session, even if a standalone one exists: not correlated', async () => {
     const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
     writeNative('standalone-1', [start('standalone-1', 10), user(20), assistant(30)]);
     writeRecord(id);
@@ -150,20 +341,54 @@ describe('copilot-cli SessionEnd correlation', () => {
     launch(id);
     await endSession(id);
 
-    expect(readRecord(id).correlation.agentSessionFile).toBe('');
+    expect(readRecord(id).correlation.status).toBe('failed');
+    expect(readRecord(id).correlation.agentSessionFile).toBeUndefined();
     expect((processEventMock.mock.calls[0][0] as { transcript_path: string }).transcript_path).toBe('');
   });
 
-  it('claims nothing when the user selected their own session (no pinned id)', async () => {
+  it('a run resumed by its full native id reads that session\'s transcript and ends under that id', async () => {
     const id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
-    writeNative(id, [start(id), user(10), assistant(20)]);
-    writeRecord(id);
+    const resumed = 'abababab-abab-4bab-8bab-abababababab';
+    const file = writeNative(resumed, [start(resumed, -5000), user(-4000), assistant(-3000), resume(100), user(200), assistant(300)]);
+    writeRecord(id, resumed);
 
-    launch(id, ['--resume']);
+    launch(id, ['--resume', resumed]);
     await endSession(id);
 
-    expect(readRecord(id).correlation.agentSessionFile).toBe('');
+    expect(readRecord(id).correlation).toMatchObject({ status: 'matched', agentSessionId: resumed, agentSessionFile: file });
+    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: resumed, transcript_path: file });
   });
+
+  it('a run resumed by a full native id with no transcript of it is not correlated and ends under its CodeMie id', async () => {
+    const id = 'dededede-dede-4ede-8ede-dededededede';
+    const resumed = 'acacacac-acac-4cac-8cac-acacacacacac';
+    writeNative('other-1', [start('other-1', 10), user(20), assistant(30)]);
+    writeRecord(id, resumed);
+
+    launch(id, ['--resume', resumed]);
+    await endSession(id);
+
+    expect(readRecord(id).correlation.status).toBe('failed');
+    expect(readRecord(id).correlation.agentSessionFile).toBeUndefined();
+    expect(readRecord(id).correlation.agentSessionId).toBe(id);
+    expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: '' });
+  });
+
+  it.each([[['--continue']], [['--resume', 'abababab']]])(
+    'a session the wrapper cannot name (%j) is located by the run window and the run stays under its CodeMie id',
+    async (args) => {
+      const id = 'dfdfdfdf-dfdf-4fdf-8fdf-dfdfdfdfdfdf';
+      const native = 'adadadad-adad-4dad-8dad-adadadadadad';
+      const file = writeNative(native, [start(native, -5000), user(-4000), assistant(-3000), resume(100), user(200), assistant(300)]);
+      writeRecord(id);
+
+      launch(id, args);
+      await endSession(id);
+
+      expect(readRecord(id).correlation).toMatchObject({ status: 'matched', agentSessionId: id, agentSessionFile: file });
+      expect(processEventMock.mock.calls[0][0]).toMatchObject({ session_id: id, transcript_path: file });
+    }
+  );
 
   it('reads the native transcript from a custom COPILOT_HOME given in the launch env', async () => {
     const id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -184,6 +409,74 @@ describe('copilot-cli SessionEnd correlation', () => {
   });
 });
 
+describe('a Copilot transcript that cannot be read', () => {
+  const canDeny = process.platform !== 'win32' && process.getuid?.() !== 0;
+  const id = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+  const unreadable = (): string => {
+    const file = writeNative(id, [start(id), user(100), assistant(200)]);
+    chmodSync(file, 0o000);
+    return file;
+  };
+
+  it('the strict read of a missing file has no events', () => {
+    expect(readCopilotEvents(join(copilotHome, 'none', 'events.jsonl'))).toEqual([]);
+  });
+
+  it('the strict read under a path that is a file has no events: ENOTDIR is absence', () => {
+    const file = join(cwd, 'a-file');
+    writeFileSync(file, '');
+
+    expect(readCopilotEvents(join(file, 'events.jsonl'))).toEqual([]);
+  });
+
+  it.skipIf(!canDeny)('the strict read of an unreadable file throws', () => {
+    expect(() => readCopilotEvents(unreadable())).toThrow(expect.objectContaining({ code: 'EACCES' }));
+  });
+
+  it('the strict read of a directory throws', () => {
+    expect(() => readCopilotEvents(cwd)).toThrow(expect.objectContaining({ code: 'EISDIR' }));
+  });
+
+  it('the strict read drops a torn line and keeps the other events', () => {
+    const file = join(cwd, 'torn.jsonl');
+    writeFileSync(file, `${JSON.stringify(user(100))}\n{"type":"assist\n${JSON.stringify(assistant(200))}\n`);
+
+    expect(readCopilotEvents(file).map((event) => event.type)).toEqual(['user.message', 'assistant.message']);
+  });
+
+  it.skipIf(!canDeny)('the tolerant read of an unreadable file has no events', () => {
+    const file = unreadable();
+
+    expect(readCopilotEventsTolerant(file)).toEqual([]);
+    expect(vi.mocked(logger.debug).mock.calls.map(([line]) => String(line))).toContain(`[copilot-cli] unreadable events.jsonl at ${file}:`);
+  });
+
+  it.skipIf(!canDeny)('processSession rejects and writes nothing to the metrics or conversation spool', async () => {
+    writeRecord(id);
+    const context = { apiBaseUrl: '', cookies: '', clientType: 'codemie-copilot', version: '1', dryRun: false, sessionId: id, agentSessionId: id };
+
+    await expect(new CopilotCliSessionAdapter(CopilotCliPluginMetadata).processSession(unreadable(), id, context))
+      .rejects.toMatchObject({ code: 'EACCES' });
+
+    expect(readdirSync(join(codemieHome, 'sessions'))).toEqual([`${id}.json`]);
+  });
+
+  it.skipIf(!canDeny)('parseNative of the cost enricher is null, no throw', async () => {
+    await expect(realDeps.parseNative('copilot-cli', unreadable(), id)).resolves.toBeNull();
+  });
+
+  it.skipIf(!canDeny)('the session cost carries why it is not measurable, not a run that cost $0', async () => {
+    const file = unreadable();
+    const { index } = await enrichCosts([{ sessionId: id, startEvent: { agentName: 'copilot-cli', data: { startTime: T0 } }, deltas: [] }] as never[], {
+      resolveAgentName: () => 'copilot-cli',
+      loadAgentSessionFile: async () => file,
+      parseNative: realDeps.parseNative,
+    });
+
+    expect(index.get(id)).toMatchObject({ hadLog: true, priced: false, usageUnavailableReason: 'The Copilot transcript of this run could not be read' });
+  });
+});
+
 describe('CopilotCliMetricsProcessor', () => {
   const sid = 'codemie-1';
   const ctx = { apiBaseUrl: '', cookies: '', clientType: 'codemie-copilot', version: '1', dryRun: false, sessionId: sid, agentSessionId: sid };
@@ -191,7 +484,14 @@ describe('CopilotCliMetricsProcessor', () => {
   const sessionsDir = () => join(codemieHome, 'sessions');
   const read = (name: string) =>
     readFileSync(join(sessionsDir(), name), 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { recordId: string; tools?: Record<string, number> });
+  const written = () => (existsSync(join(sessionsDir(), `${sid}_metrics.jsonl`)) ? read(`${sid}_metrics.jsonl`) : []);
   const toolTotal = (rows: Array<{ tools?: Record<string, number> }>) => rows.reduce((n, r) => n + (r.tools?.view ?? 0), 0);
+
+  // The live record: a metrics file is created only while it exists
+  beforeEach(() => {
+    mkdirSync(sessionsDir(), { recursive: true });
+    writeFileSync(join(sessionsDir(), `${sid}.json`), JSON.stringify({ sessionId: sid, startTime: 0 }));
+  });
 
   it('writes nothing for a zero-turn session and one delta per real assistant turn otherwise', async () => {
     const empty = writeNative('empty', [start('empty'), user(10)]);
@@ -212,10 +512,11 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(toolTotal(rows)).toBe(1);
   });
 
-  it('does not duplicate when SessionEnd runs again after the completed_ rename', async () => {
+  it('drops the write when SessionEnd runs again after the completed_ rename', async () => {
     const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40)]);
     await run(file);
     renameSync(join(sessionsDir(), `${sid}_metrics.jsonl`), join(sessionsDir(), `completed_${sid}_metrics.jsonl`));
+    renameSync(join(sessionsDir(), `${sid}.json`), join(sessionsDir(), `completed_${sid}.json`));
     await run(file);
 
     expect(readdirSync(sessionsDir()).filter((f) => f.endsWith('_metrics.jsonl'))).toEqual([`completed_${sid}_metrics.jsonl`]);
@@ -238,6 +539,28 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(toolTotal(rows)).toBe(2);
   });
 
+  it('writes a turn before recordsBeforeMs, none at it: the next record over the same transcript owns it', async () => {
+    const file = writeNative('n1', [start('n1'), user(10), assistant(20), user(30), assistant(40)]);
+    await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).processSession(file, sid, { ...ctx, recordsBeforeMs: T0 + 40 });
+
+    expect(read(`${sid}_metrics.jsonl`).map((r) => r.recordId)).toEqual([`${sid}-turn-0`]);
+  });
+
+  it('an untimed assistant turn: no delta in a bounded window; one across two passes in the whole-session window', async () => {
+    const untimed: Ev = { type: 'assistant.message', data: { model: 'gpt-5.4', outputTokens: 5 } };
+    const file = writeNative('n1', [start('n1'), user(10), untimed]);
+    const metricsFiles = () => readdirSync(sessionsDir()).filter((f) => f.endsWith('_metrics.jsonl'));
+
+    await run(file);
+    expect(metricsFiles()).toEqual([]);
+
+    const adapter = new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
+    const parsed = { ...(await adapter.parseSessionFile(file, sid)), runWindow: { startTime: -Infinity } };
+    await new CopilotCliMetricsProcessor().process(parsed, ctx);
+    await new CopilotCliMetricsProcessor().process(parsed, ctx);
+    expect(read(`${sid}_metrics.jsonl`).map((r) => r.recordId)).toEqual([`${sid}-turn-0`]);
+  });
+
   it('keeps a late tool result with no new turn as one identified supplement delta', async () => {
     const base = [start('n1'), user(10), assistant(20), toolStart('c1', 30)];
     const file = writeNative('n1', base);
@@ -248,5 +571,247 @@ describe('CopilotCliMetricsProcessor', () => {
     const rows = read(`${sid}_metrics.jsonl`);
     expect(rows.map((r) => r.recordId)).toEqual([`${sid}-turn-0`, `${sid}-supplement-1`]);
     expect(toolTotal(rows)).toBe(1);
+  });
+
+  it('stamps a supplement delta with the window start when no transcript record lies before the window end', async () => {
+    const file = writeNative('n1', [start('n1', 100), user(110), assistant(120), toolStart('c1', 130), toolDone('c1', 140)]);
+    const parsed = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).parseSessionFile(file, sid);
+
+    await new CopilotCliMetricsProcessor().process({ ...parsed, runWindow: { startTime: T0, upperBound: T0 + 50 } }, ctx);
+
+    expect(written()).toMatchObject([{ recordId: `${sid}-supplement-0`, timestamp: T0, tools: { view: 1 } }]);
+  });
+
+  it('stamps a supplement delta with the window start, not an earlier run\'s last record', async () => {
+    const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40)]);
+    const parsed = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).parseSessionFile(file, sid);
+
+    await new CopilotCliMetricsProcessor().process({ ...parsed, runWindow: { startTime: T0 + 1000, upperBound: T0 + 2000 } }, ctx);
+
+    expect(written()).toMatchObject([{ recordId: `${sid}-supplement-0`, timestamp: T0 + 1000, tools: { view: 1 } }]);
+  });
+});
+
+describe('copilot-cli runs over one resumed native session', () => {
+  const native = 'a0a0a0a0-a0a0-4a0a-8a0a-a0a0a0a0a0a0';
+  const runA = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+  const runC = 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1';
+  const adapter = () => new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
+  const ctx = (id: string) => ({ apiBaseUrl: '', cookies: '', clientType: 'codemie-copilot', version: '1', dryRun: false, sessionId: id, agentSessionId: native });
+  const usageRows = (messages: unknown[]) => (messages as Array<{ usage?: unknown }>).filter((m) => m.usage);
+  const usage = (inputTokens: number, outputTokens: number) => ({ inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 });
+
+  interface Row { tools?: Record<string, number>; fileOperations?: unknown[]; userPrompts?: unknown[] }
+  const rowsOf = (id: string): Row[] =>
+    readFileSync(join(codemieHome, 'sessions', `${id}_metrics.jsonl`), 'utf-8').trim().split('\n').map((l) => JSON.parse(l) as Row);
+  const sum = (rows: Row[]) => ({
+    tools: rows.reduce<Record<string, number>>((all, r) => {
+      for (const [k, n] of Object.entries(r.tools ?? {})) all[k] = (all[k] ?? 0) + n;
+      return all;
+    }, {}),
+    fileOperations: rows.flatMap((r) => r.fileOperations ?? []),
+    userPrompts: rows.flatMap((r) => r.userPrompts ?? []),
+  });
+
+  it('each run writes only its own window: A its tools, +2 lines and prompt; C its own, the cumulative shutdown leaking nothing of A', async () => {
+    const x = join(cwd, 'x.txt');
+    const file = writeNative(native, killResumeEvents(native, x));
+    writeRecord(runA, native, T0 - 50);
+    writeRecord(runC, native, T0 + 900);
+
+    await adapter().processSession(file, runA, ctx(runA));
+    await adapter().processSession(file, runC, ctx(runC));
+
+    expect(rowsOf(runA)).toHaveLength(2);
+    expect(sum(rowsOf(runA))).toEqual({
+      tools: { view: 1, apply_patch: 1 },
+      fileOperations: [{ type: 'write', path: x, linesAdded: 2, linesRemoved: 0 }],
+      userPrompts: [{ count: 1, text: 'first ALPHA' }],
+    });
+    expect(rowsOf(runC)).toHaveLength(3);
+    expect(sum(rowsOf(runC))).toEqual({
+      tools: { view: 1, apply_patch: 1 },
+      fileOperations: [{ type: 'edit', path: x, linesAdded: 1, linesRemoved: 0 }],
+      userPrompts: [{ count: 1, text: 'second BRAVO' }],
+    });
+  });
+
+  it('tokens and requests come from the usage records inside each run window; a resumed run carries no premium requests', async () => {
+    const file = writeNative(native, killResumeEvents(native, join(cwd, 'x.txt')));
+
+    const a = await adapter().parseSessionFile(file, runA, undefined, { startTime: T0 - 50, upperBound: T0 + 900 });
+    const c = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(usageRows(a.messages)).toEqual([{ model: MODEL, usage: usage(300, 30), requests: 2 }]);
+    expect(usageRows(c.messages)).toEqual([{ model: MODEL, usage: usage(1200, 120), requests: 3 }]);
+    expect(c.usageMeta?.premiumRequests).toBeUndefined();
+  });
+
+  it('a fresh session (started inside the run) carries the premium requests of its rollup', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), usageRecord(200, 100, 10), reply(210),
+      shutdown(500, { totalPremiumRequests: 4, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } })]);
+
+    const parsed = await adapter().parseSessionFile(file, runA, undefined, { startTime: T0 - 50 });
+
+    expect(parsed.usageMeta?.premiumRequests).toBe(4);
+  });
+
+  it('a resumed run killed before its shutdown, with no usage record, carries no tokens', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10),
+      shutdown(500, { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } }),
+      resume(1000), prompt(1100, 'q'), reply(1210, 5)]);
+
+    const parsed = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(usageRows(parsed.messages)).toEqual([]);
+    expect(parsed.usageMeta?.usageUnavailableReason).toBeTruthy();
+  });
+
+  it('a resumed run window with no usage record and its own shutdown carries the delta of the cumulative rollup', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10),
+      shutdown(500, { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } }),
+      resume(1000), prompt(1100, 'q'), reply(1210, 5),
+      shutdown(1500, { totalPremiumRequests: 2, modelMetrics: { [MODEL]: { requests: { count: 3 }, usage: usage(400, 25) } } })]);
+
+    const parsed = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(usageRows(parsed.messages)).toEqual([{ model: MODEL, usage: usage(300, 15), requests: 2 }]);
+    expect(parsed.usageMeta).toMatchObject({ premiumRequests: 1, usagePartial: false });
+    expect(parsed.usageMeta?.usageUnavailableReason).toBeUndefined();
+  });
+
+  it('a resumed run with no growth over its shutdowns reaches the session cost with its own reason', async () => {
+    const rollup = { totalPremiumRequests: 1, modelMetrics: { [MODEL]: { requests: { count: 1 }, usage: usage(100, 10) } } };
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210, 10), shutdown(500, rollup), resume(1000), shutdown(1500, rollup)]);
+
+    const { index } = await enrichCosts([{ sessionId: runC, startEvent: { agentName: 'copilot-cli', data: { startTime: T0 + 900 } }, deltas: [] }] as never[], {
+      resolveAgentName: () => 'copilot-cli',
+      loadAgentSessionFile: async () => file,
+      parseNative: (_agent, filePath, sessionId, run) => adapter().parseSessionFile(filePath, sessionId, undefined, run),
+    });
+
+    expect(index.get(runC)?.usageUnavailableReason).toBe('No tokens in this run of a resumed Copilot session');
+  });
+
+  it('two apply_patch calls to one path are two file operations, each with its own lines', async () => {
+    const x = join(cwd, 'x.txt');
+    const parsed = await adapter().parseSessionFile(writeNative(native, killResumeEvents(native, x)), runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([
+      { type: 'write', path: x, linesAdded: 2, linesRemoved: 0 },
+      { type: 'edit', path: x, linesAdded: 1, linesRemoved: 0 },
+    ]);
+  });
+
+  it('a multi-file apply_patch puts its lines on its first file; the others are operations without lines', async () => {
+    const [x, y] = [join(cwd, 'x.txt'), join(cwd, 'y.txt')];
+    const patch = '*** Begin Patch\n*** Update File: x.txt\n+a\n*** Add File: y.txt\n+b\n+c\n*** End Patch\n';
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210), ...patchCall('m1', 220, patch, [x, y], [y], 3)]);
+
+    const parsed = await adapter().parseSessionFile(file, runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([
+      { type: 'edit', path: x, linesAdded: 3, linesRemoved: 0 },
+      { type: 'write', path: y },
+    ]);
+  });
+
+  it('a run with no live and no completed_ record queues no conversation; only the metrics processor fails', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210)]);
+    // A spool left behind by an earlier pass: a write to it needs no record
+    const spool = join(codemieHome, 'sessions', `${runA}_conversation.jsonl`);
+    mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
+    writeFileSync(spool, '');
+
+    const result = await adapter().processSession(file, runA, ctx(runA));
+
+    expect(result.failedProcessors).toEqual(['copilot-cli-metrics']);
+    expect(readFileSync(spool, 'utf-8')).toBe('');
+  });
+
+  it('a create call whose telemetry names only filePaths is a write', async () => {
+    const x = join(cwd, 'x.txt');
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'tool.execution_start', timestamp: iso(220), data: { toolCallId: 'k1', toolName: 'create', arguments: { path: x } } },
+      { type: 'tool.execution_complete', timestamp: iso(230), data: { toolCallId: 'k1', success: true,
+        toolTelemetry: { restrictedProperties: { filePaths: JSON.stringify([x]) } } } }]);
+
+    const parsed = await adapter().parseSessionFile(file, runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'write', path: x }]);
+  });
+
+  it('an older build\'s apply_patch on a relative path and the shutdown listing it are one operation on the absolute path', async () => {
+    const x = join(cwd, 'x.txt');
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'tool.execution_start', timestamp: iso(220), data: { toolCallId: 'o1', toolName: 'apply_patch', arguments: '*** Begin Patch\n*** Add File: x.txt\n+a\n*** End Patch\n' } },
+      { type: 'tool.execution_complete', timestamp: iso(230), data: { toolCallId: 'o1', success: true } },
+      shutdown(500, { codeChanges: { linesAdded: 1, linesRemoved: 0, filesModified: [x] } })]);
+
+    const parsed = await adapter().parseSessionFile(file, runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'write', path: x, linesAdded: 1, linesRemoved: 0 }]);
+  });
+
+  it('a relative apply_patch path after a resume in another directory joins the resumed directory', async () => {
+    const other = join(cwd, 'other');
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'session.resume', timestamp: iso(1000), data: { resumeTime: iso(1000), context: { cwd: other, gitRoot: other } } },
+      prompt(1100, 'q'), reply(1210),
+      { type: 'tool.execution_start', timestamp: iso(1220), data: { toolCallId: 'r1', toolName: 'apply_patch', arguments: '*** Begin Patch\n*** Add File: x.txt\n+a\n*** End Patch\n' } },
+      { type: 'tool.execution_complete', timestamp: iso(1230), data: { toolCallId: 'r1', success: true } }]);
+
+    const parsed = await adapter().parseSessionFile(file, runC);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'write', path: join(other, 'x.txt') }]);
+  });
+
+  const deletePatch = '*** Begin Patch\n*** Delete File: x.txt\n*** End Patch\n';
+
+  it('a call whose telemetry lists a path as deleted is a delete', async () => {
+    const x = join(cwd, 'x.txt');
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'tool.execution_start', timestamp: iso(220), data: { toolCallId: 'd1', toolName: 'apply_patch', arguments: deletePatch } },
+      { type: 'tool.execution_complete', timestamp: iso(230), data: { toolCallId: 'd1', success: true,
+        toolTelemetry: { restrictedProperties: { filePaths: JSON.stringify([x]), addedPaths: '[]', deletedPaths: JSON.stringify([x]) } } } }]);
+
+    const parsed = await adapter().parseSessionFile(file, runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'delete', path: x }]);
+  });
+
+  it('an apply_patch with no telemetry and a Delete File header is a delete of the absolute path', async () => {
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      { type: 'tool.execution_start', timestamp: iso(220), data: { toolCallId: 'd2', toolName: 'apply_patch', arguments: deletePatch } },
+      { type: 'tool.execution_complete', timestamp: iso(230), data: { toolCallId: 'd2', success: true } }]);
+
+    const parsed = await adapter().parseSessionFile(file, runA);
+
+    expect(parsed.metrics?.fileOperations).toEqual([{ type: 'delete', path: join(cwd, 'x.txt') }]);
+  });
+
+  it('each bounded run counts only the skills invoked inside its window', async () => {
+    const skill = (at: number, name: string): Ev => ({ type: 'skill.invoked', timestamp: iso(at), data: { skill: name } });
+    const events = [...killResumeEvents(native, join(cwd, 'x.txt')), skill(150, 'skill-a'), skill(1150, 'skill-c')]
+      .sort((l, r) => Date.parse(l.timestamp as string) - Date.parse(r.timestamp as string));
+    const file = writeNative(native, events);
+
+    const a = await adapter().parseSessionFile(file, runA, undefined, { startTime: T0 - 50, upperBound: T0 + 900 });
+    const c = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(a.metrics?.skillInvocations).toEqual({ 'skill-a': 1 });
+    expect(c.metrics?.skillInvocations).toEqual({ 'skill-c': 1 });
+  });
+
+  it('a resumed run with no per-call lines takes the shutdown lines and files beyond the prior shutdown', async () => {
+    const [x, y] = [join(cwd, 'x.txt'), join(cwd, 'y.txt')];
+    const file = writeNative(native, [start(native, 0), prompt(100, 'p'), reply(210),
+      shutdown(500, { codeChanges: { linesAdded: 2, filesModified: [x] } }),
+      resume(1000), prompt(1100, 'q'), reply(1210),
+      shutdown(1500, { codeChanges: { linesAdded: 5, filesModified: [x, y] } })]);
+
+    const c = await adapter().parseSessionFile(file, runC, undefined, { startTime: T0 + 900 });
+
+    expect(c.metrics?.fileOperations).toEqual([{ type: 'edit', path: y, linesAdded: 3, linesRemoved: 0 }]);
   });
 });

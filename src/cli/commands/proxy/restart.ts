@@ -1,9 +1,16 @@
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
-import { checkStatus, stopDaemon, type DaemonState } from './daemon-manager.js';
+import type { ProjectBindingState } from '../../../utils/project-binding.js';
+import { checkStatus, stopDaemon, writeConnectionRecord, type DaemonState } from './daemon-manager.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { DEFAULT_DAEMON_PORT } from './connect-orchestrator.js';
-import { launchDaemon, prepareDaemonLaunch, spawnForProfile } from './launch-daemon.js';
+import {
+  launchDaemon,
+  prepareDaemonLaunch,
+  shouldWriteConnectionRecord,
+  spawnForProfile,
+} from './launch-daemon.js';
 
 export interface ProxyRestartOptions {
   profile?: string;
@@ -17,9 +24,12 @@ function printRestarted(daemonState: DaemonState): void {
 async function restartStopped(opts: ProxyRestartOptions): Promise<void> {
   const config = await ConfigLoader.load(process.cwd(), opts.profile ? { name: opts.profile } : undefined);
   const profile = config.name ?? 'default';
+  const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
   printRestarted(await launchDaemon(config, profile, {
     port: DEFAULT_DAEMON_PORT,
     clientType: 'codemie-daemon',
+    projectBinding,
+    writeRecord: await shouldWriteConnectionRecord(opts.profile),
   }));
 }
 
@@ -59,10 +69,37 @@ function spawnFailedError(state: DaemonState, error: unknown): ToolExecutionErro
   );
 }
 
+/**
+ * Project for a restarted daemon (EPMCDME-15411; PR #758 review, finding 6). The project can
+ * depend on the directory the daemon was started from, so a restart from elsewhere must not move it:
+ * - `--profile`: the newly resolved project.
+ * - Started from a repo config (`local`): the recorded project; that config is not visible here.
+ * - The profile now owns its identity (`own` / `none`): the resolved value, so a profile that gained
+ *   its own project bills it.
+ * - Otherwise (unowned, not-applicable, or a state file without a binding): the recorded project.
+ */
+export function restartProject(
+  state: Pick<DaemonState, 'project' | 'projectBinding'>,
+  opts: Pick<ProxyRestartOptions, 'profile'>,
+  resolvedProject: string | undefined,
+  resolvedBinding: ProjectBindingState | undefined
+): { project?: string; projectBinding?: ProjectBindingState } {
+  if (opts.profile) return { project: resolvedProject, projectBinding: resolvedBinding };
+  if (state.projectBinding !== 'local' && (resolvedBinding === 'own' || resolvedBinding === 'none')) {
+    return { project: resolvedProject, projectBinding: resolvedBinding };
+  }
+  return {
+    project: state.project ?? resolvedProject,
+    projectBinding: state.project ? state.projectBinding : resolvedBinding,
+  };
+}
+
 /** Replace a running daemon, keeping its port and identity (the start-time conflict check does not apply). */
 async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<void> {
   const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
   const profile = config.name ?? opts.profile ?? state.profile;
+  const resolvedBinding = await reportDaemonProfileIdentity(config, 'proxy');
+  const { project, projectBinding } = restartProject(state, opts, config.codeMieProject, resolvedBinding);
   // Fail on a bad profile or expired SSO before the working daemon is touched.
   const prepared = await prepareDaemonLaunch(config, profile);
 
@@ -78,7 +115,10 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
       gatewayKey: state.gatewayKey,
       // A switched profile's tenant may not serve the old profile's model.
       model: opts.profile ? undefined : state.model,
-      project: opts.profile ? config.codeMieProject : (state.project ?? config.codeMieProject),
+      project,
+      projectBinding,
+      // Written below, only once the port check has passed: a rolled-back restart leaves no record.
+      writeRecord: false,
     });
   } catch (error) {
     throw spawnFailedError(state, error);
@@ -88,6 +128,10 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
     // Clients are configured for the recorded port; do not leave a daemon elsewhere.
     await stopDaemon();
     throw portMismatchError(state, daemonState.port);
+  }
+  // `profile` is the one the daemon was just spawned for (equal to daemonState.profile).
+  if (await shouldWriteConnectionRecord(opts.profile)) {
+    await writeConnectionRecord(daemonState, profile, state.clientType);
   }
   printRestarted(daemonState);
 }

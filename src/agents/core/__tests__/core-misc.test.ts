@@ -311,6 +311,18 @@ describe('sync-state-utils: applyProcessingSyncUpdates', () => {
     expect(session.sync?.conversations?.lastSyncedHistoryIndex).toBe(9);
   });
 
+  it('seeds the legacy single checkpoint into the per-conversation map without lowering a mapped value', () => {
+    const legacy = makeSession({ sync: { conversations: { conversationId: 'A', lastSyncedHistoryIndex: 3 } } });
+    applyProcessingSyncUpdates(legacy, [conversationsResult({ historyIndexByConversation: { B: 1 } })]);
+    expect(legacy.sync?.conversations?.historyIndexByConversation).toEqual({ A: 3, B: 1 });
+
+    const mapped = makeSession({
+      sync: { conversations: { conversationId: 'A', lastSyncedHistoryIndex: 3, historyIndexByConversation: { A: 5 } } },
+    });
+    applyProcessingSyncUpdates(mapped, [conversationsResult({ historyIndexByConversation: { B: 1 } })]);
+    expect(mapped.sync?.conversations?.historyIndexByConversation).toEqual({ A: 5, B: 1 });
+  });
+
   it('accumulates totalMessagesSynced / totalSyncAttempts across batches', () => {
     const session = makeSession();
     applyProcessingSyncUpdates(session, [conversationsResult({ totalMessagesSynced: 2, totalSyncAttempts: 1 })]);

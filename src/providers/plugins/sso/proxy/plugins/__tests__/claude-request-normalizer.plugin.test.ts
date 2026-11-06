@@ -23,6 +23,9 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCr
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
+  getLastSignInAt: vi.fn().mockResolvedValue(null),
+}));
 
 import { CredentialRefresher } from '../credential-refresh.js';
 

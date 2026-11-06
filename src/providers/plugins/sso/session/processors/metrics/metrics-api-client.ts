@@ -28,10 +28,12 @@ import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
-import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
+import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
 import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
@@ -50,7 +52,7 @@ interface MetricsRequestError extends Error {
  * - Error classification (retryable vs non-retryable)
  */
 class MetricsApiClient {
-  private readonly config: Required<Omit<MetricsApiConfig, 'deadlineMs' | 'abortSignal'>>;
+  private readonly config: Required<Omit<MetricsApiConfig, 'deadlineMs' | 'abortSignal' | 'credentialsSuperseded'>> & Pick<MetricsApiConfig, 'credentialsSuperseded'>;
   private readonly bounds: SyncBounds;
 
   constructor(config: MetricsApiConfig) {
@@ -62,7 +64,8 @@ class MetricsApiClient {
       retryAttempts: config.retryAttempts ?? 3,
       retryDelays: config.retryDelays || [1000, 2000, 5000],
       version: config.version || process.env.CODEMIE_CLI_VERSION || 'unknown',
-      clientType: config.clientType || 'codemie-cli'
+      clientType: config.clientType || 'codemie-cli',
+      credentialsSuperseded: config.credentialsSuperseded
     };
     this.bounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
   }
@@ -98,10 +101,13 @@ class MetricsApiClient {
         // hook auth gate can prompt the user to re-authenticate
         if ((error as MetricsRequestError).isAuthFailure) {
           noteAuthFailure(this.bounds.abortSignal);
-          await markAnalyticsAuthInvalid(
-            statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
-            this.config.baseUrl
-          );
+          await markAuthInvalidUnlessSuperseded({
+            reason: statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
+            baseUrl: this.config.baseUrl,
+            cookies: this.config.cookies,
+            apiKey: this.config.apiKey,
+            credentialsSuperseded: this.config.credentialsSuperseded
+          });
         }
 
         if (!this.isRetryable(error as Error)) {
@@ -113,7 +119,7 @@ class MetricsApiClient {
       }
     }
 
-    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`);
+    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError });
   }
 
   private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
@@ -183,6 +189,7 @@ class MetricsApiClient {
         body,
         signal: request.signal
       });
+      request.noteOutcome();
 
       const responseText = await response.text();
       const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
@@ -230,6 +237,7 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
+      request.noteOutcome(error);
       if ((error as Error).name === 'AbortError') {
         const stopReason = request.stopReason();
         if (stopReason) {
@@ -313,6 +321,7 @@ export interface MetricsSenderOptions {
   deadlineMs?: number;
   /** Aborts the request in flight and the backoff (see MetricsApiConfig.abortSignal) */
   abortSignal?: AbortSignal;
+  credentialsSuperseded?: CredentialsSupersededCheck;
 }
 
 /**
@@ -348,7 +357,8 @@ export class MetricsSender {
       version: options.version,
       clientType: options.clientType,
       deadlineMs: options.deadlineMs,
-      abortSignal: options.abortSignal
+      abortSignal: options.abortSignal,
+      credentialsSuperseded: options.credentialsSuperseded
     };
 
     this.client = new MetricsApiClient(config);
@@ -498,7 +508,7 @@ export class MetricsSender {
    * Called when agent process exits
    *
    * @param session - Session metadata (with optional model)
-   * @param workingDirectory - Current working directory (for git branch detection)
+   * @param workingDirectory - Current working directory (for git branch detection when the session has no branch)
    * @param status - Session end status object with status and optional reason
    * @param durationMs - Wall-clock session duration in milliseconds
    * @param error - Optional error information (for failed sessions)
@@ -506,7 +516,7 @@ export class MetricsSender {
    * @param endTime - The session's end (epoch ms); default now
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository' | 'gitBranch'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
@@ -514,8 +524,7 @@ export class MetricsSender {
     activeDurationMs?: number,
     endTime?: number
   ): Promise<MetricsSyncResponse> {
-    // Detect git branch
-    const branch = await detectGitBranch(workingDirectory);
+    const branch = session.gitBranch || await detectGitBranch(workingDirectory);
 
     // Use canonical owner/repo from session if available; fall back to filesystem derivation
     const repository = session.repository ?? extractRepository(workingDirectory);

@@ -19,6 +19,11 @@ import {
   writeClaudeCodeOtlpConfig,
   removeClaudeCodeOtlpConfig,
 } from '../claude-code-otlp.js';
+import {
+  checkClaudeCodeOtlpEndpoint,
+  readConfiguredOtlpPort,
+  refreshClaudeCodeOtlpEndpoint,
+} from '../claude-code-otlp-endpoint.js';
 import { readState } from '../../daemon-manager.js';
 import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
@@ -33,7 +38,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   // failure via mockRejectedValueOnce; vi.spyOn can't do this directly —
   // ESM module namespaces aren't spy-able ("module namespace is not
   // configurable").
-  return { ...actual, unlink: vi.fn(actual.unlink) };
+  return { ...actual, unlink: vi.fn(actual.unlink), readFile: vi.fn(actual.readFile) };
 });
 
 vi.mock('../../daemon-manager.js', () => ({
@@ -1599,6 +1604,103 @@ describe('claude-code-otlp connector', () => {
       await removeClaudeCodeOtlpConfig();
 
       expect(await readPreferencesBytes()).toBe(before);
+    });
+  });
+
+  describe('OTLP endpoint continuity', () => {
+    const live = { url: 'http://127.0.0.1:60005', gatewayKey: 'gk-new' };
+    const settingsPath = () => join(homeDir, '.claude', 'settings.json');
+
+    it('merges a user edit made after the mismatch check into the fresh settings', async () => {
+      await writeClaudeCodeOtlpConfig();
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(readFile).mockImplementationOnce(async (path) => {
+        const snapshot = await actual.readFile(path, 'utf-8');
+        const edited = JSON.parse(snapshot);
+        edited.theme = 'concurrent-user-edit';
+        await actual.writeFile(settingsPath(), JSON.stringify(edited));
+        return snapshot;
+      });
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(true);
+      const saved = await readJson(settingsPath());
+      expect(saved.theme).toBe('concurrent-user-edit');
+      expect(saved.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${live.url}/v1/analytics/otlp`);
+    });
+
+    it('re-points only the CodeMie endpoint/header at the live daemon and keeps everything else', async () => {
+      await writeClaudeCodeOtlpConfig({ scope: 'project' });
+      const before = await readJson(settingsPath());
+      before.env.USER_VAR = 'keep';
+      before.theme = 'dark';
+      await writeFile(settingsPath(), JSON.stringify(before, null, 2));
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(true);
+
+      const after = await readJson(settingsPath());
+      expect(after.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:60005/v1/analytics/otlp');
+      expect(after.env.OTEL_EXPORTER_OTLP_HEADERS).toBe('Authorization=Bearer gk-new');
+      expect({ ...after, env: { ...after.env, OTEL_EXPORTER_OTLP_ENDPOINT: 0, OTEL_EXPORTER_OTLP_HEADERS: 0 } })
+        .toEqual({ ...before, env: { ...before.env, OTEL_EXPORTER_OTLP_ENDPOINT: 0, OTEL_EXPORTER_OTLP_HEADERS: 0 } });
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toMatchObject({ matches: true });
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+    });
+
+    it('leaves a foreign (non-CodeMie) endpoint and a missing file untouched', async () => {
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(existsSync(settingsPath())).toBe(false);
+
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      const foreign = JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318' } });
+      await writeFile(settingsPath(), foreign);
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toBeNull();
+      expect(await readConfiguredOtlpPort()).toBeNull();
+      expect(await readRaw(settingsPath())).toBe(foreign);
+    });
+
+    it.each([
+      ['remote same-suffix endpoint', 'https://collector.example/v1/analytics/otlp'],
+      ['localhost host', 'http://localhost:4001/v1/analytics/otlp'],
+      ['https loopback', 'https://127.0.0.1:4001/v1/analytics/otlp'],
+      ['extra path prefix', 'http://127.0.0.1:4001/x/v1/analytics/otlp'],
+      ['malformed URL', 'not a url/v1/analytics/otlp'],
+    ])('never treats a user-owned destination as CodeMie-owned: %s', async (_name, endpoint) => {
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      const raw = JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: endpoint, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer user-token' } });
+      await writeFile(settingsPath(), raw);
+
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toBeNull();
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await readConfiguredOtlpPort()).toBeNull();
+      expect(await readRaw(settingsPath())).toBe(raw);
+    });
+
+    it('reports a header-only mismatch', async () => {
+      await writeClaudeCodeOtlpConfig(); // :41999, key test-gateway-key-123
+
+      expect(await checkClaudeCodeOtlpEndpoint({ url: mockState.url, gatewayKey: 'rotated' }))
+        .toMatchObject({ matches: false, configured: 'http://127.0.0.1:41999/v1/analytics/otlp', expected: 'http://127.0.0.1:41999/v1/analytics/otlp' });
+    });
+
+    it('reports the port Claude Code is told to export to, and a mismatch against the live daemon', async () => {
+      await writeClaudeCodeOtlpConfig(); // mockState: :41999
+
+      expect(await readConfiguredOtlpPort()).toBe(41999);
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toEqual({
+        configured: 'http://127.0.0.1:41999/v1/analytics/otlp',
+        expected: 'http://127.0.0.1:60005/v1/analytics/otlp',
+        matches: false,
+      });
+    });
+
+    it('never throws on corrupt settings', async () => {
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      await writeFile(settingsPath(), '{not json');
+
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await readConfiguredOtlpPort()).toBeNull();
     });
   });
 });

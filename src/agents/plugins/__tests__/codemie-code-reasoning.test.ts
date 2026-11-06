@@ -81,12 +81,12 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
 }));
 
 // Mock OpenCodeSessionAdapter
-const { mockDiscoverSessions } = vi.hoisted(() => ({
-  mockDiscoverSessions: vi.fn(),
+const { mockLocateSessionTranscript } = vi.hoisted(() => ({
+  mockLocateSessionTranscript: vi.fn(),
 }));
 vi.mock('../opencode/opencode.session.js', () => ({
   OpenCodeSessionAdapter: vi.fn(function () {
-    return { discoverSessions: mockDiscoverSessions };
+    return { locateSessionTranscript: mockLocateSessionTranscript };
   }),
 }));
 
@@ -137,7 +137,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDiscoverSessions.mockResolvedValue([]);
+    mockLocateSessionTranscript.mockResolvedValue(undefined);
     mockProcessEvent.mockResolvedValue(undefined);
   });
 

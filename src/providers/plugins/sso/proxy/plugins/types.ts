@@ -142,7 +142,8 @@ export interface ProxyInterceptor {
 
 export interface UpstreamResponseTools {
   readBody(response: IncomingMessage): Promise<Buffer>;
-  retry(requestBody: Buffer): Promise<IncomingMessage>;
+  /** `null`/`undefined` replays a request that was sent without a body (GET, HEAD, DELETE). */
+  retry(requestBody: Buffer | null | undefined): Promise<IncomingMessage>;
   fromBuffer(response: IncomingMessage, body: Buffer): IncomingMessage;
 }
 

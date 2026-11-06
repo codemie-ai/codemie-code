@@ -14,7 +14,7 @@
  * manifest's own timestamps make both unnecessary.
  */
 
-import { readdirSync, existsSync, realpathSync, statSync } from 'fs';
+import { readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import {
   latestRecordTime,
@@ -23,6 +23,7 @@ import {
   type AggregatedResult,
   type SessionDiscoveryOptions,
   type SessionDescriptor,
+  type RunBounds,
 } from '../../core/session/BaseSessionAdapter.js';
 import type {
   SessionProcessor,
@@ -34,8 +35,15 @@ import type { Session } from '../../core/session/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
 import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
-import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
-import { extractCopilotUsage } from './copilot-cli.usage.js';
+import { readCopilotEvents } from './copilot-cli.storage-utils.js';
+import { locateCopilotTranscript } from './copilot-cli.transcript-lookup.js';
+import {
+  extractCopilotUsage,
+  extractCopilotRunUsage,
+  inRun,
+  runShutdownShare,
+} from './copilot-cli.usage.js';
+import { applyShutdownShare, callFileOperations, directoryCursor, type ToolCall } from './copilot-cli.file-operations.js';
 import type {
   CopilotSessionStartData,
   CopilotShutdownData,
@@ -46,16 +54,16 @@ import type {
 } from './copilot-cli-event-types.js';
 import { CopilotCliMetricsProcessor } from './session/processors/copilot-cli.metrics-processor.js';
 import { CopilotCliConversationsProcessor } from './session/processors/copilot-cli.conversations-processor.js';
+import { resolveRunWindow } from '../../core/session/run-window.js';
+import type { RunWindow } from '../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
+import { SessionRecordNotFoundError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/**
- * Copilot tools that write to disk. `view` also carries a `path` but is a read, and the
- * aggregator excludes reads from the changed-files metrics.
- */
-const FILE_WRITE_TOOLS = new Set(['create', 'edit']);
+/** The whole transcript, for a caller that names no run (a report over the native session). */
+const WHOLE_SESSION: RunBounds = { startTime: -Infinity };
 
 /** Trailing-slash-insensitive directory comparison. */
 function sameDir(a: string | undefined, b: string): boolean {
@@ -63,6 +71,16 @@ function sameDir(a: string | undefined, b: string): boolean {
     return false;
   }
   return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+}
+
+/** The record's run window; none without a record — the metrics processor reports it, no conversation is queued. */
+async function recordRunWindow(sessionId: string, context: ProcessingContext): Promise<RunWindow | undefined> {
+  try {
+    return await resolveRunWindow(sessionId, context);
+  } catch (error) {
+    if (error instanceof SessionRecordNotFoundError) return undefined;
+    throw error;
+  }
 }
 
 export class CopilotCliSessionAdapter implements SessionAdapter {
@@ -165,9 +183,15 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
    * `messages` carries the RAW per-model Copilot buckets — `readCopilotCli` in
    * `usage-readers.ts` owns the conversion into `TokenUsage`, so the OpenAI/Anthropic
    * convention mismatch lives in exactly one place.
+   *
+   * With `run`, the usage and the session-level counters (tools, prompts, skills, file operations)
+   * are the run's own: one native session is shared by every run that resumed it. The turn records
+   * stay whole — the conversation is numbered over the full session.
+   *
+   * A transcript that cannot be read throws; a missing one is a session with no events.
    */
-  async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
-    const events = readCopilotEventsTolerant(filePath);
+  async parseSessionFile(filePath: string, sessionId: string, _agentSessionId?: string, run?: RunBounds): Promise<ParsedSession> {
+    const events = readCopilotEvents(filePath);
 
     const start = events.find((e) => e.type === 'session.start')?.data as
       | CopilotSessionStartData
@@ -176,7 +200,8 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
       | CopilotShutdownData
       | undefined;
 
-    const usage = extractCopilotUsage(events);
+    const bounds = run ?? WHOLE_SESSION;
+    const usage = run ? extractCopilotRunUsage(events, run) : extractCopilotUsage(events);
 
     const tools: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
@@ -196,7 +221,8 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
 
     // tool.execution_start is the ONLY event carrying the tool name and arguments;
     // tool.execution_complete carries just toolCallId + a boolean success. Pair by id.
-    const toolCallById = new Map<string, { name: string; path?: string }>();
+    const toolCallById = new Map<string, ToolCall>();
+    const callDirectory = directoryCursor(events);
 
     // Only the newest CLI builds put `model` on each assistant.message; 1.0.17 and every
     // 0.0.x omit it. Track the model in effect from session.model_change so those turns
@@ -214,14 +240,17 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           }
           // Remember the name and target path; whether the write actually happened is
           // only known at tool.execution_complete.
-          toolCallById.set(data.toolCallId, { name: data.toolName, path: data.arguments?.path });
+          const args = data.arguments;
+          toolCallById.set(data.toolCallId, typeof args === 'string'
+            ? { name: data.toolName, patch: args }
+            : { name: data.toolName, path: args?.path });
           break;
         }
         case 'tool.execution_complete': {
           const data = (event.data ?? {}) as CopilotToolCompleteData;
           const call = data.toolCallId ? toolCallById.get(data.toolCallId) : undefined;
-          if (!call) {
-            break; // orphaned completion (truncated transcript) — nothing to attribute
+          if (!call || !inRun(event, bounds)) {
+            break; // orphaned completion (truncated transcript), or another run's call
           }
           tools[call.name] = (tools[call.name] ?? 0) + 1;
           const bucket = toolStatus[call.name] ?? { success: 0, failure: 0 };
@@ -233,15 +262,15 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           // A failed edit/create (permission denied, bad old_str) must not count as a
           // changed file, or the report inflates filesChanged and can attach the
           // session's line totals to a file that was never written.
-          if (!failed && call.path && FILE_WRITE_TOOLS.has(call.name)) {
-            fileOperations.push({ type: call.name === 'create' ? 'write' : 'edit', path: call.path });
+          if (!failed) {
+            fileOperations.push(...callFileOperations(call, data, callDirectory(event)));
           }
           break;
         }
         case 'skill.invoked': {
           const data = (event.data ?? {}) as CopilotSkillInvokedData;
           const name = data.skill ?? data.name;
-          if (name) {
+          if (name && inRun(event, bounds)) {
             skillInvocations[name] = (skillInvocations[name] ?? 0) + 1;
           }
           break;
@@ -253,7 +282,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
             : typeof data.content === 'string'
               ? data.content
               : undefined;
-          if (typeof text === 'string' && text.trim()) {
+          if (typeof text === 'string' && text.trim() && inRun(event, bounds)) {
             userPrompts.push({ count: 1, text });
           }
           turnRecords.push({
@@ -311,28 +340,9 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
       }
     }
 
-    // session.shutdown.codeChanges is the authoritative churn figure, but reports only
-    // session-wide line totals plus a file list — no per-file deltas. Merge it into the
-    // per-file operations already gathered from tool arguments rather than appending a
-    // second entry for the same path, which would double-count the file.
-    const changes = shutdown?.codeChanges;
-    if (changes) {
-      for (const path of changes.filesModified ?? []) {
-        if (!fileOperations.some((op) => op.path === path)) {
-          fileOperations.push({ type: 'edit', path });
-        }
-      }
-      // Copilot gives no per-file split, so the session totals land on one entry. Prefer a
-      // file shutdown actually lists as modified — the first tool-derived entry may be a
-      // file that was opened but never changed, and crediting churn to it would be wrong.
-      const modified = new Set(changes.filesModified ?? []);
-      const target =
-        fileOperations.find((op) => op.path !== undefined && modified.has(op.path)) ?? fileOperations[0];
-      if (target) {
-        target.linesAdded = changes.linesAdded ?? 0;
-        target.linesRemoved = changes.linesRemoved ?? 0;
-      }
-    }
+    // session.shutdown.codeChanges is cumulative over the copilot session and session-wide: the
+    // run's share fills in what the calls themselves did not record.
+    applyShutdownShare(fileOperations, runShutdownShare(events, bounds));
 
     return {
       sessionId,
@@ -362,76 +372,27 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     };
   }
 
-  /**
-   * The `events.jsonl` of a record that names none: a pinned run's (native id = the CodeMie id),
-   * a `--resume <id>` run's (its stored native id), else the session started or resumed in the
-   * run's window (its start → the start of the next copilot record in the same directory) in the
-   * run's directory — the latest such event wins.
-   *
-   * ponytail: two runs selecting a session in one directory at once are indistinguishable
-   */
+  /** See {@link locateCopilotTranscript}. */
   async locateTranscript(record: Session): Promise<string[]> {
-    const root = getCopilotSessionStateRoot();
-    const eventsOf = (id: string) => join(root, id, 'events.jsonl');
-
-    if (existsSync(eventsOf(record.sessionId))) {
-      return [eventsOf(record.sessionId)];
-    }
-    const resumedId = record.correlation?.agentSessionId;
-    if (resumedId && resumedId !== 'unknown' && !/[\\/]/.test(resumedId) && existsSync(eventsOf(resumedId))) {
-      return [eventsOf(resumedId)];
-    }
-
-    let dirNames: string[];
-    try {
-      dirNames = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-    } catch {
-      return [];
-    }
-    const realpath = (path: string) => {
-      try {
-        return realpathSync(path);
-      } catch {
-        return path;
-      }
-    };
-    const runCwd = realpath(record.workingDirectory);
-    const { nextRecordStartInDirectory } = await import('../../core/session/next-record-start.js');
-    const until = await nextRecordStartInDirectory(record);
-    let best: { path: string; at: number } | undefined;
-    for (const name of dirNames) {
-      const path = eventsOf(name);
-      try {
-        if (statSync(path).mtimeMs < record.startTime) continue;
-      } catch {
-        continue;
-      }
-      for (const event of readCopilotEventsTolerant(path)) {
-        if (event.type !== 'session.start' && event.type !== 'session.resume') continue;
-        const at = Date.parse(event.timestamp ?? '');
-        const cwd = (event.data as CopilotSessionStartData | undefined)?.context?.cwd;
-        if (!Number.isFinite(at) || at < record.startTime || (until !== undefined && at >= until)) continue;
-        if (!cwd || realpath(cwd) !== runCwd) continue;
-        if (!best || at > best.at) best = { path, at };
-      }
-    }
-    return best ? [best.path] : [];
+    return locateCopilotTranscript(record);
   }
 
-  /** Parse once, then run every registered processor in priority order. */
+  /** Resolve and parse the record's run window once, then run every registered processor in priority order. */
   async processSession(
     filePath: string,
     sessionId: string,
     context: ProcessingContext
   ): Promise<AggregatedResult> {
-    const parsed = await this.parseSessionFile(filePath, sessionId);
+    const runWindow = await recordRunWindow(sessionId, context);
+    const parsed = { ...(await this.parseSessionFile(filePath, sessionId, undefined, runWindow)), runWindow };
 
     const processors: AggregatedResult['processors'] = {};
     const failedProcessors: string[] = [];
     let totalRecords = 0;
 
     for (const processor of this.processors) {
-      if (!processor.shouldProcess(parsed)) {
+      // With no record no window bounds the run's turns: every turn of the native session would be queued
+      if (!processor.shouldProcess(parsed) || (!runWindow && processor instanceof CopilotCliConversationsProcessor)) {
         continue;
       }
       try {

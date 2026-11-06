@@ -33,7 +33,7 @@ export function decodeJwtClaims(token: string): Record<string, unknown> {
 /**
  * Pull `email` straight off a JWT credential's claims, or off the SSO
  * session's `codemie_access_token` cookie claims (`email`, falling back to
- * `preferred_username`). Shared by the tier-1 `jwt` identity tier below and
+ * `preferred_username`), or the backend-verified `email` attached to the SSO credentials. Shared by the tier-1 `jwt` identity tier below and
  * by the adapter's plain `user_email` field — both resolve the same claim.
  */
 export function resolveEmailFromCredentials(
@@ -56,6 +56,10 @@ export function resolveEmailFromCredentials(
       if (typeof email === 'string' && email) {
         return email;
       }
+    }
+    // oauth2-proxy logins carry no claim: the email the backend reported for these cookies.
+    if (credentials.email) {
+      return credentials.email;
     }
   }
   return '';

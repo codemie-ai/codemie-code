@@ -9,6 +9,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { MetricsDataLoader, type RawSessionData } from '../data-loader.js';
 import { AnalyticsAggregator } from '../aggregator.js';
+import { parseDateOnly } from '../../../../utils/date-filter.js';
 
 function rawSession(sessionId: string): RawSessionData {
   return {
@@ -47,6 +48,28 @@ describe('MetricsDataLoader.sessionMatchesFilter', () => {
     const loader = new MetricsDataLoader('/nonexistent');
     const session = rawSession('abc-123');
     expect(loader.sessionMatchesFilter(session, { agentName: 'claude' })).toBe(true);
+  });
+});
+
+describe('MetricsDataLoader.sessionMatchesFilter — inclusive date-only --to', () => {
+  const startedAt = (iso: string): RawSessionData => {
+    const session = rawSession('s');
+    session.startEvent.data.startTime = Date.parse(iso);
+    return session;
+  };
+  const filter = {
+    fromDate: parseDateOnly('2026-10-25', 'from')!,
+    toDate: parseDateOnly('2026-10-25', 'to')!,
+  };
+
+  it.each([
+    ['2026-10-24T12:00:00Z', false],
+    ['2026-10-25T09:00:00Z', true],
+    ['2026-10-25T18:00:00Z', true],
+    ['2026-10-26T09:00:00Z', false],
+  ])('session starting %s matches --from D --to D: %s', (iso, expected) => {
+    const loader = new MetricsDataLoader('/nonexistent');
+    expect(loader.sessionMatchesFilter(startedAt(iso), filter)).toBe(expected);
   });
 });
 
@@ -184,6 +207,51 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0].agentSessionFile).toBe(agentSessionFile);
+  });
+
+  it('takes runtimeCheckpoint.transcriptPath when the agentSessionFile is gone (a Desktop folder switch)', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const livePath = join(dir, 'folder-b-transcript.jsonl');
+    writeFileSync(livePath, '');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: join(dir, 'folder-a-gone.jsonl'), retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: livePath, lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(livePath);
+  });
+
+  it('keeps the agentSessionFile when the runtimeCheckpoint transcript is gone too', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const gone = join(dir, 'folder-a-gone.jsonl');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: gone, retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: join(dir, 'folder-b-gone.jsonl'), lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(gone);
   });
 
   it('leaves agentSessionFile undefined when the session has no correlation', () => {

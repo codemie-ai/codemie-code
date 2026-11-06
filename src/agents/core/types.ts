@@ -735,7 +735,12 @@ export enum AgentAdapterType {
 export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
-  forwardOtlpEventsToSpool: (events: Record<string, unknown>[], agentName: string) => Promise<boolean>;
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  ) => Promise<boolean>;
 }
 
 /**
@@ -773,6 +778,12 @@ export interface AgentAdapter {
    * this capability.
    */
   extractNativeResumeId?(args: string[]): string | undefined;
+
+  /**
+   * Whether the launch continues the agent's earlier session without naming it (e.g. `--continue`).
+   * Agents without such a form may omit this capability.
+   */
+  continuesNativeSession?(args: string[]): boolean;
 
   /**
    * Additional installation steps that run regardless of agent installation status

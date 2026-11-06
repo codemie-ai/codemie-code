@@ -70,7 +70,7 @@ interface HookGroup {
   [key: string]: unknown;
 }
 
-interface ClaudeSettings {
+export interface ClaudeSettings {
   // Parsed from user-edited JSON, so an event's value is not guaranteed to be an array.
   hooks?: Record<string, unknown>;
   env?: Record<string, string>;
@@ -138,7 +138,7 @@ function isHistoricalCodemieValue(key: string, value: string): boolean {
  * own (via `env`) — neither half alone is distinctive enough. `env` must
  * be a pre-mutation snapshot or the pairing check breaks mid-pass.
  */
-function isCodemieOwnedEnvValue(
+export function isCodemieOwnedEnvValue(
   key: (typeof CODEMIE_ENV_KEYS)[number],
   value: unknown,
   env: Record<string, unknown>
@@ -270,7 +270,7 @@ export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
 export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
   'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
 
-async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
+export async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
     return {};
   }

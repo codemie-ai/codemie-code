@@ -31,4 +31,5 @@ import './006-resolve-hook-command-paths.migration.js';
 import './007-decouple-provider-workspace-config.migration.js';
 import './008-repair-hook-shell-and-stale-paths.migration.js';
 import './009-raise-otlp-prompt-hook-timeout.migration.js';
-import './010-localize-otlp-hook-commands.migration.js';
+import './010-clear-cloned-profile-identity.migration.js';
+import './011-localize-otlp-hook-commands.migration.js';
