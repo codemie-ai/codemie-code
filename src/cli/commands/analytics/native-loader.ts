@@ -13,7 +13,7 @@
  */
 
 import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, win32 } from 'node:path';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
@@ -67,18 +67,43 @@ export interface NativeLoaderDeps {
   discover(maxAgeDays?: number): Promise<DiscoveredNative[]>;
   /** Parse a native log into a unified session. */
   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
-  /** Resolve a path to its real (symlink-free) form for dedup comparison. */
+  /** The comparison key of a path for dedup and ownership lookups ({@link transcriptPathKey}). */
   realPath(p: string): string;
   /** Returns true when the transcript at filePath contains a codemie_session_start marker (first 10 lines). */
   hasOwnershipMarker(filePath: string): boolean;
 }
 
-function safeRealPath(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
+/** Symlink-free form of `p`, or `p` unchanged when it cannot be resolved. On Windows the native
+ * resolver is tried first: it also expands 8.3 short names (`OLEKSI~1`) the JS one leaves as is. */
+function resolveRealPath(p: string, platform: NodeJS.Platform): string {
+  const resolvers = platform === 'win32' ? [realpathSync.native, realpathSync] : [realpathSync];
+  for (const resolve of resolvers) {
+    try {
+      return resolve(p);
+    } catch {
+      // try the next resolver, then fall back to the path as given
+    }
   }
+  return p;
+}
+
+/**
+ * The key two transcript paths are compared by, in every dedup and ownership lookup here.
+ *
+ * Windows paths are case-insensitive, and neither realpath resolver canonicalises case reliably,
+ * so an agent can record a transcript as `c:\…\C--repo\x.jsonl` (the cwd's case) while discovery
+ * reads `C:\…\C--repo\x.jsonl` (the folder's case) — the same file. Compared verbatim, that one
+ * file is both a tracked session and an unowned `native-external` one, so it is counted twice, or
+ * dropped when it has no tracked record. On `win32` the key is therefore normalised
+ * (separators, `.`/`..`) and lower-cased; elsewhere it is the realpath as is.
+ */
+export function transcriptPathKey(p: string, platform: NodeJS.Platform = process.platform): string {
+  const resolved = resolveRealPath(p, platform);
+  return platform === 'win32' ? win32.normalize(resolved).toLowerCase() : resolved;
+}
+
+function safeRealPath(p: string): string {
+  return transcriptPathKey(p);
 }
 
 /** The transcript paths a record names: `agentSessionFile` and the checkpoint's `transcriptPath` (equal once the daemon re-tracks a switched transcript; a record of an earlier build keeps the old path in the first; callers collect them in a set). */
