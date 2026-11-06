@@ -784,7 +784,7 @@ command containing the trigger signature. (3) Lead shares **only that command wi
 command to register their daily job.
 
 **Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
-CLI), `--include-external <windows|always|never>` (default: windows).
+CLI), `--include-external <windows|always|never>` (default: never).
 
 **Windows and `--webhook`:** when `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
 trigger URL at `&` and cmd.exe expands its `%…%` runs, so `--webhook "<url>"` arrives broken.
@@ -815,7 +815,7 @@ resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
 ```bash
 # Developer: register the daily delivery job on this machine — paste the command your team
 # lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
-codemie analytics sync install --webhook-b64 <value> --include-external "windows"
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
 codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
 
 # Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
@@ -841,7 +841,7 @@ is logged out, via `loginctl enable-linger`.
 **`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
 same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
 `03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
-`--include-external <windows|always|never>` (default `windows`). Install prints the run
+`--include-external <windows|always|never>` (default `never`). Install prints the run
 time, lookback, policy, the webhook host (signature masked), the email the reports will
 carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
 replaces the existing job and settings rather than duplicating them, and keeps the

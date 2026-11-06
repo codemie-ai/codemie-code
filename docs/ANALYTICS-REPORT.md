@@ -420,7 +420,7 @@ sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-boot
 ```bash
 # Developer: register the daily delivery job on this machine — paste the command your team
 # lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
-codemie analytics sync install --webhook-b64 <value> --include-external "windows"
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
 codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
 
 # Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
@@ -449,7 +449,7 @@ codemie analytics sync install [options]
   --format <json>             Report export format for every configured target (default and only accepted value: json)
   --at <HH:MM>                Daily run time, 24-hour local time (default: 03:00)
   --lookback-days <n>         Session window looked back on each run, 1-30 (default: 7)
-  --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)
+  --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: never)
 ```
 
 `--webhook-b64` exists so the command `bootstrap` prints survives every shell: a raw trigger

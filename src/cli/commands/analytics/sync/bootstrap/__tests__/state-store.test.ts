@@ -214,7 +214,7 @@ describe('toInstallCommandOptions', () => {
   });
 
   it('defaults includeExternal when the saved state has none', () => {
-    expect(toInstallCommandOptions({ version: 1 }).includeExternal).toBe('windows');
+    expect(toInstallCommandOptions({ version: 1 }).includeExternal).toBe('never');
   });
 });
 

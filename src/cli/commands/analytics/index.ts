@@ -109,7 +109,7 @@ function createSyncBootstrapCommand(): Command {
       'The same trigger URL encoded as base64url, for shells that mangle a raw URL (use instead of --webhook)'
     )
     .option('--lookback-days <n>', 'Fixed session window for the printed install command, 1-30 (default: follows the CLI default)')
-    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
     .action(async (options: BootstrapOptions) => {
       const { runBootstrap, createRealBootstrapDeps } = await import('./sync/bootstrap/run-bootstrap.js');
       process.exitCode = await runBootstrap(options, createRealBootstrapDeps());
@@ -132,7 +132,7 @@ function createSyncInstallCommand(): Command {
     .option('--format <json>', "Report export format for every configured delivery target (default and only accepted value: json)")
     .option('--at <HH:MM>', 'Daily run time, 24-hour local time (default: 03:00)')
     .option('--lookback-days <n>', 'Session window looked back on each run, 1-30 (default: 7)')
-    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
     .action(async (options: InstallOptions) => {
       const { runInstall, createRealInstallDeps } = await import('./sync/install.js');
       process.exitCode = await runInstall(options, createRealInstallDeps());

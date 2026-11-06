@@ -116,13 +116,13 @@ async function step5TriggerUrl(deps: BootstrapDeps, state: BootstrapState, save:
  * collector's `askIncludeExternal()` menu labels (`describeIncludeExternal` plus its
  * per-choice detail clause). */
 const INCLUDE_EXTERNAL_CHOICES: { value: IncludeExternalPolicy; name: string }[] = [
-  { value: 'windows', name: 'Windows only (recommended): Windows sends data, macOS and Linux stay CodeMie-only' },
+  { value: 'never', name: 'Never (recommended): strictly CodeMie sessions on every platform' },
   { value: 'always', name: 'On all platforms: every agent session on every machine' },
-  { value: 'never', name: 'Never: strictly CodeMie sessions; Windows machines send nothing' }
+  { value: 'windows', name: 'Windows only: Windows machines also count external sessions (the standalone collector\'s old default)' }
 ];
 
 /**
- * Step 6, "External sessions": the `--include-external` policy, defaulting to `'windows'`
+ * Step 6, "External sessions": the `--include-external` policy, defaulting to `'never'`
  * (the same default {@link validateIncludeExternal} applies to a missing `--include-external`).
  * Ported from the collector's `askIncludeExternal()`, minus its ANSI `dim()` on the last
  * explanatory line.
@@ -136,7 +136,6 @@ async function step6ExternalSessions(
   deps.err(stepHeading(5));
 
   deps.err('`codemie analytics --include-external` also counts agent sessions not launched through CodeMie.');
-  deps.err("Windows needs it: there the CLI can't recognise CodeMie's own sessions, so without it the export is empty.");
   deps.err('Machines with it on and machines with it off report figures that are not directly comparable.');
 
   const includeExternal = await deps.prompt.select(

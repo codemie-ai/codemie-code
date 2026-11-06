@@ -21,7 +21,12 @@ import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings }
 
 export const DEFAULT_LOOKBACK_DAYS = 7;
 export const DEFAULT_AT = '03:00';
-const DEFAULT_INCLUDE_EXTERNAL: IncludeExternalPolicy = 'windows';
+/** `never`: CodeMie-owned sessions only, on every platform. Windows used to default to
+ * including external sessions because ownership detection missed CodeMie's own sessions
+ * there; today those come from CodeMie's session records, so including external sessions
+ * only adds non-CodeMie ones (and double-counts a session whose transcript path differs in
+ * case from the recorded one). */
+const DEFAULT_INCLUDE_EXTERNAL: IncludeExternalPolicy = 'never';
 
 const MIN_LOOKBACK_DAYS = 1;
 const MAX_LOOKBACK_DAYS = 30;

@@ -49,14 +49,14 @@ A guided setup walks you through 8 steps. Each step shows its position ("Step 2 
    **Who can trigger** to **Anyone**, and copy its URL.
 5. **Trigger URL**: paste it. The CLI test-sends a small `setup-check-<stamp>.json` and
    tells you where the file and the Teams reply should appear.
-6. **External sessions**: `windows` (recommended), `always` or `never`. See
+6. **External sessions**: `never` (recommended), `always` or `windows`. See
    [Platform notes](#platform-notes).
 7. **Lookback**: the CLI default (7 days today, which follows CLI updates) or a fixed
    1–30 days.
 8. **Developer command**: one line to share with your team:
 
 ```
-codemie analytics sync install --webhook-b64 aHR0cHM6Ly9wcm9k… --include-external "windows"
+codemie analytics sync install --webhook-b64 aHR0cHM6Ly9wcm9k… --include-external "never"
 ```
 
 The webhook is printed base64url-encoded, so the line runs unchanged in bash/zsh, PowerShell
@@ -82,7 +82,7 @@ pass the URL as `--webhook-b64` instead (see [Platform notes](#platform-notes)).
 Paste the command your team lead sent:
 
 ```bash
-codemie analytics sync install --webhook-b64 <value> --include-external "windows"
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
 ```
 
 If you see `unknown command 'sync'`, update the CLI first with `codemie self-update`.
@@ -142,7 +142,7 @@ codemie analytics sync install --webhook-b64 <value> --at 09:30 --lookback-days 
 ```
 
 Install always takes the full set of options: anything you leave out goes back to its
-default (`--at 03:00`, the CLI's lookback, `--include-external windows`).
+default (`--at 03:00`, the CLI's lookback, `--include-external never`).
 
 ### See what it is doing
 
@@ -316,12 +316,15 @@ The job records the **absolute** paths to `node` and to the CLI's real entry scr
 schedulers don't run with your interactive `PATH`. On Windows it never goes through a `.cmd`
 shim.
 
-**By default, only Windows includes external sessions.** The CLI decides whether a native
-agent session belongs to CodeMie by comparing its transcript path. On Windows that comparison
-is unreliable (drive-letter casing, separator form), so every session would look external and
-the report would come back empty. The `windows` policy opts them back in there. On macOS and
-Linux ownership resolves correctly, and including external sessions would pull in sessions
-that genuinely aren't CodeMie's. `always` and `never` override this on every platform.
+**External sessions are left out by default, on every platform.** "External" means an agent
+session CodeMie did not launch, e.g. running `claude` directly. `always` includes them on every
+machine; `windows` includes them on Windows machines only.
+
+The standalone collector defaulted to `windows`, because the CLI used to miss CodeMie's own
+sessions there and the Windows report came back empty. CodeMie's sessions now come from its
+own session records, so on Windows `windows` only adds non-CodeMie sessions, and it counts a
+CodeMie session twice when the agent recorded its transcript path in a different case (opening
+the same project once from `c:` and once from `C:`). That is why the default is now `never`.
 
 **Windows and raw URLs.** When `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
 trigger URL at `&` and cmd.exe expands its `%…%` runs, even inside double quotes. That is why
@@ -401,4 +404,7 @@ files and the same message shape, so the move is one command:
   `codemie analytics sync bootstrap`, answer **yes** to "flow already imported?", paste the
   flow's trigger URL, and share the new install command. The collector's saved answers
   (`~/.codemie/analytics-setup.json`) aren't reused; delete that file when done.
+- **Windows figures change.** The collector included external sessions on Windows by default;
+  `sync` doesn't. A Windows developer's report now holds only CodeMie's sessions, comparable
+  with macOS and Linux. A team that wants the old behaviour passes `--include-external windows`.
 - **External clients** no longer need a collector archive: everyone installs through the CLI.

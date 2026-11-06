@@ -229,7 +229,7 @@ describe('runInstall', () => {
     const output = printed.join('\n');
     expect(output).toContain('03:00');
     expect(output).toContain('7 days (default)');
-    expect(output).toContain('windows');
+    expect(output).toContain('never');
     expect(output).toContain('hooks.example.invalid');
     expect(output).toContain('dev@example.com');
     expect(output).toContain('sync run');

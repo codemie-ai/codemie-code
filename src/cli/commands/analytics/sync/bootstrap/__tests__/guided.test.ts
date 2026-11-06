@@ -674,7 +674,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     expect(deps.out).toHaveBeenCalledWith(buildInstallCommand({ webhook: otherUrl, includeExternal: 'windows' }));
   });
 
-  it('step 6 offers windows (default), always and never, with explanations, and saves the chosen policy', async () => {
+  it('step 6 offers never (default), always and windows, with explanations, and saves the chosen policy', async () => {
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
@@ -688,11 +688,11 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
       1,
       'When should developer machines include external sessions?',
       [
-        { value: 'windows', name: expect.stringContaining('Windows only (recommended)') },
+        { value: 'never', name: expect.stringContaining('Never (recommended)') },
         { value: 'always', name: expect.stringContaining('On all platforms') },
-        { value: 'never', name: expect.stringContaining('Never') }
+        { value: 'windows', name: expect.stringContaining('Windows only') }
       ],
-      'windows'
+      'never'
     );
     expect(errLines(deps).some((l) => l.includes('also counts agent sessions not launched through CodeMie'))).toBe(true);
     const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;

@@ -87,9 +87,9 @@ describe('validateInstallOptions', () => {
     expect(() => validateInstallOptions({ webhook: FAKE_URL, format: 'otel' })).toThrow(/--format/);
   });
 
-  it('omitting --lookback-days yields no lookbackDays key, with defaults at 03:00 / windows / json', () => {
+  it('omitting --lookback-days yields no lookbackDays key, with defaults at 03:00 / never / json', () => {
     const settings = validateInstallOptions({ webhook: FAKE_URL });
-    expect(settings).toEqual({ webhookUrl: FAKE_URL, format: 'json', includeExternal: 'windows', at: '03:00' });
+    expect(settings).toEqual({ webhookUrl: FAKE_URL, format: 'json', includeExternal: 'never', at: '03:00' });
     expect('lookbackDays' in settings).toBe(false);
   });
 
@@ -161,7 +161,7 @@ describe('validateInstallOptions', () => {
     expect(settings).toEqual({
       git: { repoUrl: FAKE_GIT_REPO },
       format: 'json',
-      includeExternal: 'windows',
+      includeExternal: 'never',
       at: '03:00'
     });
     expect('webhookUrl' in settings).toBe(false);
