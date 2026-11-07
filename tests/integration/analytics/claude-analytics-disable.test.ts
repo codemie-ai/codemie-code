@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { seedLegacyHookSession } from '../../helpers/legacy-hook-session.js';
 import {
   describeRun,
   expectExit,
@@ -120,6 +121,8 @@ function runPromptHook(
   project: string,
   sessionId: string
 ): { run: IsolatedRunResult; forwarded: boolean; wroteState: boolean } {
+  // Opt-out assertions concern an installed hook in an existing session, not resuming an unknown scope without an owner.
+  seedLegacyHookSession(codemieHome, sessionId);
   rmSync(forwardingMarker(), { force: true });
   rmSync(join(codemieHome, 'logs'), { recursive: true, force: true });
   const homeBefore = snapshotDir(codemieHome, skipLogs);

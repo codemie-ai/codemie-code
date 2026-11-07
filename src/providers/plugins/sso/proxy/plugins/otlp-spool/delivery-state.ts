@@ -88,12 +88,22 @@ export async function expireCarriedAgeLocked(sessionId: string, status: SessionS
   return true;
 }
 
+/** A hold that reached its original bound suspends the session before its range is dropped; false = the stop is not recorded, so nothing expires yet. */
+async function expiryStopped(rec: DeliveryFailure, onHoldExpired?: () => Promise<boolean>): Promise<boolean> {
+  return rec.reason !== 'destination_hold' || !onHoldExpired || (await onHoldExpired());
+}
+
 /**
  * Before a stream's request: `wait` while its bounded backoff runs; at the retention bound the failing
  * range is dropped (recorded) and the stream continues with whatever arrived after it. Takes the
  * session lock: never call while holding it.
  */
-export async function deliveryGate(sessionId: string, stream: SpoolStream, now: number = Date.now()): Promise<'go' | 'wait'> {
+export async function deliveryGate(
+  sessionId: string,
+  stream: SpoolStream,
+  now: number = Date.now(),
+  onHoldExpired?: () => Promise<boolean>
+): Promise<'go' | 'wait'> {
   // Common case first, without the lock: nothing recorded for this stream.
   const peek = await readStatus(sessionId);
   const carried = stream === 'hooks' && Boolean(peek?.carriedAge?.hooks?.length);
@@ -111,6 +121,8 @@ export async function deliveryGate(sessionId: string, stream: SpoolStream, now: 
       return 'go';
     }
     if (now - rec.since >= heldRetentionMs()) {
+      // The stop comes first: if it cannot be recorded the range stays, nothing is sent, and the next gate retries.
+      if (!(await expiryStopped(rec, onHoldExpired))) return 'wait';
       expireDeliveryLocked(sessionId, status, stream, rec, now);
       await writeStatus(sessionId, status);
       return 'go';
@@ -130,7 +142,8 @@ export async function noteDeliveryFailure(
   stream: SpoolStream,
   failure: { reason: DeliveryLossReason; detail?: string },
   range: { cursor: number; end: number },
-  now: number = Date.now()
+  now: number = Date.now(),
+  onHoldExpired?: () => Promise<boolean>
 ): Promise<'noted' | 'lost' | 'stale'> {
   return withSessionLock(sessionId, async () => {
     const { cursor } = range;
@@ -155,7 +168,7 @@ export async function noteDeliveryFailure(
       nextAt: now + deliveryBackoffMs(attempts),
     };
     status.delivery = { ...status.delivery, [stream]: rec };
-    const lost = now - rec.since >= heldRetentionMs();
+    const lost = now - rec.since >= heldRetentionMs() && (await expiryStopped(rec, onHoldExpired));
     if (lost) expireDeliveryLocked(sessionId, status, stream, rec, now);
     await writeStatus(sessionId, status);
     return lost ? 'lost' : 'noted';
@@ -171,9 +184,10 @@ export function deliveryFailureOf(o: SendOutcome): { reason: DeliveryLossReason;
   if (o.kind === 'ok' || o.kind === 'discarded' || o.kind === 'auth-expired') return undefined;
   const cause = o.reason ?? o.kind;
   if (cause === 'credentials_stale' || cause === 'not_sendable') return undefined;
+  if (o.hold && o.detail) return { reason: 'destination_hold', detail: o.detail }; // an explicit hold (also the synthetic 422 one) is never a rejection
   if (['http_400', 'http_413', 'http_422'].includes(cause)) return { reason: 'delivery_rejected', detail: cause };
-  if (o.detail) return { reason: 'destination_unavailable', detail: o.detail };
-  if (cause === 'response_malformed' || cause === 'response_too_large') return { reason: 'response_unverified', detail: cause };
+  if (o.detail) return { reason: o.hold ? 'destination_hold' : 'destination_unavailable', detail: o.detail };
+  if (cause === 'response_unverified' || cause === 'response_malformed' || cause === 'response_too_large') return { reason: 'response_unverified', detail: cause };
   return { reason: 'delivery_failed', detail: cause };
 }
 
@@ -182,12 +196,13 @@ export async function recordUnacknowledged(
   sessionId: string,
   stream: SpoolStream,
   outcome: SendOutcome,
-  range: { cursor: number; end: number }
+  range: { cursor: number; end: number },
+  onHoldExpired?: () => Promise<boolean>
 ): Promise<void> {
   const failure = deliveryFailureOf(outcome);
   if (!failure) return;
   try {
-    await noteDeliveryFailure(sessionId, stream, failure, range);
+    await noteDeliveryFailure(sessionId, stream, failure, range, Date.now(), onHoldExpired);
   } catch (err) {
     logger.debug('[otlp-forwarder] delivery failure not recorded', ...sanitizeLogArgs({ sessionId, stream, err: err instanceof Error ? err.message : String(err) }));
   }

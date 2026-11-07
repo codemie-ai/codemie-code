@@ -79,7 +79,7 @@ type M = Awaited<ReturnType<typeof load>>;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const credentials = () => h.creds as import('../../../../../../core/types.js').SSOCredentials;
 const stamp = (m: M, sid: string) =>
-  m.stamp.stampEvidence({ cwd: '/repo', sessionId: sid }, { organization: h.cfg.org, routing: h.cfg.routing });
+  m.stamp.stampEvidence({ cwd: '/repo', sessionId: sid }, { organization: h.cfg.org, routing: h.cfg.routing, collection_generation: 0 });
 const keyOf = (m: M, sid: string) => {
   const id = m.io.forwarderIdentity(credentials())!;
   return m.rec.recordKey(id.api_identity, id.owner_hash, sid);

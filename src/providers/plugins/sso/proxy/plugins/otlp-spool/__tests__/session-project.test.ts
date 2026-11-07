@@ -438,3 +438,26 @@ describe('hold and loss persistence', () => {
     expect(status?.evidenceMarked).toBeUndefined();
   });
 });
+
+describe('evaluateSessionEvidence: publication stop and contract hold', () => {
+  const base = { hasHooks: true, marked: true, capability: 'evidence' as const, stickyPersonal: false, preEpoch: false, now: 1000, retentionMs: 500 };
+  const record = (funding_route?: 'subscription') => ({
+    kind: 'existing' as const,
+    record: { schema: 1, session_id: 's', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven', project_source: 'none',
+      api_identity: 'a', owner_hash: 'o', created: 1, last_used: 1, ...(funding_route ? { funding_route } : {}) } as never,
+  });
+  it('a stopped session holds, then is lost (reported unpublished) past retention, never sent', () => {
+    expect(evaluateSessionEvidence({ ...base, record: record('subscription'), stopped: true })).toEqual({ action: 'hold', reason: 'publication_stopped' });
+    expect(evaluateSessionEvidence({ ...base, record: record('subscription'), stopped: true, heldSince: 100 })).toEqual({ action: 'lose', reason: 'publication_stopped' });
+  });
+  it('a new-contract record is held, never sent legacy, when the contract is not advertised (also on a legacy backend)', () => {
+    for (const capability of ['evidence', 'legacy', 'unknown'] as const) {
+      expect(evaluateSessionEvidence({ ...base, capability, record: record('subscription'), contractAdvertised: false }))
+        .toEqual({ action: 'hold', reason: 'publication_contract_unavailable' });
+    }
+  });
+  it('legacy-recorded sessions and advertised contracts are unchanged', () => {
+    expect(evaluateSessionEvidence({ ...base, record: record(), contractAdvertised: false }).action).toBe('send_evidence');
+    expect(evaluateSessionEvidence({ ...base, record: record('subscription'), contractAdvertised: true }).action).toBe('send_evidence');
+  });
+});
