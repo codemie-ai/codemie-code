@@ -291,11 +291,13 @@ export class CodeMieProxy {
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
+      const analytics = this.interceptors.find((i) => i.healthStatus)?.healthStatus?.();
       res.end(JSON.stringify({
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
         pid: process.pid,
+        ...(analytics ? { analytics } : {}),
       }));
       return;
     }

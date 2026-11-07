@@ -14,8 +14,10 @@ import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/c
 export interface NotTrackedAdvice {
   /** Why the project is not collected, as a clause ("it is excluded"). */
   description: string;
-  /** The command (or action) that would change it, when there is one. */
-  nextStep?: string;
+  /** A single runnable command that would change it, when there is one. */
+  command?: string;
+  /** Prose guidance when no single command fixes it ("fix or delete it", "run this inside that project: …"). */
+  action?: string;
 }
 
 function quotePath(path: string): string {
@@ -25,23 +27,23 @@ function quotePath(path: string): string {
 function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefined {
   switch (reason) {
     case 'disabled':
-      return { description: 'analytics collection is disabled', nextStep: 'codemie proxy analytics enable' };
+      return { description: 'analytics collection is disabled', command: 'codemie proxy analytics enable' };
     case 'project-excluded':
-      return { description: 'this project is excluded', nextStep: `codemie proxy analytics include ${quotePath(path)}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)}` };
     case 'not-in-allowlist':
       return {
         description: 'it is not in the Project-scope allowlist',
-        nextStep: `run this inside that project: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME} --scope project`,
+        action: `run this inside that project: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME} --scope project`,
       };
     case 'hooks-not-installed':
       return {
         description: 'the Claude Code hooks are not installed',
-        nextStep: `codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
+        command: `codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
       };
     case 'preferences-corrupt':
       return {
         description: 'the analytics preferences file is corrupt',
-        nextStep: 'fix or delete it; `codemie proxy analytics status` shows where it is',
+        action: 'fix or delete it; `codemie proxy analytics status` shows where it is',
       };
     default:
       return undefined;
@@ -52,25 +54,25 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
   const flag = `--${connectorId}`;
   switch (reason) {
     case 'analytics-disabled':
-      return { description: 'analytics collection is disabled', nextStep: `codemie proxy analytics enable ${flag}` };
+      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${flag}` };
     case 'project-excluded':
-      return { description: 'this project is excluded', nextStep: `codemie proxy analytics include ${quotePath(path)} ${flag}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${flag}` };
     case 'scope-untracked':
       return {
         description: "it is outside this connector's Project scope",
-        nextStep: `run this inside that project: codemie proxy connect ${flag} --scope project`,
+        action: `run this inside that project: codemie proxy connect ${flag} --scope project`,
       };
     case 'scope-disabled':
-      return { description: 'the connector is not connected', nextStep: `codemie proxy connect ${flag}` };
+      return { description: 'the connector is not connected', command: `codemie proxy connect ${flag}` };
     case 'scope-corrupt':
       return {
         description: 'the connector scope config is corrupt',
-        nextStep: 'fix or delete ~/.codemie/copilot-connectors.json, then reconnect',
+        action: 'fix or delete ~/.codemie/copilot-connectors.json, then reconnect',
       };
     case 'preferences-corrupt':
       return {
         description: 'the analytics preferences file is corrupt',
-        nextStep: 'fix or delete it; `codemie proxy analytics status` shows where it is',
+        action: 'fix or delete it; `codemie proxy analytics status` shows where it is',
       };
     default:
       return undefined;

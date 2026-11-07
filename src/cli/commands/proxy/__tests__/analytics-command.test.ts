@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 let tempDir: string;
 let projectRoot: string;
@@ -29,12 +30,14 @@ describe('createProxyAnalyticsCommand', () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-'));
     projectRoot = await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-'));
+    vi.stubEnv('CODEMIE_HOME', tempDir);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     vi.resetModules();
     await rm(tempDir, { recursive: true, force: true });
     await rm(projectRoot, { recursive: true, force: true });
@@ -192,7 +195,9 @@ describe('createProxyAnalyticsCommand', () => {
     await runCommand(['status']);
     const output = logSpy.mock.calls.flat().join('\n');
     expect(output).toContain('Hooks:');
-    expect(output).toContain('Excluded projects:');
+    expect(output).toContain('Excluded:');
+    // No connector is connected in this isolated home, so the shared Delivery section stays hidden.
+    expect(output).not.toContain('Delivery:');
   });
 
   it('status --json prints parseable JSON through the real command wiring (CR-004)', async () => {
@@ -202,6 +207,144 @@ describe('createProxyAnalyticsCommand', () => {
     expect(logSpy).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
     expect(parsed).toMatchObject({ excludedProjects: [expect.any(String)] });
+  });
+
+  describe('status delivery section', () => {
+    const connectors: Array<[string[], string]> = [
+      [[], 'Hooks:'],
+      [['--claude-code-otlp'], 'Hooks:'],
+      [['--copilot-cli-otlp'], 'Connected:'],
+      [['--copilot-chat-otlp'], 'Connected:'],
+    ];
+
+    const daemonState = {
+      pid: 4242,
+      port: 4001,
+      url: 'http://localhost:4001',
+      profile: 'default',
+      gatewayKey: 'key',
+      startedAt: new Date().toISOString(),
+    };
+
+    const plainOutput = (): string => stripVTControlCharacters(logSpy.mock.calls.flat().join('\n'));
+
+    function mockConnectorActive(active: boolean): void {
+      vi.doMock('../analytics-connectors.js', async () => {
+        const actual = await vi.importActual<typeof import('../analytics-connectors.js')>('../analytics-connectors.js');
+        return { ...actual, hasActiveAnalyticsConnector: vi.fn().mockResolvedValue(active) };
+      });
+    }
+
+    beforeEach(() => {
+      mockConnectorActive(true);
+    });
+
+    afterEach(() => {
+      vi.doUnmock('../daemon-manager.js');
+      vi.doUnmock('../health-check.js');
+      vi.doUnmock('../delivery-health.js');
+      vi.doUnmock('../analytics-connectors.js');
+    });
+
+    function mockRunningDaemon(delivery: unknown): {
+      checkProxyHealth: ReturnType<typeof vi.fn>;
+      collectDeliveryHealth: ReturnType<typeof vi.fn>;
+    } {
+      const checkProxyHealth = vi.fn().mockResolvedValue({
+        healthy: true,
+        level: 'shallow',
+        code: 'ok',
+        analytics: { credentials: 'ok' },
+      });
+      const collectDeliveryHealth = vi.fn().mockResolvedValue(delivery);
+      vi.doMock('../daemon-manager.js', () => ({
+        checkStatus: vi.fn().mockResolvedValue({ running: true, state: daemonState }),
+      }));
+      vi.doMock('../health-check.js', () => ({ checkProxyHealth }));
+      vi.doMock('../delivery-health.js', async () => {
+        const actual = await vi.importActual<typeof import('../delivery-health.js')>('../delivery-health.js');
+        return { ...actual, collectDeliveryHealth };
+      });
+      return { checkProxyHealth, collectDeliveryHealth };
+    }
+
+    it.each(connectors)('%j prints the Delivery section first and "proxy not running" when the daemon is stopped', async (flags, headline) => {
+      await runCommand(['status', ...flags]);
+      const lines = plainOutput().split('\n');
+      expect(lines[0]).toBe('Delivery: proxy not running');
+      expect(lines[1]).toContain(headline);
+      expect(lines).not.toContain('');
+      expect(lines.filter((l) => l.startsWith('Delivery:'))).toHaveLength(1);
+    });
+
+    it.each(connectors)('%j --json adds delivery: null when the daemon is stopped', async (flags) => {
+      await runCommand(['status', ...flags, '--json']);
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty('delivery', null);
+    });
+
+    it.each(connectors)('%j shows the shared verdict from /health when the daemon is running', async (flags, headline) => {
+      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
+        status: 'unhealthy',
+        reason: 'credentials_expired',
+        pendingBytes: 2048,
+      });
+      await runCommand(['status', ...flags]);
+
+      expect(checkProxyHealth).toHaveBeenCalledWith(expect.objectContaining({ port: 4001, expectedPid: 4242 }));
+      expect(collectDeliveryHealth).toHaveBeenCalledWith(daemonState, { credentials: 'ok' });
+      const lines = plainOutput().split('\n');
+      expect(lines.slice(0, 3)).toEqual([
+        'Delivery: unhealthy (credentials expired)',
+        '  Pending: 2.00 KB (all sessions on this machine)',
+        '  Run: codemie profile login',
+      ]);
+      expect(lines[3]).toContain(headline);
+      expect(lines).not.toContain('');
+    });
+
+    it.each(connectors)('%j --json equals the collected status plus the same delivery object', async (flags) => {
+      const delivery = { status: 'healthy', pendingBytes: 0 };
+      mockRunningDaemon(delivery);
+      await runCommand(['status', ...flags, '--json']);
+      const withDelivery = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(withDelivery.delivery).toEqual(delivery);
+
+      vi.doUnmock('../daemon-manager.js');
+      vi.doUnmock('../health-check.js');
+      vi.doUnmock('../delivery-health.js');
+      vi.resetModules();
+      logSpy.mockClear();
+      await runCommand(['status', ...flags, '--json']);
+      const stopped = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect({ ...withDelivery, delivery: undefined }).toEqual({ ...stopped, delivery: undefined });
+    });
+
+    it.each(connectors)('%j hides the Delivery section when no connector is active, even with unsent data pending', async (flags, headline) => {
+      mockConnectorActive(false);
+      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
+        status: 'healthy',
+        pendingBytes: 4096,
+      });
+      await runCommand(['status', ...flags]);
+
+      const output = plainOutput();
+      expect(output).not.toContain('Delivery:');
+      expect(output).not.toContain('Pending:');
+      expect(output.split('\n')[0]).toContain(headline);
+      expect(checkProxyHealth).not.toHaveBeenCalled();
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
+    });
+
+    it.each(connectors)('%j --json has delivery: null when no connector is active, even with unsent data pending', async (flags) => {
+      mockConnectorActive(false);
+      mockRunningDaemon({ status: 'healthy', pendingBytes: 4096 });
+      await runCommand(['status', ...flags, '--json']);
+
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty('delivery', null);
+    });
   });
 
   it('createProxyAnalyticsCommand registers all five subcommands (CR-004)', async () => {
@@ -416,8 +559,8 @@ describe('createProxyAnalyticsCommand', () => {
       await runCommand(['status', flag]);
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).toContain('Collection:');
-      expect(output).toContain('Excluded projects:');
-      expect(output).toContain('Current directory');
+      expect(output).toContain('Excluded:');
+      expect(output).toContain('Current:');
     });
 
     it('status --json prints a single parseable JSON document for this connector', async () => {

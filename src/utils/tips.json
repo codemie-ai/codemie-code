@@ -235,7 +235,7 @@
   {
     "id": "cmd-proxy-status",
     "category": "Proxy & IDE",
-    "message": "Is the local gateway even alive? `codemie proxy status` tells you — add `--deep` to verify upstream reachability, `--json` for scripts.",
+    "message": "Is the local gateway even alive? `codemie proxy status` tells you, and whether analytics are reaching CodeMie — add `--deep` to verify upstream reachability, `--json` for scripts.",
     "command": "proxy",
     "commands": [
       "codemie proxy status",
