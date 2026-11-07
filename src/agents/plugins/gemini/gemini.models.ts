@@ -96,7 +96,7 @@ async function fetchCodeMieModelsForGemini(env: NodeJS.ProcessEnv): Promise<LlmM
   const found = await getStoredPlatformCredentialsFromEnv(env);
   if (found) {
     logger.debug('[gemini-models] Fetching CodeMie model list via SSO auth');
-    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   }
 
   return [];

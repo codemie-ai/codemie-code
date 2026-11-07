@@ -42,7 +42,28 @@ export function codeMieUrlFromApiBase(apiBase: string): string {
   return apiBase.replace(/\/+$/, '').replace(/\/code-assistant-api(\/.*)?$/i, '');
 }
 
-export function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {
+/**
+ * Join stored SSO cookies into a `key=value; key2=value2` Cookie header string.
+ * Centralizes the hand-built join duplicated across every credential-loading
+ * call site (hook sync, incremental sync, skills commands); mirrors the
+ * private helper of the same name in sso.session-sync.plugin.ts.
+ */
+export function buildCookieHeader(cookies: Record<string, string> | undefined): string {
+  if (!cookies) return '';
+  return Object.entries(cookies)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ');
+}
+
+/**
+ * @param authorization - SSO-only fallback credential (see `SSOCredentials.authorization`).
+ * Sent as an additional `Authorization` header alongside the cookie header; never used with
+ * the JWT-string overload, since JWT credentials already own that header slot.
+ */
+export function buildAuthHeaders(
+  auth: Record<string, string> | string,
+  authorization?: string
+): Record<string, string> {
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -57,6 +78,9 @@ export function buildAuthHeaders(auth: Record<string, string> | string): Record<
     headers.cookie = Object.entries(auth)
       .map(([key, value]) => `${key}=${value}`)
       .join(';');
+    if (authorization) {
+      headers.authorization = authorization;
+    }
   }
 
   return headers;
@@ -288,7 +312,8 @@ export interface UserInfoRequestOptions {
 export function fetchCodeMieUserInfo(
   apiUrl: string,
   cookies: Record<string, string>,
-  options?: UserInfoRequestOptions
+  options?: UserInfoRequestOptions,
+  authorization?: string
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
@@ -298,10 +323,11 @@ export function fetchCodeMieUserInfo(
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
   auth: Record<string, string> | string,
-  options: UserInfoRequestOptions = {}
+  options: UserInfoRequestOptions = {},
+  authorization?: string
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
-  const headers = buildAuthHeaders(auth);
+  const headers = buildAuthHeaders(auth, authorization);
   const url = `${apiUrl}/v1/user`;
 
   const client = new HTTPClient({
@@ -363,7 +389,7 @@ export async function selectCodeMieProject(
     if (!authResult.apiUrl || !authResult.cookies) {
       throw new ConfigurationError('API URL or cookies not found in authentication result');
     }
-    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.cookies);
+    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.cookies, undefined, authResult.authorization);
   }
 
   const allProjects = accountProjects(userInfo);

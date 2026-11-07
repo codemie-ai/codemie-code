@@ -31,10 +31,14 @@ vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
   },
+  hasUsableSsoCredential: (cookies: Record<string, string> | undefined, authorization: string | undefined) =>
+    Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim()),
 }));
 
 vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
   ensureApiBase: (raw: string) => mockEnsureApiBase(raw),
+  buildCookieHeader: (cookies: Record<string, string> | undefined) =>
+    cookies ? Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join('; ') : '',
 }));
 
 let fetchSpy: ReturnType<typeof vi.fn>;

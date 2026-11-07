@@ -65,6 +65,15 @@ const GLOBAL_CREDENTIALS: SSOCredentials = {
   expiresAt: Date.now() + 12 * 60 * 60 * 1000 // 12 hours from now
 };
 
+// A reverse proxy in front of the backend can strip cookies entirely, leaving only the
+// `authorization` value from the browser callback as the usable credential.
+const AUTHORIZATION_ONLY_CREDENTIALS: SSOCredentials = {
+  cookies: {},
+  apiUrl: TEST_API_URL_1,
+  expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+  authorization: 'Bearer backend-issued-token'
+};
+
 describe('SSO Per-URL Credential Management', () => {
   // Setup isolated CODEMIE_HOME for this test suite
   setupTestIsolation();
@@ -426,6 +435,50 @@ describe('SSO Per-URL Credential Management', () => {
       const remainingMs = status.expiresAt! - Date.now();
       expect(remainingMs).toBeGreaterThan(59 * 60 * 1000); // At least 59 minutes
       expect(remainingMs).toBeLessThan(61 * 60 * 1000); // At most 61 minutes
+    });
+  });
+
+  describe('Authorization Fallback Credentials (cookie-stripping reverse proxy)', () => {
+    it('stores and retrieves the authorization fallback when cookies are empty', async () => {
+      const store = CredentialStore.getInstance();
+
+      await store.storeSSOCredentials(AUTHORIZATION_ONLY_CREDENTIALS, TEST_BASE_URL_1);
+      const retrieved = await store.retrieveSSOCredentials(TEST_BASE_URL_1);
+
+      expect(retrieved).toMatchObject({
+        apiUrl: TEST_API_URL_1,
+        cookies: {},
+        authorization: 'Bearer backend-issued-token'
+      });
+    });
+
+    it('surfaces the authorization fallback through CodeMieSSO lookup', async () => {
+      const store = CredentialStore.getInstance();
+      const sso = new CodeMieSSO();
+
+      await store.storeSSOCredentials(AUTHORIZATION_ONLY_CREDENTIALS, TEST_BASE_URL_1);
+      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+
+      expect(retrieved?.authorization).toBe('Bearer backend-issued-token');
+      expect(retrieved?.cookies).toEqual({});
+    });
+
+    it('reports an authenticated status from the authorization fallback alone', async () => {
+      const store = CredentialStore.getInstance();
+      await store.storeSSOCredentials(AUTHORIZATION_ONLY_CREDENTIALS, TEST_BASE_URL_1);
+
+      const config: CodeMieConfigOptions = {
+        provider: 'ai-run-sso',
+        codeMieUrl: TEST_BASE_URL_1,
+        baseUrl: TEST_API_URL_1,
+        apiKey: 'sso-provided',
+        model: 'test-model'
+      };
+
+      const status = await SSOSetupSteps.getAuthStatus!(config);
+
+      expect(status.authenticated).toBe(true);
+      expect(status.apiUrl).toBe(TEST_API_URL_1);
     });
   });
 

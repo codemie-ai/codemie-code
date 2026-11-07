@@ -4,17 +4,17 @@ import type { HookProcessingConfig } from '../hook.js';
 import { getConfigValue } from './config-value.js';
 
 /**
- * Cookies for CodeMie analytics, read once from the credential store, plus the check that tells a
- * rejection from a newer sign-in apart. Cookies handed in through the config are used as they are,
- * with no check.
+ * Cookies (and SSO authorization fallback) for CodeMie analytics, read once from the credential
+ * store, plus the check that tells a rejection from a newer sign-in apart. Credentials handed in
+ * through the config are used as they are, with no check.
  */
 export async function loadAnalyticsCookies(
   logTag: string,
   ssoUrl: string | undefined,
   config?: HookProcessingConfig
 ): Promise<CookieAuth> {
-  if (config?.cookies) {
-    return { cookies: config.cookies };
+  if (config?.cookies || config?.authorization) {
+    return { cookies: config?.cookies || '', authorization: config?.authorization };
   }
   if (!ssoUrl) {
     return { cookies: '' };

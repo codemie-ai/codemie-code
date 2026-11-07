@@ -78,6 +78,8 @@ export interface SkillMetricSession {
 interface SkillEventTransport {
   apiUrl: string;
   cookieHeader: string;
+  /** SSO authorization fallback (see `SSOCredentials.authorization`) */
+  authorization?: string;
   cliVersion: string;
 }
 
@@ -266,7 +268,8 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
     'User-Agent': `codemie-cli/${transport.cliVersion}`,
     'X-CodeMie-CLI': `codemie-cli/${transport.cliVersion}`,
     'X-CodeMie-Client': 'codemie-cli',
-    Cookie: transport.cookieHeader,
+    ...(transport.cookieHeader && { Cookie: transport.cookieHeader }),
+    ...(transport.authorization && { Authorization: transport.authorization }),
   };
   if (body.repository) headers['X-CodeMie-Repository'] = encodeAttributionHeader(body.repository);
   if (body.branch) headers['X-CodeMie-Branch'] = encodeAttributionHeader(body.branch);
@@ -309,11 +312,13 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
   }
 }
 
+const SENSITIVE_HEADER_NAMES = new Set(['cookie', 'authorization']);
+
 function redactSensitiveHeaders(headers: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [
       key,
-      key.toLowerCase() === 'cookie' ? '<redacted>' : value,
+      SENSITIVE_HEADER_NAMES.has(key.toLowerCase()) ? '<redacted>' : value,
     ])
   );
 }
@@ -364,16 +369,17 @@ async function tryBuildTransport(agentVersion: string): Promise<SkillEventTransp
   }
 
   let cookieHeader = '';
+  let authorization: string | undefined;
   let apiUrl: string | undefined;
   try {
-    const { CodeMieSSO } = await import('@/providers/plugins/sso/sso.auth.js');
+    const { CodeMieSSO, hasUsableSsoCredential } = await import('@/providers/plugins/sso/sso.auth.js');
+    const { buildCookieHeader } = await import('@/providers/core/codemie-auth-helpers.js');
     const sso = new CodeMieSSO();
     const credentials = await sso.getStoredCredentials(ssoUrl);
 
-    if (credentials?.cookies) {
-      cookieHeader = Object.entries(credentials.cookies)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('; ');
+    if (hasUsableSsoCredential(credentials?.cookies, credentials?.authorization)) {
+      cookieHeader = buildCookieHeader(credentials?.cookies);
+      authorization = credentials?.authorization;
     }
     // credentials.apiUrl is the resolved API base (e.g.
     // "<codeMieUrl>/code-assistant-api"). The bare baseUrl from the profile
@@ -384,8 +390,8 @@ async function tryBuildTransport(agentVersion: string): Promise<SkillEventTransp
     logger.debug('[skills] Failed to load SSO credentials for events', error);
   }
 
-  if (!cookieHeader) {
-    logger.debug('[skills] Skipping event emission: no SSO cookies available');
+  if (!cookieHeader && !authorization) {
+    logger.debug('[skills] Skipping event emission: no SSO cookies/authorization available');
     return null;
   }
 
@@ -400,7 +406,7 @@ async function tryBuildTransport(agentVersion: string): Promise<SkillEventTransp
   }
 
   logger.debug('[skills] Built skill events transport', { apiUrl });
-  return { apiUrl, cookieHeader, cliVersion: agentVersion };
+  return { apiUrl, cookieHeader, authorization, cliVersion: agentVersion };
 }
 
 function readPackageVersion(): string {
