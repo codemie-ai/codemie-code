@@ -23,6 +23,7 @@ import { getNpmPrefixArgs } from './npm-prefix.js';
 import { compareVersions, isValidSemanticVersion } from './version-utils.js';
 import { getCodemiePath } from './paths.js';
 import { parseBooleanEnv } from './env.js';
+import { verifyActiveCli, formatStaleWarning, type ActiveCliVerdict } from './active-cli.js';
 
 export const CLI_PACKAGE_NAME = '@codemieai/code';
 
@@ -294,17 +295,6 @@ export async function updateCli(latestVersion: string, silent = false): Promise<
       timeout: 60000 // 1 minute timeout for update
     });
 
-    if (silent) {
-      // Silent mode: just log to debug
-      logger.debug(`CodeMie CLI auto-updated to ${latestVersion}`);
-    } else {
-      console.log();
-      console.log(chalk.green('✓ CodeMie CLI updated successfully!'));
-      console.log(chalk.cyan(`  Current version: ${latestVersion}`));
-      console.log();
-      console.log(chalk.dim('  💡 The update will take effect on the next command.'));
-      console.log();
-    }
   } catch (error) {
     // Log error for debugging
     logger.error('CLI update failed', {
@@ -326,6 +316,49 @@ export async function updateCli(latestVersion: string, silent = false): Promise<
     console.log();
     throw error;
   }
+
+  await reportUpdateResult(latestVersion, silent);
+}
+
+/**
+ * Report a successful update: check whether the codemie first on PATH is the one just updated,
+ * then print the outcome (debug-only in silent mode). A failure here must never reach the
+ * install failure branch or change the exit code.
+ *
+ * @param latestVersion - Version that was just installed
+ * @param silent - If true, log to debug only
+ */
+async function reportUpdateResult(latestVersion: string, silent: boolean): Promise<void> {
+  let verdict: ActiveCliVerdict = { status: 'unknown', reason: 'active install check did not run' };
+  try {
+    verdict = await verifyActiveCli(latestVersion, { withHint: !silent });
+  } catch (error) {
+    logger.debug('Active codemie check failed:', error);
+  }
+
+  if (silent) {
+    // Silent mode: just log to debug
+    logger.debug(`CodeMie CLI auto-updated to ${latestVersion}`);
+    if (verdict.status === 'stale') {
+      logger.debug(
+        `Active codemie ${verdict.active.path} is version ${verdict.active.version}, older than installed ${latestVersion}`
+      );
+    }
+    return;
+  }
+
+  console.log();
+  console.log(chalk.green('✓ CodeMie CLI updated successfully!'));
+  console.log(chalk.cyan(`  Current version: ${latestVersion}`));
+  console.log();
+  if (verdict.status === 'stale') {
+    for (const line of formatStaleWarning(verdict)) {
+      console.log(line.startsWith('    ') ? chalk.white(line) : chalk.yellow(line));
+    }
+  } else {
+    console.log(chalk.dim('  💡 The update will take effect on the next command.'));
+  }
+  console.log();
 }
 
 /**

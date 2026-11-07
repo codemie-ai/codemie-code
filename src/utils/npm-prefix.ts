@@ -71,6 +71,31 @@ export function getCodemieNpmPrefix(
 }
 
 /**
+ * Package root of CodeMie inside an npm prefix: `<prefix>\node_modules\@codemieai\code` on win32,
+ * `<prefix>/lib/node_modules/@codemieai/code` on POSIX.
+ *
+ * @param prefix - npm prefix to resolve the package root in.
+ * @param platform - Platform whose path rules and layout to use; defaults to `process.platform`.
+ */
+export function getCodemiePackageDir(
+  prefix: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  const layout = isWindows(platform) ? WIN32_LAYOUT : POSIX_LAYOUT;
+  return getPathModule(platform).join(prefix, ...layout);
+}
+
+/**
+ * Directory npm puts global executables in: the prefix itself on win32, `<prefix>/bin` on POSIX.
+ *
+ * @param prefix - npm prefix to resolve the bin directory in.
+ * @param platform - Platform whose path rules to use; defaults to `process.platform`.
+ */
+export function getNpmBinDir(prefix: string, platform: NodeJS.Platform = process.platform): string {
+  return isWindows(platform) ? prefix : getPathModule(platform).join(prefix, 'bin');
+}
+
+/**
  * Path of the per-user npm prefix that older CodeMie installers wrote to `.npmrc`.
  *
  * @param platform - Platform to resolve the path for; defaults to `process.platform`.

@@ -1,0 +1,45 @@
+{
+  "decision": "request-changes",
+  "rationale": "One blocking finding: updateCli in cli-updater.ts now spans ~69 lines against the documented under-50-line standard, introduced by this change. Edge-case and acceptance candidates were checked against source (7 dismissed as unreachable, graceful-degrade, or deliberate per plan AR-2/spec); no defers, standards fully adjudicated.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "spec", "item": "Locate first codemie via existing getCommandPath('codemie'), callers untouched", "status": "pass", "notes": "lookupCommandPath wraps getCommandPath with a 5s guard; processes.ts untouched" },
+    { "kind": "spec", "item": "Read active version without spawning (POSIX realpath + owning package.json; Windows shim + package)", "status": "pass", "notes": "No codemie spawn. POSIX walk-up reaches package root (bin/ has no package.json); odd layouts degrade to unknown, i.e. today's text" },
+    { "kind": "spec", "item": "Helper returns active path/version/prefix, never throws, prefix via getCodemieNpmPrefix", "status": "pass", "notes": "findActiveCli returns found/unknown union inside try/catch" },
+    { "kind": "spec", "item": "Compare with compareVersions; active >= installed keeps current success text", "status": "pass", "notes": "current verdict prints takes-effect line" },
+    { "kind": "spec", "item": "Stale: yellow warning with path, versions, fix (a) uninstall or (b) PATH order, new terminal", "status": "pass", "notes": "Spec offers (a) or (b); (b) always present. Legacy prefix swaps (a) for installer/doctor per plan AR-2" },
+    { "kind": "spec", "item": "Not determinable: today's text unchanged, reason logged via logger.debug", "status": "pass", "notes": "unknown() logs debug; cli-updater wraps in try/catch" },
+    { "kind": "spec", "item": "Silent mode: same check, one debug line on mismatch, no output", "status": "pass", "notes": "withHint false avoids npm spawn" },
+    { "kind": "spec", "item": "Exit code stays 0; self-update.ts and process.exit(0) unchanged", "status": "pass", "notes": "Neither file in diff" },
+    { "kind": "spec", "item": "Docs: COMMANDS.md updated; CONFIGURATION.md unchanged", "status": "pass", "notes": "docs/COMMANDS.md reworded" },
+    { "kind": "spec", "item": "Non-goals respected (no auto-fix, getCommandPath unchanged, failure path unchanged)", "status": "pass", "notes": "Diff limited to npm-prefix.ts helpers, active-cli.ts, success branch" },
+    { "kind": "story-ac", "item": "AC1: stale older active prints warning with path, versions, fix steps, no takes-effect line", "status": "pass", "notes": "PATH-order fix always present; uninstall fix omitted only for legacy prefix by design (AR-2)" },
+    { "kind": "story-ac", "item": "AC2: active >= installed leaves output as today", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC3: undeterminable active install leaves output as today with debug reason", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC4: silent auto-update prints nothing new, mismatch at debug only", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC5: check never spawns codemie, never triggers update, never throws", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC6: works with POSIX which and Windows where.exe, spaces, extensionless shim", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC7: exit code 0 for every successful-update outcome", "status": "pass", "notes": "" },
+    { "kind": "story-ac", "item": "AC8: COMMANDS.md no longer claims unconditional takes effect on next command", "status": "pass", "notes": "" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "git log diff_base..HEAD is empty: HEAD equals diff_base and the change is uncommitted, so there are no commit subjects to check." },
+    { "kind": "code-quality", "status": "partial", "notes": "Naming, .js extensions, return types, JSDoc, no console.log conform. Unmet: updateCli in cli-updater.ts is ~68 lines, code-quality.md requires functions under 50." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/cli-updater.ts",
+      "line": 284,
+      "title": "updateCli exceeds the 50-line function limit",
+      "problem": "code-quality.md requires functions under 50 lines and one responsibility. updateCli now spans about 69 lines (284-352), up from about 46 before this change, combining install, failure reporting, active-CLI verification and silent/interactive output.",
+      "impact": "Documented code-quality standard is broken by lines this change added; the guide lists oversized functions as a Don't.",
+      "recommendation": "Extract the post-install block (verify active CLI, then silent logging or interactive success output with the stale warning) into a helper such as reportUpdateResult(latestVersion, silent) so updateCli drops back under 50 lines."
+    }
+  ],
+  "deferred": []
+}
