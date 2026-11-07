@@ -12,6 +12,8 @@ import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent } from './pi-agent.js';
+import { PI_FORKED_CONTINUATION } from '@/agents/plugins/pi/pi.session.js';
 import { logger } from '@/utils/logger.js';
 // Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
@@ -703,6 +705,8 @@ interface PiUsageEntry {
   timestamp?: string;
   /** Model the user switched to, on a `model_change` entry. */
   modelId?: string;
+  /** Auxiliary model on an omp model_usage entry. */
+  model?: string;
   /** Summary-generation spend, recorded at entry level with no model attached. */
   usage?: PiUsage;
   message?: {
@@ -775,6 +779,7 @@ function piRecordKey(entry: PiUsageEntry, ts: number | null): string | null {
  *   1. `message` / role `assistant` — the model is `responseModel ?? model`.
  *   2. `message` / role `toolResult` carrying its own `usage` — sub-agent and summary spend.
  *   3. `branch_summary` / `compaction` with a top-level `entry.usage`.
+ *   4. omp `model_usage` — auxiliary spend with its own model, without switching the conversation.
  *
  * Pi attributes NO model to (2) and (3) — it buckets them under a single "Tools/summaries" key.
  * The report is per-model, so they are APPROXIMATED to the model in effect at that point in the
@@ -792,7 +797,16 @@ export function extractPiUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
   const keyedRecords = new Map<string, UsageRecord>();
 
-  for (const messages of allMessageArrays(parsed)) {
+  const owners = [
+    { owner: parsed.sessionId, messages: messagesOf(parsed) },
+    ...(parsed.subagents ?? [])
+      .filter((sub) => Array.isArray(sub.messages))
+      .map((sub) => ({
+        owner: sub.agentType === PI_FORKED_CONTINUATION ? parsed.sessionId : sub.agentId,
+        messages: sub.messages,
+      })),
+  ];
+  for (const { owner, messages } of owners) {
     // Model attribution never crosses a transcript boundary: a sub-agent log is its own
     // conversation, so its first unattributed entry must not inherit the parent's last model.
     let currentModel: string | undefined;
@@ -815,6 +829,8 @@ export function extractPiUsageRecords(parsed: ParsedSession): UsageRecord[] {
         block = message.usage;
       } else if (entry.type === 'branch_summary' || entry.type === 'compaction') {
         block = entry.usage;
+      } else if (entry.type === 'model_usage') {
+        block = entry.usage;
       }
       if (!block) {
         continue;
@@ -824,7 +840,9 @@ export function extractPiUsageRecords(parsed: ParsedSession): UsageRecord[] {
       appendDedupedRecord(records, keyedRecords, {
         key: piRecordKey(entry, ts),
         ts,
-        model: currentModel ?? 'unknown',
+        model: entry.type === 'model_usage' && typeof entry.model === 'string' && entry.model.trim()
+          ? entry.model : currentModel ?? 'unknown',
+        ownerAgentId: owner,
         usage: piBlockToUsage(block),
       });
     }
@@ -869,6 +887,7 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
     case 'kimi':
       return readKimi(parsed);
     case 'pi':
+    case 'omp':
       return readPi(parsed);
     case 'copilot-cli':
       return readCopilotCli(parsed);
@@ -912,7 +931,7 @@ export function gatherUsageDeduped(
   if (isCodexFamilyAgent(a)) {
     return readCodex(parsed);
   }
-  if (a === 'pi') {
+  if (isPiFamilyAgent(a)) {
     // Cross-session dedup, like Claude and unlike the session-local readers above: `/fork`
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
@@ -973,7 +992,7 @@ export function gatherDedupedUsageRecords(
   if (isCodexFamilyAgent(a)) {
     return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd), seen);
   }
-  if (a === 'pi') {
+  if (isPiFamilyAgent(a)) {
     return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
