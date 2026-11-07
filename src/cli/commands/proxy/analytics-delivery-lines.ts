@@ -30,8 +30,5 @@ export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
       `  Run: ${entry?.run ?? 'codemie proxy analytics status'}`,
     ];
   }
-  return [
-    `Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`,
-    '  Run: codemie proxy restart',
-  ];
+  return [`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`];
 }

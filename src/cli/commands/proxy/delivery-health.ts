@@ -14,12 +14,16 @@ export interface DeliveryHealth {
   pendingBytes: number;
 }
 
-/** Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile. */
+/**
+ * Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile.
+ * `identity_mismatch` and `send_failed` come from the spool, which is shared by the whole machine,
+ * so their labels say so.
+ */
 export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
   credentials_expired: { label: 'credentials expired', run: 'codemie profile login' },
   auth_rejected: { label: 'analytics auth rejected', run: 'codemie profile login' },
-  identity_mismatch: { label: 'analytics identity mismatch', run: 'codemie proxy restart' },
-  send_failed: { label: 'sending to analytics failed' },
+  identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
+  send_failed: { label: 'sending to analytics failed on this machine' },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
@@ -87,11 +91,10 @@ export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
     run = entry?.run;
   } else {
     lines.push(`Delivery: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`);
-    run = 'codemie proxy restart';
   }
 
   if (health.pendingBytes > 0) {
-    lines.push(`  Pending: ${formatBytes(health.pendingBytes)}`);
+    lines.push(`  Pending: ${formatBytes(health.pendingBytes)} (all sessions on this machine)`);
   }
   if (run) {
     lines.push(`  Run: ${run}`);

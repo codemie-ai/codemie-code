@@ -106,6 +106,11 @@ describe('collectDeliveryHealth', () => {
     expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
   });
 
+  it('ignores a marker that records no URL, since it cannot be attributed to this profile', async () => {
+    getAnalyticsAuthStatus.mockResolvedValue({ detectedAt: 2000, reason: 'redirect' });
+    expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
+  });
+
   it('never clears the marker', async () => {
     getAnalyticsAuthStatus.mockResolvedValue(marker);
     getLastSignInAt.mockResolvedValue(3000);
@@ -192,7 +197,7 @@ describe('formatDeliveryLines', () => {
   it('prints pending bytes when there are any', () => {
     expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
       'Delivery: healthy',
-      '  Pending: 2.00 KB',
+      '  Pending: 2.00 KB (all sessions on this machine)',
     ]);
   });
 
@@ -202,7 +207,7 @@ describe('formatDeliveryLines', () => {
     );
     expect(lines).toEqual([
       `Delivery: unhealthy (${DELIVERY_REASONS.credentials_expired.label})`,
-      '  Pending: 512 B',
+      '  Pending: 512 B (all sessions on this machine)',
       '  Run: codemie profile login',
     ]);
   });
@@ -212,11 +217,15 @@ describe('formatDeliveryLines', () => {
     expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`]);
   });
 
-  it('suggests a restart for unknown', () => {
+  it('prints no Run line for unknown', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
       'Delivery: unknown (restart the proxy to enable all checks)',
-      '  Run: codemie proxy restart',
     ]);
+  });
+
+  it('says the spool-derived reasons cover the whole machine', () => {
+    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
+    expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
   });
 
   it('reports a stopped proxy for null', () => {

@@ -297,7 +297,7 @@ describe('createProxyAnalyticsCommand', () => {
       const lines = plainOutput().split('\n');
       expect(lines.slice(0, 3)).toEqual([
         'Delivery: unhealthy (credentials expired)',
-        '  Pending: 2.00 KB',
+        '  Pending: 2.00 KB (all sessions on this machine)',
         '  Run: codemie profile login',
       ]);
       expect(lines[3]).toContain(headline);

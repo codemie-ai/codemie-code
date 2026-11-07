@@ -21,13 +21,17 @@ interface DeliveryHealth {
 Unhealthy when any rule below applies. The first rule that matches sets `reason`:
 
 1. `credentials_expired`: the daemon `/health` reply reports `analytics.credentials: 'stale'`.
-2. `auth_rejected`: the analytics auth marker applies. The filtering is the same as the auth gate's (`sso.auth-gate.ts:51-96`): markers detected before the latest sign-in are dropped, and the marker is matched against the daemon's recorded profile and its URLs.
+2. `auth_rejected`: the analytics auth marker applies. The filtering follows the auth gate's (`sso.auth-gate.ts:51-96`): markers detected before the latest sign-in are dropped, and the marker is matched against the daemon's recorded profile and its URLs. It is stricter than the gate in one respect: a marker that records no URL, or a daemon with no known URL, is not attributed to this daemon, so another profile's failure is never reported as this one's.
 3. `identity_mismatch`: a session with pending data is held with `holds.session.reason === 'analytics_endpoint_mismatch'` (the daemon's analytics URL does not match the credentials' identity, `tick-processor.ts:136`). No other hold reason affects health.
 4. `send_failed`: a stream has a live delivery-failure record, using the forwarder's liveness check (`liveDelivery`, `delivery-state.ts:18`).
 
 When no rule applies and the `/health` reply has no usable `analytics.credentials` (an older daemon, no reply, or a malformed field), `status` is `unknown` instead of `healthy`.
 
 `pendingBytes` is the sum of unsent bytes (size − cursor) across all spool streams.
+
+**Concurrent reads.** The collector reads session status files that the daemon, and hook processes, may be writing at that moment, and the in-process session lock does not cover a reader in another process. `writeStatus` therefore replaces the file atomically (`writeJsonFileAtomic`: temp file in the same directory, then rename, retried on Windows while a reader holds the target), so a reader never sees a truncated file and `readStatus` never reports "no status" for a session that has one. This is provided by `main` and needs no change in this task.
+
+**Scope.** The spool (`~/.codemie/proxy/otlp-spool`) is shared by the whole machine and its sessions carry no profile or daemon identity. `pendingBytes`, `identity_mismatch` and `send_failed` therefore describe every session on the machine, not only this daemon's, and the output says so: the labels end in "on this machine" and `Pending:` is followed by "(all sessions on this machine)". `credentials_expired` and `auth_rejected` are specific to the daemon's profile.
 
 Reason codes are stable identifiers, not display strings. Every label map keyed by reason is typed `Record<Reason, string>`, so adding a code without a label fails to compile.
 
@@ -39,8 +43,9 @@ Reason codes are stable identifiers, not display strings. Every label map keyed 
 
 ### 3. `codemie proxy status`
 
-- After the daemon block, a new line: `Analytics: healthy` (green), `Analytics: unhealthy (<short label>)` (yellow), or `Analytics: unknown (restart the proxy to enable all checks)` (dim), followed for `unknown` by `Run: codemie proxy restart`.
-- When unhealthy, a tip line follows: `Run: codemie profile login` for `credentials_expired` and `auth_rejected`, `Run: codemie proxy restart` for `identity_mismatch`, and `Run: codemie proxy analytics status` for `send_failed`.
+- After the daemon block, a new line: `Analytics: healthy` (green), `Analytics: unhealthy (<short label>)` (yellow), or `Analytics: unknown (restart the proxy to enable all checks)` (dim). The `unknown` line is never followed by a `Run:` tip; its label already says to restart the proxy.
+- Only when unhealthy, a tip line follows: `Run: codemie profile login` for `credentials_expired` and `auth_rejected`, `Run: codemie proxy restart` for `identity_mismatch`, and `Run: codemie proxy analytics status` for `send_failed`.
+- The short labels are `credentials expired`, `analytics auth rejected`, `analytics identity mismatch on this machine` and `sending to analytics failed on this machine`.
 - `--json` adds `analytics: DeliveryHealth`, where `reason` is the code.
 - The line and the JSON field appear only when an OTLP connector is enabled; otherwise both are omitted, whatever the spool holds.
 - When the daemon is stopped, text and JSON stay exactly as they are today (`Status: stopped` / `{"status":"stopped"}`), with no analytics line.
@@ -51,8 +56,8 @@ This applies to the default (Claude Code) and every connector flag — today `--
 
 - **Delivery section** (first, identical for every connector, shown only when an OTLP connector is enabled, as in `proxy status`):
   - `Delivery: healthy`, `Delivery: unhealthy (<label>)` or `Delivery: unknown (restart the proxy to enable all checks)`.
-  - `Pending: <size>` (for example `2.00 KB`), only when pending bytes are above 0.
-  - `Run: codemie profile login` for the two credential reasons, and `Run: codemie proxy restart` for `identity_mismatch` and `unknown`.
+  - `Pending: <size> (all sessions on this machine)` (for example `Pending: 2.00 KB (all sessions on this machine)`), only when pending bytes are above 0.
+  - Only when unhealthy: `Run: codemie profile login` for the two credential reasons, and `Run: codemie proxy restart` for `identity_mismatch`. `unknown` and `send_failed` print no `Run:` line.
   - When the daemon is running, the command calls `/health`. When the daemon is stopped, the section shows `Delivery: proxy not running` instead of a verdict.
 - **Connector section**: the same data as today, in the new style. That is connected / hooks installed, scope, tracked projects, collection enabled or disabled, excluded projects, whether the current directory is tracked and why, and the corrupt-preferences error. At most one `Run: <command>` line holds the fix: `codemie proxy connect --<id>` when the connector is not connected, otherwise the existing not-tracked advice command (for example `codemie proxy analytics include "<path>"`). Advice that is not a single command (for example a corrupt preferences file) goes into the not-tracked reason instead. There is no `Hint:` line.
 - The "Not affected by these settings: …" text is printed after the sections as a plain, dim sentence (no label, no indentation), for example: These settings do not affect the daily analytics collector or the session sync that `codemie claude` runs itself.
@@ -64,7 +69,7 @@ This applies to the default (Claude Code) and every connector flag — today `--
 
 - AC1: One collector serves both commands, with no per-connector delivery logic, and it never throws.
 - AC2: Each of the four reasons is detected under its stated rule. When several apply, the stated precedence decides.
-- AC3: `auth_rejected` ignores a marker detected before the latest sign-in, and a marker that does not match the daemon's recorded profile or URLs.
+- AC3: `auth_rejected` ignores a marker detected before the latest sign-in, a marker that does not match the daemon's recorded profile or URLs, and a marker that records no URL.
 - AC4: `send_failed` ignores a delivery record that fails the forwarder's liveness check.
 - AC5: An `analytics_endpoint_mismatch` session hold produces `identity_mismatch`. Every other hold reason leaves health unchanged.
 - AC6: Adding a reason code without a label is a compile error.
@@ -76,7 +81,7 @@ This applies to the default (Claude Code) and every connector flag — today `--
 
 ### `codemie proxy status`
 
-- AC9: Prints the green, yellow or dim (`unknown`) `Analytics:` line, plus the tip for its reason, only when an OTLP connector is enabled.
+- AC9: Prints the green, yellow or dim (`unknown`) `Analytics:` line, plus the tip for its reason only when unhealthy (never for `unknown`), only when an OTLP connector is enabled.
 - AC10: `--json` adds only `analytics: DeliveryHealth`, and all existing fields are unchanged.
 - AC11: With the daemon stopped, text and JSON are byte-identical to today's.
 
@@ -86,8 +91,13 @@ This applies to the default (Claude Code) and every connector flag — today `--
 - AC13: The connector section shows the same data as today in the new style, with at most one `Run:` line and no `Hint:` line, followed by the unlabeled dim sentence about unaffected channels.
 - AC14: `--json` keeps its existing shape and adds `delivery` (`null` when the daemon is stopped or no connector is enabled).
 
+### Scope
+
+- AC15: Spool-derived output (`Pending:`, `identity_mismatch`, `send_failed`) states that it covers every session on the machine.
+
 ## Non-goals
 
+- Filtering delivery health to one profile or daemon. It needs a profile identity on every spool session, which the spool does not record today.
 - Session-sync pipeline backlog (`~/.codemie/sessions`, managed launches).
 - Last-successful-delivery time, and detecting a stall that leaves no failure record.
 - Backlog trend (growing or draining).

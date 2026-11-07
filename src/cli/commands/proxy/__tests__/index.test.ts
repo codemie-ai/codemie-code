@@ -1118,8 +1118,8 @@ describe('proxy status', () => {
     it.each([
       ['credentials_expired', 'credentials expired', 'codemie profile login'],
       ['auth_rejected', 'analytics auth rejected', 'codemie profile login'],
-      ['identity_mismatch', 'analytics identity mismatch', 'codemie proxy restart'],
-      ['send_failed', 'sending to analytics failed', 'codemie proxy analytics status'],
+      ['identity_mismatch', 'analytics identity mismatch on this machine', 'codemie proxy restart'],
+      ['send_failed', 'sending to analytics failed on this machine', 'codemie proxy analytics status'],
     ])('prints a yellow unhealthy line and a Run tip for %s', async (reason, label, run) => {
       await arrange({
         connectorActive: true,
@@ -1134,14 +1134,14 @@ describe('proxy status', () => {
       expect(lines[index + 1]).toBe(`  Run: ${run}`);
     });
 
-    it('prints a dim unknown line with a restart tip when the daemon sent no analytics block', async () => {
+    it('prints a dim unknown line with no Run tip when the daemon sent no analytics block', async () => {
       await arrange({ connectorActive: true, delivery: { status: 'unknown', pendingBytes: 0 } });
 
       const lines = await runStatus(['status']);
 
       const index = lines.indexOf(`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`);
       expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]).toBe('  Run: codemie proxy restart');
+      expect(lines[index + 1]?.trimStart().startsWith('Run:') ?? false).toBe(false);
       const { collectDeliveryHealth } = await import('../delivery-health.js');
       expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
     });

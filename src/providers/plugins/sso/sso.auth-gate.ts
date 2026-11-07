@@ -48,15 +48,19 @@ export type AuthGateResult =
  * of baseUrl/syncApiUrl/loginUrl. No candidate resolved at all (e.g. no SSO configured) ⇒ treat
  * the marker as still applicable rather than silently ignore a real problem.
  */
-export function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrls: Array<string | undefined>): boolean {
+export function markerAppliesToProfile(
+  marker: AnalyticsAuthStatus,
+  candidateUrls: Array<string | undefined>,
+  requireUrlMatch = false
+): boolean {
   if (!marker.baseUrl) {
     // Old/malformed marker with no key of its own — treat as matching rather than silently
     // ignore a real problem it might still be reporting.
-    return true;
+    return !requireUrlMatch;
   }
   const known = candidateUrls.filter((u): u is string => Boolean(u));
   if (known.length === 0) {
-    return true;
+    return !requireUrlMatch;
   }
   const normalizedMarkerUrl = normalizeUrlForKey(marker.baseUrl);
   return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
@@ -67,16 +71,17 @@ export function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | nu
 }
 
 /**
- * Read-only view of the marker the gate would act on: it must match the profile's URLs and must not
- * predate the latest sign-in for `source`. Unlike the gate it never clears an outdated marker, so
- * status commands can report on it without changing state.
+ * Read-only view of the marker for status commands: it must match the profile's URLs and must not
+ * predate the latest sign-in for `source`. Unlike the gate it never clears an outdated marker, and it
+ * is stricter: a marker with no URL, or a profile with no known URL, is not attributed to this profile,
+ * so another profile's failure is never reported as this one's.
  */
 export async function applicableAuthMarker(
   source: PlatformUrlSource,
   candidateUrls: Array<string | undefined>
 ): Promise<AnalyticsAuthStatus | null> {
   const marker = await getAnalyticsAuthStatus();
-  if (!marker || !markerAppliesToProfile(marker, candidateUrls)) {
+  if (!marker || !markerAppliesToProfile(marker, candidateUrls, true)) {
     return null;
   }
   return isOlderThan(marker, await getLastSignInAt(source)) ? null : marker;

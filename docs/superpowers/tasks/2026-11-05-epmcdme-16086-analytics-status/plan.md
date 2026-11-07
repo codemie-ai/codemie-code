@@ -38,11 +38,11 @@ Test-first: yes — fixtures in a temp `CODEMIE_HOME`: pending bytes summed acro
 
 ## Task 4: Delivery-health collector
 
-**Files:** `src/providers/plugins/sso/sso.auth-gate.ts:51-67` (export `isOlderThan`, add read-only `applicableAuthMarker(source, candidateUrls)` built from `getAnalyticsAuthStatus`, `markerAppliesToProfile`, `getLastSignInAt`; it never clears the marker), new `src/cli/commands/proxy/delivery-health.ts`, new test `__tests__/delivery-health.test.ts`.
+**Files:** `src/providers/plugins/sso/sso.auth-gate.ts:51-67` (export `isOlderThan`, add read-only `applicableAuthMarker(source, candidateUrls)` built from `getAnalyticsAuthStatus`, `markerAppliesToProfile`, `getLastSignInAt`; it never clears the marker; `markerAppliesToProfile` gains `requireUrlMatch = false`, which `applicableAuthMarker` sets so a marker with no URL, or a profile with no known URL, is not attributed to the daemon, while the auth gate keeps its lenient behavior), new `src/cli/commands/proxy/delivery-health.ts`, new test `__tests__/delivery-health.test.ts`. `writeStatus` in `otlp-spool/session-status.ts` is already atomic on `main` (`writeJsonFileAtomic`: temp file, then rename retried on Windows), so the summary never reads a truncated status and needs no change here.
 
-- Exports `DeliveryHealth` (exactly the spec shape), `DeliveryReason`, and `DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }>`, which drives labels and remedies in both commands so a missing code fails to compile (AC6). `send_failed` has no `run`: `proxy status` then prints `codemie proxy analytics status`, `analytics status` prints no `Run:` line.
+- Exports `DeliveryHealth` (exactly the spec shape), `DeliveryReason`, and `DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }>`, which drives labels and remedies in both commands so a missing code fails to compile (AC6). `send_failed` has no `run`: `proxy status` then prints `codemie proxy analytics status`, `analytics status` prints no `Run:` line. The spool is machine-wide, so the `identity_mismatch` and `send_failed` labels end in "on this machine".
 - `collectDeliveryHealth(state: DaemonState, reply?: AnalyticsHealthReply): Promise<DeliveryHealth>` makes no request. Precedence: stale reply, `applicableAuthMarker` (source and candidate URLs from `state.provider/targetUrl/syncApiUrl/syncCodeMieUrl`), `mismatchHeld`, `sendFailed`; none matching gives `healthy` when `reply` is present, else `unknown`. Whole body in try/catch, falling back to `{ status: 'unknown', pendingBytes: 0 }`.
-- Also export `formatDeliveryLines(health | null)` returning the shared `Delivery:` headline, `Pending:` and `Run:` lines used by Task 6, so the wording lives once.
+- Also export `formatDeliveryLines(health | null)` returning the shared `Delivery:` headline, `Pending:` (suffixed "(all sessions on this machine)") and `Run:` lines (unhealthy only, never for `unknown`) used by Task 6, so the wording lives once.
 
 Test-first: yes — each reason alone; precedence when several apply; marker older than the last sign-in or for another profile URL is ignored; no reply gives `unknown`; reply `ok` with nothing else gives `healthy`; a throwing dependency yields `unknown`.
 
@@ -52,7 +52,7 @@ Test-first: yes — each reason alone; precedence when several apply; marker old
 
 - `analytics-connectors.ts` exports one `ANALYTICS_CONNECTORS` table `{ id, collect, format, isActive }` for Claude Code, Copilot CLI and Copilot Chat (`isActive` = connected: `hasClaudeCodeOtlpHooks()` / `readCopilotConnectorScope(id)` enabled, whatever the collection preference). Task 6 reuses `collect/format`.
 - In the `status` action pass `expectedPid: state.pid` to `checkProxyHealth`, then call `collectDeliveryHealth(state, health.analytics)`. Show the line only when any connector `isActive`; the stopped path at `:217-224` is untouched.
-- Text, after the `Uptime:` line and before the existing OTLP `Warning:`: `Analytics: healthy` (green), `Analytics: unhealthy (<label>)` (yellow) plus `  Run: <run>` tip (`run ?? 'codemie proxy analytics status'`), or `Analytics: unknown (restart the proxy to enable all checks)` (dim) plus `  Run: codemie proxy restart`. `--json` adds `analytics: DeliveryHealth` under the same visibility rule.
+- Text, after the `Uptime:` line and before the existing OTLP `Warning:`: `Analytics: healthy` (green), `Analytics: unhealthy (<label>)` (yellow) plus `  Run: <run>` tip (`run ?? 'codemie proxy analytics status'`), or `Analytics: unknown (restart the proxy to enable all checks)` (dim), with no `Run:` tip. `--json` adds `analytics: DeliveryHealth` under the same visibility rule.
 - Update `index.test.ts` and `daemon-status-contract.test.ts`: existing `console.log` expectations stay byte-identical when no connector is active; add cases for the three line variants, the tips, JSON `analytics`, and stopped output unchanged.
 
 Test-first: yes — healthy with an active connector prints the green line; stale reply prints `unhealthy (...)` and `Run: codemie profile login`; no `analytics` in the reply prints the dim `unknown` line; no connector hides line and JSON key even with pending bytes; stopped daemon output equals today's.
@@ -79,6 +79,6 @@ Test-first: no — documentation and copy only.
 
 ## Negative-constraint pass
 
-- No new on-disk state file or `DaemonState` change (Tasks 1-4 use `/health`, the spool and the existing marker only); `applicableAuthMarker` never clears the marker.
+- No new on-disk state file or `DaemonState` change (Tasks 1-4 use `/health`, the spool and the existing marker only; the status file keeps its name and format, with only a transient `.tmp` during a write); `applicableAuthMarker` never clears the marker.
 - Stopped-daemon `proxy status` unchanged (Task 5); `--json` of `analytics status` keeps its shape and only adds `delivery` (Task 6).
 - No `Hint:` line, at most one `Run:` (Task 6); session-sync backlog, trends, last-success time, per-tool split and held/dropped lines are not implemented.
