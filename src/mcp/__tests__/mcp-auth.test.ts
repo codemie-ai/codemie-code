@@ -33,6 +33,9 @@ vi.mock('child_process', async (importOriginal) => {
   };
 });
 
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { startCallbackServer, type CallbackResult } from '../auth/callback-server.js';
 import { McpOAuthProvider } from '../auth/mcp-oauth-provider.js';
 
@@ -128,11 +131,11 @@ describe('McpOAuthProvider — metadata & storage', () => {
     else process.env.MCP_CLIENT_NAME = originalName;
   });
 
-  it('starts empty: no redirect url, tokens, client info, and a blank verifier', () => {
+  it('starts empty: no redirect url, tokens, client info, and a blank verifier', async () => {
     const p = new McpOAuthProvider();
     expect(p.redirectUrl).toBeUndefined();
-    expect(p.tokens()).toBeUndefined();
-    expect(p.clientInformation()).toBeUndefined();
+    await expect(p.tokens()).resolves.toBeUndefined();
+    await expect(p.clientInformation()).resolves.toBeUndefined();
     expect(p.codeVerifier()).toBe('');
   });
 
@@ -154,14 +157,88 @@ describe('McpOAuthProvider — metadata & storage', () => {
     expect(p.clientMetadata.client_name).toBe('My Custom Client');
   });
 
-  it('round-trips tokens, client information, and the code verifier', () => {
+  it('round-trips tokens, client information, and the code verifier', async () => {
     const p = new McpOAuthProvider();
     p.saveTokens({ access_token: 'at', token_type: 'bearer' });
     p.saveClientInformation({ client_id: 'cid', client_name: 'CodeMie CLI' });
     p.saveCodeVerifier('verifier-123');
-    expect(p.tokens()).toEqual({ access_token: 'at', token_type: 'bearer' });
-    expect(p.clientInformation()).toEqual({ client_id: 'cid', client_name: 'CodeMie CLI' });
+    await expect(p.tokens()).resolves.toEqual({ access_token: 'at', token_type: 'bearer' });
+    await expect(p.clientInformation()).resolves.toEqual({ client_id: 'cid', client_name: 'CodeMie CLI' });
     expect(p.codeVerifier()).toBe('verifier-123');
+  });
+});
+
+describe('McpOAuthProvider — disk persistence (issue #643)', () => {
+  let codemieHome: string;
+  const originalHome = process.env.CODEMIE_HOME;
+  const serverUrl = 'https://mcp.epam.com/mcp/jira';
+
+  beforeEach(async () => {
+    codemieHome = await fs.mkdtemp(path.join(os.tmpdir(), 'codemie-mcp-auth-test-'));
+    process.env.CODEMIE_HOME = codemieHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = originalHome;
+    await fs.rm(codemieHome, { recursive: true, force: true });
+  });
+
+  it('a fresh provider for a never-seen server url starts with no tokens', async () => {
+    const p = new McpOAuthProvider(serverUrl);
+    await expect(p.tokens()).resolves.toBeUndefined();
+    await expect(p.clientInformation()).resolves.toBeUndefined();
+  });
+
+  it('tokens and client info saved by one instance are loaded by a new instance for the same server url', async () => {
+    const first = new McpOAuthProvider(serverUrl);
+    await first.saveTokens({ access_token: 'at-1', refresh_token: 'rt-1', token_type: 'bearer' });
+    await first.saveClientInformation({ client_id: 'cid-1' });
+
+    const second = new McpOAuthProvider(serverUrl);
+    await expect(second.tokens()).resolves.toEqual({ access_token: 'at-1', refresh_token: 'rt-1', token_type: 'bearer' });
+    await expect(second.clientInformation()).resolves.toEqual({ client_id: 'cid-1' });
+  });
+
+  it('two different MCP server urls on the same host get independent, non-colliding storage', async () => {
+    const jira = new McpOAuthProvider('https://mcp.epam.com/mcp/jira');
+    const kb = new McpOAuthProvider('https://mcp.epam.com/mcp/kb');
+    await jira.saveTokens({ access_token: 'jira-token', token_type: 'bearer' });
+    await kb.saveTokens({ access_token: 'kb-token', token_type: 'bearer' });
+
+    const jiraReload = new McpOAuthProvider('https://mcp.epam.com/mcp/jira');
+    const kbReload = new McpOAuthProvider('https://mcp.epam.com/mcp/kb');
+    await expect(jiraReload.tokens()).resolves.toEqual({ access_token: 'jira-token', token_type: 'bearer' });
+    await expect(kbReload.tokens()).resolves.toEqual({ access_token: 'kb-token', token_type: 'bearer' });
+  });
+
+  it("invalidateCredentials('all') clears the persisted file so a later instance starts blank again", async () => {
+    const first = new McpOAuthProvider(serverUrl);
+    await first.saveTokens({ access_token: 'at', token_type: 'bearer' });
+    await first.invalidateCredentials('all');
+
+    const second = new McpOAuthProvider(serverUrl);
+    await expect(second.tokens()).resolves.toBeUndefined();
+  });
+
+  it("invalidateCredentials('tokens') clears only tokens on disk, keeping client info for later instances", async () => {
+    const first = new McpOAuthProvider(serverUrl);
+    await first.saveTokens({ access_token: 'at', token_type: 'bearer' });
+    await first.saveClientInformation({ client_id: 'cid' });
+    await first.invalidateCredentials('tokens');
+
+    const second = new McpOAuthProvider(serverUrl);
+    await expect(second.tokens()).resolves.toBeUndefined();
+    await expect(second.clientInformation()).resolves.toEqual({ client_id: 'cid' });
+  });
+
+  it('a provider constructed without a server url never touches disk (backward-compatible, in-memory only)', async () => {
+    const p = new McpOAuthProvider();
+    await p.saveTokens({ access_token: 'memory-only', token_type: 'bearer' });
+
+    const credentialsDir = path.join(codemieHome, 'credentials');
+    const entries = await fs.readdir(credentialsDir).catch(() => []);
+    expect(entries).toEqual([]);
   });
 });
 
@@ -174,43 +251,43 @@ describe('McpOAuthProvider — invalidateCredentials scoping', () => {
     return p;
   }
 
-  it("scope 'tokens' clears only tokens", () => {
+  it("scope 'tokens' clears only tokens", async () => {
     const p = seeded();
     p.invalidateCredentials('tokens');
-    expect(p.tokens()).toBeUndefined();
-    expect(p.clientInformation()).toEqual({ client_id: 'cid' });
+    await expect(p.tokens()).resolves.toBeUndefined();
+    await expect(p.clientInformation()).resolves.toEqual({ client_id: 'cid' });
     expect(p.codeVerifier()).toBe('v');
   });
 
-  it("scope 'client' clears only client info", () => {
+  it("scope 'client' clears only client info", async () => {
     const p = seeded();
     p.invalidateCredentials('client');
-    expect(p.clientInformation()).toBeUndefined();
-    expect(p.tokens()).toEqual({ access_token: 'at', token_type: 'bearer' });
+    await expect(p.clientInformation()).resolves.toBeUndefined();
+    await expect(p.tokens()).resolves.toEqual({ access_token: 'at', token_type: 'bearer' });
     expect(p.codeVerifier()).toBe('v');
   });
 
-  it("scope 'verifier' clears only the code verifier", () => {
+  it("scope 'verifier' clears only the code verifier", async () => {
     const p = seeded();
     p.invalidateCredentials('verifier');
     expect(p.codeVerifier()).toBe('');
-    expect(p.tokens()).toEqual({ access_token: 'at', token_type: 'bearer' });
-    expect(p.clientInformation()).toEqual({ client_id: 'cid' });
+    await expect(p.tokens()).resolves.toEqual({ access_token: 'at', token_type: 'bearer' });
+    await expect(p.clientInformation()).resolves.toEqual({ client_id: 'cid' });
   });
 
-  it("scope 'all' clears everything", () => {
+  it("scope 'all' clears everything", async () => {
     const p = seeded();
     p.invalidateCredentials('all');
-    expect(p.tokens()).toBeUndefined();
-    expect(p.clientInformation()).toBeUndefined();
+    await expect(p.tokens()).resolves.toBeUndefined();
+    await expect(p.clientInformation()).resolves.toBeUndefined();
     expect(p.codeVerifier()).toBe('');
   });
 
-  it("scope 'discovery' leaves stored credentials intact", () => {
+  it("scope 'discovery' leaves stored credentials intact", async () => {
     const p = seeded();
     p.invalidateCredentials('discovery');
-    expect(p.tokens()).toEqual({ access_token: 'at', token_type: 'bearer' });
-    expect(p.clientInformation()).toEqual({ client_id: 'cid' });
+    await expect(p.tokens()).resolves.toEqual({ access_token: 'at', token_type: 'bearer' });
+    await expect(p.clientInformation()).resolves.toEqual({ client_id: 'cid' });
     expect(p.codeVerifier()).toBe('v');
   });
 });
