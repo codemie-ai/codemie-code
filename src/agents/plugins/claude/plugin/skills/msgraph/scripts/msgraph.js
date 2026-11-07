@@ -695,6 +695,24 @@ async function cmdSharepoint(args) {
   console.log('            --site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]');
 }
 
+// Teams the user is a member of, read from /me/memberOf (Group.Read.All). The endpoint returns
+// every kind of group, and the team filter is applied client-side, so a single page cuts off
+// teams for users who belong to many groups. Follow @odata.nextLink to get them all.
+async function listMemberTeams(token) {
+  const teams = [];
+  let next = '/me/memberOf';
+  let params = { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 999 };
+  while (next) {
+    const page = await graphGet(next, token, params);
+    for (const g of page.value || [])
+      if (Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team')) teams.push(g);
+    const nl = page['@odata.nextLink'];
+    next = nl ? nl.replace(GRAPH_BASE, '') : null;
+    params = {};
+  }
+  return teams;
+}
+
 async function cmdTeams(args) {
   const token = await getValidToken();
   const limit = parseInt(args.limit) || 20;
@@ -795,8 +813,7 @@ async function cmdTeams(args) {
       teams = data.value || [];
     } catch (e) {
       if (!/403|Forbidden/.test(e.message)) throw e;
-      const data = await graphGet('/me/memberOf', token, { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 200 });
-      teams = (data.value || []).filter(g => Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team'));
+      teams = await listMemberTeams(token);
     }
     if (args.json) { console.log(JSON.stringify(teams, null, 2)); return; }
     for (const t of teams) console.log(`${(t.id || '').slice(0, 36)}  ${t.displayName}`);
