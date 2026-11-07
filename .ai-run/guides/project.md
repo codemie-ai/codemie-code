@@ -4,9 +4,9 @@
 
 | Field | Value | Source |
 |---|---|---|
-| Project name | CodeMie Code | `README.md:1` |
-| Repository/package | `@codemieai/code` (`codemie-ai/codemie-code`) | `package.json:name`, `git remote -v` origin |
-| Project code/key | `epm-cdme` | `.codemie/codemie-cli.config.json:activeProfile` |
+| Project name | @codemieai/code | package.json::name |
+| Repository/package | codemie-ai/codemie-code | package.json::repository |
+| Project code/key | EPMCDME | user decision |
 
 ## Work Item Tracker
 
@@ -22,21 +22,23 @@
 **Lookup**: Invoke the `codemie-jira-assistant` skill with the ticket key and a request for summary, description, acceptance criteria, and links.
 **Create**: Invoke the `codemie-jira-assistant` skill with the complete ticket payload or approved story file as the argument.
 **Output**: Ticket key and URL returned by the skill.
+**Comment**: Invoke the `codemie-jira-assistant` skill with a request to add a comment to the ticket, passing the comment body as the argument.
 
 ## Source Control And Review
 
 | Field | Value |
 |---|---|
 | Provider | GitHub |
-| Repository remote | git@github.com:codemie-ai/codemie-code.git |
+| Repository remote | origin (https://github.com/codemie-ai/codemie-code.git) |
 | Default target branch | main |
 | Review artifact type | PR |
 
 ## MR Adapter
 
 **Status**: configured
-**Adapter**: `gh` CLI (authenticated; repo remote is GitHub).
-**Instructions**: Check current branch state via `gh pr list --head $(git branch --show-current)` and avoid creating duplicate PRs. Follow Conventional Commits and the project Squash-and-Merge default. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"` using the Body Template below.
+**Adapter**: `gh` CLI (authenticated; repo remote is GitHub)
+**Instructions**: Check current branch state via `gh pr list --head $(git branch --show-current)` and avoid creating duplicate PRs. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"` using the body template.
+**Body Template**: `.github/PULL_REQUEST_TEMPLATE.md`
 
 ## Complexity Scoring
 

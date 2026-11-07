@@ -1,271 +1,45 @@
 # Architecture Guide
 
-## Quick Summary
+**Project**: @codemieai/code · **Stack**: TypeScript (ESM, target ES2022, module NodeNext) commander CLI · **Scope**: plugin registries, CLI command wiring and packaged runtime assets; logging, process and error rules live in `.ai-run/guides/development/development-practices.md`
 
-CodeMie Code architecture guide covering plugin-based 5-layer architecture and organizational patterns for CLI tools.
+## Structure and boundaries
 
-**Category**: Architecture
-**Complexity**: Medium
-**Prerequisites**: TypeScript, Node.js 20+, File system basics
+### Rules
+- R10. List every non-TS file read at runtime from `dist/` in `copyConfigs` or `fileConfigs` of `scripts/copy-plugins.js` (tsc copies no assets; a missing source only prints a warning, so the build still passes and the file is absent at runtime). Evidence: `scripts/copy-plugins.js::fileConfigs`
+- R11. Keep workflow templates as `.yml` under `src/workflows/templates/<provider>/` and list them in that provider's `metadata.ts` (they are read from `src/` at runtime via `templateDir`, never copied to `dist/`, and `package.json` `files` ships them). Evidence: `src/workflows/templates/github/metadata.ts::templateDir`
+- R13. Launch an agent through `AgentRegistry`: a new agent launch path resolves its adapter from the registry, never by importing the plugin directly (proxy and analytics commands may reach plugin-specific helpers). Evidence: `src/agents/registry.ts::AgentRegistry`
 
----
+## Patterns in use
 
-## Directory Structure
+### Rules
+- R6. Stop a proxied request by setting `context.metadata.blocked = true` in `onRequest`, never by throwing (`runHook` logs a thrown error and continues with the next interceptor, so the request still goes upstream). Evidence: `src/providers/plugins/sso/proxy/sso.proxy.ts::runHook`
+- R7. Opt a proxy plugin out by throwing from `createInterceptor` with a message containing `disabled` or `not available` (logged at info); any other throw is logged as an error and the proxy starts without that plugin. Evidence: `src/providers/plugins/sso/proxy/plugins/registry.ts::PluginRegistry.initialize`
+- R8. Build an ACP variant by extending the base plugin and overriding `metadata` with `silentMode: true` and an `enrichArgs` that prepends the ACP switch (stdout is the JSON-RPC channel; all five ACP plugins under claude/, codex/, gemini/, kimi/ and opencode/ set it). Evidence: `src/agents/plugins/gemini/gemini-acp.plugin.ts::GeminiAcpPlugin`
+- R9. Write an OpenCode runtime plugin as a source-string constant whose handlers mutate `output` (OpenCode discards returned values; the string avoids compiling `@opencode-ai/plugin` types this package does not depend on). Evidence: `src/agents/plugins/codemie-code-hooks/shell-hooks-source.ts::SHELL_HOOKS_PLUGIN_SOURCE`
+- R13. Expect a broken or duplicate Claude-format plugin to vanish silently: `resolvePlugins` keeps the first plugin of a name in source order (`--plugin-dir`, project `.codemie/plugins/`, user cache, settings dirs) and logs a load failure only at debug level. Evidence: `src/plugins/core/plugin-resolver.ts::resolvePlugins`
 
-```
-codemie-code/
-├── src/                Source code
-│   ├── cli/            CLI commands layer
-│   ├── agents/         Agent system (registry + plugins)
-│   ├── providers/      LLM provider system
-│   ├── frameworks/     Framework integrations
-│   ├── mcp/            MCP proxy bridge & OAuth
-│   ├── utils/          Shared utilities
-│   ├── env/            Environment management
-│   ├── workflows/      CI/CD templates
-│   └── analytics/      Usage tracking
-├── tests/              Integration tests
-├── bin/                Executable entry points
-├── dist/               Build output (gitignored)
-├── package.json        Dependencies & scripts
-└── tsconfig.json       TypeScript configuration
-```
+### Constraints
+| Do not | Do instead | Why | Evidence |
+|---|---|---|---|
+| Do not copy `src/hooks/executor.ts::HookExecutor` | Change the runtime hook bridge in `src/agents/plugins/codemie-code-hooks/shell-hooks-source.ts` | `src/hooks/` has no production importer, only its own tests | `src/hooks/executor.ts::HookExecutor` |
 
----
+### Read first
+| When you are | Exemplar | Why this one | Tests |
+|---|---|---|---|
+| adding a proxy plugin that blocks or short-circuits a request | `src/providers/plugins/sso/proxy/plugins/endpoint-blocker.plugin.ts::EndpointBlockerInterceptor` | smallest plugin: priority, interceptor, `metadata.blocked` | `src/providers/plugins/sso/proxy/plugins/__tests__/endpoint-blocker.plugin.test.ts::EndpointBlockerPlugin` |
 
-## Source Organization
+## Extension points
 
-```
-src/
-├── cli/commands/         Commander.js command handlers
-├── agents/
-│   ├── registry.ts       Agent registry (routing)
-│   ├── core/             Base classes & interfaces
-│   └── plugins/          Concrete agent implementations
-├── providers/
-│   ├── core/             Provider interfaces
-│   └── plugins/          LLM provider implementations
-├── frameworks/
-│   ├── core/             Framework interfaces
-│   └── plugins/          Framework implementations and documentation-tool integrations
-├── mcp/
-│   ├── auth/             OAuth provider & callback server
-│   ├── stdio-http-bridge.ts
-│   ├── proxy-logger.ts
-│   └── constants.ts
-└── utils/
-    ├── errors.ts         Error classes
-    ├── logger.ts         Logging utilities
-    ├── security.ts       Security utilities
-    └── processes.ts      Process execution
-```
+### Rules
+- R1. Register a new agent plugin with a `registerPlugin(new XPlugin())` line in `AgentRegistry.initialize()` and add its name to the exact name list asserted in `src/agents/__tests__/registry.test.ts` (the registry is an explicit list, not discovery; an `OtlpAgentAdapter` lands in a separate map and stays out of `getAgentNames()`). Evidence: `src/agents/registry.ts::AgentRegistry.initialize`
+- R2. Register a provider at import time: `registerProvider()` in `<name>.template.ts`, setup steps and model proxy via `ProviderRegistry.register*` in its `index.ts`, and an import line in `src/providers/index.ts` (a provider missing from that import list never registers; `ProviderRegistry` has no lazy init). Evidence: `src/providers/core/decorators.ts::registerProvider`
+- R3. Register a docs/framework tool with `FrameworkRegistry.registerFramework()` in `src/frameworks/plugins/index.ts`; a documentation tool sets `group: 'documentation'` so `codemie docs` lists it. Evidence: `src/frameworks/plugins/index.ts::registerFramework`
+- R4. Add a config migration as `src/migrations/NNN-<slug>.migration.ts` ending in `MigrationRegistry.register(new X())`, plus an import line in `src/migrations/index.ts` (order is the id string sort; `success: false` keeps it pending and retried on every start-up, `success: true` records it permanently even when nothing changed). Evidence: `src/migrations/runner.ts::MigrationRunner.runPending`
+- R5. Add a proxy plugin with a `registry.register(new XPlugin())` line in `registerCorePlugins()` and give it a numeric `priority` (execution order is ascending priority, not registration order). Evidence: `src/providers/plugins/sso/proxy/plugins/registry.ts::PluginRegistry.getEnabledPluginsSorted`
+- R12. Add a CLI command as a `createXCommand(): Command` factory under `src/cli/commands/` and register it with `program.addCommand()` in `src/cli/index.ts`. Evidence: `src/cli/index.ts::addCommand`
 
----
-
-## Plugin-Based 5-Layer Architecture
-
-```
-┌─────────────────────────────────┐
-│  CLI Layer (src/cli/)           │  ← User commands
-└────────────┬────────────────────┘
-             ↓ calls
-┌─────────────────────────────────┐
-│  Registry Layer                 │  ← Plugin discovery & routing
-│  (src/agents/registry.ts)       │
-└────────────┬────────────────────┘
-             ↓ routes to
-┌─────────────────────────────────┐
-│  Plugin Layer (src/*/plugins/)  │  ← Concrete implementations
-└────────────┬────────────────────┘
-             ↓ extends
-┌─────────────────────────────────┐
-│  Core Layer (src/*/core/)       │  ← Interfaces & base classes
-└────────────┬────────────────────┘
-             ↓ uses
-┌─────────────────────────────────┐
-│  Utils Layer (src/utils/)       │  ← Shared utilities
-└─────────────────────────────────┘
-```
-
----
-
-## Layer Responsibilities
-
-### CLI Layer — User Interface
-
-Handles argument parsing, user prompts, and command routing. Does **not** contain business logic or direct plugin access.
-
-- Reference: `src/cli/commands/install.ts:15`
-
-### Registry Layer — Orchestration
-
-Manages plugin discovery, lazy initialization, and routing. Does **not** handle CLI or plugin implementation details.
-
-- Reference: `src/agents/registry.ts:14`
-
-### Plugin Layer — Implementations
-
-Concrete agent/provider/framework implementations. Each plugin handles specific external tool integration.
-
-```typescript
-// src/agents/plugins/claude/claude.plugin.ts:20
-export class ClaudePlugin implements AgentAdapter {
-  async install(): Promise<void> { /* npm install -g @anthropic-ai/claude-cli */ }
-  async execute(args: string[]): Promise<void> { await exec('claude', args); }
-}
-```
-
-- Reference: `src/agents/plugins/opencode/opencode.plugin.ts:335`
-
-### Core Layer — Contracts
-
-Defines interfaces and base classes that all plugins implement. Does **not** contain business logic.
-
-```typescript
-// src/agents/core/types.ts:10
-export interface AgentAdapter {
-  name: string;
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  execute(args: string[], options?: ExecutionOptions): Promise<void>;
-  isInstalled(): Promise<boolean>;
-  getVersion(): Promise<string | undefined>;
-  installVersion?(version: string): Promise<string | null>; // returns verified installed version; null = binary not yet on PATH
-}
-```
-
-### Utils Layer — Foundation
-
-Shared utilities for logging, error handling, security, and processes. Does **not** contain business logic or plugin specifics.
-
-- Reference: `src/utils/errors.ts:15`, `src/utils/logger.ts`, `src/utils/security.ts`, `src/utils/processes.ts`
-
----
-
-## Communication Rules
-
-| Allowed | Not Allowed |
-|---------|-------------|
-| `CLI → Registry → Plugin → Core → Utils` | Skipping layers |
-| Pass data via interfaces/types | Sharing mutable state |
-| `async`/`await` throughout | Blocking operations |
-| Plugins depend on Core | Core depends on Plugins |
-| All layers → Utils | Plugin → Plugin direct calls |
-
-**Flow**: `CLI → Registry → Plugin → Core → Utils` — never skip layers, never reverse direction.
-
----
-
-## Error Flow
-
-Errors propagate upward with context added at each layer:
-
-```
-Plugin Error (throws)
-    ↓ propagates
-Registry (catches, adds context)
-    ↓ re-throws
-CLI (catches, formats for user)
-```
-
-- Reference: `src/cli/commands/execute.ts:30` — uses `createErrorContext()` and `formatErrorForUser()` from `src/utils/errors.ts`.
-
----
-
-## Test Organization
-
-```
-tests/integration/       Feature-level integration tests
-src/[module]/__tests__/  Unit tests co-located with source
-```
-
-Unit tests are co-located with source; integration tests live in `tests/`.
-
----
-
-## File Naming
-
-| Type | Convention | Example |
-|------|------------|---------|
-| Modules | kebab-case.ts | `agent-registry.ts` |
-| Tests | `*.test.ts` or `__tests__/` | `registry.test.ts` |
-| Plugins | `*.plugin.ts` | `claude.plugin.ts` |
-| Interfaces | `types.ts` or `*.types.ts` | `types.ts` |
-| Config | camelCase.json | `tsconfig.json` |
-
----
-
-## Finding Code
-
-| Need | Location |
-|------|----------|
-| CLI commands | `src/cli/commands/` |
-| Agent plugins | `src/agents/plugins/` |
-| Provider plugins | `src/providers/plugins/` |
-| Core interfaces | `src/*/core/types.ts` |
-| Session adapters | `src/agents/core/session/` |
-| Error classes | `src/utils/errors.ts` |
-| Logging | `src/utils/logger.ts` |
-| Security | `src/utils/security.ts` |
-| Processes | `src/utils/processes.ts` |
-| Environment | `src/env/` |
-
----
-
-## Plugin System Design
-
-**Registry pattern**: All plugin systems follow the same lazy-init registry approach.
-
-```typescript
-AgentRegistry.getAgent('claude')             // src/agents/registry.ts
-ProviderRegistry.getProvider('openai')       // src/providers/core/registry.ts
-FrameworkRegistry.getFramework('bmad')       // src/frameworks/core/registry.ts
-FrameworkRegistry.getFramework('codegraph')  // documentation tool in the same registry
-```
-
-**Plugin discovery**:
-1. Registry initializes on first access (lazy).
-2. Plugins register in registry constructor.
-3. CLI queries registry by name; registry returns instance or `undefined`.
-
-**Adding a new plugin**:
-1. Implement the interface from `core/types.ts`.
-2. Register the plugin in the registry's `initialize()` method.
-3. No CLI layer changes required — the plugin is auto-discoverable.
-
----
-
-## Testing Strategy
-
-| Layer | Test Type | What to Mock |
-|-------|-----------|--------------|
-| CLI | Unit | Registry |
-| Registry | Unit | Plugins |
-| Plugin | Unit | External tools |
-| Core | Unit | N/A |
-| Utils | Unit | File system, network |
-| All | Integration | Nothing |
-
----
-
-## Key Design Principles
-
-1. **Separation of Concerns** — each layer has a distinct responsibility.
-2. **Dependency Inversion** — plugins depend on Core interfaces, not vice versa.
-3. **Open/Closed** — extend via plugins; do not modify core.
-4. **Plugin Isolation** — plugins do not depend on each other.
-5. **Lazy Loading** — registry initializes plugins on first use.
-
----
-
-## References
-
-| Area | Path |
-|------|------|
-| CLI | `src/cli/commands/` |
-| Registry | `src/agents/registry.ts`, `src/providers/registry.ts`, `src/frameworks/registry.ts` |
-| Plugins | `src/*/plugins/` |
-| Core | `src/*/core/` |
-| Utils | `src/utils/` |
-| Tests | `tests/integration/`, `src/**/__tests__/` |
-| OTLP ingestion adapters | `OtlpAgentAdapter` (abstract base class, `src/agents/core/OtlpAgentAdapter.ts`) is a second, non-chat plugin type registered the same way as `AgentAdapter` — one plugin per coding tool, ingesting that tool's native hook/telemetry events into the analytics pipeline. See `docs/ARCHITECTURE-OTLP-PLUGIN.md` for the dispatch pattern and how to add a new adapter (e.g. a future Cursor/other-tool adapter). |
+### Read first
+| When you are | Exemplar | Why this one | Tests |
+|---|---|---|---|
+| adding an agent shortcut binary | `bin/codemie-gemini.js::AgentCLI` | whole wrapper: registry lookup, not-found exit, `AgentCLI.run` | no covering test |
+| adding a native-telemetry (OTLP) adapter or hook event | `src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts::ClaudeCodeOtlpPlugin` | reference `OtlpAgentAdapter`; contract in `docs/ARCHITECTURE-OTLP-PLUGIN.md` | `src/agents/core/__tests__/OtlpAgentAdapter.test.ts::OtlpAgentAdapter` |
