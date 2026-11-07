@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14585_session-report-outside-repo",
+  "head": "7cc3b8314bd4515a60b757542103ef0a464c246b",
+  "runner": "npm",
+  "started_at": "2026-10-21T16:10:13Z",
+  "completed_at": "2026-10-21T16:11:18Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 58000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "5 failures in system-proxy-dispatcher.test.ts and sso.auth-gate.test.ts; neither touched by branch diff (env-dependent: proxy/network timeouts, ANTHROPIC base URL leaking into SSO test)"
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "notes": "No container engine installed; user approved local skip; CI scans on the PR"
+    },
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "notes": "Outside requested scope (lint, typecheck, unit tests)"
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "notes": "Outside requested scope (lint, typecheck, unit tests)"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "notes": "Outside requested scope (lint, typecheck, unit tests)"
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "notes": "Outside requested scope (lint, typecheck, unit tests)"
+    }
+  ],
+  "failures": {
+    "unit": " FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch through the explicit proxy\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/5]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:53895, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/5]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/5]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > starts a detached sign-in without awaiting authenticate when credentials are missing\nAssertionError: expected \"vi.fn()\" to be called with arguments: [ 'https://codemie.example.com' ]\n\nReceived:\n\n  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://api.anthropic.com\",\n  ]\n\n\nNumber of calls: 1\n\n \u276f src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:58:35\n     56|\n     57|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO \u2026\n     58|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU\u2026\n       |                                   ^\n     59|   });\n     60|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/5]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, \u2026(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": undefined,\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n"
+  }
+}

@@ -6,6 +6,7 @@
  */
 
 import { join } from 'node:path';
+import { getCodemiePath } from '../../../../utils/paths.js';
 import { SessionsSource } from '../sources/sessions-source.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 import { AnalyticsAggregator } from '../aggregator.js';
@@ -15,7 +16,7 @@ import { emailSlug, generateReportJson, writeReportWithFallback } from './report
 export interface SessionReportOptions {
   /** Session id to scope the report to. */
   sessionId: string;
-  /** Absolute or cwd-relative output path for the JSON report. Defaults to `docs/codemie/analytics/codemie-analytics-[email-]<sessionId>.json` relative to cwd. */
+  /** Absolute or cwd-relative output path for the JSON report. Defaults to `<CODEMIE_HOME or ~/.codemie>/analytics/codemie-analytics-[email-]<sessionId>.json`. */
   outputPath?: string;
   /** User email to embed in report metadata and default filename. */
   userEmail?: string;
@@ -65,7 +66,7 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
   const emailPrefix = options.userEmail ? `${emailSlug(options.userEmail)}-` : '';
   const outputPath =
     options.outputPath ??
-    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailPrefix}${options.sessionId}.json`);
+    join(getCodemiePath('analytics'), `codemie-analytics-${emailPrefix}${options.sessionId}.json`);
 
   // Explicit path ⇒ no home/tmp fallback; a write error propagates to the caller.
   const result = writeReportWithFallback((p) => generateReportJson(payload, p), outputPath, false);

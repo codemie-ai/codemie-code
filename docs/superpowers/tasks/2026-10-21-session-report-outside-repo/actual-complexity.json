@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-21T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Single function generateSessionReport in session-report.ts changed to default the output path to getCodemiePath('analytics'); reuses existing path helper." },
+    { "dimension": "technical_risk", "reason": "Established getCodemiePath pattern; no security or performance impact; trivial rollback." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
