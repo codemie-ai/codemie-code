@@ -24,8 +24,8 @@ Quality-gate commands (lint, type-check, build, CI) are defined in `.ai-run/guid
 | Variables / Functions | camelCase | `agentName`, `installAgent()` |
 | Classes / Interfaces / Types | PascalCase | `AgentRegistry`, `AgentAdapter` |
 | Constants | UPPER_SNAKE_CASE | `BUILTIN_AGENT_NAME` |
-| Files | kebab-case.ts | `agent-registry.ts` |
-| Plugins | kebab.plugin.ts | `claude.plugin.ts` |
+| Files | kebab-case.ts; a one-class file may be PascalCase | `session-config.ts`, `BaseAgentAdapter.ts` |
+| Plugins | kebab.plugin.ts (agents, frameworks); kebab.template.ts (providers) | `claude.plugin.ts`, `sso.template.ts` |
 | Tests | *.test.ts | `registry.test.ts` |
 
 ---
@@ -40,19 +40,19 @@ Rule: all exported functions need explicit return types; prefer `interface` over
 | `interface ExecutionOptions { cwd?: string }` | Use inline type literals for shared shapes |
 | `_unused: string` | Leave unused vars without `_` prefix |
 
-Reference: `src/agents/registry.ts:47-50`
+Reference: `src/agents/registry.ts::AgentRegistry.getAgent`
 
 ---
 
 ## Imports
 
-Rule: always use `.js` extension (ES modules); use `import type` for type-only imports; group Node built-ins → third-party → local; no wildcard or `require()` imports.
+Rule: always use `.js` extension (ES modules); use `import type` for type-only imports; group Node built-ins → third-party → local; no wildcard or `require()` imports. Known debt, to fix: `import * as` is used for Node built-ins (`import * as path from 'path'`) and spied modules (`import * as npm from '../../utils/processes.js'`) in non-test files.
 
 ```typescript
-// src/agents/plugins/claude/claude.plugin.ts:1-4
-import { AgentAdapter } from '../../core/types.js';
-import { exec } from '../../../utils/processes.js';
-import type { ExecutionOptions } from '../../core/types.js';
+// src/agents/plugins/claude/claude.plugin.ts::ClaudePlugin (file header)
+import type { AgentMetadata } from '../../core/types.js';
+import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { writeConfigToTempFile } from '../../core/temp-config.js';
 ```
 
 | Do | Don't |
@@ -65,7 +65,7 @@ import type { ExecutionOptions } from '../../core/types.js';
 
 ## ESLint Configuration
 
-Key rules (`eslint.config.mjs:5-20`):
+Key rules (`eslint.config.mjs::rules`, the `src/**/*.ts` block; test files have their own block):
 
 | Rule | Setting | Reason |
 |------|---------|--------|
@@ -94,7 +94,7 @@ Key settings (`tsconfig.json`):
 
 **Functions**: under 50 lines; one responsibility; max 4–5 parameters; use destructuring for multiple params.
 
-**Files**: under 500 lines; one main export per file; co-locate related functionality.
+**Files**: under 500 lines; one main export per file; co-locate related functionality. Known debt, to fix: `src/utils/config.ts`, `src/cli/commands/hook.ts`, `src/agents/core/BaseAgentAdapter.ts`, `src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts`, `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts` and other modules over 500 lines.
 
 **Classes**: Single Responsibility; prefer composition over inheritance; use dependency injection.
 
@@ -144,7 +144,7 @@ lint-staged config (`package.json` lint-staged section):
 
 - ESLint passes with zero warnings
 - TypeScript compiles without errors
-- No `console.log()` left in code
+- No `console.log()` left in code. Known debt, to fix: CLI commands print user output with `console.log` (e.g. `src/cli/commands/shared/helpers.ts::enableVerboseLogging`)
 - All imports have `.js` extensions
 - Function return types are explicit
 - No hardcoded secrets

@@ -90,3 +90,7 @@ docs/superpowers/qa-tasks/*/**/*.local.*
 /docs/superpowers/resume/
 /docs/superpowers/review-prompts/
 /docs/codemie/analytics/
+
+docs/superpowers/tasks/*/**/*.local/
+docs/superpowers/tasks/*/**/task-*-brief.md
+docs/superpowers/tasks/*/**/task-*-report.md

@@ -16,31 +16,28 @@ Core development practices for CodeMie Code: error handling, logging, process ex
 
 | Exception | When to Use | Example Use Case | Source |
 |-----------|-------------|------------------|--------|
-| `CodeMieError` | Base for all errors | Generic CodeMie failures | src/utils/errors.ts:1-6 |
-| `ConfigurationError` | Config issues | Invalid profile, missing settings | src/utils/errors.ts:8-13 |
-| `AgentNotFoundError` | Agent lookup failed | Unknown agent name requested | src/utils/errors.ts:15-20 |
-| `AgentInstallationError` | Install failed | npm install errors, missing deps | src/utils/errors.ts:22-27 |
-| `ToolExecutionError` | Tool exec failed | Command execution errors | src/utils/errors.ts:29-34 |
-| `PathSecurityError` | Path validation failed | Path traversal attempt | src/utils/errors.ts:36-41 |
-| `NpmError` | npm operations | Network, permission, package issues | src/utils/errors.ts:57-66 |
-| `ReconcileLockHeldError` | Session reconcile lock held | Another process holds a Desktop session's reconcile lock at finalization | src/utils/errors.ts:77-82 |
+| `CodeMieError` | Base for all errors | Generic CodeMie failures | `src/utils/errors.ts::CodeMieError` |
+| `ConfigurationError` | Config issues | Invalid profile, missing settings | `src/utils/errors.ts::ConfigurationError` |
+| `AgentNotFoundError` | Agent lookup failed | Unknown agent name requested | `src/utils/errors.ts::AgentNotFoundError` |
+| `AgentInstallationError` | Install failed | npm install errors, missing deps | `src/utils/errors.ts::AgentInstallationError` |
+| `ToolExecutionError` | Tool exec failed | Command execution errors | `src/utils/errors.ts::ToolExecutionError` |
+| `PathSecurityError` | Path validation failed | Path traversal attempt | `src/utils/errors.ts::PathSecurityError` |
+| `NpmError` | npm operations | Network, permission, package issues; build it with `parseNpmError()` | `src/utils/errors.ts::NpmError` |
+| `ReconcileLockHeldError` | Session reconcile lock held | Another process holds a Desktop session's reconcile lock at finalization | `src/utils/errors.ts::ReconcileLockHeldError` |
+| `SessionFileLockTimeoutError` | Session file lock not acquired in time | Concurrent writers on one session file | `src/utils/errors.ts::SessionFileLockTimeoutError` |
+| `PartialRegistrationError` | Some assistants/skills failed to register | Registration batch partly failed | `src/utils/errors.ts::PartialRegistrationError` |
 
 ### Pattern: Throw & Catch
 
 ```typescript
-// Throw - Source: src/agents/registry.ts:47-50
-if (!adapter) {
-  throw new AgentNotFoundError(name);
-}
+// Throw - Source: src/cli/commands/uninstall.ts (AgentRegistry.getAgent returns undefined; the caller throws)
+const adapter = AgentRegistry.getAgent(name);
+if (!adapter) throw new AgentNotFoundError(name);
 
-// Catch - Source: src/cli/commands/execute.ts:30-38
-try {
-  await adapter.execute(args);
-} catch (error) {
-  const context = createErrorContext(error, { agentName });
-  logger.error('Execution failed', context);
-  console.error(formatErrorForUser(context));
-}
+// Catch - Source: src/cli/commands/shared/helpers.ts::handleSetupError
+const context = createErrorContext(error);
+logger.error(`Failed to ${label}`, context);
+console.error(formatErrorForUser(context));
 ```
 
 **Rules**:
@@ -83,7 +80,7 @@ const versionMismatch =
 ### Configuration
 
 ```typescript
-// Source: src/utils/logger.ts:22-60
+// Source: src/utils/logger.ts::Logger.setAgentName
 // Set context at agent startup
 logger.setAgentName('claude');
 logger.setProfileName('work');
@@ -94,16 +91,16 @@ logger.setSessionId(sessionId);
 
 | Level | When | Console | File | Example |
 |-------|------|---------|------|---------|
-| DEBUG | Internal details | ❌ No | ✅ Yes | `logger.debug('State transition', { from, to })` |
+| DEBUG | Internal details | stderr, only when `CODEMIE_DEBUG` | only when `CODEMIE_DEBUG` | `logger.debug('State transition', { from, to })` |
 | INFO | Normal operations | ❌ No | ✅ Yes | `logger.info('Agent initialized', { agent })` |
-| WARN | Recoverable issues | ✅ Yes | ✅ Yes | `logger.warn('Config missing', { key })` |
-| ERROR | Failures | ✅ Yes | ✅ Yes | `logger.error('Install failed', context)` |
-| SUCCESS | User feedback | ✅ Yes | ✅ Yes | `logger.success('Agent installed')` |
+| WARN | Recoverable issues | ❌ No | ✅ Yes | `logger.warn('Config missing', { key })` |
+| ERROR | Failures | stderr, only when `CODEMIE_DEBUG` | ✅ Yes | `logger.error('Install failed', context)` |
+| SUCCESS | User feedback | ✅ stdout | ✅ Yes | `logger.success('Agent installed')` |
 
 ### Pattern: Structured Logging with Sanitization
 
 ```typescript
-// Source: src/utils/logger.ts:150-165
+// Source: src/utils/security.ts::sanitizeLogArgs
 import { sanitizeLogArgs } from './security.js';
 
 // Good - Structured with sanitization
@@ -119,16 +116,16 @@ logger.debug(JSON.stringify(request)); // ❌ No sanitization
 ```
 
 **Rules**:
-- ✅ Use logger.debug() for internal details (file-only)
+- ✅ Use logger.debug() for internal details; it writes nothing unless `CODEMIE_DEBUG` is set, then to the log file and stderr. Evidence: `src/utils/logger.ts::Logger.debug`
 - ✅ Use logger.success() for user feedback messages
-- ✅ Always sanitize with sanitizeLogArgs() before logging
+- ✅ Pass data as logger arguments, never interpolated into the message: the file sink runs `sanitizeLogArgs()` on the arguments only. Evidence: `src/utils/logger.ts::Logger.writeToLogFile`
 - ✅ Set session context (agent, profile, sessionId) at startup
 - ❌ Use console.log() for debug info (use logger.debug())
 - ❌ Log sensitive data (tokens, passwords, API keys)
 - ❌ Log in performance-critical paths
 
 **Log File Location**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
-**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs on stderr (a hook process writes every log level to the log file only; its stderr carries only its own message to the agent on a blocking exit)
+**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs on stderr. A `codemie hook` or `codemie sound` process never writes to the console (its stderr is the agent's block reason): `bin/codemie.js::isHookProcess`
 
 ---
 
@@ -137,14 +134,15 @@ logger.debug(JSON.stringify(request)); // ❌ No sanitization
 ### npm & Process Operations
 
 ```typescript
-// Source: src/utils/processes.ts
-import { installGlobal, commandExists, exec } from './utils/processes.js';
+// Source: src/utils/processes.ts::installGlobal, src/utils/exec.ts::exec
+import { installGlobal, listGlobal, commandExists } from './utils/processes.js';
+import { exec } from './utils/exec.js';
 
 // Check if package installed
-const installed = await listGlobal('@anthropic-ai/claude-cli');
+const installed = await listGlobal('@anthropic-ai/claude-code');
 
 // Install package
-await installGlobal('@anthropic-ai/claude-cli');
+await installGlobal('@anthropic-ai/claude-code');
 
 // Check command exists
 const hasGit = await commandExists('git');
@@ -154,10 +152,10 @@ const result = await exec('npm', ['install', '-g', 'package']);
 ```
 
 **Rules**:
-- ✅ Use exec() from src/utils/exec.ts for all process spawning
+- ✅ Use exec() from src/utils/exec.ts for all process spawning. Known debt, to fix: `exec` from `child_process` in `src/providers/plugins/bedrock/bedrock.setup-steps.ts`, `src/utils/clipboard.ts`, `src/telemetry/runtime/DesktopRepositoryResolver.ts`; `execSync` in `src/workflows/detector.ts`; `execFile` in `src/mcp/auth/mcp-oauth-provider.ts`; `spawn` in `src/agents/core/BaseAgentAdapter.ts`, `src/providers/plugins/sso/sso.auth.ts`, `src/bin/codebase-memory-ui-daemon.ts`, `src/cli/commands/sound.ts`, `src/cli/commands/skills/lib/run-skills-cli.ts`.
 - ✅ Use high-level functions (installGlobal, etc.) when available
 - ✅ Handle errors with parseNpmError() for npm operations
-- ✅ Set appropriate timeouts (default: 2 minutes)
+- ✅ Pass a timeout for npm operations (`installGlobal` defaults to 5 minutes). Evidence: `src/utils/processes.ts::installGlobal`
 - ❌ Use child_process.exec() directly
 - ❌ Use synchronous operations (execSync) in async contexts
 
@@ -193,15 +191,14 @@ async function getAgent(name: string) { } // Missing return type
 ```
 
 **Rules**:
-- ✅ All imports use .js extensions (required for ES modules)
-- ✅ All exported functions have explicit return types
+- ✅ All relative imports use .js extensions (required for ES modules)
+- ✅ Exported functions have explicit return types. Allowed exceptions: `src/agents/plugins/claude/plugin/statusline.ts` (bundled standalone script)
 - ✅ Use interfaces for object shapes (prefer over types)
-- ✅ Use async/await consistently (no Promise chains)
+- ✅ Prefer async/await; `.then()` remains in fire-and-forget calls (e.g. `src/telemetry/runtime/DesktopTelemetryRuntime.ts`, `src/providers/plugins/sso/proxy/sso.proxy.ts`)
 - ✅ Use optional chaining (?.) and nullish coalescing (??)
-- ✅ Use single quotes ('') for strings (project convention, consistent style)
-- ⚠️ 'any' allowed when needed - @typescript-eslint/no-explicit-any disabled
+- ✅ Prefer single quotes ('') for strings; not lint-enforced, and generated-source modules such as `src/agents/plugins/codemie-code-hooks/shell-hooks-source.ts` use double quotes
+- ⚠️ 'any' allowed when needed - @typescript-eslint/no-explicit-any disabled. Evidence: `eslint.config.mjs::no-explicit-any`
 - ❌ Use require() or __dirname (use ES modules and getDirname())
-- ❌ Use double quotes ("") for strings (use single quotes instead)
 
 ---
 
@@ -210,7 +207,7 @@ async function getAgent(name: string) { } // Missing return type
 ### CodeMie Paths
 
 ```typescript
-// Source: src/utils/paths.ts:80-95
+// Source: src/utils/paths.ts::getCodemiePath
 import { getCodemiePath, getCodemieHome } from './utils/paths.js';
 
 // Get base directory (~/.codemie/)
@@ -225,7 +222,7 @@ const agentsDir = getCodemiePath('agents');
 ### Path Validation
 
 ```typescript
-// Source: src/utils/paths.ts:40-60
+// Source: src/utils/paths.ts::isPathWithinDirectory
 import { isPathWithinDirectory, matchesPathStructure } from './utils/paths.js';
 
 // Ensure path is within working directory
@@ -249,35 +246,21 @@ const matches = matchesPathStructure(
 ### Profile Loading
 
 ```typescript
-// Source: src/env/config-loader.ts:50-70
-import { ConfigLoader } from './env/config-loader.js';
+// Source: src/utils/config.ts::ConfigLoader.load
+import { ConfigLoader } from './utils/config.js';
 
-// Load config from working directory
-const config = await ConfigLoader.load(process.cwd(), {
-  profile: 'work',
-  provider: 'openai'
-});
-
-// Access profile settings
-const apiKey = config.profile.provider.apiKey;
-const model = config.profile.model;
+// Priority: CLI overrides > env vars > project config > global config > defaults
+const config = await ConfigLoader.load(process.cwd(), { name: 'work' });
+const model = config.model;
 ```
 
 ### Environment Variables
 
-**Required**:
+No provider key variable is required: a profile from `codemie setup` supplies provider, URL and credentials. `ConfigLoader` reads these overrides (Evidence: `src/utils/config.ts::ConfigLoader.loadFromEnv`):
 ```bash
-# Provider-specific (one required)
-ANTHROPIC_API_KEY=sk-ant-...          # For Claude
-OPENAI_API_KEY=sk-...                 # For OpenAI
-GOOGLE_AI_API_KEY=...                 # For Gemini
-```
-
-**Optional**:
-```bash
-CODEMIE_DEBUG=true                    # Debug logging to stderr (default: false)
-CODEMIE_PROFILE=work                  # Default profile (default: default)
-NODE_ENV=development                  # Environment mode
+CODEMIE_PROVIDER / CODEMIE_BASE_URL / CODEMIE_API_KEY / CODEMIE_MODEL / CODEMIE_TIMEOUT
+CODEMIE_DEBUG=true                    # Debug logging to file and stderr (default: false)
+CODEMIE_URL / CODEMIE_AUTH_METHOD     # SSO overrides
 ```
 
 **Rules**:
@@ -364,7 +347,7 @@ codemie doctor
 ### Dynamic Imports for Mocking
 
 ```typescript
-// Source: src/utils/__tests__/npm.test.ts:10-30
+// Source: src/utils/__tests__/processes.test.ts::installGlobal
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as exec from '../exec.js';
 
@@ -402,7 +385,6 @@ describe('npm utilities', () => {
 - **Processes**: `src/utils/processes.ts`, `src/utils/exec.ts`
 - **Paths**: `src/utils/paths.ts`
 - **Security**: `src/utils/security.ts`
-- **Configuration**: `src/env/config-loader.ts`
-- **Utils Guide**: `src/utils/CLAUDE.md`
+- **Configuration**: `src/utils/config.ts`
 
 ---

@@ -10,19 +10,21 @@ Public API surface exported by `src/index.ts` for external integration (VSCode e
 
 | Export | Purpose | Source |
 |--------|---------|--------|
-| `CodeMieSSO` | Browser-based SSO authentication & credential storage | `src/providers/plugins/sso/sso.auth.ts:33` |
-| `CodeMieProxy` | Plugin-based HTTP proxy with streaming | `src/providers/plugins/sso/proxy/sso.proxy.ts:41` |
-| `getPluginRegistry` | Singleton accessor for the plugin registry | `src/providers/plugins/sso/proxy/plugins/registry.ts:142` |
-| `processEvent` | Programmatic hook event processing | `src/cli/commands/hook.ts:1152` |
-| `ConfigLoader` | Unified config loader with priority system | `src/utils/config.ts:29` |
+| `CodeMieSSO` | Browser-based SSO authentication & credential storage | `src/providers/plugins/sso/sso.auth.ts::CodeMieSSO` |
+| `CodeMieProxy` | Plugin-based HTTP proxy with streaming | `src/providers/plugins/sso/proxy/sso.proxy.ts::CodeMieProxy` |
+| `getPluginRegistry` | Singleton accessor for the plugin registry | `src/providers/plugins/sso/proxy/plugins/registry.ts::getPluginRegistry` |
+| `processEvent`, `HookProcessingConfig` | Programmatic hook event processing | `src/cli/commands/hook.ts::processEvent` |
+| `ConfigLoader` | Unified config loader with priority system | `src/utils/config.ts::ConfigLoader` |
+| `AgentRegistry`, `AgentAdapter` (type) | Agent lookup and launch | `src/agents/registry.ts::AgentRegistry` |
+| `logger`, `exec`, every error class, `EnvManager` | Shared utilities | `src/index.ts::EnvManager` |
 
 ---
 
 ## CodeMieSSO
 
-Handles browser-based OAuth; manages credential storage, session lifecycle, and callback handling. Credentials are stored per base URL and expire after 24 hours.
+Handles browser-based OAuth; manages credential storage, session lifecycle, and callback handling. Credentials are stored per base URL; `expiresAt` comes from the `codemie_access_token` JWT `exp` claim, else 24 hours.
 
-**Key methods** (`src/providers/plugins/sso/sso.auth.ts:33`):
+**Key methods** (`src/providers/plugins/sso/sso.auth.ts::CodeMieSSO`):
 
 | Method | Signature |
 |--------|-----------|
@@ -58,15 +60,15 @@ const result = await sso.authenticate({ codeMieUrl: 'https://codemie.lab.epam.co
 
 Plugin-extensible HTTP proxy that streams requests to an upstream API and runs plugin hooks at each lifecycle stage. Never buffers — all streaming is chunk-by-chunk.
 
-**Key methods** (`src/providers/plugins/sso/proxy/sso.proxy.ts:41`):
+**Key methods** (`src/providers/plugins/sso/proxy/sso.proxy.ts::CodeMieProxy`):
 
 | Method | Signature |
 |--------|-----------|
 | `constructor` | `(config: ProxyConfig)` |
 | `start` | `() => Promise<{ port: number; url: string }>` |
-| `stop` | `() => Promise<void>` |
+| `stop` | `(bounds?: { deadlineMs?: number }) => Promise<void>` |
 
-**ProxyConfig key fields** (`src/providers/plugins/sso/proxy/sso.proxy.ts:41`):
+**ProxyConfig key fields** (`src/providers/plugins/sso/proxy/proxy-types.ts::ProxyConfig`):
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -93,7 +95,7 @@ Plugin-extensible HTTP proxy that streams requests to an upstream API and runs p
 
 Singleton accessor; returns a `PluginRegistry` that manages plugin ordering and lifecycle for the proxy.
 
-**`PluginRegistry` methods** (`src/providers/plugins/sso/proxy/plugins/registry.ts:14`):
+**`PluginRegistry` methods** (`src/providers/plugins/sso/proxy/plugins/registry.ts::PluginRegistry`):
 
 | Method | Purpose |
 |--------|---------|
@@ -106,12 +108,12 @@ Singleton accessor; returns a `PluginRegistry` that manages plugin ordering and 
 **`ProxyPlugin` contract**:
 ```typescript
 interface ProxyPlugin {
-  id: string; name: string; priority: number;
-  createInterceptor(context: PluginContext): Promise<ProxyInterceptor>;
-  onEnable?(): Promise<void>; onDisable?(): Promise<void>;
+  id: string; name: string; version: string; priority: number; dependencies?: string[];
+  createInterceptor(context: PluginContext): ProxyInterceptor | Promise<ProxyInterceptor>;
+  onInstall?(): Promise<void>; onUninstall?(): Promise<void>; onEnable?(): Promise<void>; onDisable?(): Promise<void>;
 }
 ```
-(`src/providers/plugins/sso/proxy/plugins/registry.ts:14`)
+(`src/providers/plugins/sso/proxy/plugins/types.ts::ProxyPlugin`)
 
 **`ProxyInterceptor` hooks** (all optional): `onProxyStart`, `onRequest`, `onResponseHeaders`, `onResponseChunk`, `onResponseComplete`, `onProxyStop`, `onError`.
 
@@ -123,7 +125,7 @@ interface ProxyPlugin {
 
 Stateless function that processes hook events programmatically — same logic as the CLI hook command but accepts event objects and throws exceptions (instead of `process.exit`) when `config` is supplied.
 
-**Signature** (`src/cli/commands/hook.ts:1152`):
+**Signature** (`src/cli/commands/hook.ts::processEvent`):
 ```typescript
 export async function processEvent(event: BaseHookEvent, config?: HookProcessingConfig): Promise<void>;
 ```
@@ -157,7 +159,7 @@ Unified config loader with a fixed priority chain. Supports legacy single-provid
 
 **Priority** (highest → lowest): CLI args → env vars → project config (`.codemie/codemie-cli.config.json`) → global config (`~/.codemie/codemie-cli.config.json`) → defaults.
 
-**Static methods** (`src/utils/config.ts:29`):
+**Static methods** (`src/utils/config.ts::ConfigLoader`):
 
 | Method | Use when |
 |--------|----------|
@@ -167,7 +169,7 @@ Unified config loader with a fixed priority chain. Supports legacy single-provid
 | `loadWithSources(workingDir?)` | Need to know which layer each field came from |
 | `showWithSources(workingDir?)` | Human-readable source attribution |
 
-**Config formats** (`src/utils/config.ts:29`):
+**Config formats** (`src/utils/config.ts::ConfigLoader.loadMultiProviderConfig`):
 
 Legacy (v1): flat `{ provider, apiKey, model, baseUrl, ... }`.  
 Multi-provider (v2): `{ version: 2, activeProfile: string, profiles: Record<string, CodeMieConfigOptions>, analytics? }`.
