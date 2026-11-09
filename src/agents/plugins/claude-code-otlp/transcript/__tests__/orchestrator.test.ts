@@ -3751,6 +3751,32 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
     expect(env[0]).toMatchObject({ permission_mode: 'plan' });
   });
 
+  it('keeps the env change for the first active Stop when an idle reopened Stop runs first', async () => {
+    const sessionId = 'session-reopen-idle-stop-env';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
+    await resume.finalize(true);
+    const envCheck = { effort: sessionEnvFixture.effort, permissionMode: 'plan' };
+
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
+    await idle.finalize(true);
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
+    await active.finalize(true);
+
+    expect(active.suppressLifecycle).toBe(false);
+    expect(active.events.filter((e) => e.type === 'agent.session.env')).toHaveLength(1);
+  });
+
   it('keeps subagent usage for the first active pass when an idle reopen ends first', async () => {
     const sessionId = 'session-reopen-subagent';
     const path = writeTranscript(`${sessionId}.jsonl`, [

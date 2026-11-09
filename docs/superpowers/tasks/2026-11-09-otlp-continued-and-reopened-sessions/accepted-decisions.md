@@ -56,6 +56,17 @@ ticket acceptance criteria (verified live, isolated, against baseline `main`).
   adds overhead and risks breaking correct counting.
 - **Reopen only if:** a real continued session is seen with subagent transcripts copied from its parent.
 
+## D-5 (review run 5): raw passthrough hooks on an idle reopened session
+
+- **Behaviour:** hooks that are not lifecycle events (`Notification`, `InstructionsLoaded`, ...) are
+  still forwarded at hook time while a reopened session has no activity of its own. This was the
+  behaviour before this change.
+- **Decision:** not changed. It is not shown that the backend uses these events to admit a session
+  into a day's window, or that Claude Code fires them on a reopen. Gating them without that evidence
+  risks dropping legitimate events (a `SubagentStop` already counts as activity by design).
+- **Reopen only if:** real data shows a `Notification` (or another passthrough event) on an idle
+  reopen putting the session back into the reopen day's analytics.
+
 ## Fixed after review run 4 (for reference, not accepted limits)
 
 - CR-001: a reopen no longer moves the env baseline, so a model/permission-mode change made at
@@ -63,6 +74,8 @@ ticket acceptance criteria (verified live, isolated, against baseline `main`).
 - CR-002: an idle reopened `SessionEnd` no longer runs the subagent backstop or the env check, so
   subagent usage is still sent once the session is active again.
 - CR-003: tests added for the parent lookup when the `continued-in` record lies before the tail window.
+- Review run 5 CR-001: an idle reopened `Stop`/`StopFailure`/`PreCompact` no longer settles deferred
+  subagents or moves the env baseline.
 
 ## Evidence
 

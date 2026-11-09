@@ -1119,11 +1119,15 @@ export async function openMainTranscriptPass(
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger, pass);
     // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
     // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
-    if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
+    // A reopened session with no activity of its own sends nothing (the plugin drops this pass's
+    // payload), so it must not consume deferred subagents or the env baseline either: both stay for
+    // the first pass after the session is active again.
+    const idle = isReopenedIdle(state);
+    if (!idle && (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact')) {
       events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, pass, envCheck?.cwd)));
     }
 
-    if (envCheck) {
+    if (envCheck && !idle) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
@@ -1131,7 +1135,7 @@ export async function openMainTranscriptPass(
     return {
       events,
       finalize: finalizeOf(sessionId, state, release),
-      suppressLifecycle: isReopenedIdle(state),
+      suppressLifecycle: idle,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
