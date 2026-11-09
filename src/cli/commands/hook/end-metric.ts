@@ -105,7 +105,8 @@ export async function sendSessionEndMetrics(
     const verdict = await legacyMetricsVerdict(session);
     if (!verdict.publish) {
       logger.debug(`[hook:SessionEnd] End metric withheld: ${verdict.reason}`);
-      await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason });
+      // A transient verdict is not persisted: the end metric stays unmarked and delivery retries it
+      if (!('transient' in verdict)) await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason });
       return;
     }
 

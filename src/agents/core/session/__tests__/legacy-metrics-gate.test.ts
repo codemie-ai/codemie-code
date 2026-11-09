@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,11 +9,23 @@ const identity = vi.hoisted(() => ({
 vi.mock('@/agents/core/evidence/hook-identity.js', () => ({
   currentEvidenceIdentity: vi.fn(async () => identity.current),
 }));
+const faults = vi.hoisted(() => ({ consentThrows: false }));
+vi.mock('@/agents/core/evidence/consent-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/core/evidence/consent-store.js')>();
+  return {
+    ...actual,
+    consentHolds: vi.fn(async (...args: Parameters<typeof actual.consentHolds>) => {
+      if (faults.consentThrows) throw new Error('consent store lock timeout');
+      return actual.consentHolds(...args);
+    }),
+  };
+});
 
 const { freezeLegacyMetricsConsent, legacyMetricsVerdict, isLegacyGateSkip, isLegacyGatedProvider } = await import('../legacy-metrics-gate.js');
 const { connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
-const { writeNotice, writeStop, hasMarker } = await import('@/agents/core/evidence/stop-marker.js');
+const { writeNotice, writeStop, markerState } = await import('@/agents/core/evidence/stop-marker.js');
+const { evidenceDir, stopFileName } = await import('@/agents/core/evidence/record-store.js');
 const { createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
 
 const SCOPE = { api_identity: 'api-x', owner_hash: 'owner-x', project: 'test321' };
@@ -30,6 +42,7 @@ describe('legacy /v1/metrics gate', () => {
     folder = mkdtempSync(join(tmpdir(), 'legacy-gate-repo-'));
     process.env.CODEMIE_HOME = join(root, '.codemie');
     identity.current = { api_identity: 'api-x', owner_hash: 'owner-x' };
+    faults.consentThrows = false;
   });
 
   afterEach(() => {
@@ -38,10 +51,13 @@ describe('legacy /v1/metrics gate', () => {
     rmSync(folder, { recursive: true, force: true });
   });
 
-  async function session(provider = GATED, project: string | undefined = 'test321') {
+  async function session(provider = GATED, project: string | undefined = 'test321', agentSessionId = NATIVE_ID) {
     const legacyMetricsConsent = await freezeLegacyMetricsConsent(provider, project, folder);
-    return { provider, project, workingDirectory: folder, correlation: { agentSessionId: NATIVE_ID }, legacyMetricsConsent };
+    return { provider, project, workingDirectory: folder, correlation: { agentSessionId }, legacyMetricsConsent };
   }
+
+  const PENDING = { publish: false, reason: 'destination-pending', transient: true };
+  const UNAVAILABLE = { publish: false, reason: 'verdict-unavailable', transient: true };
 
   it('gates anthropic-subscription only', () => {
     expect(isLegacyGatedProvider(GATED)).toBe(true);
@@ -95,11 +111,41 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'consent-revoked' });
   });
 
-  it('a notice marker is destination-held', async () => {
+  it('a notice marker (a recoverable hold) is a transient destination-pending, never a final skip', async () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
     await writeNotice(recordKey('api-x', 'owner-x', NATIVE_ID), 'hold_project_unavailable', NATIVE_ID);
-    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'destination-held' });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+  });
+
+  it('a non-empty spool holds entry is a transient destination-pending until the hold clears', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'stamp_pending', since: 1 } } });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+    await writeStatus(NATIVE_ID, createStatus());
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('a marker that cannot be read is transient verdict-unavailable', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    mkdirSync(join(evidenceDir(), stopFileName(recordKey('api-x', 'owner-x', NATIVE_ID))), { recursive: true });
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+  });
+
+  it('an error while establishing the verdict is transient verdict-unavailable', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    faults.consentThrows = true;
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+  });
+
+  it('an unsafe native session id never reaches a spool or marker path: transient verdict-unavailable', async () => {
+    await connectFolder(SCOPE, folder);
+    for (const unsafe of ['../escape', 'a/b', 'a\\b']) {
+      expect(await legacyMetricsVerdict(await session(GATED, 'test321', unsafe))).toEqual(UNAVAILABLE);
+    }
   });
 
   it('a stop marker is destination-held', async () => {
@@ -120,10 +166,15 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
-  it('hasMarker is false only when no marker exists', async () => {
+  it('markerState tells absent, notice, stop and unreadable apart', async () => {
     const key = recordKey('api-x', 'owner-x', 'other');
-    expect(await hasMarker(key)).toBe(false);
+    expect(await markerState(key)).toBe('absent');
     await writeNotice(key, 'hold_project_unavailable', 'other');
-    expect(await hasMarker(key)).toBe(true);
+    expect(await markerState(key)).toBe('notice');
+    await writeStop(key, 'consent_revoked', 'other');
+    expect(await markerState(key)).toBe('stop');
+    const unreadable = recordKey('api-x', 'owner-x', 'unreadable');
+    mkdirSync(join(evidenceDir(), stopFileName(unreadable)), { recursive: true });
+    expect(await markerState(unreadable)).toBe('unknown');
   });
 });

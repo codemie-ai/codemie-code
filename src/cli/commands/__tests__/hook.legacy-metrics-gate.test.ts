@@ -34,14 +34,25 @@ vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal
 vi.mock('@/agents/core/evidence/hook-identity.js', () => ({
   currentEvidenceIdentity: vi.fn(async () => ({ api_identity: 'api-x', owner_hash: 'owner-x' })),
 }));
+const faults = vi.hoisted(() => ({ consentThrows: false }));
+vi.mock('@/agents/core/evidence/consent-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/core/evidence/consent-store.js')>();
+  return {
+    ...actual,
+    consentHolds: vi.fn(async (...args: Parameters<typeof actual.consentHolds>) => {
+      if (faults.consentThrows) throw new Error('consent store lock timeout');
+      return actual.consentHolds(...args);
+    }),
+  };
+});
 
 const { processEvent } = await import('../hook.js');
-const { isDeliveryDone } = await import('../hook/delivery.js');
+const { deliverSession, isDeliveryDone } = await import('../hook/delivery.js');
 const { getSessionMetricsPath } = await import('@/agents/core/session/session-config.js');
 const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
 const { getCodemiePath } = await import('@/utils/paths.js');
 const { consentStorePath, connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
-const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+const { evidenceDir, recordKey, stopFileName } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice } = await import('@/agents/core/evidence/stop-marker.js');
 
 interface Sent {
@@ -76,6 +87,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     process.env.CODEMIE_HOME = home;
     mkdirSync(getCodemiePath('sessions'), { recursive: true });
     sent = [];
+    faults.consentThrows = false;
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       sent.push({ url: String(input), project: headers.get('X-CodeMie-Project'), body: JSON.parse(String(init?.body ?? '{}')) });
@@ -92,6 +104,22 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
   function metricCalls(): Sent[] {
     return sent.filter((s) => s.url.endsWith('/v1/metrics'));
+  }
+
+  function usageCalls(): Sent[] {
+    return metricCalls().filter((m) => m.body.name !== 'codemie_cli_session_total');
+  }
+
+  function transcriptLines(): string[] {
+    return ['2026-11-01T10:00:01Z', '2026-11-01T10:00:02Z'].map((timestamp, i) => JSON.stringify({
+      type: i % 2 === 0 ? 'user' : 'assistant',
+      uuid: `msg-${i}`,
+      sessionId: NATIVE_ID,
+      timestamp,
+      message: i % 2 === 0
+        ? { role: 'user', content: 'prompt' }
+        : { role: 'assistant', id: 'api-1', content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }], usage: { input_tokens: 1, output_tokens: 1 } },
+    }));
   }
 
   function lifecycleStatuses(): unknown[] {
@@ -111,6 +139,13 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     await processEvent({ ...base, hook_event_name: 'SessionEnd', reason: 'exit' } as never, config);
     return sessionId;
   }
+
+  function configFor(provider: string, sessionId: string) {
+    return { ...baseConfig, provider, sessionId };
+  }
+
+  const markerKey = (): string => recordKey(IDENTITY.api_identity, IDENTITY.owner_hash, NATIVE_ID);
+  const clearMarker = (): void => rmSync(join(evidenceDir(), stopFileName(markerKey())), { force: true });
 
   async function endMetricSkipped(sessionId: string): Promise<string | undefined> {
     return (await new SessionStore().loadSession(sessionId))?.endMetricSkipped;
@@ -146,30 +181,82 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     expect(await endMetricSkipped(sessionId)).toBe('consent-revoked');
   });
 
-  it('(c) a hold marker for the record key before SessionEnd withholds the end metric', async () => {
+  it('(c) a recoverable hold (notice marker) at SessionEnd leaves the end metric unmarked; it is sent once the hold clears', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
 
     const sessionId = await runSession('anthropic-subscription', async () => {
-      await writeNotice(recordKey(IDENTITY.api_identity, IDENTITY.owner_hash, NATIVE_ID), 'hold_project_unavailable', NATIVE_ID);
+      await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
+    });
+
+    expect(lifecycleStatuses()).toEqual(['started']);
+    expect(await endMetricSkipped(sessionId)).toBeUndefined();
+    expect(await isDeliveryDone(sessionId, configFor('anthropic-subscription', sessionId))).toBe(false);
+
+    clearMarker();
+    await deliverSession(sessionId, configFor('anthropic-subscription', sessionId));
+
+    expect(lifecycleStatuses()).toEqual(['started', 'completed']);
+    expect(await endMetricSkipped(sessionId)).toBeUndefined();
+  });
+
+  it('(c2) a final hold (stop marker) at SessionEnd is persisted as destination-held', async () => {
+    await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    const { writeStop } = await import('@/agents/core/evidence/stop-marker.js');
+
+    const sessionId = await runSession('anthropic-subscription', async () => {
+      await writeStop(markerKey(), 'consent_revoked', NATIVE_ID);
     });
 
     expect(lifecycleStatuses()).toEqual(['started']);
     expect(await endMetricSkipped(sessionId)).toBe('destination-held');
   });
 
+  it('(e) a gate error at SessionEnd sends nothing and leaves the end metric unmarked; a later delivery sends it', async () => {
+    await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+
+    const sessionId = await runSession('anthropic-subscription', async () => {
+      faults.consentThrows = true;
+    });
+
+    expect(lifecycleStatuses()).toEqual(['started']);
+    expect(await endMetricSkipped(sessionId)).toBeUndefined();
+
+    faults.consentThrows = false;
+    await deliverSession(sessionId, configFor('anthropic-subscription', sessionId));
+
+    expect(lifecycleStatuses()).toEqual(['started', 'completed']);
+  });
+
+  it('(f) usage deltas under a recoverable hold stay pending and are sent once the hold clears', async () => {
+    await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    const sessionId = 'gate-17054-held-deltas';
+    const transcript = join(repo, 'held-deltas.jsonl');
+    writeFileSync(transcript, `${transcriptLines().join('\n')}\n`);
+    const base = { session_id: NATIVE_ID, transcript_path: transcript, permission_mode: 'default', cwd: repo };
+    const config = configFor('anthropic-subscription', sessionId);
+
+    await processEvent({ ...base, hook_event_name: 'SessionStart', source: 'startup', startTime: Date.parse('2026-11-01T10:00:00Z') } as never, config);
+    await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
+    await processEvent({ ...base, hook_event_name: 'Stop' } as never, config);
+    await processEvent({ ...base, hook_event_name: 'SessionEnd', reason: 'exit' } as never, config);
+
+    expect(lifecycleStatuses()).toEqual(['started']);
+    expect(usageCalls()).toEqual([]);
+    expect(await endMetricSkipped(sessionId)).toBeUndefined();
+    expect(await isDeliveryDone(sessionId, config)).toBe(false);
+
+    clearMarker();
+    await deliverSession(sessionId, config);
+
+    expect(lifecycleStatuses()).toEqual(['started', 'completed']);
+    expect(usageCalls().length).toBeGreaterThan(0);
+    expect(await isDeliveryDone(sessionId, config)).toBe(true);
+  });
+
   it('without consent, transcript deltas are withheld at Stop and SessionEnd and the session counts as delivered', async () => {
     const sessionId = 'gate-17054-deltas';
     const transcript = join(repo, 'deltas.jsonl');
-    const lines = ['2026-11-01T10:00:01Z', '2026-11-01T10:00:02Z'].map((timestamp, i) => JSON.stringify({
-      type: i % 2 === 0 ? 'user' : 'assistant',
-      uuid: `msg-${i}`,
-      sessionId: NATIVE_ID,
-      timestamp,
-      message: i % 2 === 0
-        ? { role: 'user', content: 'prompt' }
-        : { role: 'assistant', id: 'api-1', content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }], usage: { input_tokens: 1, output_tokens: 1 } },
-    }));
-    writeFileSync(transcript, `${lines.join('\n')}\n`);
+    writeFileSync(transcript, `${transcriptLines().join('\n')}\n`);
     const base = { session_id: NATIVE_ID, transcript_path: transcript, permission_mode: 'default', cwd: repo };
     const config = { ...baseConfig, provider: 'anthropic-subscription', sessionId };
 

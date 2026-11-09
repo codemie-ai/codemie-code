@@ -1,4 +1,4 @@
-import { access, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
@@ -91,13 +91,16 @@ export async function isStopped(key: string): Promise<boolean> {
   }
 }
 
-/** Whether any marker exists, a stop or a notice. Fail closed: false only when it is absent. */
-export async function hasMarker(key: string): Promise<boolean> {
+export type MarkerState = 'absent' | 'notice' | 'stop' | 'unknown';
+
+/** Which marker exists: none, a notice (recoverable), a stop (final), or one that could not be read or parsed. */
+export async function markerState(key: string): Promise<MarkerState> {
   try {
-    await access(pathOf(key));
-    return true;
+    const m = JSON.parse(await readFile(pathOf(key), 'utf-8')) as Partial<MarkerFile>;
+    return m.stop === false ? 'notice' : 'stop';
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ENOENT';
+    if (err instanceof SyntaxError) return 'unknown';
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unknown';
   }
 }
 
