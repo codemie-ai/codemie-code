@@ -54,6 +54,27 @@ describe('resolveInheritedUuids', () => {
     expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
   });
 
+  it('finds a parent whose continued-in record is followed by more than the tail window', async () => {
+    // ~600 KB appended after the record: the 256 KB tail misses it, the whole-file fallback must not.
+    const filler = JSON.stringify({ type: 'attachment', sessionId: 'P', attachment: { content: 'y'.repeat(1000) } });
+    const trailing = Array.from({ length: 600 }, () => filler);
+    writeFileSync(
+      join(dir, 'P.jsonl'),
+      [msg('u1', 'P'), msg('u2', 'P'), continuedIn('P', 'C'), ...trailing].join('\n') + '\n'
+    );
+    writeFileSync(join(dir, 'C.jsonl'), [msg('u1', 'C'), msg('u2', 'C'), msg('u3', 'C')].join('\n') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1', 'u2']);
+  });
+
+  it('returns no parent for a large sibling whose whole file never names the session', async () => {
+    const filler = JSON.stringify({ type: 'attachment', sessionId: 'X', attachment: { content: 'y'.repeat(1000) } });
+    writeFileSync(join(dir, 'X.jsonl'), Array.from({ length: 600 }, () => filler).join('\n') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual([]);
+  });
+
   it('returns null, not "no parent", when a sibling transcript cannot be read', async () => {
     mkdirSync(join(dir, 'unreadable.jsonl'));
     writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');

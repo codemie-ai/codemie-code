@@ -46,6 +46,24 @@ ticket acceptance criteria (verified live, isolated, against baseline `main`).
   permanently drop work of a session that crashed before its first Stop.
 - **Reopen only if:** parse state is shown to be lost in normal operation.
 
+## D-4 (review run 4, CR-004): copied subagent transcripts
+
+- **Behaviour:** if Claude Code copied a parent's subagent transcripts into the continued session's
+  folder, their usage could be counted twice.
+- **Decision:** not changed, and not valid as a finding. Checked on the 4 real parent/child pairs: no
+  subagent file name appears in both folders (parents have 1/8/7/11 subagent files, children
+  1/0/1/0). It was never observed, and a dedup rule would be built without a real example, which
+  adds overhead and risks breaking correct counting.
+- **Reopen only if:** a real continued session is seen with subagent transcripts copied from its parent.
+
+## Fixed after review run 4 (for reference, not accepted limits)
+
+- CR-001: a reopen no longer moves the env baseline, so a model/permission-mode change made at
+  resume is reported by the first active pass.
+- CR-002: an idle reopened `SessionEnd` no longer runs the subagent backstop or the env check, so
+  subagent usage is still sent once the session is active again.
+- CR-003: tests added for the parent lookup when the `continued-in` record lies before the tail window.
+
 ## Evidence
 
 Isolated harness and results: `C:\Users\OlehPrusak\codemie-eval\` (outside the repo). Related review

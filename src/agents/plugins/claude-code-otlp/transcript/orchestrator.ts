@@ -802,7 +802,11 @@ export async function openSessionStartPass(
           configured_model: sessionEnvFields.configured_model || last.configured_model,
         }
       : sessionEnvFields;
-    state.lastSessionEnvFields = merged;
+    // A reopen announces nothing, so it must not move the env baseline either: the first pass after
+    // the session is active again diffs the resumed model/permission mode against it and reports it.
+    if (!reopened || !last) {
+      state.lastSessionEnvFields = merged;
+    }
     return {
       events: [],
       finalize: finalizeOf(sessionId, state, release),
@@ -1512,11 +1516,15 @@ export async function openSessionEndPass(
 
     // End of the session: nothing more will arrive, so a subagent still unproven is an agent. The
     // summary above resolved the same candidates with the same `final`: reuse it.
+    // A reopened session with no activity of its own sends nothing at all (the plugin drops this
+    // pass's payload), so the backstop must not consume subagent state or the env baseline either:
+    // they stay for the first pass after the session is active again.
+    const idle = isReopenedIdle(state);
     pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, {
       final: true,
       extra: deferredCandidates(state),
     });
-    for (const rawFile of pass.snapshot.files) {
+    for (const rawFile of idle ? [] : pass.snapshot.files) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
@@ -1534,7 +1542,7 @@ export async function openSessionEndPass(
       }
     }
 
-    if (envCheck) {
+    if (envCheck && !idle) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
@@ -1544,7 +1552,7 @@ export async function openSessionEndPass(
       finalize: finalizeOf(sessionId, state, release),
       gitHeadStart: state.gitHeadStart,
       sessionStartedAt: state.sessionStartedAt,
-      suppressLifecycle: isReopenedIdle(state),
+      suppressLifecycle: idle,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

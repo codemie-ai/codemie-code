@@ -3728,6 +3728,52 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
     expect(idle.events).toEqual([]);
   });
 
+  it('reports an env change made at resume once the reopened session is active', async () => {
+    const sessionId = 'session-reopen-env';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
+    await resume.finalize(true);
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop', {
+      effort: sessionEnvFixture.effort,
+      permissionMode: 'plan',
+    });
+    await active.finalize(true);
+
+    const env = active.events.filter((e) => e.type === 'agent.session.env');
+    expect(env).toHaveLength(1);
+    expect(env[0]).toMatchObject({ permission_mode: 'plan' });
+  });
+
+  it('keeps subagent usage for the first active pass when an idle reopen ends first', async () => {
+    const sessionId = 'session-reopen-subagent';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    writeSubagentFixture(sessionId, 'a1', [usageLine({ uuid: 'uuid-sa-1', messageId: 'msg-sa-1', outputTokens: 777 })]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
+    await idleEnd.finalize(true);
+    expect(idleEnd.events).toEqual([]);
+
+    await startSession(sessionId, 'resume');
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const end = await openSessionEndPass(sessionId, path, '/repo');
+    await end.finalize(true);
+
+    expect(end.events.filter((e) => e.type === 'agent.subagent.usage').map((e) => e.agent_id)).toEqual(['a1']);
+  });
+
   it('survives a corrupt inheritedUuids value in the saved state', async () => {
     const sessionId = 'session-corrupt-inherited';
     const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z'), assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z')]);
