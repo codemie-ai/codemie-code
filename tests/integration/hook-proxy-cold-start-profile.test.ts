@@ -72,14 +72,14 @@ describe('hook proxy cold start on the recorded profile', () => {
     return env;
   }
 
+  // A fresh SessionStart: a mid-session event with no session record is stopped before the proxy is ensured.
   function runHook(home: string): Promise<RunResult> {
     const input = JSON.stringify({
-      hook_event_name: 'Notification',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
       session_id: 'agent-session-under-test',
       transcript_path: join(home, 'transcript.jsonl'),
       cwd: home,
-      message: 'Claude is waiting for your input',
-      notification_type: 'idle_prompt',
     });
     return new Promise((done, fail) => {
       const child = spawn(process.execPath, [BIN, 'hook', '--agent', 'claude-code-otlp'], {
