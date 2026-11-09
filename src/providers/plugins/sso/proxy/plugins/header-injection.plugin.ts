@@ -17,6 +17,7 @@ import { CODEMIE_ENDPOINTS } from '../../sso.http-client.js';
 import { logger } from '../../../../../utils/logger.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../utils/header-value.js';
 
+import { CONSENT_HEADER, CONSENT_VALUE, CONTRACT_HEADER, FUNDING_HEADER, PUBLICATION_CONTRACT, stripAnalyticsOnlyHeaders } from '../../../../../agents/core/evidence/publication-contract.js';
 import type { ClassResult } from '../../../../../agents/core/evidence/classify.js';
 import { ORG_ENCODED_HEADER, encodeOrganization, needsOrganizationEncoding } from '../../../../../agents/core/evidence/org-encoding.js';
 
@@ -46,6 +47,8 @@ export interface AnalyticsAttribution {
   repoKey?: string;
   project?: string;
   projectSource: 'linked_folder' | 'profile' | 'none';
+  /** New publication contract request: the frozen funding claim, and whether explicit work consent currently holds. */
+  contract?: { fundingRoute: string; consent: boolean };
 }
 
 export interface AttributionHeaders {
@@ -107,6 +110,12 @@ function analyticsAttributionHeaders(input: AnalyticsAttribution): AttributionHe
     headers['X-CodeMie-Project'] = project;
     if (input.projectSource !== 'none') headers['X-CodeMie-Project-Source'] = input.projectSource;
   }
+  if (input.contract) {
+    headers[CONTRACT_HEADER] = PUBLICATION_CONTRACT;
+    headers[FUNDING_HEADER] = input.contract.fundingRoute;
+    // Consent is only ever sent together with a non-blank project.
+    if (input.contract.consent && project) headers[CONSENT_HEADER] = CONSENT_VALUE;
+  }
   return { headers, omitted };
 }
 
@@ -130,6 +139,8 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     const config = this.context.config;
     const provider = ProviderRegistry.getProvider(config.provider || '');
     const requiresIntegration = provider?.customProperties?.requiresIntegration === true;
+    // Analytics-only headers are built by the forwarder from the frozen record; a model request never carries them.
+    stripAnalyticsOnlyHeaders(context.headers);
     let repository = config.repository || undefined;
     let branch = config.branch;
     let clientType = config.clientType;

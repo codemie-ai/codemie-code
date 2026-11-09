@@ -1,6 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { SPOOL_STREAMS, spoolRoot, statusFile, type SpoolStream } from './spool-paths.js';
+import { readFile } from 'node:fs/promises';
+import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
+import { SPOOL_STREAMS, statusFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
+import { STOP_REASONS, type StopReason } from '@/agents/core/evidence/stop-marker.js';
 import {
   DELIVERY_LOSS_REASONS,
   HOLD_REASONS,
@@ -82,6 +84,10 @@ export interface SessionStatus {
    * each expires on its own clock (`expireCarriedAgeLocked`), whatever else holds or fails the session.
    */
   carriedAge?: Partial<Record<SpoolStream, AgeSegment[]>>;
+  /** A required publication stop whose marker could not be written yet: nothing is sent while it is set (see stop-intent.ts). */
+  stopIntent?: StopReason;
+  /** Write-ahead checkpoint of a new-contract network attempt: set durably before the POST, cleared once its outcome is processed (see stop-intent.ts). */
+  sendCheckpoint?: true;
 }
 
 export interface AgeSegment {
@@ -282,8 +288,12 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (discard) status.lastDiscard = discard;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
+  if (source['sendCheckpoint'] === true) status.sendCheckpoint = true;
   const carried = parseCarriedAge(source['carriedAge']);
   if (carried) status.carriedAge = carried;
+  if (typeof source['stopIntent'] === 'string' && (STOP_REASONS as readonly string[]).includes(source['stopIntent'])) {
+    status.stopIntent = source['stopIntent'] as StopReason;
+  }
 
   return status;
 }
@@ -299,8 +309,8 @@ export async function readStatus(sessionId: string): Promise<SessionStatus | nul
 }
 
 export async function writeStatus(sessionId: string, status: SessionStatus): Promise<void> {
-  await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
-  await writeFile(statusFile(sessionId), JSON.stringify(status), { encoding: 'utf-8', mode: 0o600 });
+  // A failed update must retain the previous write-ahead checkpoint, not truncate it.
+  await writeJsonFileAtomic(statusFile(sessionId), status, { directoryMode: 0o700 });
 }
 
 /**

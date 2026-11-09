@@ -9,6 +9,8 @@ const RENAME_MAX_ATTEMPTS = 10;
 const RENAME_RETRY_STEP_MS = 20;
 
 export interface AtomicJsonWriteOptions {
+  /** Explicit permissions for a newly created parent directory (for private evidence/spool state). */
+  directoryMode?: number;
   /** Refuse to replace an existing, non-empty file whose content is not valid JSON. */
   refuseUnparsable?: boolean;
   /** Human-readable name of the file, used in error messages. */
@@ -72,7 +74,10 @@ export async function writeJsonFileAtomic(
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
   }
 
-  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.mkdir(path.dirname(target), {
+    recursive: true,
+    ...(options.directoryMode === undefined ? {} : { mode: options.directoryMode }),
+  });
   const tempPath = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode });

@@ -69,6 +69,7 @@ export async function startAwaitingLoginListener(opts: AwaitingLoginOptions): Pr
         status: 'ok',
         port: typeof address === 'object' && address ? address.port : opts.port,
         pid: process.pid,
+        analytics: { credentials: 'stale' },
       }));
       return;
     }

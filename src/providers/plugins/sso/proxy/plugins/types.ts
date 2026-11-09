@@ -80,10 +80,21 @@ export interface PluginConfig {
 }
 
 /**
+ * Analytics delivery health reported in the daemon `/health` reply.
+ * `stale` means the analytics credentials were rejected and telemetry is spooled to disk.
+ */
+export interface AnalyticsHealthReply {
+  credentials: 'ok' | 'stale';
+}
+
+/**
  * Enhanced interceptor with streaming support
  */
 export interface ProxyInterceptor {
   name: string;
+
+  /** Report analytics delivery health for the `/health` reply (first interceptor to answer wins) */
+  healthStatus?(): AnalyticsHealthReply;
 
   /** Called when proxy starts (for initialization) */
   onProxyStart?(): Promise<void>;

@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', 'gemini-acp': '#F8C27A', codex: '#06B6D4', 'codemie-codex': '#06B6D4', 'codex-acp': '#38D6EC', opencode: '#259F4C', 'opencode-acp': '#5BC97E', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', 'gemini-acp': '#F8C27A', codex: '#06B6D4', 'codemie-codex': '#06B6D4', 'codex-acp': '#38D6EC', opencode: '#259F4C', 'opencode-acp': '#5BC97E', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6', omp: '#F9303C' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -27,9 +27,16 @@
     if (!seenAgentColor[agent]) { seenAgentColor[agent] = PALETTE[colorCursor % PALETTE.length]; colorCursor++; }
     return seenAgentColor[agent];
   }
-  // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
-  // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', 'gemini': 'Gemini CLI' };
+  // Agent keys are internal ids; these are the product names a human should read. Mirror of
+  // `agent-labels.ts` — every key analytics emits is listed so labels share one casing; an
+  // unknown key falls through unchanged.
+  var AGENT_LABELS = {
+    claude: 'Claude Code', 'claude-acp': 'Claude Code ACP', 'claude-desktop': 'Claude Desktop',
+    'codemie-code': 'CodeMie Code', codex: 'Codex CLI', 'codex-acp': 'Codex CLI ACP', 'codemie-codex': 'CodeMie Codex',
+    gemini: 'Gemini CLI', 'gemini-acp': 'Gemini CLI ACP', opencode: 'OpenCode', 'opencode-acp': 'OpenCode ACP',
+    kimi: 'Kimi Code', 'kimi-acp': 'Kimi Code ACP', openwiki: 'OpenWiki', 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', omp: 'Oh My Pi'
+  };
+  var COMMANDS_NOT_RECORDED = { omp: true }; // omp persists no slash commands
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
@@ -464,7 +471,7 @@
     var datasets = agentList.map(function (a) {
       var ss = byAgent.get(a);
       var perDay = {}; ss.forEach(function (s) { var k = dayKey(s.startTime); perDay[k] = (perDay[k] || 0) + 1; });
-      return { label: a, data: allDays.map(function (d) { return perDay[d] || 0; }), backgroundColor: colorFor(a) };
+      return { label: labelFor(a), data: allDays.map(function (d) { return perDay[d] || 0; }), backgroundColor: colorFor(a) };
     });
     makeChart(canvasIn(stackCard._body), {
       type: 'bar', data: { labels: allDays, datasets: datasets },
@@ -473,7 +480,7 @@
 
     makeChart(canvasIn(shareCard._body), {
       type: 'doughnut',
-      data: { labels: agentList, datasets: [{ data: agentList.map(function (a) { return Math.abs(sum(byAgent.get(a), function (s) { return s.netLines; })); }), backgroundColor: agentList.map(colorFor), borderWidth: 0 }] },
+      data: { labels: agentList.map(labelFor), datasets: [{ data: agentList.map(function (a) { return Math.abs(sum(byAgent.get(a), function (s) { return s.netLines; })); }), backgroundColor: agentList.map(colorFor), borderWidth: 0 }] },
       options: { cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10 } } } }
     });
 
@@ -1003,7 +1010,7 @@
     var byAgent = groupBy(fs, function (s) { return s.agentName; });
     var aList = Array.from(byAgent.keys());
     makeChart(canvasIn(byAgentCard._body), {
-      type: 'doughnut', data: { labels: aList, datasets: [{ data: aList.map(function (a) { return sum(byAgent.get(a), function (s) { return s.costUSD; }); }), backgroundColor: aList.map(colorFor), borderWidth: 0 }] },
+      type: 'doughnut', data: { labels: aList.map(labelFor), datasets: [{ data: aList.map(function (a) { return sum(byAgent.get(a), function (s) { return s.costUSD; }); }), backgroundColor: aList.map(colorFor), borderWidth: 0 }] },
       options: { cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10 } }, tooltip: { callbacks: { label: function (c) { return c.label + ': ' + fmtUSD(c.parsed); } } } } }
     });
     row.appendChild(byAgentCard);
@@ -1578,7 +1585,7 @@
       ['Tool calls', fmtNum(s.toolCallsTotal), (s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 100) + '% ok' : '')],
       ['Agents', fmtNum(sumCalls(dispatchCounts(s, 'agent'))), ''],
       ['Skills', fmtNum(sumCalls(dispatchCounts(s, 'skill'))), ''],
-      ['Commands', fmtNum(sumCalls(dispatchCounts(s, 'command'))), '']
+      ['Commands', COMMANDS_NOT_RECORDED[s.agentName] ? '—' : fmtNum(sumCalls(dispatchCounts(s, 'command'))), COMMANDS_NOT_RECORDED[s.agentName] ? 'not recorded' : '']
     ]));
     grid3.appendChild(costCard); grid3.appendChild(tokCard); grid3.appendChild(actCard);
     body.appendChild(grid3);
