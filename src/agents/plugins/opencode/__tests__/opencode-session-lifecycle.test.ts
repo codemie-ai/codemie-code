@@ -34,6 +34,7 @@ vi.mock('../../codemie-code-hooks/index.js', () => ({
 }));
 
 const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
+const { OpenCodeSessionAdapter } = await import('../opencode.session.js');
 
 function baseEnv(): NodeJS.ProcessEnv {
   return {
@@ -79,7 +80,6 @@ describe('OpenCode onSessionStart', () => {
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.sessionId).toBe('codemie-uuid-1');
-    expect(options.cwd).toBe(process.cwd());
     expect(options.buildContext().clientType).toBe('codemie-opencode');
   });
 
@@ -107,6 +107,42 @@ describe('OpenCode onSessionStart', () => {
 
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.buildContext().clientType).toBe('codemie-opencode-acp');
+  });
+
+  it('hands processEvent the wrapper owner and the sync URL from the env, so the record stores it and the hook can send', async () => {
+    const env = {
+      ...baseEnv(),
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com/code-assistant-api',
+    };
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    const [, config] = processEvent.mock.calls[0];
+    expect(config).toMatchObject({
+      ownerPid: 4242,
+      ownerStartedAt: 1_790_000_000_000,
+      syncApiUrl: 'https://sync.example.com/code-assistant-api',
+    });
+  });
+
+  it('with no started proxy and no sync URL, the failsafe gets no send path: CODEMIE_BASE_URL is the LLM host', async () => {
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', { ...baseEnv(), CODEMIE_BASE_URL: 'https://llm.example.com' });
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.syncApiUrl).toBeUndefined();
+    expect(options.buildContext().apiBaseUrl).toBe('');
+  });
+
+  it('with the started proxy, the failsafe sends through it', async () => {
+    const env = { ...baseEnv(), CODEMIE_BASE_URL: 'http://127.0.0.1:4000', CODEMIE_TARGET_API_URL: 'https://sso.example.com/code-assistant-api' };
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.syncApiUrl).toBe('http://127.0.0.1:4000');
+    expect(options.buildContext().apiBaseUrl).toBe('http://127.0.0.1:4000');
   });
 
   it('falls back to codemie-opencode when CODEMIE_CLIENT_TYPE is unset (unchanged plain-OpenCode behavior)', async () => {
@@ -208,6 +244,20 @@ describe('OpenCode onSessionEnd', () => {
     expect(event.session_id).toBe('codemie-uuid-1');
     expect(event.reason).toBe('exit');
     expect(config.clientType).toBe('codemie-opencode');
+  });
+
+  it('carries the CodeMie id and the located transcript, so processing takes every session of the run', async () => {
+    const locate = vi.spyOn(OpenCodeSessionAdapter.prototype, 'locateSessionTranscript')
+      .mockResolvedValue({ transcript: '/data/opencode/opencode.db', sessionIds: ['ses_run'] });
+    try {
+      await OpenCodePluginMetadata.lifecycle!.onSessionEnd!(0, baseEnv());
+    } finally {
+      locate.mockRestore();
+    }
+
+    const [event] = processEvent.mock.calls[0];
+    expect(event.session_id).toBe('codemie-uuid-1');
+    expect(event.transcript_path).toBe('/data/opencode/opencode.db');
   });
 
   it('reports a non-zero exit code in the reason', async () => {

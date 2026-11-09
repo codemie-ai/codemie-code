@@ -31,9 +31,13 @@ import {
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
+import { persistedHistoryIndexOf } from '../../../../core/session/conversation-checkpoint.js';
+import { getPriorRunsCheckpoint } from './opencode.conversation-checkpoints.js';
 import { loadPartsForMessage } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 /**
  * The conversation folder these payloads are filed under in CodeMie.
@@ -86,13 +90,14 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
 
   shouldProcess(session: ParsedSession): boolean {
     if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
-    return session.messages.length > 0;
+    // A subagent's child session is the parent agent's work, not a conversation of the user's
+    return session.messages.length > 0 && !(session.metadata as { parentId?: string } | undefined)?.parentId;
   }
 
-  // _context is intentionally unused: conversation identity comes from
-  // session.metadata.openCodeSessionId, never from context.agentSessionId,
-  // which differs between the timer/Stop and in-process SessionEnd paths.
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  // The context bounds the file lock wait and the run's events (`recordsBeforeMs`):
+  // conversation identity comes from session.metadata.openCodeSessionId, never from
+  // context.agentSessionId, which differs between the timer/Stop and in-process SessionEnd paths.
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       const metadata = session.metadata as (OpenCodeMetadata & { storagePath?: string }) | undefined;
       const openCodeSessionId = metadata?.openCodeSessionId;
@@ -107,7 +112,10 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       }
 
       const messages = session.messages as OpenCodeMessage[];
-      const events = await normalizeEvents(messages, storagePath, openCodeSessionId, metadata?.partsMap);
+      const sessionEvents = await normalizeEvents(messages, storagePath, openCodeSessionId, metadata?.partsMap);
+      // Events from the next record's start on belong to that record's run
+      const until = context.recordsBeforeMs;
+      const events = until === undefined ? sessionEvents : sessionEvents.filter(event => Date.parse(event.date) < until);
 
       logger.debug(
         `[opencode-conversations] Normalised ${events.length} events from ${messages.length} messages`
@@ -120,21 +128,24 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       const { SessionStore } = await import('../../../../core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const sessionMetadata = await sessionStore.loadSession(session.sessionId);
-      const persistedHistoryIndex = sessionMetadata?.sync?.conversations?.lastSyncedHistoryIndex ?? -1;
+      // A record's run can hold several sessions: each conversation keeps its own checkpoint
+      const syncState = sessionMetadata?.sync?.conversations;
+      const persistedHistoryIndex = persistedHistoryIndexOf(syncState, openCodeSessionId);
       const lastSyncedSourceIndex = parseLastSyncedSourceIndex(
-        sessionMetadata?.sync?.conversations?.lastSyncedMessageUuid,
+        syncState?.lastSyncedMessageUuid?.startsWith(`${openCodeSessionId}@`) ? syncState.lastSyncedMessageUuid : undefined,
         persistedHistoryIndex
       );
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { readJSONL } = await import('../../../../../providers/plugins/sso/session/utils/jsonl-reader.js');
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, '[opencode-conversations]');
 
       // Payloads already queued but not yet uploaded also advance the watermark,
-      // otherwise every tick re-queues the same turn.
-      const queuedCheckpoint = getQueuedCheckpoint(existingPayloads);
-      const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex);
-      const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex);
+      // otherwise every tick re-queues the same turn; the session's turns before the
+      // record's start are earlier runs'.
+      const queuedCheckpoint = getQueuedCheckpoint(existingPayloads.filter(payload => payload.payload.conversationId === openCodeSessionId));
+      const priorCheckpoint = getPriorRunsCheckpoint(events, sessionMetadata?.startTime);
+      const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex, priorCheckpoint.sourceIndex);
+      const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex, priorCheckpoint.historyIndex);
 
       const turn = buildIncrementalTurn(events, effectiveSourceIndex, effectiveHistoryIndex);
 
@@ -161,7 +172,7 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
         return { success: true, message: 'No visible history generated', metadata: { recordsProcessed: 0 } };
       }
 
-      const { appendFile, mkdir } = await import('fs/promises');
+      const { mkdir } = await import('fs/promises');
       const { dirname } = await import('path');
       await mkdir(dirname(conversationsPath), { recursive: true });
 
@@ -189,7 +200,15 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
         status: CONVERSATION_SYNC_STATUS.PENDING,
       };
 
-      await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n', 'utf-8');
+      const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+      if (!appended) {
+        logger.warn(`[opencode-conversations] Window ${sentinel} write dropped, will retry on the next pass`);
+        return {
+          success: true,
+          message: 'Conversation write dropped',
+          metadata: { recordsProcessed: 0 }
+        };
+      }
 
       return {
         success: true,

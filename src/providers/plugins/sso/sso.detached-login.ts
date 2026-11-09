@@ -1,12 +1,23 @@
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { getCodemiePath, getDirname } from '@/utils/paths.js';
+import { getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
+import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
+import {
+  carriedFields,
+  getLockPath,
+  lastSignInOf,
+  readLock,
+  type CompletedSignIn,
+  type LoginLock,
+} from '@/providers/plugins/sso/sso.login-lock.js';
 
-export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'failed';
+export { getLastSignInAt } from '@/providers/plugins/sso/sso.login-lock.js';
+
+export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'signed-in-recently' | 'failed';
 
 const LOCK_MAX_AGE_MS = 150_000;
 const COOLDOWN_MS = 30_000;
@@ -19,32 +30,11 @@ const UNREADABLE_LOCK_GRACE_MS = 5_000;
  */
 const ORPHANED_TMP_MAX_AGE_MS = 60_000;
 
-interface LoginLock {
-  pid: number;
-  startedAt: number;
-  /** Epoch millis when this lock's own sign-in succeeded, if it has (see releaseLoginLockOnSuccess). */
-  succeededAt?: number;
-}
+/** How long a hook waits for a detached sign-in; stays below the 180s UserPromptSubmit hook timeout. */
+export const SSO_LOGIN_WAIT_MS = 150_000;
+const LOGIN_WAIT_POLL_MS = 1_000;
 
-function getLockPath(): string {
-  return getCodemiePath('sso-login.lock');
-}
-
-async function readLock(lockPath: string): Promise<LoginLock | null> {
-  try {
-    const lock = JSON.parse(await readFile(lockPath, 'utf-8')) as Partial<LoginLock> | null;
-    if (typeof lock?.pid !== 'number' || typeof lock.startedAt !== 'number') {
-      return null;
-    }
-    return {
-      pid: lock.pid,
-      startedAt: lock.startedAt,
-      ...(typeof lock.succeededAt === 'number' && { succeededAt: lock.succeededAt }),
-    };
-  } catch {
-    return null;
-  }
-}
+export type LoginWaitResult = { status: 'succeeded' } | { status: 'failed'; error?: string } | { status: 'timeout' };
 
 /**
  * Lock writes are not atomic (`wx` open and write, the child-pid rewrite truncates
@@ -107,8 +97,12 @@ async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
  * is the only consequence this race can have. Simplified back to `wx` rather than keep machinery
  * guarding a race that grace period already covers.
  */
-async function tryCreateLock(lockPath: string): Promise<boolean> {
-  const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
+async function tryCreateLock(lockPath: string, replacedSignIn?: CompletedSignIn): Promise<boolean> {
+  const lock: LoginLock = {
+    pid: process.pid,
+    startedAt: Date.now(),
+    ...carriedFields(replacedSignIn),
+  };
   try {
     await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
     return true;
@@ -143,46 +137,115 @@ async function writeLockAtomically(lockPath: string, lock: LoginLock): Promise<v
   });
 }
 
-/** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
-async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | null> {
-  await sweepOrphanedTmpFiles(lockPath);
-  try {
-    if (await tryCreateLock(lockPath)) {
-      return null;
-    }
+/** What decides whether two reads of a lock are the same lock. */
+function sameLock(a: LoginLock | null, b: LoginLock | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.pid === b.pid && a.startedAt === b.startedAt && a.succeededAt === b.succeededAt && a.failedAt === b.failedAt;
+}
 
-    const existing = await readLock(lockPath);
-    if (existing?.succeededAt !== undefined) {
-      // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
-      // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
-      // split, a succeeded sign-in whose process lingers past COOLDOWN_MS but still within
-      // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
-      // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
-      // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
-      if (Date.now() - existing.succeededAt < COOLDOWN_MS) {
-        return 'cooldown';
-      }
-      // Cooldown elapsed: fall through to the stale/corrupt replace path below.
-    } else if (existing) {
-      const age = Date.now() - existing.startedAt;
-      if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
-        return 'in-progress';
-      }
-      if (age < COOLDOWN_MS) {
-        return 'cooldown';
-      }
-    } else if (await isRecentlyModified(lockPath)) {
-      // Unreadable but just written: its owner is mid-write, not a corrupt lock.
+/**
+ * Removes the lock only if it is still the one the caller judged stale. Between the caller's read
+ * and this unlink another caller may have replaced it with a fresh lock, and unlinking that one
+ * would let both start a browser. An unreadable lock counts as changed once it is freshly written.
+ */
+async function removeLockIfUnchanged(lockPath: string, judged: LoginLock | null): Promise<boolean> {
+  const current = await readLock(lockPath);
+  if (!sameLock(current, judged) || (current === null && (await isRecentlyModified(lockPath)))) {
+    return false;
+  }
+  await removeLock(lockPath);
+  return true;
+}
+
+/** The outcome that blocks a new login given the lock found, or null when the lock may be replaced. */
+async function blockingOutcome(
+  lockPath: string,
+  existing: LoginLock | null,
+  url: string
+): Promise<DetachedLoginOutcome | null> {
+  if (existing?.succeededAt !== undefined) {
+    // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
+    // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
+    // split, a succeeded sign-in whose process lingers past COOLDOWN_MS but still within
+    // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
+    // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
+    // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
+    // The cooldown damps repeated sign-ins for the URL that just signed in; a sign-in for another
+    // URL is not a repeat. A lock without a URL (older versions) damps every URL.
+    const sameUrl = existing.url === undefined || normalizeUrlForKey(existing.url) === normalizeUrlForKey(url);
+    // Cooldown elapsed, or the success was for another URL: the lock may be replaced.
+    return sameUrl && Date.now() - existing.succeededAt < COOLDOWN_MS ? 'signed-in-recently' : null;
+  }
+  if (existing) {
+    const age = Date.now() - existing.startedAt;
+    if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
       return 'in-progress';
     }
-
-    // Stale or corrupt: replace it. Losing this race means another login just started.
-    await removeLock(lockPath);
-    return (await tryCreateLock(lockPath)) ? null : 'in-progress';
-  } catch (error) {
-    logger.debug('[sso-detached-login] Failed to acquire lock:', error);
-    return 'failed';
+    return age < COOLDOWN_MS ? 'cooldown' : null;
   }
+  // Unreadable but just written: its owner is mid-write, not a corrupt lock.
+  return (await isRecentlyModified(lockPath)) ? 'in-progress' : null;
+}
+
+/**
+ * Replacing a stale lock is read-judge-remove-create, so two callers judging the same stale lock
+ * could each remove the other's fresh one. Callers in this process are serialised per lock path;
+ * `removeLockIfUnchanged` covers other processes. A rare change between its read and unlink
+ * remains open — the lock file has no atomic compare-and-delete.
+ */
+const lockDecisionTails = new Map<string, Promise<void>>();
+
+async function serialiseLockDecision<T>(lockPath: string, decide: () => Promise<T>): Promise<T> {
+  const previous = lockDecisionTails.get(lockPath) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => gate);
+  lockDecisionTails.set(lockPath, tail);
+  await previous;
+  try {
+    return await decide();
+  } finally {
+    release();
+    if (lockDecisionTails.get(lockPath) === tail) {
+      lockDecisionTails.delete(lockPath);
+    }
+  }
+}
+
+/** How often a lock that keeps changing under this call is re-judged before giving way to it. */
+const MAX_LOCK_DECISIONS = 3;
+
+/** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
+function acquireLock(lockPath: string, url: string): Promise<DetachedLoginOutcome | null> {
+  return serialiseLockDecision(lockPath, async () => {
+    await sweepOrphanedTmpFiles(lockPath);
+    try {
+      for (let decision = 0; decision < MAX_LOCK_DECISIONS; decision++) {
+        if (await tryCreateLock(lockPath)) {
+          return null;
+        }
+
+        const existing = await readLock(lockPath);
+        const blocked = await blockingOutcome(lockPath, existing, url);
+        if (blocked) {
+          return blocked;
+        }
+
+        // Stale or corrupt: replace it. Losing this race means another login just started.
+        if (await removeLockIfUnchanged(lockPath, existing)) {
+          return (await tryCreateLock(lockPath, lastSignInOf(existing))) ? null : 'in-progress';
+        }
+      }
+      return 'in-progress';
+    } catch (error) {
+      logger.debug('[sso-detached-login] Failed to acquire lock:', error);
+      return 'failed';
+    }
+  });
 }
 
 /**
@@ -192,7 +255,7 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
  * sign-in immediately, so a burst of still-ongoing redirects (e.g. the other proxied-request
  * consumers that don't yet pick up fresh credentials, or any other misconfiguration) opened the
  * browser again after every single one of them (PR #655 review). `acquireLock` damps repeated
- * sign-ins for `COOLDOWN_MS` after `succeededAt`; after that window the lock is treated as stale
+ * sign-ins for the same URL for `COOLDOWN_MS` after `succeededAt`; after that window the lock is treated as stale
  * and replaced, so a genuinely NEW expiry later is never blocked for longer than one cooldown.
  */
 export async function releaseLoginLockOnSuccess(): Promise<void> {
@@ -200,10 +263,93 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
-      await writeLockAtomically(lockPath, { ...lock, succeededAt: Date.now() });
+      // The replaced sign-in of another URL stays recorded, so this success does not erase that URL's stamp.
+      const keepsOtherUrl = lock.lastSucceededUrl !== undefined
+        && (lock.url === undefined || normalizeUrlForKey(lock.lastSucceededUrl) !== normalizeUrlForKey(lock.url));
+      await writeLockAtomically(lockPath, {
+        pid: lock.pid,
+        startedAt: lock.startedAt,
+        ...(lock.url !== undefined && { url: lock.url }),
+        ...(keepsOtherUrl && { lastSucceededAt: lock.lastSucceededAt, lastSucceededUrl: lock.lastSucceededUrl }),
+        succeededAt: Date.now(),
+      });
     }
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to release lock:', error);
+  }
+}
+
+/**
+ * Called by the detached sign-in process after a failed sign-in, so a waiting hook can report the
+ * child's error. Owner-only, like releaseLoginLockOnSuccess; acquireLock still treats the lock by
+ * its (soon dead) pid, so cooldown/replace semantics are unchanged.
+ */
+export async function releaseLoginLockOnFailure(error: string): Promise<void> {
+  try {
+    const lockPath = getLockPath();
+    const lock = await readLock(lockPath);
+    if (lock?.pid === process.pid) {
+      await writeLockAtomically(lockPath, { ...lock, failedAt: Date.now(), error });
+    }
+  } catch (err) {
+    logger.debug('[sso-detached-login] Failed to stamp lock failure:', err);
+  }
+}
+
+/**
+ * Polls the sign-in lock until the detached login succeeds, fails (stamped, lock gone, or child
+ * died without stamping) or the deadline passes. Never throws.
+ */
+export async function waitForDetachedSsoLogin(
+  opts: { timeoutMs?: number; pollMs?: number } = {}
+): Promise<LoginWaitResult> {
+  const { timeoutMs = SSO_LOGIN_WAIT_MS, pollMs = LOGIN_WAIT_POLL_MS } = opts;
+  const deadline = Date.now() + timeoutMs;
+  const lockPath = getLockPath();
+  for (;;) {
+    try {
+      const lock = await readLock(lockPath);
+      if (lock?.succeededAt !== undefined) {
+        return { status: 'succeeded' };
+      }
+      if (lock?.failedAt !== undefined) {
+        return { status: 'failed', ...(lock.error !== undefined && { error: lock.error }) };
+      }
+      // A mid-write lock reads as null briefly; only call it gone when it is not freshly modified.
+      if (lock ? !isProcessAlive(lock.pid) : !(await isRecentlyModified(lockPath))) {
+        return { status: 'failed', error: 'the sign-in process exited without completing' };
+      }
+    } catch (error) {
+      logger.debug('[sso-detached-login] Failed to poll sign-in lock:', error);
+    }
+    if (Date.now() >= deadline) {
+      return { status: 'timeout' };
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+  }
+}
+
+/**
+ * Drops the lock of an attempt that never started. When an earlier sign-in is on record the lock
+ * is kept as a failed attempt with no process behind it (an old `startedAt` makes `acquireLock`
+ * replace it at once), so that sign-in time is not lost with the file.
+ */
+async function discardAttempt(lockPath: string, replacedSignIn: CompletedSignIn | undefined): Promise<void> {
+  if (replacedSignIn === undefined) {
+    await removeLock(lockPath);
+    return;
+  }
+  try {
+    await writeLockAtomically(lockPath, {
+      pid: process.pid,
+      startedAt: 0,
+      failedAt: Date.now(),
+      error: 'the sign-in process could not be started',
+      ...carriedFields(replacedSignIn),
+    });
+  } catch (error) {
+    logger.debug('[sso-detached-login] Failed to keep the earlier sign-in time:', error);
+    await removeLock(lockPath);
   }
 }
 
@@ -216,10 +362,12 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
 export async function startDetachedSsoLogin(codeMieUrl: string): Promise<DetachedLoginOutcome> {
   const lockPath = getLockPath();
 
-  const blocked = await acquireLock(lockPath);
+  const blocked = await acquireLock(lockPath, codeMieUrl);
   if (blocked) {
     return blocked;
   }
+
+  const replacedSignIn = lastSignInOf(await readLock(lockPath));
 
   try {
     const script = join(getDirname(import.meta.url), '../../../bin/sso-login.js');
@@ -232,24 +380,67 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
       throw new Error('Failed to spawn sign-in process');
     }
 
-    await writeLockAtomically(lockPath, { pid, startedAt: Date.now() });
+    await writeLockAtomically(lockPath, { pid, startedAt: Date.now(), url: codeMieUrl, ...carriedFields(replacedSignIn) });
     return 'started';
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to start sign-in:', error);
-    await removeLock(lockPath);
+    await discardAttempt(lockPath, replacedSignIn);
     return 'failed';
   }
 }
 
-export function describeLogin(outcome: DetachedLoginOutcome = 'failed'): string {
+const EXPIRED_LEAD = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
+const MANUAL_RESUME = 'After login completes, re-send your prompt.';
+const OPEN_FAILED = `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
+
+/**
+ * All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in.
+ * An undefined outcome means no browser sign-in was attempted (API key, unexpected gate error), so
+ * the expiry is not assumed and no `codemie profile login` is suggested.
+ */
+export function describeLogin(
+  outcome: DetachedLoginOutcome | undefined,
+  opts: { resume?: 'auto' | 'manual'; wait?: LoginWaitResult } = {}
+): string {
+  const { resume = 'manual', wait } = opts;
+  if (outcome === undefined && !wait) {
+    return 'CodeMie could not verify your credentials. Check your CodeMie API key or profile configuration, then re-send your prompt.';
+  }
+  if (wait?.status === 'failed') {
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}`;
+  }
+  if (wait?.status === 'succeeded') {
+    // Reached only when the post-sign-in re-check still failed, e.g. the login was for another profile/URL.
+    return `${EXPIRED_LEAD}\nThe browser sign-in finished, but this CodeMie profile is still not authenticated (the sign-in may have been for a different profile or URL).\nRun \`codemie profile login\` for this profile. ${MANUAL_RESUME}`;
+  }
+  if (wait?.status === 'timeout') {
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not finish in time.\nComplete it, or run \`codemie profile login\`. ${MANUAL_RESUME}`;
+  }
   switch (outcome) {
     case 'started':
-      return 'A browser sign-in window has been opened automatically.\nComplete the sign-in, then re-send your prompt.\nIf you closed the browser window, run `codemie profile login`.';
-    case 'in-progress':
-      return 'A browser sign-in is already in progress.\nComplete the sign-in, then re-send your prompt.\nIf you closed the browser window, run `codemie profile login`.';
+    case 'in-progress': {
+      const opened =
+        outcome === 'started'
+          ? 'A browser sign-in window has been opened automatically.'
+          : 'A browser sign-in is already in progress.';
+      const next =
+        resume === 'auto'
+          ? 'Finish signing in and your prompt will continue automatically.'
+          : `Complete the sign-in. ${MANUAL_RESUME}\nIf you closed the browser window, run \`codemie profile login\`.`;
+      return `${EXPIRED_LEAD}\n${opened}\n${next}`;
+    }
     case 'cooldown':
-      return 'The previous sign-in attempt did not complete. Run `codemie profile login`, then re-send your prompt.';
-    default:
-      return 'Could not open the browser sign-in automatically. Run `codemie profile login`, then re-send your prompt.';
+      return `${EXPIRED_LEAD}\nThe previous sign-in attempt did not complete. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
+    case 'signed-in-recently':
+      return `A sign-in finished moments ago; re-send your prompt. If it is rejected again, wait about ${Math.round(COOLDOWN_MS / 1000)} seconds and re-send: a new sign-in then opens automatically.`;
+    case 'failed':
+    case undefined:
+      return OPEN_FAILED;
+    default: {
+      // Compile-time exhaustiveness only: the caller must never see a throw for an unexpected value.
+      const unexpected: never = outcome;
+      void unexpected;
+      return OPEN_FAILED;
+    }
   }
 }

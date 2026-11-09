@@ -4,7 +4,6 @@
 
 | Service | Purpose | Auth Method | Config Key |
 |---------|---------|-------------|------------|
-| LangGraph | Agent state machine orchestration | N/A | Framework |
 | LangChain | LLM abstractions & tool calling | N/A | Framework |
 | OpenAI | GPT models | API Key | `OPENAI_API_KEY` |
 | Anthropic Claude | Claude models | API Key | `ANTHROPIC_API_KEY` |
@@ -19,24 +18,9 @@
 
 ---
 
-## LangGraph Integration
-
-LangGraph drives agent orchestration as a typed state machine; every node is a processing function and every edge (including conditional) is explicit routing logic.
-
-| Concept | Role |
-|---------|------|
-| `StateGraph` | Manages agent state transitions |
-| Node | Processing function (process / execute / validate) |
-| Edge / Conditional Edge | Static or dynamic control flow |
-| `workflow.compile()` | Produces the executable agent |
-
-`file:src/agents/codemie-code/agent.ts:50-80`
-
----
-
 ## LangChain Integration
 
-Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they provide streaming, tool calling, and retries out of the box.
+Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they provide streaming, tool calling, and retries out of the box. In the current codebase, LangChain is used for LLM-facing integrations such as prompt-driven hooks, not for a LangGraph state-machine agent runtime.
 
 | Do | Don't |
 |----|-------|
@@ -44,6 +28,7 @@ Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they pr
 | Stream via `llm.stream(messages)` | Buffer entire response before yield |
 
 `file:src/providers/plugins/openai/openai.provider.ts:30-50`
+`file:src/hooks/prompt-executor.ts:1-80`
 
 ---
 
@@ -155,7 +140,7 @@ CodeMie injects model config via env vars before spawning OpenCode:
 ### Session Analytics Flow
 
 1. OpenCode exits → grace period for file writes
-2. `onSessionEnd` hook: discovers and processes latest session → writes JSONL deltas
+2. `onSessionEnd` hook: selects the run's own sessions — the session id the launch named (`--session <ses_>`), plus every session created inside the run window `[startTime, nextRecordStart)` in the record's working directory (by realpath), a subagent's child sessions included (with no conversation and no user prompt of their own); a run launched as a continuation (`--continue` / `-c`) adds, of the older sessions (not a subagent's child) updated inside the window, the newest with a message inside it, else the newest updated; a record with no directory selects only the session it named. A fresh run with no session of its own selects nothing: nothing is flushed, the record still finalizes. There is no "newest anywhere" fallback. Each selected session is processed in turn — its deltas go to the record's JSONL, its turns to its own conversation
 3. `SessionSyncer` reads JSONL → POSTs to `v1/metrics` API
 
 `file:src/agents/plugins/opencode/opencode.plugin.ts:145-326`
@@ -180,7 +165,7 @@ CodeMie injects model config via env vars before spawning OpenCode:
 
 ### Metrics Processor
 
-`file:src/agents/plugins/opencode/session/processors/opencode.metrics-processor.ts` — priority 1; extracts tokens, duration, cost; writes deduplicated JSONL deltas.
+`file:src/agents/plugins/opencode/session/processors/opencode.metrics-processor.ts` — priority 1; extracts tokens, duration, cost; hands its deltas to the shared `MetricsWriter`, which dedupes them by `recordId`, applies the run window and appends them to the JSONL.
 
 ---
 
@@ -216,16 +201,16 @@ The MCP proxy bridges stdio JSON-RPC to streamable HTTP with automatic OAuth 2.0
 Codex uses two pipelines (same model as Claude). Cost computed server-side; CLI never sends `money_spent`.
 
 **Pipeline A — CLI tool/lifecycle → `POST /v1/metrics`**
-- Tool deltas: `file:src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`)
+- Tool deltas: `file:src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`): a call gives its delta once its output appears, as success, at its own line's time; a call without output is not counted
 - Lifecycle: `file:src/agents/plugins/codex/codex.plugin.ts` (`onSessionStart`/`onSessionEnd`) → `processEvent` in `file:src/cli/commands/hook.ts:170-228`
-- `status` hardcoded `'completed'`; end signal travels in `reason` field. Stale sessions → `reason: 'interrupted'`.
+- `status` hardcoded `'completed'`; end signal travels in `reason` field. Stranded sessions (a dead owner) → `reason: 'interrupted'`, sent with the native `session_id`.
 
 **Pipeline B — LLM proxy traffic → `codemie_litellm_proxy_usage`**
 - Traffic routed through `CODEMIE_BASE_URL` via `model_providers.codemie` block: `file:src/agents/plugins/codex/codex.plugin.ts:222-281`
 - Headers injected per request: `file:src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts:30-83`
 - Backend computes cost from `cost_config`; analytics joins pipelines by `session_id`.
 
-**Stale-session reconciliation**: On every `onSessionStart`, `reconcileStaleCodexSessions` scans `~/.codemie/sessions/` for `status: "active"` sessions idle > 30 min and synthesises `SessionEnd` with `reason: 'interrupted'`. `file:src/agents/plugins/codex/codex.reconciliation.ts`
+**Session reconciliation** (every agent, every wrapper start): `reconcileOtherSessions` scans `~/.codemie/sessions/<uuid>.json` — a `stranded` record (`status: "active"` whose owner process `ownerPid` + `ownerStartedAt` is gone; no inactivity threshold) gets a synthetic `SessionEnd` (`reason: 'interrupted'`, `endTimeFromActivity`, the native `session_id`) with the final flush of its transcript, ending at its last recorded activity; an `undelivered` record (`completed` but still `{id}.json`) is delivered through the launch's own send path, same CodeMie host only; a `legacy` record (no `ownerPid`) idle > 72 h is finalized locally, nothing sent. A record is renamed `completed_*` only once delivered — the file name is the queue. ≤ 5 records per start, ≤ 3 attempts each, each attempt stopped 10 s after it starts, under `{id}.reconcile.lock`. The wrapper awaits the pass and finalizes its own record at exit within a 10 s budget; on a normal exit (`prompt_input_exit` / `logout`) of an agent whose `SessionEnd` runs as a `codemie hook` process, the hook only finalizes locally and this exit step sends the end metric, syncs and renames. `file:src/agents/core/session/stale-session-reconciliation.ts`
 
 ---
 
@@ -256,7 +241,7 @@ Claude Code's `Stop` hook fires only when the assistant responds. A burst of `!b
 | Empty-history exit | Loop breaks immediately when `transformMessages` returns `history: []` |
 | Advance guard | Loop breaks if `lastProcessedMessageUuid` and `currentHistoryIndex` are both unchanged from the previous iteration |
 
-The main-transcript sync reads the conversation view `conversationMessages`: a line re-written with the same `uuid` after a compaction (`compact_boundary` between the copies) keeps its first copy, so it is not turned into a history entry again after the sync pointer; other duplicates keep their last copy, as in `messages`. `computeBaselinePointer` reads the same view.
+The main-transcript sync reads the conversation view `conversationMessages`: a line re-written with the same `uuid` after a compaction (`compact_boundary` between the copies) keeps its first copy, so it is not turned into a history entry again after the sync pointer; other duplicates keep their last copy, as in `messages`. `computeBaselinePointer` reads the same view. A CLI `claude` / `claude-acp` record takes the same start-time baseline as Desktop, judged by each line's timestamp rather than its position in the file, so a resumed or continued transcript sends only what follows the record's start, and a run takes no prompt or invocation from a line stamped before it; invocation counts are per run. The `SessionEnd` pass also counts the prompts typed after the last answered turn, as one prompts-only delta when no turn emits.
 
 `file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:119-177`
 
@@ -331,7 +316,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 | LiteLLM connection error | Proxy not running | `litellm --port 4000` |
 | OpenCode not found | Not installed | `codemie install opencode` |
 | OpenCode sessions not syncing | Metrics processing failed | `codemie opencode-metrics --discover --verbose` |
-| Codex sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Auto-reconciled on next codex run via `codex.reconciliation.ts` |
+| Sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Finalized by the next wrapper start of any agent once the owner process is gone (`stale-session-reconciliation.ts`); a legacy record without `ownerPid` after 72 h idle |
 | Codex `money_spent` is 0 | Backend `cost_config` missing model entry | Add model pricing in backend `cost_config` |
 
 ---

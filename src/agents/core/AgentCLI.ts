@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
-import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -64,6 +64,16 @@ export class AgentCLI {
   }
 
   /**
+   * Silent flag definition. Agents whose native CLI already uses `-s`
+   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
+   * so `-s` is forwarded to the agent untouched.
+   */
+  private getSilentFlags(): string {
+    const agentsWithNativeShortS = ['codex', 'gemini'];
+    return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
+  }
+
+  /**
    * Setup commander program
    */
   private setupProgram(): void {
@@ -75,7 +85,7 @@ export class AgentCLI {
     this.program
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
-      .option('-s, --silent', 'Enable silent mode')
+      .option(this.getSilentFlags(), 'Enable silent mode')
       .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
       .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
@@ -321,6 +331,19 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      // Per-profile CodeMie project (EPMCDME-15411): a global profile without a project
+      // of its own is asked once in a terminal; otherwise it warns once and continues
+      // with the shared project. Runs after authentication, before the environment export.
+      const { resolveLaunchIdentity, finalizeLaunchIdentity } = await import('./launch-identity.js');
+      const { canPromptForProject } = await import('../../utils/interactive.js');
+      const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
+      const launchIdentity = await resolveLaunchIdentity(config, {
+        workingDir: process.cwd(),
+        canPrompt: canPromptForProject({ task: options.task }),
+        surface: 'agent',
+        jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
+      });
+
       // Analytics auth validation for providers where CodeMie auth is analytics-only
       // (e.g. anthropic-subscription, moonshot-subscription). ai-run-sso already
       // validated these same credentials via its own validateAuth above.
@@ -381,6 +404,9 @@ export class AgentCLI {
 
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
+      // Binding state next to the profile name; clears inherited identity for own/none
+      // and writes the one unowned warning (stderr) when no prompt was possible.
+      finalizeLaunchIdentity(launchIdentity, providerEnv);
       providerEnv.CODEMIE_CLI_VERSION = this.version;
 
       // Record where the model came from. Plugin-side model resolution (e.g. the Claude
@@ -426,11 +452,14 @@ export class AgentCLI {
         }
       }
 
+      // Strip only control characters before using the value in output.
+      // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
+      // so we must not validate the format here.
+      const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
+      providerEnv[RESUME_SESSION_ENV_KEY] = resumeId;
+      providerEnv[CONTINUE_SESSION_ENV_KEY] = this.adapter.continuesNativeSession?.(args) ? '1' : '';
+
       if (options.resume || nativeResumeId) {
-        // Strip only control characters before using the value in output.
-        // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
-        // so we must not validate the format here.
-        const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
         const resolveResumeOwnership = this.adapter.resolveResumeOwnership?.bind(this.adapter);
 
         if (resolveResumeOwnership && resumeId) {

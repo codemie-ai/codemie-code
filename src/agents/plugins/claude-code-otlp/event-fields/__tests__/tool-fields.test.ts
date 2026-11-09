@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSkillForkFields, resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
+import { isSensitiveFilePath, resolveSkillForkFields, resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
+
+describe('isSensitiveFilePath', () => {
+  it.each([
+    '.env', '/repo/.env.local', 'C:\\x\\id_rsa', '/home/u/.ssh/config', '/home/u/.aws/credentials',
+    '/home/u/.gnupg/pubring.kbx', '/home/u/.kube/config', '/home/u/.docker/config.json',
+    '/home/u/.npmrc', '/home/u/.netrc', '/home/u/.pypirc', '/home/u/.git-credentials',
+    '/home/u/.pgpass', '/etc/.htpasswd', '/repo/credentials.json', '/home/u/id_ed25519',
+    '/home/u/id_ecdsa', '/home/u/id_dsa', '/repo/secrets.yaml', '/repo/server.KEY', '/repo/cert.p12',
+    '/repo/cert.pfx', '/repo/putty.ppk', '/repo/store.jks', '/repo/app.keystore', '/infra/prod.tfvars',
+    '/home/u/server.PEM',
+  ])('treats %s as a credential file', (path) => {
+    expect(isSensitiveFilePath(path)).toBe(true);
+  });
+
+  it.each([
+    '/repo/src/environment.ts', '/repo/src/index.ts', '/repo/README.md', '/repo/src/keys.ts', '/repo/package.json',
+    '/repo/docs/secret-handling.md',
+  ])('does not flag %s', (path) => {
+    expect(isSensitiveFilePath(path)).toBe(false);
+  });
+});
 
 describe('resolveToolContextFields', () => {
   it.each(['Edit', 'Write', 'MultiEdit'])('reads file_path from tool_input.file_path for %s', (toolName) => {
@@ -100,6 +121,11 @@ describe('resolveToolDiffFields', () => {
   it('falls back to counting content lines for a Write with no structuredPatch field at all', () => {
     const fields = resolveToolDiffFields('Write', { content: 'only one line' }, {});
     expect(fields).toEqual({ lines_added: 1, lines_removed: 0 });
+  });
+
+  it('counts a Write overwrite that changed nothing (type update, empty patch) as zero lines', () => {
+    const fields = resolveToolDiffFields('Write', { content: 'a\nb\n' }, { type: 'update', structuredPatch: [] });
+    expect(fields).toEqual({ lines_added: 0, lines_removed: 0 });
   });
 
   it('omits line counts for a Write with no content and no structuredPatch — unknown, not zero', () => {

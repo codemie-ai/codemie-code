@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-16321-hook-proxy-profile",
+  "head": "df28c756a801fb96dbe8ec77ed393260eb455b88",
+  "runner": "npm",
+  "started_at": "2026-11-03T15:36:00Z",
+  "completed_at": "2026-11-03T15:44:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 9065, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 35122, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 12789, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 22398, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 20306, "command": "npx vitest run --project unit src/cli/commands/proxy/__tests__ src/agents/core/__tests__/OtlpAgentAdapter.test.ts", "exit_code": 0, "notes": "Scoped to affected tests: 13 files, 439 tests passed. Full unit suite not run."},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 104911, "command": "npx vitest run --project cli tests/integration/hook-stdout.test.ts", "exit_code": 0, "notes": "Scoped to hook-stdout.test.ts: 16 tests passed, run after fresh build."},
+    {"id": "secrets", "source": "hook", "status": "SKIPPED", "duration_ms": 4642, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Output: 'No staged changes to scan' (changes are unstaged by design). Stage the files and re-run, or rely on CI gitleaks scan."}
+  ],
+  "failures": {}
+}

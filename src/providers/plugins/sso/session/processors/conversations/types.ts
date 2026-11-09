@@ -4,6 +4,8 @@
  * Type definitions for conversation payloads and API client.
  */
 
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
 /**
  * Conversation sync status constants
  */
@@ -76,10 +78,20 @@ export interface ConversationApiConfig {
   cookies?: string;
   apiKey?: string;
   timeout?: number;
+  /** TOTAL attempts, the first request included (1 = no retry); 0 or unset → the default 3 */
   retryAttempts?: number;
   version?: string;
   clientType?: string;
   dryRun?: boolean;
+  /**
+   * Epoch ms past which no attempt or backoff starts; a request's timeout is capped by what is left.
+   * Stopping throws SyncStoppedError('deadline') from upsertConversation.
+   */
+  deadlineMs?: number;
+  /** Aborts the request in flight and the backoff at once; stopping throws SyncStoppedError('aborted'). */
+  abortSignal?: AbortSignal;
+  /** True when a newer sign-in replaced the cookies that were sent; a rejection of those cookies then leaves the marker alone. */
+  credentialsSuperseded?: CredentialsSupersededCheck;
 }
 
 /**

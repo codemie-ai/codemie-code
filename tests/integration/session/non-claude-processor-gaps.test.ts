@@ -21,7 +21,8 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, rmSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { dirname, join } from 'path';
 
 import { GeminiMetricsProcessor } from '../../../src/agents/plugins/gemini/session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from '../../../src/agents/plugins/gemini/session/processors/gemini.conversations-processor.js';
@@ -50,6 +51,9 @@ const createdSessionIds: string[] = [];
 function newSessionId(prefix: string): string {
   const id = `test-${prefix}-${Math.random().toString(36).slice(2)}`;
   createdSessionIds.push(id);
+  // The live record: a metrics / conversation file is created only while it exists
+  mkdirSync(dirname(getSessionPath(id)), { recursive: true });
+  writeFileSync(getSessionPath(id), JSON.stringify({ sessionId: id, startTime: 0 }));
   return id;
 }
 
@@ -64,6 +68,13 @@ function baseContext(sessionId: string, agentSessionId: string): ProcessingConte
     sessionId,
     agentSessionId,
   };
+}
+
+/** A SessionEnd rename in flight: the live record is gone, so conversation writes are dropped. */
+function hideRecord(sessionId: string): () => void {
+  const hidden = join(dirname(getSessionPath(sessionId)), `completed_${sessionId}.json`);
+  renameSync(getSessionPath(sessionId), hidden);
+  return () => renameSync(hidden, getSessionPath(sessionId));
 }
 
 function readJsonl<T>(path: string): T[] {
@@ -222,7 +233,7 @@ describe('GeminiConversationsProcessor.process', () => {
       agentName: 'gemini',
       provider: 'test-provider',
       project: 'test-project',
-      startTime: Date.now(),
+      startTime: 0, // before every fixture message: the run window keeps them all
       workingDirectory: '/test',
       gitBranch: 'main',
       status: 'active',
@@ -292,6 +303,28 @@ describe('GeminiConversationsProcessor.process', () => {
     const persisted = await store.loadSession(sessionId);
     expect(persisted?.sync?.conversations?.lastSyncedMessageUuid).toBe('a1');
     expect(persisted?.sync?.conversations?.lastSyncedHistoryIndex).toBe(0);
+  });
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const sessionId = newSessionId('gemini-conv-drop');
+    const agentSessionId = 'agent-gemini-drop';
+    await seedSession(sessionId, agentSessionId);
+    const session = buildSession(sessionId, [
+      { id: 'u1', type: 'user', timestamp: '2025-01-01T00:00:00Z', content: 'first' },
+      { id: 'a1', type: 'gemini', timestamp: '2025-01-01T00:00:02Z', content: 'reply', model: 'gemini-3-pro' },
+    ]);
+
+    const restore = hideRecord(sessionId);
+    const dropped = await new GeminiConversationsProcessor().process(session, baseContext(sessionId, agentSessionId));
+    expect(dropped.success).toBe(true);
+    expect(dropped.message).toBe('Conversation write dropped');
+    expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
+
+    restore();
+    expect((await store.loadSession(sessionId))?.sync?.conversations).toBeUndefined();
+    const retried = await new GeminiConversationsProcessor().process(session, baseContext(sessionId, agentSessionId));
+    expect(retried.metadata?.turnsProcessed).toBe(1);
+    expect(readJsonl(getSessionConversationPath(sessionId))).toHaveLength(1);
   });
 
   it('is idempotent - a second pass over the same transcript queues no new records', async () => {
@@ -481,6 +514,97 @@ describe('OpenCodeConversationsProcessor.process', () => {
     expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
   });
 
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const sessionId = newSessionId('oc-conv-drop');
+    const session = buildSession(
+      sessionId,
+      [userMessage],
+      { 'msg-u': [{ id: 'pu1', messageID: 'msg-u', sessionID: OC_SESSION_ID, type: 'text', text: 'a prompt' }] },
+    );
+
+    const restore = hideRecord(sessionId);
+    const dropped = await new OpenCodeConversationsProcessor().process(session, baseContext(sessionId, OC_SESSION_ID));
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.recordsProcessed).toBe(0);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(getSessionConversationPath(sessionId))).toBe(false);
+
+    restore();
+    const retried = await new OpenCodeConversationsProcessor().process(session, baseContext(sessionId, OC_SESSION_ID));
+    expect(retried.metadata?.recordsProcessed).toBe(1);
+    expect(readJsonl(getSessionConversationPath(sessionId))).toHaveLength(1);
+  });
+
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const sessionId = newSessionId('oc-conv-torn');
+    const messages: Array<Record<string, unknown>> = [];
+    const partsMap: Record<string, Array<Record<string, unknown>>> = {};
+    const addTurn = (n: number) => {
+      messages.push(
+        { id: `msg-u${n}`, sessionID: OC_SESSION_ID, role: 'user', time: { created: 1_700_000_000_000 + n * 10_000 } },
+        { ...assistantMessage, id: `msg-a${n}`, time: { created: 1_700_000_005_000 + n * 10_000 } },
+      );
+      partsMap[`msg-u${n}`] = [{ id: `pu${n}`, messageID: `msg-u${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `question ${n}` }];
+      partsMap[`msg-a${n}`] = [{ id: `pa${n}`, messageID: `msg-a${n}`, sessionID: OC_SESSION_ID, type: 'text', text: `answer ${n}` }];
+    };
+    const processor = new OpenCodeConversationsProcessor();
+    const path = getSessionConversationPath(sessionId);
+
+    addTurn(1);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    addTurn(2);
+    await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+    const [first, second] = readFileSync(path, 'utf-8').trim().split('\n');
+    writeFileSync(path, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    addTurn(3);
+    const result = await processor.process(buildSession(sessionId, [...messages], partsMap), baseContext(sessionId, OC_SESSION_ID));
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(path, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual([
+      'question 3',
+      'answer 3',
+    ]);
+  });
+
+  it('numbers runs A, C, D over one opencode session across the full session, each run sending only its own exchange', async () => {
+    const T = 1_700_000_000_000;
+    const exchanges = [T + 10_000, T + 20_000, T + 30_000];
+    const messages = exchanges.flatMap((at, i) => [
+      { id: `msg-u${i}`, sessionID: OC_SESSION_ID, role: 'user', time: { created: at } },
+      { id: `msg-a${i}`, sessionID: OC_SESSION_ID, role: 'assistant', time: { created: at + 1_000 }, modelID: 'kimi-k2' },
+    ]);
+    const partsMap = Object.fromEntries(exchanges.flatMap((_at, i) => [
+      [`msg-u${i}`, [{ id: `pu${i}`, messageID: `msg-u${i}`, sessionID: OC_SESSION_ID, type: 'text', text: `prompt ${i}` }]],
+      [`msg-a${i}`, [{ id: `pa${i}`, messageID: `msg-a${i}`, sessionID: OC_SESSION_ID, type: 'text', text: `reply ${i}` }]],
+    ]));
+    // Each run starts just before its own exchange; the next run's start bounds it
+    const starts = exchanges.map((at) => at - 1_000);
+    const runs = starts.map((startTime) => {
+      const sessionId = newSessionId('oc-conv-run');
+      writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime }));
+      return sessionId;
+    });
+
+    for (const [i, sessionId] of runs.entries()) {
+      await new OpenCodeConversationsProcessor().process(
+        buildSession(sessionId, messages, partsMap),
+        { ...baseContext(sessionId, OC_SESSION_ID), recordsBeforeMs: starts[i + 1] },
+      );
+    }
+
+    const payloads = runs.map((sessionId) => readJsonl<Record<string, any>>(getSessionConversationPath(sessionId)));
+    expect(payloads.map((records) => records.map((record) => record.historyIndices))).toEqual([[[0, 0]], [[1, 1]], [[2, 2]]]);
+    expect(payloads.map((records) => records[0].payload.history.map((entry: any) => entry.message))).toEqual([
+      ['prompt 0', 'reply 0'],
+      ['prompt 1', 'reply 1'],
+      ['prompt 2', 'reply 2'],
+    ]);
+  });
+
   it('queues a user-only payload when the prompt has no assistant reply yet', async () => {
     const sessionId = newSessionId('oc-conv-noreply');
     // A brand-new user prompt is published immediately (messageCount 1, no
@@ -512,30 +636,85 @@ describe('OpenCodeConversationsProcessor.process', () => {
 
 describe('CopilotCliMetricsProcessor', () => {
   const processor = new CopilotCliMetricsProcessor();
-  const context = baseContext('copilot-metrics', 'copilot-agent');
+  function buildSession(
+    sessionId: string,
+    metrics: ParsedSession['metrics'],
+    messages: ParsedSession['messages'] = []
+  ): ParsedSession {
+    return {
+      sessionId,
+      agentName: 'copilot-cli',
+      metadata: {},
+      messages,
+      ...(metrics !== undefined && { metrics }),
+    } as ParsedSession;
+  }
 
   it('only runs when the session carries parsed metrics', () => {
     expect(processor.shouldProcess({ metrics: { tools: {} } } as unknown as ParsedSession)).toBe(true);
     expect(processor.shouldProcess({} as unknown as ParsedSession)).toBe(false);
   });
 
-  it('reports the total tool-call count as recordsProcessed', async () => {
-    const result = await processor.process(
-      { metrics: { tools: { read: 2, write: 1, bash: 3 } } } as unknown as ParsedSession,
-      context,
+  it('reports one record per assistant turn (not per tool-call total)', async () => {
+    const sessionId = newSessionId('copilot-metrics-turns');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const session = buildSession(
+      sessionId,
+      { tools: { read: 2, write: 1, bash: 3 } },
+      [
+        { type: 'user', timestamp: '2025-01-01T00:00:00Z' },
+        { type: 'assistant', timestamp: '2025-01-01T00:00:01Z', message: { model: 'gpt-5' } },
+        { type: 'assistant', timestamp: '2025-01-01T00:00:02Z', message: { model: 'gpt-5' } },
+      ]
     );
+
+    const result = await processor.process(session, context);
     expect(result.success).toBe(true);
-    expect(result.metadata?.recordsProcessed).toBe(6);
+    expect(result.metadata?.recordsProcessed).toBe(2);
+
+    const deltas = readJsonl<MetricDelta>(getSessionMetricsPath(sessionId));
+    expect(deltas).toHaveLength(2);
+    expect(deltas[0].tools).toEqual({ read: 2, write: 1, bash: 3 });
+    expect(deltas[1].tools).toEqual({});
   });
 
-  it('returns zero when metrics carry no tools', async () => {
-    const result = await processor.process({ metrics: {} } as unknown as ParsedSession, context);
+  it('stamps a resumed session\'s supplement delta with its last record inside the run window; a turn before the record start is dropped', async () => {
+    const sessionId = newSessionId('copilot-metrics-resumed');
+    const context = baseContext(sessionId, 'copilot-agent');
+    // The session was created long before this record started (a resumed session)
+    writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime: Date.parse('2026-10-01T00:00:00Z') }));
+    const session = {
+      ...buildSession(sessionId, { tools: { read: 2 } }, [
+        { type: 'assistant', timestamp: '2026-05-09T12:00:01Z', message: { model: 'gpt-5' } },
+      ]),
+      metadata: { createdAt: '2026-05-09T12:00:00Z' },
+      recordTimes: ['2026-05-09T12:00:00Z', '2026-05-09T12:00:01Z', '2026-10-01T00:05:00Z'],
+    } as ParsedSession;
+
+    await processor.process(session, context);
+    await processor.process(session, context);
+
+    const deltas = readJsonl<MetricDelta>(getSessionMetricsPath(sessionId));
+    expect(deltas.map((d) => d.recordId)).toEqual(['copilot-agent-supplement-0']);
+    expect(deltas[0].timestamp).toBe(Date.parse('2026-10-01T00:05:00Z'));
+    expect(deltas[0].tools).toEqual({ read: 2 });
+  });
+
+  it('returns zero when metrics carry no tools and there are no assistant turns', async () => {
+    const sessionId = newSessionId('copilot-metrics-empty-tools');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const result = await processor.process(
+      buildSession(sessionId, {}, []),
+      context,
+    );
     expect(result.success).toBe(true);
     expect(result.metadata?.recordsProcessed).toBe(0);
   });
 
-  it('does not throw when metrics is entirely absent (returns zero)', async () => {
-    const result = await processor.process({} as unknown as ParsedSession, context);
+  it('does not throw when metrics is entirely absent (returns zero with a valid ParsedSession shape)', async () => {
+    const sessionId = newSessionId('copilot-metrics-no-metrics');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const result = await processor.process(buildSession(sessionId, undefined, []), context);
     expect(result.success).toBe(true);
     expect(result.metadata?.recordsProcessed).toBe(0);
   });

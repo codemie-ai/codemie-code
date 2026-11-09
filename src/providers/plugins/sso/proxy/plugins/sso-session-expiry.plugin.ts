@@ -15,6 +15,12 @@
  * Nothing else has ever been observed to produce this exact redirect, so
  * no secondary confirming signal is needed before acting on it.
  *
+ * A redirect on a request that was sent with credentials a finished sign-in has since replaced is not
+ * an expiry: the request is replayed once with the stored cookies and that response is returned. If
+ * the replay is itself the redirect the session really is gone and the expiry path below runs; if
+ * the replay throws the client gets a 401 asking it to re-send. No marker is written and no sign-in
+ * is started for a superseded request.
+ *
  * KNOWN GAP: detection relies ONLY on this exact 302/303-to-/oauth2/start signature. Two other
  * gateway rejection shapes bypass it silently (no marker written, no re-login triggered, no
  * failing test): a plain 401, and an HTML 200 (the latter is already handled on the metrics
@@ -41,9 +47,43 @@ import { ProxyContext } from '../proxy-types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 import { logger } from '../../../../../utils/logger.js';
 import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
+import { supersedingCookieHeader } from '../../session/cookie-auth.js';
+import type { CredentialRefresher } from './credential-refresh.js';
+import type { SSOCredentials } from '@/providers/core/types.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
+const RENEWED_MESSAGE =
+  'CodeMie SSO session was just renewed; this request used the previous credentials. Please re-send your prompt.';
+
+/**
+ * Anthropic-shaped 401. The body must later become per-client (Codex expects an OpenAI-shaped
+ * error), as the known gap above says.
+ */
+function syntheticUnauthorized(
+  response: IncomingMessage,
+  tools: UpstreamResponseTools,
+  message: string
+): IncomingMessage {
+  const body = Buffer.from(JSON.stringify({
+    type: 'error',
+    error: { type: 'authentication_error', message },
+  }), 'utf-8');
+  const synthetic = tools.fromBuffer(response, body);
+  synthetic.statusCode = 401;
+  synthetic.statusMessage = 'Unauthorized';
+  synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
+  return synthetic;
+}
+
+function isOauthRedirect(response: IncomingMessage): boolean {
+  const location = response.headers['location'];
+  return (
+    (response.statusCode === 302 || response.statusCode === 303) &&
+    typeof location === 'string' &&
+    location.includes(OAUTH2_START_MARKER)
+  );
+}
 
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
@@ -64,26 +104,45 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
     if (!context.credentials || !('cookies' in context.credentials)) {
       return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: JWT profiles unaffected
     }
-    return new SSOSessionExpiryInterceptor(context.config.targetApiUrl);
+    return new SSOSessionExpiryInterceptor(
+      context.config.targetApiUrl,
+      context.credentialRefresher as CredentialRefresher<SSOCredentials> | undefined
+    );
   }
 }
 
 class SSOSessionExpiryInterceptor implements ProxyInterceptor {
   name = 'sso-session-expiry';
 
-  constructor(private readonly targetApiUrl: string) {}
+  constructor(
+    private readonly targetApiUrl: string,
+    private readonly credentialRefresher?: CredentialRefresher<SSOCredentials>
+  ) {}
 
   async onUpstreamResponse(
-    _context: ProxyContext,
+    context: ProxyContext,
     response: IncomingMessage,
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage> {
-    const location = response.headers['location'];
-    const isOauthRedirect =
-      (response.statusCode === 302 || response.statusCode === 303) &&
-      typeof location === 'string' &&
-      location.includes(OAUTH2_START_MARKER);
-    if (!isOauthRedirect) return response;
+    if (!isOauthRedirect(response)) return response;
+
+    const freshCookies = await supersedingCookieHeader(context.headers['cookie'], this.credentialRefresher);
+    if (freshCookies !== null) {
+      logger.debug(`[${this.name}] request carried superseded credentials; not treating the redirect as an expiry`);
+      try {
+        await tools.readBody(response); // keep-alive socket: the 302 body must be consumed
+      } catch (error) {
+        logger.debug(`[${this.name}] draining the redirect body failed`, error);
+      }
+      const replayed = await this.replayWithFreshCookies(context, tools, freshCookies);
+      if (!replayed) {
+        return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
+      }
+      if (!isOauthRedirect(replayed)) return replayed;
+      // The fresh credentials were rejected too, so the session really is gone: handle the replayed
+      // redirect as an expiry below. The replay is never repeated.
+      response = replayed;
+    }
 
     let outcome: DetachedLoginOutcome | undefined;
     let failedStep: string | undefined;
@@ -107,14 +166,28 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       );
     }
 
-    const body = Buffer.from(JSON.stringify({
-      type: 'error',
-      error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome)}` },
-    }), 'utf-8');
-    const synthetic = tools.fromBuffer(response, body);
-    synthetic.statusCode = 401;
-    synthetic.statusMessage = 'Unauthorized';
-    synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
-    return synthetic;
+    const login = describeLogin(outcome ?? 'failed');
+    // After a sign-in that just finished the text already says so; "session expired" would contradict it.
+    return syntheticUnauthorized(response, tools, outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`);
+  }
+
+  /**
+   * Sends the request once more with the cookies a finished sign-in stored. `tools.retry` reuses
+   * `context.headers` as they are rather than re-running the request interceptors, so the fresh
+   * cookie header is put there first. A request without a buffered body (GET, HEAD, DELETE) is
+   * replayed with that null body. Resolves null when the replay throws.
+   */
+  private async replayWithFreshCookies(
+    context: ProxyContext,
+    tools: UpstreamResponseTools,
+    freshCookies: string
+  ): Promise<IncomingMessage | null> {
+    try {
+      context.headers['cookie'] = freshCookies;
+      return await tools.retry(context.requestBody);
+    } catch (error) {
+      logger.debug(`[${this.name}] replaying the request with the renewed credentials failed`, error);
+      return null;
+    }
   }
 }

@@ -13,18 +13,37 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../BaseProcessor.js';
-import { shouldStopSync } from '../../../../../../agents/core/session/BaseProcessor.js';
+import { shouldStopSync, SyncStoppedError } from '../../../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
-import { aggregateDeltas } from './metrics-aggregator.js';
+import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
-import { readJSONL } from '../../utils/jsonl-reader.js';
-import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
+import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
+import type { Session } from '../../../../../../agents/core/session/types.js';
+import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
+
+/** Whether a metric delta may still be sent: pending, or failed with retries left. */
+export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
+  return delta.syncStatus === 'pending' ||
+    (delta.syncStatus === 'failed' && (delta.syncAttempts ?? 0) < MAX_SYNC_ATTEMPTS);
+}
+
+/**
+ * Per branch: the last model of the newest delta on that branch that names one, else of the newest such delta
+ * on any branch, whatever its sync status. The model does not depend on the branch, so a branch with no history
+ * of its own keeps the session's.
+ */
+function lastKnownModelByBranch(deltas: MetricDelta[], session: Session): (branch: string) => string | undefined {
+  const modeledNewestFirst = [...deltas].reverse().filter(d => d.models?.length);
+  const sessionModel = modeledNewestFirst[0]?.models?.at(-1);
+  return branch => modeledNewestFirst.find(d => branchKeyOf(d, session) === branch)?.models?.at(-1) ?? sessionModel;
+}
 
 export class MetricsSyncProcessor implements SessionProcessor {
   readonly name = 'metrics-sync';
@@ -51,13 +70,10 @@ export class MetricsSyncProcessor implements SessionProcessor {
       const metricsFile = getSessionMetricsPath(session.sessionId);
 
       // 1. Read all deltas from JSONL
-      const allDeltas = await readJSONL<MetricDelta>(metricsFile);
+      const allDeltas = await readJSONLTolerant<MetricDelta>(metricsFile, `[${this.name}]`);
 
       // 2. Retry pending deltas and previously failed deltas until the attempt cap.
-      const pendingDeltas = allDeltas.filter(d =>
-        d.syncStatus === 'pending' ||
-        (d.syncStatus === 'failed' && d.syncAttempts < MAX_SYNC_ATTEMPTS)
-      );
+      const pendingDeltas = allDeltas.filter(isDeltaSendCandidate);
 
       if (pendingDeltas.length === 0) {
         logger.debug(`[${this.name}] No pending deltas to sync for session ${session.sessionId}`);
@@ -132,7 +148,11 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       // 5. Aggregate pending deltas into metrics grouped by branch
       const clientType = context.clientType || 'codemie-cli';
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, agentConfig);
+      // A branch whose pending deltas name no model keeps the branch's, else the session's, last known one.
+      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, {
+        agentConfig,
+        fallbackModelByBranch: lastKnownModelByBranch(allDeltas, sessionMetadata)
+      });
 
       logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 
@@ -176,7 +196,10 @@ export class MetricsSyncProcessor implements SessionProcessor {
         retryAttempts: 3,
         version: context.version,
         clientType,
-        dryRun: context.dryRun
+        dryRun: context.dryRun,
+        deadlineMs: context.syncDeadlineMs,
+        abortSignal: context.abortSignal,
+        credentialsSuperseded: context.credentialsSuperseded
       });
 
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
@@ -215,6 +238,12 @@ export class MetricsSyncProcessor implements SessionProcessor {
           }
           logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.branch}"`);
         } catch (error) {
+          if (error instanceof SyncStoppedError) {
+            // Stopped by the caller's abort / deadline: this branch's deltas stay pending
+            deferred = true;
+            processedBranches--;
+            break;
+          }
           const message = error instanceof Error ? error.message : String(error);
           logger.error(`[${this.name}] Sync threw for branch "${metric.attributes.branch}": ${message}`);
           for (const delta of branchDeltas) {
@@ -228,7 +257,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // far are persisted, unprocessed branches keep their deltas pending.
       const syncedAt = Date.now();
 
-      const updatedDeltas = allDeltas.map((d): MetricDelta => {
+      // The file is re-read under its lock: a line a hook appended during the network wait stays as read.
+      const applyStatuses = (current: MetricDelta[]): MetricDelta[] => current.map((d): MetricDelta => {
         if (successfulRecordIds.has(d.recordId)) {
           return {
             ...d,
@@ -252,10 +282,29 @@ export class MetricsSyncProcessor implements SessionProcessor {
         return d;
       });
 
-      await writeJSONLAtomic(metricsFile, updatedDeltas);
-
+      let updatedDeltas = allDeltas;
       const successCount = successfulRecordIds.size;
       const failedCount = failedByRecordId.size;
+      try {
+        const rewritten = await rewriteSessionFile<MetricDelta>('metrics', session.sessionId, (current) => {
+          updatedDeltas = applyStatuses(current);
+          return updatedDeltas;
+        }, context);
+        if (!rewritten) {
+          logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone, sync outcome dropped`);
+        }
+      } catch (error) {
+        if (!(error instanceof SessionFileLockTimeoutError)) throw error;
+        logger.warn(
+          `[${this.name}] Metrics lock of session ${session.sessionId} stayed held: the outcomes of ${successCount} accepted / ` +
+          `${failedCount} failed deltas were not persisted; they stay pending and will be re-sent`
+        );
+        return {
+          success: true,
+          message: `Sync not persisted: ${successCount}/${pendingDeltas.length} deltas accepted, their outcome not written (metrics lock held)`,
+          metadata: { persisted: false }
+        };
+      }
       // Deferral is not a failure: remaining branch metrics stay pending for the next run
       const message = deferred
         ? `Sync deferred: ${metrics.length - processedBranches} items remaining (deadline/abort)`

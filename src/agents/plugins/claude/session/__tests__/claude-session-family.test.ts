@@ -1,9 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { logger } from '@/utils/logger.js';
 import { ClaudePluginMetadata } from '../../claude.plugin.js';
 import { ClaudeSessionAdapter } from '../../claude.session.js';
+
+const unreadable = vi.hoisted(() => ({ path: undefined as string | undefined }));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    readFile: (...args: Parameters<typeof actual.readFile>) =>
+      String(args[0]) === unreadable.path
+        ? Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))
+        : actual.readFile(...args),
+  };
+});
 
 interface FixtureMessage {
   type: string;
@@ -35,6 +49,8 @@ describe('ClaudeSessionAdapter family evidence', () => {
   });
 
   afterEach(async () => {
+    unreadable.path = undefined;
+    vi.restoreAllMocks();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -78,6 +94,7 @@ describe('ClaudeSessionAdapter family evidence', () => {
         requestShape: 'background', requestNonInteractive: false,
       }),
     ]));
+    expect(parsed.subagentsIncomplete).toBeUndefined();
   });
 
   it('keeps readable usage and protocol rows when sibling metadata or transcript is damaged', async () => {
@@ -114,13 +131,72 @@ describe('ClaudeSessionAdapter family evidence', () => {
     const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
     const readable = parsed.subagents?.find(subagent => subagent.agentId === 'readable');
 
-    expect(parsed.subagents?.map(subagent => subagent.agentId).sort()).toEqual(['no-meta', 'readable']);
+    expect(parsed.subagents?.map(subagent => subagent.agentId).sort()).toEqual(['damaged', 'no-meta', 'readable']);
+    expect(parsed.subagents?.find(subagent => subagent.agentId === 'damaged')?.messages).toEqual([]);
+    expect(parsed.subagentsIncomplete).toBeUndefined();
     expect(readable?.messages).toHaveLength(2);
     expect(readable?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.objectContaining({ usage: { input_tokens: 13, output_tokens: 8 } }) }),
       expect.objectContaining({ type: 'system', subtype: 'task-notification', taskId: 'child-task', status: 'completed' }),
     ]));
   });
+  it('marks sub-agents incomplete when one sub-agent file cannot be read', async () => {
+    const sessionId = 'unreadable-family';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    const subagentsDir = join(tempDir, sessionId, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T13:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+    for (const agentId of ['first', 'locked', 'second']) {
+      await writeFile(join(subagentsDir, `agent-${agentId}.jsonl`), jsonl([{
+        type: 'assistant', uuid: `${agentId}-1`, sessionId, timestamp: '2026-09-15T13:00:01.000Z',
+        message: { id: `${agentId}-response`, role: 'assistant', content: '[sanitized]', usage: { input_tokens: 2, output_tokens: 1 } },
+      }]));
+    }
+    unreadable.path = join(subagentsDir, 'agent-locked.jsonl');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBe(true);
+    expect(parsed.subagents?.map(subagent => subagent.agentId).sort()).toEqual(['first', 'second']);
+    expect(warn.mock.calls.filter(([line]) => String(line).includes('Failed to parse sub-agent file'))).toHaveLength(1);
+  });
+
+  it('marks sub-agents incomplete when the subagents directory cannot be listed', async () => {
+    const sessionId = 'unlistable-family';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await mkdir(join(tempDir, sessionId), { recursive: true });
+    await writeFile(join(tempDir, sessionId, 'subagents'), 'not a directory');
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T11:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBe(true);
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
+  it('leaves sub-agents complete when the subagents directory is absent', async () => {
+    const sessionId = 'no-subagents';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T12:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBeUndefined();
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
   it('excludes api-request-blob lines from a subagent transcript', async () => {
     const sessionId = 'blob-family';
     const sessionFile = join(tempDir, `${sessionId}.jsonl`);

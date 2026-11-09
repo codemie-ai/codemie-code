@@ -1,0 +1,43 @@
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+index 455213d5..96bd3f7e 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+@@ -6,7 +6,7 @@
+  * and parses the file once and hands the lines in.
+  */
+ 
+-import { countContentLines } from '../../../../utils/file-operations.js';
++import { countContentLines } from '@/utils/file-operations.js';
+ 
+ /** The subset of a transcript line these extractors read; every field is optional. */
+ export interface SignalLine {
+diff --git a/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts b/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
+index bc787e86..5fdea54b 100644
+--- a/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
++++ b/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
+@@ -66,4 +66,12 @@ describe('extractClaudeFileOperation', () => {
+     });
+     expect(op).toMatchObject({ linesAdded: 3 });
+   });
++
++  it('reports linesAdded: 0 for an empty-content Write, not undefined', () => {
++    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: '' }, {
++      filePath: '/repo/a.ts',
++      content: '',
++    });
++    expect(op).toMatchObject({ linesAdded: 0 });
++  });
+ });
+diff --git a/src/agents/plugins/claude/session/claude-file-operation.ts b/src/agents/plugins/claude/session/claude-file-operation.ts
+index 7e33c803..3760bc00 100644
+--- a/src/agents/plugins/claude/session/claude-file-operation.ts
++++ b/src/agents/plugins/claude/session/claude-file-operation.ts
+@@ -70,7 +70,7 @@ export function extractClaudeFileOperation(
+ 
+   if (toolName === 'Write') {
+     const content = res.content || res.file?.content || inp.content;
+-    if (content) {
++    if (content !== undefined) {
+       fileOp.linesAdded = countContentLines(content);
+     }
+   } else if (toolName === 'Edit' && Array.isArray(res.structuredPatch)) {

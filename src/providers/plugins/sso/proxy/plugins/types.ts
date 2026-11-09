@@ -80,16 +80,27 @@ export interface PluginConfig {
 }
 
 /**
+ * Analytics delivery health reported in the daemon `/health` reply.
+ * `stale` means the analytics credentials were rejected and telemetry is spooled to disk.
+ */
+export interface AnalyticsHealthReply {
+  credentials: 'ok' | 'stale';
+}
+
+/**
  * Enhanced interceptor with streaming support
  */
 export interface ProxyInterceptor {
   name: string;
 
+  /** Report analytics delivery health for the `/health` reply (first interceptor to answer wins) */
+  healthStatus?(): AnalyticsHealthReply;
+
   /** Called when proxy starts (for initialization) */
   onProxyStart?(): Promise<void>;
 
-  /** Called when proxy stops (for cleanup) */
-  onProxyStop?(): Promise<void>;
+  /** Called when proxy stops (for cleanup); network work stops at `bounds.deadlineMs` when given */
+  onProxyStop?(bounds?: { deadlineMs?: number }): Promise<void>;
 
   /** Called before forwarding request */
   onRequest?(context: ProxyContext): Promise<void>;
@@ -142,7 +153,8 @@ export interface ProxyInterceptor {
 
 export interface UpstreamResponseTools {
   readBody(response: IncomingMessage): Promise<Buffer>;
-  retry(requestBody: Buffer): Promise<IncomingMessage>;
+  /** `null`/`undefined` replays a request that was sent without a body (GET, HEAD, DELETE). */
+  retry(requestBody: Buffer | null | undefined): Promise<IncomingMessage>;
   fromBuffer(response: IncomingMessage, body: Buffer): IncomingMessage;
 }
 

@@ -151,11 +151,18 @@ export function parseUsageLine(
 
 /**
  * Identity key for a logical request: the API request id when the transcript has one, else
- * `message.id`, plus the resolved model. Single source of truth for every `openRequests` /
- * dedupe key.
+ * `message.id`, plus the resolved model. API-error rows use a separate key namespace so a
+ * matching request id and model cannot merge their sticky error flag into a normal usage record.
+ * Single source of truth for every `openRequests` / dedupe key.
  */
-export function usageRequestKey(r: { requestId: string; messageId: string; model: string }): string {
-  return `${r.requestId || r.messageId}::${r.model}`;
+export function usageRequestKey(r: {
+  requestId: string;
+  messageId: string;
+  model: string;
+  isApiError?: boolean;
+}): string {
+  const key = `${r.requestId || r.messageId}::${r.model}`;
+  return r.isApiError ? `${key}::api-error` : key;
 }
 
 /**
@@ -213,6 +220,8 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
  * API-error rows legitimately carry no `stop_reason` and are not partial.
  */
 export function isOutputTokensPartial(req: Pick<OpenUsageRequest, 'stopReason' | 'isApiError'>): boolean {
+  // Keep the API-error exception for schema/semantic stability; orchestration filters these rows
+  // before emitting agent.usage.request events.
   return !req.stopReason && !req.isApiError;
 }
 

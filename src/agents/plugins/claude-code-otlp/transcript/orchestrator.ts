@@ -70,7 +70,22 @@ import {
   type Compaction,
   type SignalLine,
 } from './session-signals.js';
-import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from './subagent-usage.js';
+import {
+  type SubagentFile,
+  buildSubagentUsageEvent,
+  type SubagentSnapshot,
+  refreshHead,
+  resolveSubagentSnapshot,
+} from './subagent-usage.js';
+
+/**
+ * The subagent resolution of ONE hook pass. The session summary (`commands`) and the settling of
+ * deferred subagents (usage) both need it, over the same candidates and the same main-transcript
+ * text: whichever runs first stores it here and the other reuses it. Never kept across passes.
+ */
+interface PassSnapshot {
+  snapshot?: SubagentSnapshot;
+}
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
 // the pass openers from this one module.
@@ -344,7 +359,12 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
  *   fires before the boundary line exists.
  */
-async function buildFullAccumulator(transcriptPath: string): Promise<{
+async function buildFullAccumulator(
+  transcriptPath: string,
+  final: boolean,
+  extra: readonly SubagentFile[],
+  pass: PassSnapshot
+): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
@@ -384,7 +404,9 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     // 'main' is used uniformly rather than re-deriving deriveMainEvents's active-skill state.
     const parsedUsage = parseUsageLine(line, 'main', '', '', '');
     if (parsedUsage) {
-      modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
+      if (!parsedUsage.isApiError) {
+        modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
+      }
     }
   }
   for (const model of modelByRequestKey.values()) {
@@ -416,7 +438,13 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
 
-  const named = extractOrderedNamedInvocations(parsedLines);
+  // A forked skill run as `/name` leaves no command wrapper; count its plain line when a fork
+  // proves the prompt started one.
+  // Resolved over the same candidates (discovered + hook-reported/deferred paths) the usage events
+  // use, so a fork recovered from a path outside discovery is counted here too.
+  pass.snapshot = await resolveSubagentSnapshot(transcriptPath, { final, extra, raw });
+  const { slashPromptIds } = pass.snapshot;
+  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
   acc.commandsInOrder = named.commandsInOrder;
 
   const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
@@ -469,6 +497,21 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
   return seen;
 }
 
+function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
+  const key = usageRequestKey(parsed);
+  const existing = state.openRequests[key];
+
+  // Older persisted states keyed API-error placeholders like normal requests. When a real row
+  // now arrives under that legacy key, replace the placeholder instead of preserving its sticky
+  // error flag; current API-error rows use a separate key namespace.
+  if (existing?.isApiError && !parsed.isApiError) {
+    state.openRequests[key] = parsed;
+  } else {
+    state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+  }
+  return key;
+}
+
 /**
  * Derive the spool-bound events for one `Stop`/`PreCompact`/`PostCompact`/`SessionEnd`/
  * `StopFailure` hook fire, mutating `state` in memory. Does not persist anything — the caller (a
@@ -503,7 +546,8 @@ async function deriveMainEvents(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
-  trigger: MainTranscriptDerivationTrigger
+  trigger: MainTranscriptDerivationTrigger,
+  pass: PassSnapshot = {}
 ): Promise<Record<string, unknown>[]> {
   const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
@@ -541,10 +585,7 @@ async function deriveMainEvents(
     if (parsed) {
       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
-      const key = usageRequestKey(parsed);
-      const existing = state.openRequests[key];
-      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-      touchedKeys.add(key);
+      touchedKeys.add(mergeOpenUsageRequest(state, parsed));
     }
 
     // Applied after this line's own usage is scoped — the turn that invokes a skill still
@@ -560,11 +601,21 @@ async function deriveMainEvents(
   if (seeded) state.seenMessageUuids = [...seenUuids];
 
   for (const key of touchedKeys) {
-    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+    const request = state.openRequests[key];
+    // usageRequestKey isolates API-error rows even when request id and resolved model match a
+    // normal request, so suppressing one cannot hide that normal request from downstream.
+    if (!request.isApiError) {
+      events.push(buildUsageRequestEvent(sessionId, request));
+    }
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
+    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(
+      transcriptPath,
+      trigger === 'SessionEnd',
+      deferredCandidates(state),
+      pass
+    );
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -579,7 +630,7 @@ async function deriveMainEvents(
     // empty agentId; the contract's api_calls excludes subagent requests, including a forked
     // skill's (scopeKind: 'skill' too, but with its own agentId — see deriveSubagentEvents).
     summaryEvent.api_calls = Object.values(state.openRequests).filter(
-      (r) => (r.scopeKind === 'main' || r.scopeKind === 'skill') && !r.agentId
+      (r) => (r.scopeKind === 'main' || r.scopeKind === 'skill') && !r.agentId && !r.isApiError
     ).length;
     events.push(summaryEvent);
   }
@@ -824,6 +875,130 @@ export async function openSessionEnvCheckPass(
   }
 }
 
+/** Forget `agentId` as deferred (its usage is being derived now). */
+function clearDeferred(state: TranscriptParseState, agentId: string): void {
+  if (state.deferredAgentIds) {
+    state.deferredAgentIds = state.deferredAgentIds.filter((id) => id !== agentId);
+  }
+  if (state.deferredSubagentFiles) {
+    delete state.deferredSubagentFiles[agentId];
+  }
+}
+
+/**
+ * Derive one subagent and register it as settled: its path, its type and any positive skill
+ * evidence — never a guessed scope. The registry is the memory of "known scope + path + offset", so
+ * a later `Stop`/`StopFailure`/`PreCompact`/`SessionEnd` sends what was appended since (nothing
+ * proves a subagent file complete: it can be created after `SubagentStop`, and a prefix still yields
+ * a summary) without resolving the subagent again. Usage already proven is sent now, and the
+ * offsets keep unchanged requests from being sent again.
+ */
+async function deriveOrRetain(
+  state: TranscriptParseState,
+  sessionId: string,
+  file: SubagentFile
+): Promise<Record<string, unknown>[]> {
+  clearDeferred(state, file.agentId);
+  const events = await deriveSubagentEvents(state, sessionId, file);
+  // Correlation metadata the file did not have yet is filled from its changed content (no scope guess).
+  await refreshHead(file);
+  const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
+  state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
+  (state.deferredSubagentFiles ??= {})[agentId] = {
+    filePath,
+    toolUseId,
+    agentType,
+    spawnDepth,
+    description,
+    skillName,
+    // Settled = the scope is known (proved, or already sent). A subagent left an agent only because the
+    // session ended is not: a resumed session resolves it again.
+    ...(file.unproven ? {} : { settled: true }),
+    promptId: file.promptId || undefined,
+    headDone: file.headDone,
+    headSize: file.headSize,
+  };
+  return events;
+}
+
+/**
+ * The candidate with the scope the registry already knows (a proved skill, or a settled agent): a
+ * later partial update — a repeated `SubagentStop` whose evidence is temporarily missing — never
+ * overwrites it.
+ */
+function withKnownScope(state: TranscriptParseState, file: SubagentFile): SubagentFile {
+  const known = state.deferredSubagentFiles?.[file.agentId];
+  if (!known || (!known.settled && !known.skillName)) return file;
+  return {
+    ...file,
+    toolUseId: file.toolUseId ?? known.toolUseId,
+    agentType: file.agentType ?? known.agentType,
+    spawnDepth: file.spawnDepth ?? known.spawnDepth,
+    description: (known.skillName ? known.description : undefined) || file.description || known.description,
+    skillName: known.skillName,
+    pending: undefined,
+    unproven: undefined,
+    settled: known.settled,
+    promptId: known.promptId,
+    headDone: known.headDone,
+    headSize: known.headSize,
+  };
+}
+
+/** Persist head facts a snapshot learned about a registered file whose offset did not move. */
+function syncHead(state: TranscriptParseState, file: SubagentFile): void {
+  const entry = state.deferredSubagentFiles?.[file.agentId];
+  if (!entry?.settled || file.pending) return;
+  entry.promptId = file.promptId || undefined;
+  entry.headDone = file.headDone;
+  entry.headSize = file.headSize;
+}
+
+/** The deferred subagents as file candidates, at the paths their `SubagentStop` reported. */
+function deferredCandidates(state: TranscriptParseState): SubagentFile[] {
+  return Object.entries(state.deferredSubagentFiles ?? {}).map(([agentId, f]) => ({ agentId, ...f }));
+}
+
+/**
+ * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
+ * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
+ * `Stop`, `StopFailure` and `PreCompact`, when new evidence or usage may have arrived. Pending
+ * candidates stay deferred; covered settled candidates stay registered without re-derivation.
+ * Registration also survives `SessionEnd`: a resumed session still needs the known scope and
+ * nonstandard paths to reconstruct commands and consume later bytes. No-op without registered
+ * candidates. A failing subagent is skipped, state intact.
+ */
+async function settleDeferredSubagents(
+  state: TranscriptParseState,
+  sessionId: string,
+  transcriptPath: string,
+  pass: PassSnapshot,
+  cwd?: string
+): Promise<Record<string, unknown>[]> {
+  if (!state.deferredAgentIds?.length) {
+    return [];
+  }
+  const events: Record<string, unknown>[] = [];
+  // Same resolution the session summary used in this pass, when there was one (no re-read).
+  pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, { extra: deferredCandidates(state) });
+  for (const rawFile of pass.snapshot.files) {
+    if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
+    const file: SubagentFile = { ...rawFile, cwd };
+    syncHead(state, file);
+    // Covered by its offset: nothing to send now, but more may still be appended - stay registered.
+    if (await subagentAlreadyCovered(state, file)) continue;
+    const snapshot = structuredClone(state);
+    try {
+      events.push(...(await deriveOrRetain(state, sessionId, file)));
+    } catch (err) {
+      Object.assign(state, snapshot);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[claude-code-otlp] deferred subagent failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
+    }
+  }
+  return events;
+}
+
 /**
  * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
@@ -848,7 +1023,13 @@ export async function openMainTranscriptPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    const pass: PassSnapshot = {};
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger, pass);
+    // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
+    // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
+    if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
+      events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, pass, envCheck?.cwd)));
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1057,7 +1238,8 @@ async function subagentAlreadyCovered(state: TranscriptParseState, subagentFile:
   }
   try {
     const info = await stat(subagentFile.filePath);
-    return info.size === offset;
+    // An empty file at offset 0 has consumed nothing: not covered, so a deferred candidate survives.
+    return offset > 0 && info.size === offset;
   } catch {
     return false;
   }
@@ -1105,17 +1287,19 @@ async function deriveSubagentEvents(
   for (const line of lines) {
     const parsed = parseUsageLine(line, scopeKind, scopeName, subagentFile.agentId, agentType);
     if (parsed) {
-      const key = usageRequestKey(parsed);
-      const existing = state.openRequests[key];
-      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-      touchedKeys.add(key);
+      touchedKeys.add(mergeOpenUsageRequest(state, parsed));
     }
   }
   state.subagentOffsets[subagentFile.agentId] = nextOffset;
 
   const events: Record<string, unknown>[] = [];
   for (const key of touchedKeys) {
-    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+    const request = state.openRequests[key];
+    // usageRequestKey isolates API-error rows even when request id and resolved model match a
+    // normal request, so suppressing one cannot hide that normal request from downstream.
+    if (!request.isApiError) {
+      events.push(buildUsageRequestEvent(sessionId, request));
+    }
   }
 
   // Cumulative usage for this agent — every record of its own scope_kind ('skill' for a forked
@@ -1123,7 +1307,7 @@ async function deriveSubagentEvents(
   // (consistent with buildFullAccumulator's own "recomputed from full state" framing for the
   // sibling agent.session.summary event).
   const usageRequestsForAgent = Object.values(state.openRequests).filter(
-    (r) => r.scopeKind === scopeKind && r.agentId === subagentFile.agentId
+    (r) => r.scopeKind === scopeKind && r.agentId === subagentFile.agentId && !r.isApiError
   );
 
   const scan = await scanSubagentTranscript(subagentFile.filePath);
@@ -1161,7 +1345,19 @@ export async function openSubagentPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    // A subagent that may still prove to be a skill fork sends nothing yet: the backend keeps the
+    // max() of scope_kind/scope_name per request, so a wrong first scope could not be fixed later.
+    let events: Record<string, unknown>[] = [];
+    const incoming = withKnownScope(state, subagentFile);
+    if (incoming.pending) {
+      state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), incoming.agentId])];
+      const { agentId, filePath, toolUseId, agentType, spawnDepth, description } = incoming;
+      (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description };
+    } else {
+      // A resolved stop (also a later one of a subagent deferred before) is derived now; if its file
+      // has no content yet the candidate stays deferred (with its positive evidence) until it does.
+      events = await deriveOrRetain(state, sessionId, incoming);
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1214,19 +1410,26 @@ export async function openSessionEndPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
+    const pass: PassSnapshot = {};
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd', pass);
 
-    const subagentFiles = await findSubagentFiles(transcriptPath);
-    for (const rawFile of subagentFiles) {
+    // End of the session: nothing more will arrive, so a subagent still unproven is an agent. The
+    // summary above resolved the same candidates with the same `final`: reuse it.
+    pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, {
+      final: true,
+      extra: deferredCandidates(state),
+    });
+    for (const rawFile of pass.snapshot.files) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
+      syncHead(state, file);
       if (await subagentAlreadyCovered(state, file)) {
         continue;
       }
       const snapshot = structuredClone(state);
       try {
-        events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+        events.push(...(await deriveOrRetain(state, sessionId, file)));
       } catch (err) {
         Object.assign(state, snapshot);
         const msg = err instanceof Error ? err.message : String(err);

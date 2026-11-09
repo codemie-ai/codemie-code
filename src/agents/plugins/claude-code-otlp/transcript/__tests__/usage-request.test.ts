@@ -510,6 +510,18 @@ describe('usageRequestKey', () => {
 
     expect(a).not.toBe(b);
   });
+
+  it('isolates API-error rows from normal rows with the same request id and model', () => {
+    const normal = usageRequestKey({ requestId: 'req_1', messageId: 'msg_1', model: 'm' });
+    const apiError = usageRequestKey({
+      requestId: 'req_1',
+      messageId: 'msg_2',
+      model: 'm',
+      isApiError: true,
+    });
+
+    expect(apiError).not.toBe(normal);
+  });
 });
 
 describe('buildUsageRequestEvent - direct session', () => {
