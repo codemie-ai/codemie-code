@@ -75,6 +75,12 @@ describe('loadBootstrapState / saveBootstrapState', () => {
   });
 
   it('returns { state: null } and a notice naming the path when the file cannot be read', async () => {
+    // Windows chmod only toggles the read-only attribute (blocks writes, not reads), so
+    // 0o000 never produces EACCES on a read there — unlike POSIX, where it reliably does.
+    if (process.platform === 'win32') {
+      return;
+    }
+
     await writeFile(path, JSON.stringify({ version: 1 }), 'utf-8');
     const { chmod } = await import('fs/promises');
     await chmod(path, 0o000);
