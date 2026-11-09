@@ -25,7 +25,7 @@ Diagnostic: `codemie profile status --show-sources` prints each field with its s
 
 Local config does **not** isolate from global — missing local fields fall back to global. Both files use the same schema (`version: 2`).
 
-**File: `src/env/` and `src/utils/config.ts`** — `ConfigLoader` implementation.
+**File: `src/utils/config.ts`** — `ConfigLoader` implementation (`src/utils/config.ts::ConfigLoader`).
 
 ---
 
@@ -62,14 +62,14 @@ project context, but it cannot replace the selected provider, model, or credenti
 
 **Key rule**: `activeProfile` switches are stored in local config when `.codemie/` exists; the profile data itself can come from either source.
 
-`file:src/utils/config.ts` — `loadWithSources()` implements the merge.
+`file:src/utils/config.ts::ConfigLoader.loadWithSources` implements the merge.
 
 ---
 
 ## ConfigLoader API
 
 ```typescript
-import { ConfigLoader } from '@codemieai/code/utils/config';
+import { ConfigLoader } from '@codemieai/code'; // the package has no `exports` map; only the root entry (`src/index.ts`) is public
 
 // Check if local config exists
 const hasLocal = await ConfigLoader.hasLocalConfig();
@@ -150,7 +150,7 @@ Keep global config with provider/model. Each repo's local config sets only `code
 ### Team project context with a selected provider profile
 
 `codeMieUrl`, `codeMieProject`, and `codeMieIntegration` (the identity trio) resolve through one
-resolver, `ConfigLoader.resolveProfileIdentity(workingDir, profileName)` (EPMCDME-15411), which also
+resolver, `ConfigLoader.resolveProfileIdentity(workingDir, profileName)` (EPMCDME-15411; `src/utils/config.ts::ConfigLoader.resolveProfileIdentity`), which also
 returns a binding state:
 
 | State | When | Identity |
@@ -172,7 +172,7 @@ Rules:
 - An interactive launch of an `unowned` profile asks once (shared project preselected; picking it needs a
   named confirmation; subscription profiles can choose "Keep this profile off CodeMie") and saves the pick
   to that profile. A launch that cannot prompt (`--task`, non-TTY stdin/stdout, `CODEMIE_NO_PROMPTS=1`)
-  writes one stderr warning and continues with the shared project. Policy: `src/agents/core/launch-identity.ts`.
+  writes one stderr warning and continues with the shared project. Policy: `src/agents/core/launch-identity.ts::INHERITED_IDENTITY_ENV`.
 - The launcher exports output-only `CODEMIE_PROJECT_BINDING` (the state) next to `CODEMIE_PROFILE_NAME`;
   banner, warning and evidence read it and never re-resolve. It is never an input to `load()`.
 - The project list at launch is fetched only from the host the credentials were issued for
@@ -197,7 +197,7 @@ Two URLs can point at the CodeMie platform, and they have different jobs:
 
 For `ai-run-sso` and `bearer-auth` profiles, P is tried first and W second (a same-origin P and W is looked up once).
 Subscription providers (`anthropic-subscription`, `moonshot-subscription`) use W only, because their `baseUrl` is a vendor endpoint, not CodeMie.
-The resolver lives in `src/providers/core/codemie-auth-helpers.ts` (`getPlatformUrl`, `getStoredPlatformCredentials`); agent-side code resolves from `CODEMIE_PROFILE_CONFIG` because `CODEMIE_BASE_URL` is rewritten to the local proxy before the agent starts.
+The resolver lives in `src/providers/core/codemie-auth-helpers.ts` (`src/providers/core/codemie-auth-helpers.ts::getPlatformUrl`, `getStoredPlatformCredentials`); agent-side code resolves from `CODEMIE_PROFILE_CONFIG` because `CODEMIE_BASE_URL` is rewritten to the local proxy before the agent starts.
 
 ### CI/CD overrides
 
@@ -217,8 +217,8 @@ Environment variables override both global and local config for the fields `Conf
 | Do | Avoid |
 |---|---|
 | Override only the fields that differ from global | Duplicating global fields in local config |
-| Commit `.codemie/codemie-cli.config.json` for team project/integration settings | Committing `.codemie/credentials.json` |
-| Gitignore `.codemie/credentials.json` and `.codemie/cache/` | Storing tokens in the config file |
+| Commit `.codemie/codemie-cli.config.json` for team project/integration settings | Committing an `apiKey` inside it |
+| Keep credentials in `CredentialStore` (`codemie profile login`) | Storing tokens in the config file |
 | Use env vars for CI/CD overrides | Hardcoding CI values in local config |
 | Keep `activeProfile` consistent across global and local (usually `"default"`) | Mismatched profile names causing missed merges |
 
@@ -232,6 +232,8 @@ codemie profile                        # List all profiles (local + global)
 codemie profile status --show-sources  # Show each field with its source
 codemie profile switch <name>          # Switch active profile
 codemie profile delete <name>          # Delete a profile
+codemie profile rename <old> <new>     # Rename a profile
+codemie profile login|logout|refresh   # Manage the profile's stored credentials
 ```
 
 ---
@@ -250,7 +252,7 @@ environment variable.
 }
 ```
 
-`codemie-code` detects this at startup and prints a visible warning showing:
+`codemie-claude` detects this at launch (`src/agents/plugins/claude/settings-conflict.ts::detectSettingsConflict`) and prints a visible warning showing:
 - **Profile URL** — the URL the active profile tried to inject
 - **Active URL** — the settings.json URL that will actually be used
 

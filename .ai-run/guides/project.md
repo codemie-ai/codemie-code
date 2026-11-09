@@ -4,9 +4,9 @@
 
 | Field | Value | Source |
 |---|---|---|
-| Project name | CodeMie Code | `README.md:1` |
-| Repository/package | `@codemieai/code` (`codemie-ai/codemie-code`) | `package.json:name`, `git remote -v` origin |
-| Project code/key | `epm-cdme` | `.codemie/codemie-cli.config.json:activeProfile` |
+| Project name | CodeMie Code | README.md::CodeMie |
+| Repository/package | @codemieai/code | package.json::name |
+| Project code/key | epm-cdme | .codemie/codemie-cli.config.json::activeProfile |
 
 ## Work Item Tracker
 
@@ -22,13 +22,16 @@
 **Lookup**: Invoke the `codemie-jira-assistant` skill with the ticket key and a request for summary, description, acceptance criteria, and links.
 **Create**: Invoke the `codemie-jira-assistant` skill with the complete ticket payload or approved story file as the argument.
 **Output**: Ticket key and URL returned by the skill.
+**Comment**: Invoke the `codemie-jira-assistant` skill with a request to add a comment to the ticket, passing the comment body as the argument.
+**Attach**: Invoke the `codemie-jira-assistant` skill with a request to attach the file at {{FILE_PATH}} to ticket {{ID}} under the name `sdlc-<kind>-<filename>`.
+**Instructions**: Complexity: add the label `sdlc-factory-est-<SIZE>` for an initial score and `sdlc-factory-act-<SIZE>` for an actual one (XS–XXL as given); add only, never remove or change existing labels. Reading the Labels field returns no value (labels are additive). Ticket ID: from the branch name (`EPMCDME-\d+`) or the run work item. A published complexity-assessment artifact also adds `sdlc-factory-est-<size>` from its `size` key.
 
 ## Source Control And Review
 
 | Field | Value |
 |---|---|
 | Provider | GitHub |
-| Repository remote | git@github.com:codemie-ai/codemie-code.git |
+| Repository remote | https://github.com/codemie-ai/codemie-code.git |
 | Default target branch | main |
 | Review artifact type | PR |
 
@@ -36,33 +39,10 @@
 
 **Status**: configured
 **Adapter**: `gh` CLI (authenticated; repo remote is GitHub).
-**Instructions**: Check current branch state via `gh pr list --head $(git branch --show-current)` and avoid creating duplicate PRs. Follow Conventional Commits and the project Squash-and-Merge default. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"` using the Body Template below.
+**Instructions**: Check the current branch with `gh pr list --head $(git branch --show-current)` and avoid duplicate PRs. Follow Conventional Commits; the PR title is commit-linted in CI and becomes the squash commit. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"`, the body following `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Complexity Scoring
 
 **Status**: configured
 **Field**: Labels
 **Format**: t-shirt
-
-## Lifecycle Intent Handling
-
-### record_complexity_score
-Via the `codemie-jira-assistant` skill, add a complexity label to the ticket with the size from `data.complexity_size` (XS–XXL, as-is):
-`initial` → `sdlc-factory-est-<SIZE>`, `actual` → `sdlc-factory-act-<SIZE>`. Add only — never remove or change existing labels, so an `sdlc-standard` ticket ends with both labels.
-Ticket ID: from the branch name (`EPMCDME-\d+`) or the run work item.
-
-### get_field
-For `Labels`: always return `field_value: null` — complexity labels are additive, there is nothing to overwrite.
-
-### artifact_published
-Invoke the `codemie-jira-assistant` skill and attach the artifact file using the `--file` flag:
-
-```bash
-codemie assistants chat "289d2751-afd9-4c77-a272-90df7cd71702" \
-  "Attach this file to Jira ticket EPMCDME-<ID> as the approved <kind> artifact." \
-  --file "<path-to-artifact>"
-```
-
-Ticket ID: extract from the current branch name (pattern `EPMCDME-\d+`) or from the run work item.
-`<path-to-artifact>`: use `data.artifact_path`, or the path to `spec.md` / `plan.md` in the run directory.
-For `complexity-assessment.json` (product-owner, `artifact_kind: complexity`), also add `sdlc-factory-est-<size>` from its `size` key via `codemie-jira-assistant`, as in `record_complexity_score`.

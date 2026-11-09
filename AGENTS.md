@@ -72,10 +72,13 @@ Do not proactively commit, push, branch, or suggest git operations.
 <!-- ai-run-init:critical-rules start -->
 | Rule | Trigger | Action |
 |---|---|---|
-| Check Guides First | ANY task | Match keywords → category → load P0 guide before searching the codebase |
-| Tests on explicit request only | "write tests" / "run tests" / "create unit tests" | Otherwise do not write, run, or suggest tests |
-| Git ops on explicit request only | "commit" / "push" / "create branch" / "create PR" | Load `.ai-run/guides/standards/git-workflow.md`; defer to `sdlc-factory:mr-creator` skill for PR work |
-| Shell | ANY shell command | bash/Linux syntax only |
+| Check Guides First | ANY task | Match request to category and load the P0 guide before searching broadly |
+| Testing | "write tests" / "run tests" | ONLY then |
+| Git Operations | "commit" / "push" / "PR" / "MR" | Only then; load `.ai-run/guides/standards/git-workflow.md` |
+| Shell | ANY shell command | Use bash/Linux-compatible syntax |
+| Add OTLP hook-event ingestion through an `OtlpAgentAdapter` | adding a native hook event or a new tool's telemetry | load `.ai-run/guides/integration/external-integrations.md` |
+| Register each new agent plugin, provider plugin or framework plugin through its own registry | adding or moving a plugin | load `.ai-run/guides/architecture/architecture.md` |
+| Treat any change to an `X-CodeMie-*` attribution header, the Responses API `user` field or JWT claim overrides as a critical, security-reviewed change | a diff touches outbound attribution headers or their derivation | load `.ai-run/guides/security/security-practices.md` |
 <!-- ai-run-init:critical-rules end -->
 
 ## Working Sequence
@@ -109,39 +112,33 @@ Ask the user when:
 <!-- ai-run-init:guide-imports start -->
 | Category | Guide Path | Purpose |
 |---|---|---|
-| Architecture | `.ai-run/guides/architecture/architecture.md` | Plugin-based 5-layer architecture, layer responsibilities, dependency flow |
-| Development practices | `.ai-run/guides/development/development-practices.md` | Error handling, logging, processes, async patterns |
-| Code quality | `.ai-run/guides/standards/code-quality.md` | TypeScript style, naming, type-safety conventions |
-| Git workflow | `.ai-run/guides/standards/git-workflow.md` | Branching, Conventional Commits, PRs, Squash-and-Merge |
-| Testing | `.ai-run/guides/testing/testing-patterns.md` | Vitest patterns, dynamic-import mocking |
-| Security | `.ai-run/guides/security/security-practices.md` | Credentials, sanitization, path validation |
-| External integrations | `.ai-run/guides/integration/external-integrations.md` | Provider plugins, SSO, LiteLLM, Bedrock, Kimi, ACP |
-| Exposed API | `.ai-run/guides/integration/exposed-api.md` | CLI surface, MCP proxy endpoints, plugin contracts |
-| Project config | `.ai-run/guides/usage/project-config.md` | Profiles, ConfigLoader, env vars, paths |
-| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / codemie-jira-assistant), MR (GitHub / sdlc-factory:mr-creator) |
-| Quality gates | `.ai-run/guides/quality-gates.md` | lint, typecheck, build, test, license, secrets |
+| Project | .ai-run/guides/project.md | Project identity, tracker and source control |
+| Quality | .ai-run/guides/quality-gates.md | Quality gates and how to run them |
+| Architecture | .ai-run/guides/architecture/architecture.md | Plugin-based 5-layer architecture, registries, layer boundaries and where code lives |
+| Code quality | .ai-run/guides/standards/code-quality.md | Naming, type annotations, imports, ESLint and TypeScript settings, comment style |
+| Development practices | .ai-run/guides/development/development-practices.md | Error classes, logging levels and sanitization, process execution, paths and config loading |
+| Exposed API | .ai-run/guides/integration/exposed-api.md | Public exports of src/index.ts: CodeMieSSO, CodeMieProxy, plugin registry, processEvent, ConfigLoader |
+| External integrations | .ai-run/guides/integration/external-integrations.md | Provider templates, SSO, LiteLLM, Bedrock, OpenCode, Codex, Claude session processing, MCP proxy, OTLP ingestion |
+| Git workflow | .ai-run/guides/standards/git-workflow.md | Branch naming, Conventional Commits types and scopes, hooks, PR title and body, squash merge |
+| Project config | .ai-run/guides/usage/project-config.md | Global vs project config, profile resolution, identity binding, CodeMie URLs, env overrides |
+| Security | .ai-run/guides/security/security-practices.md | Attribution headers (critical), credential storage, log sanitization, path validation, secret scanning |
+| Testing | .ai-run/guides/testing/testing-patterns.md | Vitest projects, mocking with dynamic imports, spies, async and error assertions, cross-platform paths |
 <!-- ai-run-init:guide-imports end -->
 
 ### Task Classifier
 
 <!-- ai-run-init:task-classifier start -->
-| Keywords | P0 Guide | P1 Guide |
-|---|---|---|
-| `plugin`, `registry`, `agent`, `adapter` | architecture | external-integrations |
-| `claude`, `codex`, `gemini`, `opencode`, `pi`, `kimi`, `copilot`, `acp` | architecture | external-integrations |
-| `session`, `metrics`, `analytics`, `transcript`, `sync` | architecture | external-integrations |
-| `otel`, `otlp`, `hook`, `telemetry` | architecture | external-integrations |
-| `architecture`, `layer`, `structure`, `pattern` | architecture | development-practices |
-| `test`, `vitest`, `mock`, `coverage` | testing-patterns | development-practices |
-| `error`, `exception`, `validation` | development-practices | security-practices |
-| `security`, `sanitize`, `credential` | security-practices | development-practices |
-| `provider`, `sso`, `bedrock`, `litellm`, `langgraph`, `ollama`, `subscription` | external-integrations | architecture |
-| `cli`, `command`, `commander` | architecture | development-practices |
-| `workflow`, `ci/cd`, `github`, `gitlab` | git-workflow | quality-gates |
-| `lint`, `eslint`, `format`, `code quality` | code-quality | quality-gates |
-| `commit`, `branch`, `pr`, `git` | git-workflow | project |
-| `config`, `profile`, `env`, `setup` | project-config | project |
-| `ticket`, `EPMCDME`, `jira`, `story` | project | git-workflow |
+| Category | User Intent | Example Requests | P0 Guide | P1 Guide |
+|---|---|---|---|---|
+| Architecture | add or move a plugin, registry entry, layer or directory | "plugin", "registry", "agent", "adapter", "layer", "architecture", "cli", "command", "commander", "structure", "pattern" | .ai-run/guides/architecture/architecture.md | - |
+| Code quality | name a file, symbol or plugin; fix lint findings; add imports or types | "lint", "eslint", "format", "naming", "code quality" | .ai-run/guides/standards/code-quality.md | - |
+| Development practices | throw or catch an error, log, spawn a process, resolve a ~/.codemie path, load config | "error", "exception", "logger", "exec", "spawn", "paths", "validation", "async" | .ai-run/guides/development/development-practices.md | - |
+| Exposed API | change or consume an exported API, a proxy plugin contract or hook event processing | "exports", "proxy plugin", "processEvent", "public API" | - | .ai-run/guides/integration/exposed-api.md |
+| External integrations | add or change a provider, agent integration, session sync, MCP or OTLP ingestion | "provider", "sso", "bedrock", "litellm", "codex", "opencode", "claude", "pi", "kimi", "copilot", "mcp", "otlp", "gemini", "acp", "ollama", "subscription", "session", "metrics", "analytics", "transcript", "sync", "otel", "hook", "telemetry" | .ai-run/guides/integration/external-integrations.md | - |
+| Git workflow | commit, branch, open or review a pull request | "commit", "branch", "pr", "git", "merge", "workflow", "ci/cd", "github" | .ai-run/guides/standards/git-workflow.md | - |
+| Project config | change config loading, profiles, identity resolution or env overrides | "config", "profile", "env", "setup", "codeMieProject" | .ai-run/guides/usage/project-config.md | - |
+| Security | touch credentials, outbound headers, logging of request data, or user-supplied paths | "security", "sanitize", "credential", "header", "secret" | .ai-run/guides/security/security-practices.md | - |
+| Testing | write or fix a unit or integration test, mock a module | "test", "vitest", "mock", "coverage", "spy" | .ai-run/guides/testing/testing-patterns.md | - |
 <!-- ai-run-init:task-classifier end -->
 
 Complexity guidance:
@@ -188,16 +185,13 @@ Detailed patterns for architecture, error handling, logging, security, project c
 <!-- ai-run-init:commands start -->
 | Need | Source Guide | Source Evidence | Notes |
 |---|---|---|---|
-| Setup | `.ai-run/guides/quality-gates.md` | `package.json:scripts` | Run `npm install`; verify Node ≥ 20 |
-| Build / typecheck | `.ai-run/guides/quality-gates.md` | `package.json:scripts.build`, `scripts.typecheck` | Stops at first failure |
-| Lint / format | `.ai-run/guides/quality-gates.md` | `package.json:scripts.lint`, `scripts.lint:fix` | Zero-warning policy |
-| Unit / integration tests | `.ai-run/guides/quality-gates.md` | `package.json:scripts.test*` | Only on explicit user request |
-| Pre-commit | `.ai-run/guides/quality-gates.md` | `.husky/pre-commit`, `package.json:scripts.check:pre-commit` | Runs automatically; do not `--no-verify` |
-| Full CI | `.ai-run/guides/quality-gates.md` | `package.json:scripts.ci`, `scripts.ci:full` | Required before merge |
-| Commit message | `.ai-run/guides/standards/git-workflow.md` | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits enforced |
-| PR creation | `.ai-run/guides/standards/git-workflow.md` | `sdlc-factory:mr-creator` skill | Invoke the `mr-creator` skill |
-| Ticket lookup / create | `.ai-run/guides/project.md` | `.codemie/codemie-cli.config.json`, codemie-jira-assistant | Invoke the `codemie-jira-assistant` skill |
-| Doctor | (no guide needed) | `codemie doctor`, `codemie-code health` | Health diagnostics |
+| license-check | .ai-run/guides/quality-gates.md | package.json::license-check | Load guide before running |
+| lint | .ai-run/guides/quality-gates.md | package.json::lint | Load guide before running |
+| type-check | .ai-run/guides/quality-gates.md | package.json::typecheck | Load guide before running |
+| secret-scan | .ai-run/guides/quality-gates.md | package.json::validate:secrets | Load guide before running |
+| build | .ai-run/guides/quality-gates.md | package.json::build | Load guide before running |
+| test | .ai-run/guides/quality-gates.md | .github/workflows/ci.yml::test-ubuntu | Load guide before running |
+| Git / review workflow | .ai-run/guides/standards/git-workflow.md | git history and project context | Load guide before git operations |
 <!-- ai-run-init:commands end -->
 
 Project defaults:
@@ -250,7 +244,7 @@ The preferred way to ingest a coding tool's own native telemetry/hook events int
 
 ## Coding Standards
 
-ES modules, async/await, `interface` for shapes, explicit return types on exports, no `any`. Full conventions live in `.ai-run/guides/development/development-practices.md` and `.ai-run/guides/standards/code-quality.md`.
+ES modules, async/await, `interface` for shapes, explicit return types on exports, avoid `any` (the lint rule is off; use it only when needed). Full conventions live in `.ai-run/guides/development/development-practices.md` and `.ai-run/guides/standards/code-quality.md`.
 
 ## Detailed Policies
 

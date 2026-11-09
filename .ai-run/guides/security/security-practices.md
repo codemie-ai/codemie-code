@@ -32,7 +32,7 @@ These identifiers back audit trails, tenant isolation, per-user budget accountin
 
 ### Headers and identifier fields in scope
 
-Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts`:
+Built today by `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts::buildAttributionHeaders` (model requests through `HeaderInjectionPlugin`; analytics evidence through `otlp-spool/evidence-send.ts`):
 
 | Header | Meaning |
 |---|---|
@@ -52,7 +52,7 @@ Also in scope even though they are body fields, not headers: the Responses API `
 1. **Do not add, remove, rename, or rewrite** any project/user attribution header (or standin field) without an explicit security-review sign-off on the PR.
 2. **Do not derive the value from a new source** (process introspection, environment guesswork, filesystem heuristics) without security review — the derivation is part of the surface.
 3. **Do not silently normalize** (hash, truncate, hex-prefix) an identifier the server may treat as authoritative — normalization must be an intentional, documented protocol change agreed with the server side.
-4. **Header injection lives in exactly one layer**: the proxy plugin `header-injection.plugin.ts`. Do not add a second injection path (telemetry runtime, adapter, CLI) that competes with it.
+4. **Header injection lives in exactly one layer**: `buildAttributionHeaders` in `header-injection.plugin.ts`. Do not add a second injection path (telemetry runtime, adapter, CLI) that competes with it. Known debt, to fix: clients that call CodeMie directly and set their own client headers — `src/providers/plugins/sso/session/processors/metrics/metrics-api-client.ts::MetricsApiClient`, `src/agents/plugins/claude/plugin/statusline.ts::resolveBudget`, `src/cli/commands/skills/lib/skills-search-client.ts`, `src/cli/commands/skills/lib/skills-metrics.ts`, `src/providers/core/codemie-auth-helpers.ts`, `src/providers/plugins/sso/session/processors/conversations/apiClient.ts`.
 5. **Never log full header values** without `sanitizeHeaders()` — attribution headers carry PII (email, repository path).
 
 ### Bad vs. Good
@@ -77,7 +77,7 @@ Copy this into the PR review when the diff touches any attribution header, the `
 - [ ] No new PII surface in URL query strings or filenames derived from the identifier.
 
 References:
-- `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts` — canonical injection point
+- `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts::HeaderInjectionPlugin` — canonical injection point
 - `src/utils/security.ts` — `sanitizeHeaders`, `sanitizeLogArgs`
 - `.ai-run/guides/standards/git-workflow.md` — Code Review Checklist
 
@@ -87,23 +87,24 @@ References:
 
 Use `CredentialStore` (singleton) for all persistent secret storage. Never store tokens in plaintext files.
 
-- **Primary**: System keychain via keytar (macOS Keychain, Windows Credential Vault, Linux Secret Service)
-- **Fallback**: Encrypted JSON file with AES-256-GCM (`~/.codemie/.credentials.enc`), key derived from machine ID + OS username
+- **Primary**: System keychain via keytar (macOS Keychain, Windows Credential Vault, Linux Secret Service), holding the encrypted payload
+- **Fallback**: Encrypted file with AES-256-GCM (`~/.codemie/sso-credentials.enc`; per-URL files under `~/.codemie/credentials/`), key derived from hostname + platform + arch (`src/utils/credential-crypto.ts::deriveMachineEncryptionKey`)
 
 ```typescript
-// src/utils/security.ts:200-230
+// src/utils/security.ts::CredentialStore
 const store = CredentialStore.getInstance();
 await store.storeSSOCredentials({ accessToken, refreshToken, expiresAt }, url);
 const creds = await store.retrieveSSOCredentials(url);
-await store.deleteSSOCredentials(url);
+await store.clearSSOCredentials(url);
+```
 ```
 
 | Bad | Good |
 |-----|------|
 | Store tokens in a plaintext JSON file | `CredentialStore.getInstance().storeSSOCredentials(...)` |
-| Hardcode `const key = 'sk-ant-abc123'` | `const key = process.env.ANTHROPIC_API_KEY` |
+| Hardcode `const key = 'sk-ant-abc123'` | Read it from the active profile or `CredentialStore` |
 
-Reference: `src/utils/security.ts:200` — `CredentialStore`
+Reference: `src/utils/security.ts::CredentialStore`
 
 ---
 
@@ -111,12 +112,12 @@ Reference: `src/utils/security.ts:200` — `CredentialStore`
 
 Always sanitize before logging. `sanitizeLogArgs()` auto-redacts sensitive keys and values recursively.
 
-- **Sensitive keys detected**: `api_key`, `auth_token`, `password`, `secret`, `credential`, `private_key`, `cookie`, `authorization`
-- **Sensitive value patterns**: OpenAI keys (`sk-*`), Anthropic keys (`sk-ant-*`), JWT tokens, Bearer tokens, OAuth tokens
-- **Masking**: Long values → first/last 4 chars + `[REDACTED]`; short values → `[REDACTED]`
+- **Sensitive keys detected** (case-insensitive, `_`/`-` optional): `api_key`, `auth_token`, `access_token`, `refresh_token`, `bearer_token`, `password`, `secret`, `credential`, `private_key`, `cookie`, `authorization`
+- **Sensitive value patterns**: OpenAI keys (`sk-*`), Anthropic keys (`sk-ant-*`), Google OAuth (`ya29.*`), JWT tokens, Bearer tokens
+- **Masking**: strings longer than 8 chars → first/last 4 chars + `[REDACTED]`; shorter → `[REDACTED]`; an object under a sensitive key → `[REDACTED OBJECT]`
 
 ```typescript
-// src/utils/security.ts:77-100
+// src/utils/security.ts::sanitizeLogArgs
 logger.debug('API request', ...sanitizeLogArgs({
   url: request.url,
   headers: request.headers, // Auto-redacts Authorization, Cookie, etc.
@@ -132,7 +133,7 @@ const safeValue = sanitizeValue(sensitiveData, 'apiKey');
 | `console.log(headers)` | `logger.debug('Headers', ...sanitizeLogArgs(headers))` |
 | Log request/response bodies raw | Sanitize first with `sanitizeLogArgs()` |
 
-References: `src/utils/security.ts:77` — `sanitizeValue`; `src/utils/security.ts:130` — `sanitizeLogArgs`
+References: `src/utils/security.ts::sanitizeValue`; `src/utils/security.ts::sanitizeLogArgs`
 
 ---
 
@@ -146,23 +147,21 @@ Resolve and validate every file path before use. Throw `PathSecurityError` on vi
 - Never trust user-provided paths directly; reject `../` traversal
 
 ```typescript
-// src/agents/codemie-code/tools/path-security.test.ts:10-30
-import { isPathWithinDirectory, validatePathDepth } from './utils/paths.js';
+// src/utils/paths.ts::isPathWithinDirectory, src/utils/paths.ts::validatePathDepth
+import { isPathWithinDirectory } from './utils/paths.js';
 import { PathSecurityError } from './utils/errors.js';
 
 const resolved = path.resolve(workingDir, filePath);
 if (!isPathWithinDirectory(workingDir, resolved))
   throw new PathSecurityError(filePath, 'Path outside working directory');
-if (!validatePathDepth(resolved, workingDir, 10))
-  throw new PathSecurityError(filePath, 'Path depth exceeds limit');
 ```
 
 | Bad | Good |
 |-----|------|
 | `fs.readFile(userPath)` | Validate with `isPathWithinDirectory()` first |
-| Trust user input paths | `validateFilePath(userPath, workingDir)` |
+| Trust user input paths | `path.resolve()` then `isPathWithinDirectory(workingDir, resolved)` |
 
-References: `src/utils/paths.ts:40` — `isPathWithinDirectory`; `src/utils/paths.ts:60` — `validatePathDepth`
+References: `src/utils/paths.ts::isPathWithinDirectory`; `src/utils/paths.ts::validatePathDepth` (checks a path's depth below a named base directory: `validatePathDepth(filePath, baseDirName, expectedDepth)`)
 
 ---
 
@@ -171,30 +170,15 @@ References: `src/utils/paths.ts:40` — `isPathWithinDirectory`; `src/utils/path
 ### Environment Variables
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...           # For Claude
-OPENAI_API_KEY=sk-...                  # For OpenAI
-GOOGLE_AI_API_KEY=...                  # For Gemini
-SSO_BASE_URL=https://api.company.com   # Enterprise SSO
-SSO_WORKSPACE=workspace-id
-CODEMIE_DEBUG=true                     # Debug (non-sensitive)
+CODEMIE_API_KEY / CODEMIE_BASE_URL / CODEMIE_PROVIDER   # Profile overrides read by ConfigLoader
+CODEMIE_DEBUG=true                                      # Debug (non-sensitive)
 ```
 
 Rules:
-- Use environment variables for all secrets; use `CredentialStore` for long-term storage
+- Keep secrets in a profile or `CredentialStore`; environment variables only override them
 - Never hardcode secrets, never commit `.env` files, never log secret values
 
-### Validating Secrets at Startup
-
-```typescript
-// src/env/config-loader.ts:80-100
-const apiKey = process.env.ANTHROPIC_API_KEY
-            || process.env.OPENAI_API_KEY
-            || process.env.GOOGLE_AI_API_KEY;
-if (!apiKey && config.profile.provider.type !== 'sso')
-  throw new ConfigurationError('No API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY');
-```
-
-Reference: `src/env/config-loader.ts:80`
+No startup step checks provider key variables: credentials come from the active profile (`src/utils/config.ts::ConfigLoader.loadFromEnv`) or from `CredentialStore` for SSO and JWT.
 
 ---
 
@@ -217,7 +201,7 @@ Reference: `src/env/config-loader.ts:80`
 
 | Pattern | Example Values |
 |---------|----------------|
-| OpenAI Keys | `sk-proj-[40+ alphanumeric]` |
+| OpenAI Keys | `sk-[20+ alphanumeric]` |
 | Anthropic Keys | `sk-ant-[95+ alphanumeric with hyphens]` |
 | Google OAuth | `ya29.[100+ alphanumeric]` |
 | JWT Tokens | `[base64].[base64].[base64]` |
@@ -227,32 +211,30 @@ Reference: `src/env/config-loader.ts:80`
 
 ## File System Security
 
-Set restrictive permissions on all credential and config directories.
+Set restrictive permissions on credential, spool and evidence files.
 
 ```typescript
-// src/utils/security.ts:250-270
-await fs.mkdir(secretDir, { recursive: true, mode: 0o700 });  // Owner only
-await fs.writeFile(secretFile, data, { mode: 0o600 });         // Owner read/write only
+// src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.ts, src/providers/core/credential-owner.ts
+await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });  // Owner only
+await writeFile(tmp, encrypted, { mode: 0o600 });             // Owner read/write only
 ```
 
 | Path | Permission |
 |------|------------|
-| `~/.codemie/` | `0o700` (drwx------) |
-| `~/.codemie/.credentials.enc` | `0o600` (-rw-------) |
-| `~/.codemie/config.json` | `0o644` (-rw-r--r--) |
-| `~/.codemie/logs/` | `0o700` (drwx------) |
+| OTLP spool and evidence dirs | `0o700` |
+| Spool, status, epoch and credential-owner files | `0o600` |
 
-Reference: `src/utils/security.ts:250`
+Known debt, to fix: the `CredentialStore` fallback writes `~/.codemie/sso-credentials.enc` and `~/.codemie/credentials/*.enc` with the default mode (`src/utils/security.ts::CredentialStore`), and `~/.codemie/` is created without a mode (`src/utils/config.ts`).
 
 ---
 
 ## Pre-Commit Secret Detection
 
 ```bash
-npm run validate:secrets  # Also runs automatically via Husky pre-commit hook
+npm run validate:secrets  # Also runs in the Husky pre-commit hook
 ```
 
-Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE KEY-----`), AWS credentials, Bearer tokens, database passwords in connection strings.
+It runs Gitleaks (`ghcr.io/gitleaks/gitleaks`) in Docker, Podman or Apple Containers over the staged diff, with `.gitleaks.toml` when present, and exits with Gitleaks' code. No staged changes → exit 0. No container engine → exit 1, unless `CODEMIE_SKIP_SECRETS_SCAN=1` (then exit 0). Evidence: `scripts/validate-secrets.js::detectEngine`
 
 ---
 
@@ -260,13 +242,13 @@ Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE
 
 | Function | Purpose | Source |
 |----------|---------|--------|
-| `sanitizeValue()` | Redact sensitive value | `src/utils/security.ts:77` |
-| `sanitizeLogArgs()` | Sanitize log arguments | `src/utils/security.ts:130` |
-| `sanitizeHeaders()` | Redact HTTP headers | `src/utils/security.ts:150` |
-| `sanitizeCookies()` | Redact cookies | `src/utils/security.ts:170` |
-| `CredentialStore` | Secure credential storage | `src/utils/security.ts:200` |
-| `isPathWithinDirectory()` | Validate path safety | `src/utils/paths.ts:40` |
-| `validatePathDepth()` | Check path depth | `src/utils/paths.ts:60` |
+| `sanitizeValue()` | Redact sensitive value | `src/utils/security.ts::sanitizeValue` |
+| `sanitizeLogArgs()` | Sanitize log arguments | `src/utils/security.ts::sanitizeLogArgs` |
+| `sanitizeHeaders()` | Redact HTTP headers | `src/utils/security.ts::sanitizeHeaders` |
+| `sanitizeCookies()` | Redact cookies | `src/utils/security.ts::sanitizeCookies` |
+| `CredentialStore` | Secure credential storage | `src/utils/security.ts::CredentialStore` |
+| `isPathWithinDirectory()` | Validate path safety | `src/utils/paths.ts::isPathWithinDirectory` |
+| `validatePathDepth()` | Check path depth | `src/utils/paths.ts::validatePathDepth` |
 
 ---
 
@@ -275,8 +257,8 @@ Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE
 | Bad | Good |
 |-----|------|
 | `logger.info('API key:', apiKey)` | `logger.debug('API request', ...sanitizeLogArgs({ apiKey }))` |
-| `const key = 'sk-ant-abc123...'` | `const key = process.env.ANTHROPIC_API_KEY` |
-| `fs.readFile(userPath)` | `validateFilePath(userPath, workingDir); fs.readFile(userPath)` |
+| `const key = 'sk-ant-abc123...'` | Read it from the active profile or `CredentialStore` |
+| `fs.readFile(userPath)` | `isPathWithinDirectory(workingDir, path.resolve(workingDir, userPath))` first |
 | `console.log(headers)` | `logger.debug('Headers', ...sanitizeLogArgs(headers))` |
 | Store tokens in plaintext file | Use `CredentialStore` |
 | **Add/rewrite an `X-CodeMie-*` attribution header (or the Responses `user` field) without security review** | **Route the change through security review; keep injection in `header-injection.plugin.ts`; document any normalization** |
@@ -312,6 +294,6 @@ Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE
 - **Security Utils**: `src/utils/security.ts`
 - **Path Validation**: `src/utils/paths.ts`
 - **Error Classes**: `src/utils/errors.ts` (`PathSecurityError`)
-- **Config Validation**: `src/env/config-loader.ts`
+- **Config loading**: `src/utils/config.ts`
 - **Related guides**: `.ai-run/guides/development/development-practices.md`, `.ai-run/guides/architecture/architecture.md`
 - **OWASP Top 10**: https://owasp.org/www-project-top-ten/

@@ -84,7 +84,7 @@ The `sdlc-factory:mr-creator` skill automates steps 3–4 and writes the PR body
 |---|---|
 | `feat` | `feat(agents): add Kimi SSO support via codemie-kimi (#368)` |
 | `fix` | `fix(analytics): include sub-agent transcripts in token usage extraction (#358)` |
-| `chore` | `chore: stop tracking .codegraph data files` |
+| `chore` | `chore: bump version to 0.16.6 (#769)` |
 | `refactor` | `refactor(kimi): harden automated verification script` |
 | `revert` | `revert(agents): revert accidental merge of kimi branch into main (#359)` |
 
@@ -98,7 +98,7 @@ The `sdlc-factory:mr-creator` skill automates steps 3–4 and writes the PR body
 | Imperative subject ("add X", "fix Y") | Past tense ("added X", "fixed Y") |
 | Scope from the allowed list when applicable | Invent ad-hoc scopes (commitlint rejects them) |
 | Reference the related issue/PR in the body | Skip context |
-| Trust husky hooks to format and lint | Bypass with `--no-verify` |
+| Let the husky hooks lint, type-check and scan the commit | Bypass with `--no-verify` |
 
 ---
 
@@ -106,10 +106,10 @@ The `sdlc-factory:mr-creator` skill automates steps 3–4 and writes the PR body
 
 | Hook | Command | Effect |
 |---|---|---|
-| `pre-commit` | `npx lint-staged` → `npm run typecheck` → `npm run validate:secrets` (only when Docker daemon is up) | Lint changed files, TypeScript check, optional gitleaks scan. See `.husky/pre-commit`. |
+| `pre-commit` | `npx lint-staged` → `npm run typecheck` → `npm run validate:secrets` | lint-staged runs ESLint (`--max-warnings=0`) and `vitest related --run` on staged `.ts` files and `npm run license-check` when `package.json` is staged; then a TypeScript check; then a Gitleaks scan of the staged diff. See `.husky/pre-commit`. |
 | `commit-msg` | `npx --no -- commitlint --edit "$1"` | Validates Conventional Commits format. See `.husky/commit-msg`. |
 
-If `validate:secrets` skips because Docker is unavailable, the same scan runs in CI — do not bypass locally.
+`validate:secrets` needs Docker, Podman or Apple Containers: with none it fails the commit unless `CODEMIE_SKIP_SECRETS_SCAN=1` is set, which skips the scan. CI runs its own secrets job (`.github/workflows/ci.yml::secrets-detection`) — do not bypass locally.
 
 ---
 
@@ -195,8 +195,8 @@ git rebase -i HEAD~3        # squash WIP commits before pushing
 | `git commit --no-verify` | Bypasses commitlint + husky checks | Fix the underlying lint/typecheck issue |
 | Merge commits into `main` | Breaks the squash-only convention | Use `gh pr merge --squash` |
 | Hand-written `gh pr create` for routine flows | Skips the project PR body template | Invoke the `sdlc-factory:mr-creator` skill |
-| Mixing two scopes in one commit | Rejected by `commitlint scope-enum` and hard to revert | Split into two commits |
-| Ticket key in the commit subject when scope already conveys context | Adds noise; project history shows scope+subject is enough | Reference the ticket in the body footer instead |
+| Mixing two scopes in one commit | Hard to review and revert | Split into two commits |
+| A ticket key in place of the subject | The subject still says what changed | Put the key at the end of the subject, `(EPMCDME-NNNN)`, as history does: `fix(providers): stop SSO re-auth opening the browser twice (EPMCDME-16737) (#749)` |
 
 ---
 
@@ -208,6 +208,6 @@ git rebase -i HEAD~3        # squash WIP commits before pushing
 | `commitlint` fails on type | Custom type | Use one of the allowed types listed above |
 | `commitlint` fails on scope | Custom scope | Use one of the allowed scopes or drop the scope |
 | `lint-staged` errors during commit | ESLint warnings remain | `npm run lint:fix` then re-stage |
-| Secrets scan blocks commit | Real secret detected, or Gitleaks false positive | Remove the secret; for false positives, add to `.gitleaksignore` |
+| Secrets scan blocks commit | Real secret detected, or Gitleaks false positive | Remove the secret; for a false positive, extend the `[allowlist]` in `.gitleaks.toml` |
 | Merge conflict on rebase | Branch diverged from main | `git fetch origin && git rebase origin/main`; resolve, `git rebase --continue` |
 | Wrong branch for PR | PR targets a non-default branch | `gh pr edit --base main` |

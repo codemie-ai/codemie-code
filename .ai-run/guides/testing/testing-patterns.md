@@ -8,9 +8,12 @@
 
 ```
 codemie-code/
-├── src/[module]/__tests__/*.test.ts   Unit tests (co-located)
-└── tests/integration/*.test.ts        Integration tests
+├── src/[module]/__tests__/*.test.ts   Unit tests (co-located; `unit` project)
+├── tests/integration/*.test.ts        CLI integration tests (`cli` project)
+└── tests/integration/agent-*.test.ts  Agent tests with real network auth (`agent` project)
 ```
+
+`tests/unit/` matches no project in `vitest.config.ts::projects`: a test placed there never runs.
 
 **Naming**: `[feature].test.ts` or `test_[scenario]_[expected_outcome]`
 
@@ -25,7 +28,7 @@ Rule: Group related tests with `describe`, use nested describes for sub-features
 | Flat tests, multiple concepts per it() | Nested describe blocks, single concept per it() |
 | `test1`, `testFunction` names | Descriptive: `should register all default agents` |
 
-Reference: `src/agents/__tests__/registry.test.ts:10-25`
+Reference: `src/agents/__tests__/registry.test.ts::AgentRegistry`
 
 ```typescript
 describe('AgentRegistry', () => {
@@ -45,7 +48,7 @@ describe('AgentRegistry', () => {
 
 Rule: Use `vi.mock()` at module level to replace entire modules with controlled fakes.
 
-Reference: `src/utils/__tests__/processes.test.ts:6-13`
+Reference: `src/utils/__tests__/processes.test.ts::getNpmPrefixArgs` (module-level `vi.mock` of `../logger.js` and `@/utils/npm-prefix.js`)
 
 ```typescript
 vi.mock('../logger.js', () => ({
@@ -58,7 +61,7 @@ import { logger } from '../logger.js';
 
 Rule: Use `vi.spyOn()` in `beforeEach` and `vi.restoreAllMocks()` in `afterEach` to intercept specific functions without replacing the entire module.
 
-Reference: `src/utils/__tests__/processes.test.ts:18-26`
+Reference: `src/utils/__tests__/processes.test.ts::restoreAllMocks`
 
 | Bad | Best |
 |-----|------|
@@ -76,7 +79,7 @@ Rule: Import the module under test **inside the test body or inside `beforeEach`
 | `import { installGlobal } from '../processes.js'` at top | `const { installGlobal } = await import('../processes.js')` inside test |
 | Spy set up after static import | Spy set up before dynamic import |
 
-Reference: `src/utils/__tests__/processes.test.ts:29-46`
+Reference: `src/utils/__tests__/processes.test.ts::installGlobal`
 
 ```typescript
 beforeEach(() => {
@@ -87,7 +90,7 @@ beforeEach(() => {
 it('should install package successfully', async () => {
   const { installGlobal } = await import('../processes.js'); // dynamic, AFTER spy
   await installGlobal('test-package');
-  expect(execSpy).toHaveBeenCalledWith('npm', ['install', '-g', 'test-package'], expect.objectContaining({ timeout: 120000 }));
+  expect(execSpy).toHaveBeenCalledWith('npm', ['install', '-g', 'test-package'], expect.objectContaining({ timeout: 300000 }));
 });
 ```
 
@@ -104,7 +107,7 @@ Rule: When a class initialises a static field from a path utility at class-load 
 | `private static GLOBAL_CONFIG = getCodemiePath(...)` | `private static get GLOBAL_CONFIG(): string { return this._override ?? getCodemiePath(...); }` |
 | `vi.spyOn(paths, 'getCodemiePath')` in `beforeEach` never intercepted — field resolved at class-load | Getter resolves at access time; spy in `beforeEach` is honored |
 
-Reference: `src/utils/config.ts:47-60` — `ConfigLoader.GLOBAL_CONFIG_DIR` and `GLOBAL_CONFIG` converted from static fields to lazy getter/setter pairs.
+Reference: `src/utils/config.ts::ConfigLoader.GLOBAL_CONFIG` — `GLOBAL_CONFIG_DIR` and `GLOBAL_CONFIG` are lazy getter/setter pairs.
 
 Why: Same root cause as the dynamic-import problem — resolution happens before test setup. A lazy getter shifts it to runtime without changing production behavior.
 
@@ -114,7 +117,7 @@ Why: Same root cause as the dynamic-import problem — resolution happens before
 
 Rule: Use `await expect(...).rejects.toThrow(ErrorClass)` for async error assertions; alternatively use try/catch to inspect error properties.
 
-Reference: `src/utils/__tests__/processes.test.ts:64-76`
+Reference: `src/utils/__tests__/processes.test.ts::rejects`
 
 | Bad | Best |
 |-----|------|
@@ -127,7 +130,7 @@ Reference: `src/utils/__tests__/processes.test.ts:64-76`
 
 Rule: Assert both the error class and the specific error code to verify correct error mapping.
 
-Reference: `src/utils/__tests__/processes.test.ts:78-88`
+Reference: `src/utils/__tests__/processes.test.ts::PERMISSION_ERROR`
 
 ```typescript
 try {
@@ -144,7 +147,7 @@ try {
 
 Rule: Never hardcode POSIX-style path or `file://` URL literals in test expectations. Derive paths through `path.join()`/`path.resolve()` and build `file://` URLs via `url.pathToFileURL()`, so the assertion matches whatever separator/encoding the current OS actually produces.
 
-Reference: `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts:276-301`, `src/agents/plugins/claude/__tests__/statusline-installer.test.ts:26-35`
+Reference: `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts::pathToFileURL`, `src/agents/plugins/claude/__tests__/statusline-installer.test.ts::CLAUDE_HOME`
 
 | Bad | Best |
 |-----|------|
@@ -157,9 +160,9 @@ Why: `path.join()` uses backslashes on Windows; a hardcoded forward-slash litera
 
 ## Testing Dependency-Free Scripts via Parameter Injection
 
-Rule: For a standalone script that must stay import-free of the project's `src/` tree (deployed and run outside the compiled package), avoid `vi.mock()` on its own filesystem/network calls. Instead, give the function optional parameters defaulting to the real dependency, and pass fakes directly in tests.
+Rule: For the Claude statusline — `statusline.ts`, bundled by `scripts/bundle-statusline.mjs` into one self-contained file that Claude Code runs with `node` — inject filesystem and network calls through optional parameters defaulting to the real dependency, and pass fakes directly in tests instead of `vi.mock()`.
 
-Reference: `src/agents/plugins/claude/plugin/statusline.mjs:188-246`, `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts:185-273`
+Reference: `src/agents/plugins/claude/plugin/statusline.ts::resolveBudget`, `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts::resolveBudget`
 
 ```typescript
 export async function resolveBudget({
@@ -196,7 +199,7 @@ See `.ai-run/guides/quality-gates.md` for full command definitions (`npm test` r
 
 Run a specific file:
 ```bash
-npx vitest src/utils/__tests__/processes.test.ts
+npx vitest run src/utils/__tests__/processes.test.ts
 ```
 
 ---
@@ -229,7 +232,7 @@ npx vitest src/utils/__tests__/processes.test.ts
 ## Common Matchers
 
 ```typescript
-expect(execSpy).toHaveBeenCalledWith('npm', ['install', '-g', 'pkg'], expect.objectContaining({ timeout: 120000 }));
+expect(execSpy).toHaveBeenCalledWith('npm', ['install', '-g', 'pkg'], expect.objectContaining({ timeout: 300000 }));
 expect(agentNames).toContain('claude');
 expect(error).toBeInstanceOf(NpmError);
 expect(agent).toBeDefined();
@@ -253,9 +256,7 @@ Reference: `src/agents/__tests__/registry.test.ts`
 
 ## Coverage Guidelines
 
-- Overall: 80%+
-- Critical paths (`src/utils/`, core logic): 90%+
-- UI components: 60%+ acceptable
+- No coverage threshold is configured: `vitest.config.ts::coverage` sets the v8 provider and reporters for the `unit` project only, so `npm run test:coverage` reports and never fails on a percentage.
 
 Focus on: business logic, error handling, edge cases (nulls, timeouts), security-critical paths (path validation, sanitization).
 

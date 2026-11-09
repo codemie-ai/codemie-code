@@ -23,7 +23,12 @@ codemie-code/
 │   ├── utils/          Shared utilities
 │   ├── env/            Environment management
 │   ├── workflows/      CI/CD templates
-│   └── analytics/      Usage tracking
+│   ├── hooks/          Hook matcher and executor
+│   ├── skills/         Skill discovery and sync
+│   ├── plugins/        Plugin manifest parsing and loaders
+│   ├── telemetry/      Desktop telemetry runtime
+│   ├── migrations/     Numbered ~/.codemie migrations
+│   └── bin/            Daemon and login entry sources
 ├── tests/              Integration tests
 ├── bin/                Executable entry points
 ├── dist/               Build output (gitignored)
@@ -93,52 +98,33 @@ src/
 
 ### CLI Layer — User Interface
 
-Handles argument parsing, user prompts, and command routing. Does **not** contain business logic or direct plugin access.
+Handles argument parsing, user prompts, and command routing. Does **not** contain business logic or direct plugin access; agent launch resolves the agent through `AgentRegistry.getAgent`. Known debt, to fix: `src/cli/commands/hook.ts`, `src/cli/commands/hook/`, `src/cli/commands/proxy/`, `src/cli/commands/analytics/`, `src/cli/commands/assistants/chat/`, `src/cli/commands/install.ts`, `src/cli/commands/setup.ts` import plugin internals directly. Evidence: `src/agents/registry.ts::AgentRegistry.getAgent`
 
-- Reference: `src/cli/commands/install.ts:15`
+- Reference: `src/cli/commands/install.ts::createInstallCommand`
 
 ### Registry Layer — Orchestration
 
 Manages plugin discovery, lazy initialization, and routing. Does **not** handle CLI or plugin implementation details.
 
-- Reference: `src/agents/registry.ts:14`
+- Reference: `src/agents/registry.ts::AgentRegistry`
 
 ### Plugin Layer — Implementations
 
-Concrete agent/provider/framework implementations. Each plugin handles specific external tool integration.
+Concrete agent/provider/framework implementations. Each plugin handles specific external tool integration. Agent plugins extend the abstract `BaseAgentAdapter`, which implements `AgentAdapter`.
 
-```typescript
-// src/agents/plugins/claude/claude.plugin.ts:20
-export class ClaudePlugin implements AgentAdapter {
-  async install(): Promise<void> { /* npm install -g @anthropic-ai/claude-cli */ }
-  async execute(args: string[]): Promise<void> { await exec('claude', args); }
-}
-```
-
-- Reference: `src/agents/plugins/opencode/opencode.plugin.ts:335`
+- Reference: `src/agents/core/BaseAgentAdapter.ts::BaseAgentAdapter`, `src/agents/plugins/claude/claude.plugin.ts::ClaudePlugin`, `src/agents/plugins/opencode/opencode.plugin.ts::OpenCodePlugin`
 
 ### Core Layer — Contracts
 
-Defines interfaces and base classes that all plugins implement. Does **not** contain business logic.
+Defines interfaces and the base classes plugins extend. `BaseAgentAdapter` and the session pipeline under `src/agents/core/session/` carry shared behaviour, not only contracts.
 
-```typescript
-// src/agents/core/types.ts:10
-export interface AgentAdapter {
-  name: string;
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  execute(args: string[], options?: ExecutionOptions): Promise<void>;
-  isInstalled(): Promise<boolean>;
-  getVersion(): Promise<string | undefined>;
-  installVersion?(version: string): Promise<string | null>; // returns verified installed version; null = binary not yet on PATH
-}
-```
+- `AgentAdapter` members: `type`, `name`, `displayName`, `description`, `metadata`, `install()`, `uninstall()`, `isInstalled()`, `run(args, env?, options?)`, `getVersion(): Promise<string | null>`, `getMetricsConfig()`, plus optional resume-ownership hooks. Reference: `src/agents/core/types.ts::AgentAdapter`
 
 ### Utils Layer — Foundation
 
 Shared utilities for logging, error handling, security, and processes. Does **not** contain business logic or plugin specifics.
 
-- Reference: `src/utils/errors.ts:15`, `src/utils/logger.ts`, `src/utils/security.ts`, `src/utils/processes.ts`
+- Reference: `src/utils/errors.ts::CodeMieError`, `src/utils/logger.ts`, `src/utils/security.ts`, `src/utils/processes.ts`
 
 ---
 
@@ -152,34 +138,32 @@ Shared utilities for logging, error handling, security, and processes. Does **no
 | Plugins depend on Core | Core depends on Plugins |
 | All layers → Utils | Plugin → Plugin direct calls |
 
-**Flow**: `CLI → Registry → Plugin → Core → Utils` — never skip layers, never reverse direction.
+**Flow**: `CLI → Registry → Plugin → Core → Utils`. Known debt, to fix: Core imports plugins in `src/agents/core/AgentCLI.ts`, `src/agents/core/BaseAgentAdapter.ts`, `src/agents/core/hook-credentials.ts`, `src/agents/core/evidence/record-store.ts`, `src/agents/core/session/BaseProcessor.ts`, `src/agents/core/session/BaseSessionAdapter.ts`, `src/agents/core/session/run-window.ts`, `src/agents/core/session/session-generation.ts`, `src/agents/core/session/stale-session-reconciliation.ts`; plugins `claude-code-otlp`, `codex` and `pi` import `src/agents/plugins/claude/session/claude-named-invocations.ts::NamedInvocationCounts`.
 
 ---
 
 ## Error Flow
 
-Errors propagate upward with context added at each layer:
+Errors propagate upward; the registries hold no try/catch and add no context:
 
 ```
 Plugin Error (throws)
-    ↓ propagates
-Registry (catches, adds context)
-    ↓ re-throws
+    ↓ propagates through the registry unchanged
 CLI (catches, formats for user)
 ```
 
-- Reference: `src/cli/commands/execute.ts:30` — uses `createErrorContext()` and `formatErrorForUser()` from `src/utils/errors.ts`.
+- Reference: `src/cli/commands/shared/helpers.ts::handleSetupError` — uses `createErrorContext()` and `formatErrorForUser()` from `src/utils/errors.ts`.
 
 ---
 
 ## Test Organization
 
 ```
-tests/integration/       Feature-level integration tests
-src/[module]/__tests__/  Unit tests co-located with source
+tests/integration/       CLI integration tests (`cli` project) and `agent-*.test.ts` (`agent` project)
+src/[module]/__tests__/  Unit tests co-located with source (`unit` project)
 ```
 
-Unit tests are co-located with source; integration tests live in `tests/`.
+Unit tests are co-located with source; integration tests live in `tests/integration/`. `tests/unit/` matches no project in `vitest.config.ts::projects`, so a test placed there never runs.
 
 ---
 
@@ -187,9 +171,9 @@ Unit tests are co-located with source; integration tests live in `tests/`.
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | kebab-case.ts | `agent-registry.ts` |
+| Modules | kebab-case.ts; a file holding one class may be PascalCase (`BaseAgentAdapter.ts`, `SessionStore.ts`) | `session-config.ts` |
 | Tests | `*.test.ts` or `__tests__/` | `registry.test.ts` |
-| Plugins | `*.plugin.ts` | `claude.plugin.ts` |
+| Plugins | `*.plugin.ts` for agents and frameworks; `<name>.template.ts` for providers | `claude.plugin.ts`, `sso.template.ts` |
 | Interfaces | `types.ts` or `*.types.ts` | `types.ts` |
 | Config | camelCase.json | `tsconfig.json` |
 
@@ -209,29 +193,32 @@ Unit tests are co-located with source; integration tests live in `tests/`.
 | Security | `src/utils/security.ts` |
 | Processes | `src/utils/processes.ts` |
 | Environment | `src/env/` |
+| Hooks engine | `src/hooks/executor.ts::HookExecutor` |
+| Migrations | `src/migrations/registry.ts::MigrationRegistry`, `src/migrations/runner.ts::MigrationRunner` |
+| Plugin loading | `src/plugins/core/plugin-loader.ts::loadPlugin` |
+| Skills | `src/skills/core/SkillManager.ts::SkillManager` |
+| Desktop telemetry | `src/telemetry/runtime/DesktopTelemetryRuntime.ts::DesktopTelemetryRuntime` |
+| Workflow templates | `src/workflows/registry.ts::getTemplate` |
+| MCP bridge | `src/mcp/stdio-http-bridge.ts::StdioHttpBridge` |
+| Environment | `src/env/manager.ts::EnvManager` |
+| Proxy daemon entry (spawned detached by `codemie proxy start`) | `src/bin/proxy-daemon.ts::stateFile` |
 
 ---
 
 ## Plugin System Design
 
-**Registry pattern**: All plugin systems follow the same lazy-init registry approach.
+**Registry pattern**: each plugin system has its own registry, and they register differently.
 
 ```typescript
-AgentRegistry.getAgent('claude')             // src/agents/registry.ts
-ProviderRegistry.getProvider('openai')       // src/providers/core/registry.ts
-FrameworkRegistry.getFramework('bmad')       // src/frameworks/core/registry.ts
-FrameworkRegistry.getFramework('codegraph')  // documentation tool in the same registry
+AgentRegistry.getAgent('claude')             // lazy initialize() registers every agent plugin
+ProviderRegistry.getProvider('sso')          // each <name>.template.ts calls registerProvider() on import
+FrameworkRegistry.getFramework('codegraph')  // src/frameworks/plugins/index.ts registers on import
 ```
 
-**Plugin discovery**:
-1. Registry initializes on first access (lazy).
-2. Plugins register in registry constructor.
-3. CLI queries registry by name; registry returns instance or `undefined`.
-
 **Adding a new plugin**:
-1. Implement the interface from `core/types.ts`.
-2. Register the plugin in the registry's `initialize()` method.
-3. No CLI layer changes required — the plugin is auto-discoverable.
+1. Agents: extend `BaseAgentAdapter` and add `registerPlugin(new …)` to `AgentRegistry.initialize`; a `codemie-<agent>` shortcut also needs a `bin/` file and a `package.json` `bin` entry. Evidence: `src/agents/registry.ts::AgentRegistry.initialize`
+2. Providers: export a template that calls `ProviderRegistry.registerProvider()` and import it from the provider's `index.ts`. Evidence: `src/providers/core/registry.ts::ProviderRegistry.registerProvider`
+3. Frameworks: add `FrameworkRegistry.registerFramework(new …)` to `src/frameworks/plugins/index.ts`. Evidence: `src/frameworks/core/registry.ts::FrameworkRegistry.registerFramework`
 
 ---
 
@@ -263,7 +250,7 @@ FrameworkRegistry.getFramework('codegraph')  // documentation tool in the same r
 | Area | Path |
 |------|------|
 | CLI | `src/cli/commands/` |
-| Registry | `src/agents/registry.ts`, `src/providers/registry.ts`, `src/frameworks/registry.ts` |
+| Registry | `src/agents/registry.ts`, `src/providers/core/registry.ts`, `src/frameworks/core/registry.ts` |
 | Plugins | `src/*/plugins/` |
 | Core | `src/*/core/` |
 | Utils | `src/utils/` |
