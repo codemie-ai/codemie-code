@@ -302,7 +302,6 @@ function buildModelsConfig(
       apiKey,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'openai',
       },
       models: proxyModels,
     };
@@ -316,7 +315,6 @@ function buildModelsConfig(
       authHeader: true,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'openai',
       },
       models: anthropicModels,
     };
@@ -390,7 +388,6 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
         apiKey,
         compat: {
           supportsReasoningEffort: true,
-          thinkingFormat: 'openai',
         },
         models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
       },
