@@ -15,6 +15,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateM
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+const { logger } = await import('@/utils/logger.js');
 
 const GATEWAY = 'https://llm-gateway.example.com';
 const PROVEN_ROUTED = { routed: true, routing_proof: 'proven' };
@@ -142,6 +143,7 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
     beforeEach(() => {
       process.env.ANTHROPIC_BASE_URL = PROXY;
       process.env.ANTHROPIC_AUTH_TOKEN = 'gw';
+      profile('ai-run-sso', 'sso', { name: 'p' });
     });
     afterEach(() => {
       delete process.env.ANTHROPIC_BASE_URL;
@@ -162,6 +164,27 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
       const r = await call() as { routing: unknown; funding_route?: string };
       expect(r.routing).toEqual(UNPROVEN);
       expect(r.funding_route).toBe('unknown');
+    });
+
+    it('a live daemon started for another profile leaves the session unproven and says why', async () => {
+      readStateMock.mockResolvedValue({ ...daemon, profile: 'other' });
+      isDaemonAliveMock.mockResolvedValue(true);
+      const r = await call() as { routing: unknown; funding_route?: string };
+      expect(r.routing).toEqual(UNPROVEN);
+      expect(r.funding_route).toBe('unknown');
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('another profile'));
+    });
+
+    it('a daemon state without a url fails closed without a liveness check', async () => {
+      readStateMock.mockResolvedValue({ ...daemon, url: undefined });
+      expect((await call()).routing).toEqual(UNPROVEN);
+      expect(isDaemonAliveMock).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting liveness check fails closed', async () => {
+      readStateMock.mockResolvedValue(daemon);
+      isDaemonAliveMock.mockRejectedValue(new Error('ps failed'));
+      expect((await call()).routing).toEqual(UNPROVEN);
     });
 
     it('an unreadable daemon state fails closed', async () => {

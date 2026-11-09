@@ -9,6 +9,8 @@ export interface LocalProxy {
   url: string;
   /** Upstream URL the daemon forwards to, when recorded. */
   targetUrl?: string;
+  /** Profile the daemon was started for: the daemon is global, its upstream key belongs to this profile. */
+  profile?: string;
 }
 
 /**
@@ -34,6 +36,8 @@ export interface RoutingInput {
    * keeps this function pure.
    */
   localProxy?: LocalProxy;
+  /** Name of the profile the hook resolved; a local proxy daemon proves only sessions of the same profile. */
+  profileName?: string;
 }
 
 export interface RoutingResult {
@@ -80,21 +84,12 @@ function isLoopback(url: string | undefined): boolean {
 }
 
 /**
- * True when both URLs are loopback and name the same proxy: the hostname is normalized to 127.0.0.1
- * (localhost / [::1] are the same listener), then scheme, port and path must match. Parse errors are false.
+ * True when the endpoint is the daemon's own loopback listener in the daemon's own host form. No host
+ * normalization: 127.0.0.1, [::1] and localhost can be different sockets, so only the exact form proves it.
  */
 function sameLocalProxy(endpoint: string | undefined, proxyUrl: string): boolean {
-  if (!endpoint || !isLoopback(endpoint) || !isLoopback(proxyUrl)) return false;
-  try {
-    const a = new URL(endpoint);
-    const b = new URL(proxyUrl);
-    a.hostname = '127.0.0.1';
-    b.hostname = '127.0.0.1';
-    const left = identity(a.href);
-    return !!left && left === identity(b.href);
-  } catch {
-    return false;
-  }
+  const id = identity(endpoint);
+  return !!id && isLoopback(endpoint) && isLoopback(proxyUrl) && id === identity(proxyUrl);
 }
 
 /**
@@ -197,34 +192,64 @@ export function fundingRoute(input: RoutingInput & { apiKeyHelper?: boolean }, r
   return onlyApiKey && firstParty ? 'api_based' : 'unknown';
 }
 
+interface ResolvedEndpoint {
+  /** The endpoint Claude Code sends model requests to; undefined = its default. */
+  endpoint: string | undefined;
+  /** A Bedrock/Vertex provider is selected; the endpoint is then a cloud provider base URL. */
+  cloud: boolean;
+}
+
 /**
- * True when it is worth resolving the local proxy daemon for this session: a native launch with a
- * CodeMie provider, readable settings, no cloud provider flag on, and an effective ANTHROPIC_BASE_URL
- * that is loopback. Callers use it as the gate before reading daemon state.
+ * Claude Code's own endpoint resolution (session-env-fields.ts), one rule for every caller: the Bedrock/Vertex
+ * flags select a cloud provider on its default endpoint unless a provider base URL overrides it; otherwise
+ * ANTHROPIC_BASE_URL, empty = api.anthropic.com. Undefined = nothing is provable: unreadable settings, an
+ * unfamiliar flag spelling, or Foundry (a cloud provider this module cannot resolve an endpoint for).
+ */
+function resolveEndpoint(input: RoutingInput): ResolvedEndpoint | undefined {
+  const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);
+  if (!effective) return undefined;
+  const flag = (name: string): 'off' | 'on' | 'unknown' => flagState(effective[name]);
+  if (CLOUD_FLAGS.some((name) => flag(name) === 'unknown') || flag('CLAUDE_CODE_USE_FOUNDRY') === 'on') return undefined;
+  const cloud = flag('CLAUDE_CODE_USE_BEDROCK') === 'on' || flag('CLAUDE_CODE_USE_VERTEX') === 'on';
+  const endpoint = cloud
+    ? effective.ANTHROPIC_BEDROCK_BASE_URL || effective.ANTHROPIC_VERTEX_BASE_URL
+    : effective.ANTHROPIC_BASE_URL;
+  return { endpoint, cloud };
+}
+
+/** The native local-proxy precondition shared by the candidate gate and the proof. */
+function nativeLoopbackEndpoint(input: RoutingInput, resolved: ResolvedEndpoint | undefined): resolved is ResolvedEndpoint {
+  return launchMode(input.env) === 'native' && input.codemieProvider && !!resolved && !resolved.cloud &&
+    isLoopback(resolved.endpoint);
+}
+
+/**
+ * True when it is worth resolving the local proxy daemon for this session: exactly the sessions the
+ * local-proxy proof in `routedViaCodemie` can apply to (same resolver, same precondition). Callers use it
+ * as the gate before reading daemon state.
  */
 export function localProxyCandidate(input: RoutingInput): boolean {
-  if (launchMode(input.env) !== 'native' || !input.codemieProvider || input.settingsUnknown) return false;
-  const effective = effectiveEndpointEnv(input);
-  if (!effective) return false;
-  if (CLOUD_FLAGS.some((name) => flagState(effective[name]) !== 'off')) return false;
-  return isLoopback(effective.ANTHROPIC_BASE_URL);
+  return nativeLoopbackEndpoint(input, resolveEndpoint(input));
+}
+
+/**
+ * The live daemon proves a native session only when the endpoint is its listener, it serves the hook's
+ * profile (the daemon is global; its upstream key is that profile's), and its upstream is the profile's
+ * model route. A missing target, base URL or profile name is never a match.
+ */
+function provenByLocalProxy(input: RoutingInput, resolved: ResolvedEndpoint | undefined): boolean {
+  const proxy = input.localProxy;
+  if (!proxy || !nativeLoopbackEndpoint(input, resolved) || !sameLocalProxy(resolved.endpoint, proxy.url)) return false;
+  if (!proxy.profile || !input.profileName || proxy.profile !== input.profileName) return false;
+  const target = identity(proxy.targetUrl);
+  return !!target && target === identity(profileUrl(input));
 }
 
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
-  const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);
-  if (!effective) return UNPROVEN;
-  const get = (name: string): string | undefined => effective[name];
-  // Claude Code's own resolution (session-env-fields.ts): the Bedrock/Vertex flags select a cloud provider
-  // on its default endpoint unless a provider base URL overrides it; otherwise ANTHROPIC_BASE_URL, empty =
-  // api.anthropic.com.
-  const flags = CLOUD_FLAGS.map((name) => flagState(get(name)));
-  // An unfamiliar spelling cannot be resolved to a route either way: nothing is provable.
-  if (flags.includes('unknown')) return UNPROVEN;
-  const cloud = flagState(get('CLAUDE_CODE_USE_BEDROCK')) === 'on' || flagState(get('CLAUDE_CODE_USE_VERTEX')) === 'on';
-  const endpoint = cloud ? get('ANTHROPIC_BEDROCK_BASE_URL') || get('ANTHROPIC_VERTEX_BASE_URL') : get('ANTHROPIC_BASE_URL');
-  // Foundry is a cloud provider this module cannot resolve an endpoint for: nothing is provable.
-  if (flagState(get('CLAUDE_CODE_USE_FOUNDRY')) === 'on') return UNPROVEN;
+  const resolved = resolveEndpoint(input);
+  if (!resolved) return UNPROVEN;
+  const { endpoint, cloud } = resolved;
   const endpointId = identity(endpoint);
   // Positively direct: the executor's default endpoint or explicit first-party Anthropic. A foreign override is not.
   const direct = !endpoint || (!cloud && endpointId === identity(ANTHROPIC_DIRECT));
@@ -239,13 +264,8 @@ export function routedViaCodemie(input: RoutingInput): RoutingResult {
     return ok ? PROVEN(true) : UNPROVEN;
   }
 
-  // Native launch through the running CodeMie proxy daemon: the endpoint must be the live daemon's
-  // listener, and the daemon's upstream must be the configured model route.
-  if (launchMode(env) === 'native' && input.codemieProvider && !cloud && input.localProxy &&
-      sameLocalProxy(endpoint, input.localProxy.url)) {
-    const target = identity(input.localProxy.targetUrl);
-    if (target && target === identity(profileUrl(input))) return PROVEN(true);
-  }
+  // Native launch through the running CodeMie proxy daemon started for this profile.
+  if (provenByLocalProxy(input, resolved)) return PROVEN(true);
 
   // No proxy ran: the effective endpoint must itself be under the configured CodeMie model route
   // (origin + path-segment prefix); the analytics URL is never proof.

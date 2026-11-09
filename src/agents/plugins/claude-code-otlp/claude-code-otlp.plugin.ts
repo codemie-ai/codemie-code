@@ -127,9 +127,16 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       settingsUnknown: !settings.complete,
       codemieProvider,
       profileBaseUrl: config?.baseUrl,
+      profileName: config?.name,
     };
     // Native launch on a loopback endpoint: the live proxy daemon is the only thing that can prove it routed.
-    if (localProxyCandidate(routingInput)) routingInput.localProxy = await resolveLocalProxy();
+    if (localProxyCandidate(routingInput)) {
+      routingInput.localProxy = await resolveLocalProxy();
+      const daemonProfile = routingInput.localProxy?.profile;
+      if (routingInput.localProxy && daemonProfile !== routingInput.profileName) {
+        logger.debug(`[${this.name}] local proxy daemon serves another profile; routing stays unproven`);
+      }
+    }
     const routing = routedViaCodemie(routingInput);
     const prefs = await readClaudeAnalyticsPreferences();
     const evidenceInputs: EvidenceInputs = {

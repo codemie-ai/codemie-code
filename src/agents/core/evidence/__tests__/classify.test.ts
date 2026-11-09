@@ -22,7 +22,8 @@ describe('classify (D7)', () => {
       env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4001', ANTHROPIC_AUTH_TOKEN: 'gw' },
       codemieProvider: true,
       profileBaseUrl: 'https://llm.example.com',
-      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com' },
+      profileName: 'p',
+      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com', profile: 'p' },
     });
     expect(classify(ev({ routed_via_codemie: r.routed, routing_proof: r.routing_proof }), null)).toMatchObject({ class: 'codemie' });
   });

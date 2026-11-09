@@ -31,7 +31,8 @@ describe('fundingRoute', () => {
       codemieProvider: true,
       env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4001', ANTHROPIC_AUTH_TOKEN: 'gw' },
       profileBaseUrl: 'https://llm.example.com/v1',
-      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com/v1' },
+      profileName: 'p',
+      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com/v1', profile: 'p' },
     });
     expect(funding(i)).toBe('api_based');
   });

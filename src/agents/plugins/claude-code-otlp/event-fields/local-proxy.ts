@@ -12,7 +12,11 @@ export async function resolveLocalProxy(): Promise<LocalProxy | undefined> {
     const state = await readState();
     if (!state || typeof state.url !== 'string') return undefined;
     if (!(await isDaemonAlive(state))) return undefined;
-    return { url: state.url, targetUrl: typeof state.targetUrl === 'string' ? state.targetUrl : undefined };
+    return {
+      url: state.url,
+      targetUrl: typeof state.targetUrl === 'string' ? state.targetUrl : undefined,
+      profile: typeof state.profile === 'string' ? state.profile : undefined,
+    };
   } catch {
     logger.debug('[claude-code-otlp] local proxy state unavailable');
     return undefined;
