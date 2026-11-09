@@ -20,6 +20,16 @@ let watcherCallbacks: WatcherCallbacks;
 vi.mock('../../providers/core/codemie-auth-helpers.js', () => ({
   getStoredPlatformCredentials: storedCredentials,
 }));
+const startSignIn = vi.fn();
+const markAuthInvalid = vi.fn();
+vi.mock('../../providers/plugins/sso/sso.detached-login.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../providers/plugins/sso/sso.detached-login.js')>()),
+  startDetachedSsoLogin: startSignIn,
+}));
+vi.mock('../../utils/analytics-auth-status.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/analytics-auth-status.js')>()),
+  markAnalyticsAuthInvalid: markAuthInvalid,
+}));
 vi.mock('../../cli/commands/proxy/awaiting-login-listener.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../cli/commands/proxy/awaiting-login-listener.js')>();
   return {
@@ -141,6 +151,38 @@ describe('proxy-daemon entry point', () => {
     expect(existsSync(stateFile)).toBe(true);
   });
 
+  it('starts a browser sign-in only for a request that carries the gateway key while it holds the port', async () => {
+    process.argv = process.argv.slice(0, -2);
+    startSignIn.mockReset().mockResolvedValue('started');
+    markAuthInvalid.mockReset().mockResolvedValue(undefined);
+    const { AuthenticationError } = await import('../../providers/plugins/sso/proxy/proxy-errors.js');
+    proxyStart.mockRejectedValueOnce(new AuthenticationError('SSO credentials not found; run codemie profile login'));
+    await import('../proxy-daemon.js');
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
+
+    expect(watcherCallbacks.isAwaitingLogin?.()).toBe(true);
+
+    const anonymous = await fetch(`${state.url}/v1/messages`, { signal: AbortSignal.timeout(5000) });
+    expect(await anonymous.json()).toMatchObject({ error: { message: 'Invalid API key' } });
+    expect(startSignIn).not.toHaveBeenCalled();
+
+    const signedRequest = await fetch(`${state.url}/v1/messages`, {
+      headers: { Authorization: `Bearer ${state.gatewayKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(signedRequest.status).toBe(401);
+    expect(await signedRequest.json()).toMatchObject({
+      error: { message: expect.stringContaining('A browser sign-in window has been opened automatically') },
+    });
+    expect(startSignIn).toHaveBeenCalledWith('https://upstream.example.com');
+    expect(markAuthInvalid).toHaveBeenCalledTimes(1);
+
+    // Once the real proxy is back the watcher goes back to deep checks.
+    proxyStart.mockResolvedValueOnce({ port: state.port, url: state.url });
+    await watcherCallbacks.onUnauthorized!();
+    expect(watcherCallbacks.isAwaitingLogin?.()).toBe(false);
+  });
+
   it('restores the held 401 listener after a failed replacement and retries after sign-in', async () => {
     process.argv = process.argv.slice(0, -2);
     const { AuthenticationError } = await import('../../providers/plugins/sso/proxy/proxy-errors.js');
@@ -150,7 +192,10 @@ describe('proxy-daemon entry point', () => {
 
     proxyStart.mockRejectedValueOnce(new Error('transient startup failure'));
     await expect(watcherCallbacks.onUnauthorized!()).rejects.toThrow('transient startup failure');
-    const response = await fetch(`${before.url}/v1/messages`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${before.url}/v1/messages`, {
+      headers: { Authorization: `Bearer ${before.gatewayKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('Automatic recovery will retry') } });
     expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ port: before.port, pid: before.pid, health: 'unhealthy' });

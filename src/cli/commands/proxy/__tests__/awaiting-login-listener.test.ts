@@ -3,7 +3,7 @@
  * @group unit
  */
 import { createServer } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startAwaitingLoginListener, type AwaitingLoginListener } from '../awaiting-login-listener.js';
 
 const MESSAGE = 'SSO credentials not found for https://x.example.com. Please run: codemie profile login --url https://x.example.com';
@@ -60,6 +60,80 @@ describe('awaiting-login listener', () => {
     const reuse = createServer();
     await new Promise<void>((resolve) => reuse.listen(port, '127.0.0.1', resolve));
     await new Promise<void>((resolve) => reuse.close(() => resolve()));
+  });
+
+  describe('with a gateway key and a sign-in hook', () => {
+    const KEY = 'gateway-key';
+
+    it('answers "Invalid API key" and starts no sign-in for a request without the key', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const anonymous = await fetch(`${url}/anything`, { headers: { Origin: 'https://evil.example' } });
+      const wrong = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: 'Bearer nope' }, body: '{}' });
+
+      for (const res of [anonymous, wrong]) {
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({
+          type: 'error',
+          error: { type: 'authentication_error', message: 'Invalid API key' },
+        });
+      }
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
+
+    it('starts the sign-in once per request that carries the key and answers with its text', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('A browser sign-in window has been opened.');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: '{}' });
+
+      expect(onSignInRequest).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: 'A browser sign-in window has been opened.' },
+      });
+    });
+
+    it('falls back to the plain message when the sign-in hook rejects', async () => {
+      const onSignInRequest = vi.fn().mockRejectedValue(new Error('spawn failed'));
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/messages`, { headers: { Authorization: `Bearer ${KEY}` } });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: MESSAGE },
+      });
+    });
+
+    it('answers the plain message and starts no sign-in for background analytics ingestion', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+      const headers = { Authorization: `Bearer ${KEY}` };
+
+      const hook = await fetch(`${url}/v1/analytics/hooks`, { method: 'POST', headers, body: '{}' });
+      const otlp = await fetch(`${url}/v1/analytics/otlp/v1/logs?x=1`, { method: 'POST', headers, body: '{}' });
+
+      for (const res of [hook, otlp]) {
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({
+          type: 'error',
+          error: { type: 'authentication_error', message: MESSAGE },
+        });
+      }
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
+
+    it('keeps /health open without the key and without a sign-in', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      expect((await fetch(`${url}/health`)).status).toBe(200);
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
   });
 
   it('falls back to another port on the initial bind but never when pinned', async () => {
