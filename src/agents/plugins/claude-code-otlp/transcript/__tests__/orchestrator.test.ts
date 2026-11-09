@@ -3537,3 +3537,170 @@ describe('settled scope vs late correlation metadata (EPMCDME-16391 cache invari
     expect(scopedTokens(stop.events).filter((x) => x.startsWith('kid='))).toEqual(['kid=skill:inner:9']);
   });
 });
+
+describe('continued session (EPMCDME-16992)', () => {
+  /** A `type`d line, so the uuid-based exclusion applies to it as it does to real transcripts. */
+  function typedAssistant(uuid: string, messageId: string, sessionId: string, timestamp: string): string {
+    return JSON.stringify({
+      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
+      type: 'assistant',
+      sessionId,
+    });
+  }
+  function typedUser(uuid: string, sessionId: string, timestamp: string): string {
+    return JSON.stringify({
+      type: 'user',
+      uuid,
+      sessionId,
+      timestamp,
+      gitBranch: 'main',
+      cwd: '/repo',
+      message: { role: 'user', content: 'hi' },
+    });
+  }
+  const continuedIn = (parent: string, child: string): string =>
+    JSON.stringify({ type: 'continued-in', timestamp: '2026-11-01T19:43:28.390Z', sessionId: parent, continuedInSessionId: child });
+
+  const parentLines = (): string[] => [
+    typedUser('p-u1', 'P', '2026-11-01T17:44:35.647Z'),
+    typedAssistant('p-a1', 'msg-p1', 'P', '2026-11-01T17:45:33.000Z'),
+    typedAssistant('p-a2', 'msg-p2', 'P', '2026-11-01T17:46:33.000Z'),
+  ];
+  const copiedLines = (): string[] => [
+    typedUser('p-u1', 'C', '2026-11-01T17:44:35.647Z'),
+    typedAssistant('p-a1', 'msg-p1', 'C', '2026-11-01T17:45:33.000Z'),
+    typedAssistant('p-a2', 'msg-p2', 'C', '2026-11-01T17:46:33.000Z'),
+  ];
+
+  it('reports only the continued session\'s own requests and turns', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z'),
+    ]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    const usage = pass.events.filter((e) => e.type === 'agent.usage.request');
+    expect(usage).toHaveLength(1);
+    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary?.turns).toBe(1);
+    expect(summary?.started_at).toBe('2026-11-01T19:50:00.000Z');
+  });
+
+  it('emits no usage and no summary when the session has no own lines', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', copiedLines());
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
+  it('counts every line when the parent transcript is absent', async () => {
+    const path = writeTranscript('C.jsonl', copiedLines());
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')?.turns).toBe(1);
+  });
+});
+
+describe('reopened session without activity (EPMCDME-16993)', () => {
+  const user = (uuid: string, timestamp: string): string =>
+    JSON.stringify({ type: 'user', uuid, timestamp, gitBranch: 'main', cwd: '/repo', message: { role: 'user', content: 'hi' } });
+  const assistant = (uuid: string, messageId: string, timestamp: string): string =>
+    JSON.stringify({
+      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
+      type: 'assistant',
+    });
+
+  async function startSession(sessionId: string, source?: string): Promise<{ reopened?: boolean }> {
+    const pass = await openSessionStartPass(sessionId, 'sha-start', sessionEnvFixture, source);
+    await pass.finalize(true);
+    return pass;
+  }
+
+  it('flags a resume of an already started session and keeps its original start', async () => {
+    const sessionId = 'session-reopen-flag';
+    await startSession(sessionId, 'startup');
+    const first = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+
+    const reopen = await startSession(sessionId, 'resume');
+    const second = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+
+    expect(reopen.reopened).toBe(true);
+    expect(second.sessionStartedAt).toBe(first.sessionStartedAt);
+  });
+
+  it('does not flag a first start, even with source resume', async () => {
+    const pass = await startSession('session-reopen-first', 'resume');
+
+    expect(pass.reopened).toBeFalsy();
+  });
+
+  it('suppresses Stop and SessionEnd until the reopened session has own activity', async () => {
+    const sessionId = 'session-reopen-suppress';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
+    await idleEnd.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+    expect(idleEnd.suppressLifecycle).toBe(true);
+    expect(idleEnd.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await active.finalize(true);
+
+    expect(active.suppressLifecycle).toBe(false);
+    expect(active.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    expect(active.events.some((e) => e.type === 'agent.session.summary')).toBe(true);
+
+    const end = await openSessionEndPass(sessionId, path, '/repo');
+    await end.finalize(true);
+    expect(end.suppressLifecycle).toBe(false);
+  });
+
+  it('keeps forwarding Stop for a new session that has no lines yet', async () => {
+    const sessionId = 'session-reopen-fresh';
+    const path = writeTranscript(`${sessionId}.jsonl`, []);
+    await startSession(sessionId, 'startup');
+
+    const pass = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await pass.finalize(true);
+
+    expect(pass.suppressLifecycle).toBeFalsy();
+  });
+
+  it('re-arms suppression on a second resume', async () => {
+    const sessionId = 'session-reopen-rearm';
+    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z')]);
+    await startSession(sessionId, 'startup');
+    await startSession(sessionId, 'resume');
+    appendFileSync(path, assistant('a1', 'msg-1', '2026-11-02T10:00:05.000Z') + '\n');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+  });
+});

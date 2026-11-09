@@ -414,7 +414,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       resolveGitHeadFields(context, 'start'),
       resolveSessionEnvFields(hookInput.cwd, model, permissionMode),
     ]);
-    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
+    const pass = await openSessionStartPass(
+      hookInput.session_id,
+      gitHeadStart.git_head_start,
+      sessionEnvFields,
+      hookInput.source
+    );
+    // Reopening an already reported session announces nothing: a start stamped now would move its
+    // activity window and re-bind it to this launch (EPMCDME-16993).
+    if (pass.reopened) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
 
     const sessionStartEvent: Record<string, unknown> = {
       ...hookInput,
@@ -440,6 +450,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop', envCheckInput(hookInput)),
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
     ]);
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events],
@@ -498,6 +511,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
       resolveIdentityCandidateFields({ cwd: hookInput.cwd }),
     ]);
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     const gitCommitFields = await resolveGitCommitFields(
       hookInput.cwd,
       pass.sessionStartedAt,

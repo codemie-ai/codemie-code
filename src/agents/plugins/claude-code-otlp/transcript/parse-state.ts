@@ -67,6 +67,16 @@ export interface TranscriptParseState {
    *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
    *  a state saved before it existed. */
   seenMessageUuids?: string[];
+  /** `uuid`s of the lines a continued session copied from its parent transcript (found through the
+   *  parent's `continued-in` record); never counted or summarised. Absent = none known. */
+  inheritedUuids?: string[];
+  /** The parent lookup ran (found or definitively absent), so it is not repeated. */
+  inheritedResolved?: boolean;
+  /** A `resume` SessionStart was suppressed: lifecycle events stay suppressed until a pass reads
+   *  own activity ({@link reopenActive}). */
+  reopened?: boolean;
+  /** Since the last `resume`, a pass read at least one line of the session's own activity. */
+  reopenActive?: boolean;
   /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
    *  absent in a state saved before it existed. */
   deferredAgentIds?: string[];

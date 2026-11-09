@@ -32,6 +32,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
+import { resolveInheritedUuids } from './continuation.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   acquireParseStateLock,
@@ -98,6 +99,9 @@ type MainTranscriptDerivationTrigger = MainTranscriptTrigger | 'PostCompact';
 export interface TranscriptPass {
   events: Record<string, unknown>[];
   finalize: (accepted: boolean) => Promise<void>;
+  /** The session was reopened by a `resume` and has shown no activity of its own yet: the caller
+   *  must not forward its lifecycle event (and `events` is empty). Absent = forward as usual. */
+  suppressLifecycle?: boolean;
 }
 
 const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
@@ -236,6 +240,7 @@ interface ContentBlock {
 
 interface TranscriptLine extends SignalLine {
   gitBranch?: string;
+  uuid?: string;
 }
 
 /**
@@ -363,12 +368,14 @@ async function buildFullAccumulator(
   transcriptPath: string,
   final: boolean,
   extra: readonly SubagentFile[],
-  pass: PassSnapshot
+  pass: PassSnapshot,
+  excluded: ReadonlySet<string> = new Set()
 ): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
   endedAt: string;
+  hasOwnLines: boolean;
 }> {
   const acc = emptyAccumulator();
 
@@ -376,18 +383,24 @@ async function buildFullAccumulator(
   try {
     raw = await readFile(transcriptPath, 'utf-8');
   } catch {
-    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '' };
+    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '', hasOwnLines: false };
   }
 
-  const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
+  // Lines a continued session copied from its parent are not its own work: dropped here so no
+  // summary figure (models, tools, turns, timestamps) includes them.
+  const rawLines: string[] = [];
   const allLines: TranscriptLine[] = [];
 
-  for (const line of rawLines) {
+  for (const line of raw.split('\n')) {
+    if (line.trim().length === 0) continue;
     try {
-      allLines.push(JSON.parse(line) as TranscriptLine);
+      const parsed = JSON.parse(line) as TranscriptLine;
+      if (typeof parsed?.uuid === 'string' && excluded.has(parsed.uuid)) continue;
+      allLines.push(parsed);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
+    rawLines.push(line);
   }
   const parsedLines = keepFirstByUuid(allLines.filter(isCountedTranscriptLine));
 
@@ -464,7 +477,7 @@ async function buildFullAccumulator(
   const startedAt = firstTimestamp(parsedLines);
   const endedAt = firstTimestamp([...parsedLines].reverse());
 
-  return { acc, named, startedAt, endedAt };
+  return { acc, named, startedAt, endedAt, hasOwnLines: parsedLines.length > 0 };
 }
 
 /**
@@ -495,6 +508,26 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
     if (isCountedTranscriptLine(parsed)) keepFirstByUuid([parsed], seen);
   }
   return seen;
+}
+
+/**
+ * The uuids a continued session copied from its parent transcript (EPMCDME-16992). Looked up once,
+ * on the session's first transcript pass (`mainOffset === 0`), and kept in `state`; an unreadable
+ * directory leaves the lookup open for the next first pass. Empty for a session with no parent.
+ */
+async function ensureInherited(
+  state: TranscriptParseState,
+  sessionId: string,
+  transcriptPath: string
+): Promise<ReadonlySet<string>> {
+  if (!state.inheritedResolved && state.mainOffset === 0) {
+    const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
+    if (uuids) {
+      state.inheritedUuids = uuids;
+      state.inheritedResolved = true;
+    }
+  }
+  return new Set(state.inheritedUuids ?? []);
 }
 
 function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
@@ -557,6 +590,9 @@ async function deriveMainEvents(
     ? new Set<string>(state.seenMessageUuids)
     : await seedSeenUuids(transcriptPath, state.mainOffset);
   const seenUuids = seeded ?? new Set<string>();
+  const inherited = await ensureInherited(state, sessionId, transcriptPath);
+  for (const uuid of inherited) seenUuids.add(uuid);
+  let ownActivity = false;
   for (const line of lines) {
     let rawGitBranch = '';
     let isUserLine = false;
@@ -582,6 +618,8 @@ async function deriveMainEvents(
     }
 
     const parsed = parseUsageLine(line, 'main', '', '', '');
+    // A synthetic assistant line (Claude Code's own placeholder) is not work the user did.
+    if (!(parsed && isSyntheticModel(parsed.model))) ownActivity = true;
     if (parsed) {
       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
@@ -600,6 +638,11 @@ async function deriveMainEvents(
   state.mainOffset = nextOffset;
   if (seeded) state.seenMessageUuids = [...seenUuids];
 
+  // A reopened session stays silent until it has done something: opening it must not change its
+  // analytics (EPMCDME-16993).
+  if (state.reopened && ownActivity) state.reopenActive = true;
+  if (state.reopened && !state.reopenActive) return [];
+
   for (const key of touchedKeys) {
     const request = state.openRequests[key];
     // usageRequestKey isolates API-error rows even when request id and resolved model match a
@@ -610,12 +653,16 @@ async function deriveMainEvents(
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(
+    const { acc, named, startedAt, endedAt, hasOwnLines } = await buildFullAccumulator(
       transcriptPath,
       trigger === 'SessionEnd',
       deferredCandidates(state),
-      pass
+      pass,
+      inherited
     );
+    // A continued session with no work of its own has nothing to summarise: the figures would
+    // otherwise be the parent's, stamped with the parent's timestamps.
+    if (inherited.size > 0 && !hasOwnLines) return events;
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -666,6 +713,8 @@ function finalizeOf(
 export interface SessionStartPass extends TranscriptPass {
   sessionEnvFields: SessionEnvFields;
   gitHeadStart: string;
+  /** A `resume` of a session whose start was already recorded: nothing new to announce. */
+  reopened?: boolean;
 }
 
 /**
@@ -696,12 +745,20 @@ export interface SessionStartPass extends TranscriptPass {
 export async function openSessionStartPass(
   sessionId: string,
   gitHeadStart: string,
-  sessionEnvFields: SessionEnvFields
+  sessionEnvFields: SessionEnvFields,
+  source?: string
 ): Promise<SessionStartPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
+    // A resume of a session already started announces nothing: its start was reported once, and a
+    // start stamped at the reopen would move the session's activity window (EPMCDME-16993).
+    const reopened = source === 'resume' && Boolean(state.sessionStartedAt);
+    if (reopened) {
+      state.reopened = true;
+      state.reopenActive = false;
+    }
     if (!state.gitHeadStart) {
       state.gitHeadStart = gitHeadStart;
     }
@@ -723,6 +780,7 @@ export async function openSessionStartPass(
       finalize: finalizeOf(sessionId, state, release),
       sessionEnvFields: merged,
       gitHeadStart: state.gitHeadStart,
+      reopened,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1036,7 +1094,11 @@ export async function openMainTranscriptPass(
       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
 
-    return { events, finalize: finalizeOf(sessionId, state, release) };
+    return {
+      events,
+      finalize: finalizeOf(sessionId, state, release),
+      suppressLifecycle: state.reopened === true && state.reopenActive !== true,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
@@ -1447,6 +1509,7 @@ export async function openSessionEndPass(
       finalize: finalizeOf(sessionId, state, release),
       gitHeadStart: state.gitHeadStart,
       sessionStartedAt: state.sessionStartedAt,
+      suppressLifecycle: state.reopened === true && state.reopenActive !== true,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
