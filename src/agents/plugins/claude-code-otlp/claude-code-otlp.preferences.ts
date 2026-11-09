@@ -21,12 +21,15 @@ export interface ClaudeAnalyticsPreferences {
   version: 1;
   enabled: boolean;
   excludedProjects: string[];
+  /** Bumped atomically by every explicit enable/disable; a session recorded under another value is stopped. */
+  collectionGeneration: number;
 }
 
 export const DEFAULT_CLAUDE_ANALYTICS_PREFERENCES: ClaudeAnalyticsPreferences = {
   version: 1,
   enabled: true,
   excludedProjects: [],
+  collectionGeneration: 0,
 };
 
 export type ClaudeAnalyticsPreferencesState =
@@ -43,6 +46,9 @@ function isValidPreferences(value: unknown): value is Partial<ClaudeAnalyticsPre
   }
   const v = value as Record<string, unknown>;
   if (v.enabled !== undefined && typeof v.enabled !== 'boolean') {
+    return false;
+  }
+  if (v.collectionGeneration !== undefined && !(Number.isSafeInteger(v.collectionGeneration) && (v.collectionGeneration as number) >= 0)) {
     return false;
   }
   if (v.excludedProjects !== undefined) {
@@ -96,6 +102,7 @@ export async function readClaudeAnalyticsPreferences(): Promise<ClaudeAnalyticsP
       version: CONFIG_VERSION,
       enabled: parsed.enabled ?? DEFAULT_CLAUDE_ANALYTICS_PREFERENCES.enabled,
       excludedProjects: parsed.excludedProjects ?? DEFAULT_CLAUDE_ANALYTICS_PREFERENCES.excludedProjects,
+      collectionGeneration: parsed.collectionGeneration ?? DEFAULT_CLAUDE_ANALYTICS_PREFERENCES.collectionGeneration,
     },
   };
 }

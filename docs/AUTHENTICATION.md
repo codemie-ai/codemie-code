@@ -318,7 +318,9 @@ When the remote MCP server requires authentication, the proxy handles it automat
 6. **Token exchange** — exchange the code for access/refresh tokens
 7. **Retry** — replay the original request with the Bearer token
 
-All tokens and client state are kept in-memory only — re-authorization is required each session.
+When several MCP servers start together, their proxies take turns: a lock file (`~/.codemie/mcp-auth.lock`) lets only one browser login be in flight at a time, because concurrent logins in one browser can invalidate each other. After the initial login, an expired or rejected access token is renewed in place — silently with the refresh token when one is held in memory, otherwise through the browser — without dropping the server from the session.
+
+The login (access token, refresh token and the client registration the refresh token belongs to) is stored per MCP server under `~/.codemie/mcp-auth` (directory `0700`, files `0600`). Restarting the CLI then reuses it, or renews it silently with the refresh token, and only opens the browser when that is no longer possible. The files (`<hash>.enc`) hold a long-lived credential, so their content is encrypted with the same machine-bound key as the stored SSO and JWT credentials: a copy taken by a backup, a sync tool or a support bundle cannot be read on another machine. The key is derived from the machine rather than from a secret, so another process running as your user can still decrypt them; keep treating the directory like your SSH keys. Delete the directory to log out of every server. Set `MCP_PROXY_PERSIST_TOKENS=off` to keep everything in memory only, in which case re-authorization is required each session.
 
 ### SSO Integration
 
@@ -335,6 +337,7 @@ When running through the CodeMie SSO proxy, the MCP Auth Plugin provides additio
 |----------|---------|-------------|
 | `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name for OAuth Dynamic Client Registration |
 | `MCP_PROXY_DEBUG` | (unset) | Set to `true` for verbose proxy logging |
+| `MCP_PROXY_PERSIST_TOKENS` | (enabled) | Set to `off` to stop storing logins on disk |
 | `CODEMIE_PROXY_PORT` | (auto) | Fixed proxy port for stable auth callback URLs |
 
 Logs: `~/.codemie/logs/mcp-proxy.log`

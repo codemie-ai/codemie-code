@@ -5,6 +5,7 @@ import { atomicReplace, evidenceDir } from '@/agents/core/evidence/record-store.
 import type { Policy } from '@/agents/core/evidence/classify.js';
 import { logger } from '@/utils/logger.js';
 import { readBoundedBody } from './response.js';
+import { PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 
 /*
  * Per-namespace classification policy + backend capability cache. One file per namespace
@@ -46,6 +47,8 @@ export interface PolicyState {
   /** When the usable policy was fetched. */
   fetchedAt?: number;
   backoffUntil?: number;
+  /** The advertised contracts of the cached policy, even when it has expired; never used for classification. */
+  publicationContracts?: string[];
   /** Caller should call refreshPolicy now (no usable policy, backoff over, legacy re-probe due). */
   refreshDue: boolean;
 }
@@ -53,7 +56,16 @@ export interface PolicyState {
 export interface PolicyOpts {
   now?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * The caller sends the new publication contract: a cached policy that does not advertise it is refresh-due
+   * (still under the backoff), whatever its age, so an upgraded backend is noticed without waiting 24 h.
+   */
+  needContract?: boolean;
 }
+
+/** Whether the cached list (even an expired one, which only informs the hold decision) advertises the negotiated contract. */
+export const advertisesContract = (state: Pick<PolicyState, 'publicationContracts'>): boolean =>
+  !!state.publicationContracts?.includes(PUBLICATION_CONTRACT);
 
 export interface RefreshInput extends PolicyOpts {
   /** Analytics base URL (daemon targetUrl/url, as forwarder.resolveBaseUrl). */
@@ -82,7 +94,15 @@ function validPolicy(v: unknown): Policy | null {
   const enc = (v as Record<string, unknown>).organization_encodings;
   const encodings =
     Array.isArray(enc) && enc.length <= 16 && enc.every((e) => typeof e === 'string' && e.length <= 64) ? (enc as string[]) : undefined;
-  return { organizations: organizations as string[], version, ...(encodings?.length ? { organization_encodings: encodings } : {}) };
+  const pc = (v as Record<string, unknown>).publication_contracts;
+  const contracts =
+    Array.isArray(pc) && pc.length <= 16 && pc.every((e) => typeof e === 'string' && e.length <= 16) ? (pc as string[]) : undefined;
+  return {
+    organizations: organizations as string[],
+    version,
+    ...(encodings?.length ? { organization_encodings: encodings } : {}),
+    ...(contracts?.length ? { publication_contracts: contracts } : {}),
+  };
 }
 
 async function load(id: NamespaceId): Promise<CacheFile | null> {
@@ -106,13 +126,16 @@ export async function getPolicyState(id: NamespaceId, opts: PolicyOpts = {}): Pr
   const usable = !!c.policy && c.fetchedAt !== undefined && now - c.fetchedAt >= 0 && now - c.fetchedAt < POLICY_USABLE_MS;
   const inBackoff = c.backoffUntil !== undefined && now < c.backoffUntil;
   const legacyWait = c.capability === 'legacy' && c.probedAt !== undefined && now - c.probedAt < LEGACY_REPROBE_MS;
+  const publicationContracts = c.capability === 'evidence' ? c.policy?.publication_contracts : undefined;
+  const contractMissing = !!opts.needContract && !publicationContracts?.includes(PUBLICATION_CONTRACT);
   return {
     policy: usable ? c.policy! : null,
     capability: c.capability,
     usable,
     fetchedAt: usable ? c.fetchedAt : undefined,
     backoffUntil: inBackoff ? c.backoffUntil : undefined,
-    refreshDue: !usable && !inBackoff && !legacyWait,
+    ...(publicationContracts ? { publicationContracts } : {}),
+    refreshDue: (!usable || contractMissing) && !inBackoff && !legacyWait,
   };
 }
 
@@ -150,16 +173,18 @@ export async function refreshPolicy(id: NamespaceId, input: RefreshInput): Promi
   try {
     const prev = await load(id);
     if (!input.force && prev) {
-      if (prev.backoffUntil !== undefined && now < prev.backoffUntil) return getPolicyState(id, { now });
+      if (prev.backoffUntil !== undefined && now < prev.backoffUntil) return getPolicyState(id, { now, needContract: input.needContract });
       if (prev.capability === 'legacy' && prev.probedAt !== undefined && now - prev.probedAt < LEGACY_REPROBE_MS) {
-        return getPolicyState(id, { now });
+        return getPolicyState(id, { now, needContract: input.needContract });
       }
     }
     const out = await probe(input);
     const base = { schema: 1 as const, api_identity: id.api_identity, owner_hash: id.owner_hash, ...(id.profile ? { profile: id.profile } : {}) };
     let next: CacheFile;
     if (out.kind === 'ok') {
-      next = { ...base, capability: 'evidence', policy: out.policy, fetchedAt: now };
+      // A policy that does not advertise the contract is re-read at most every BACKOFF_MS, never in a loop.
+      const awaitingContract = !!input.needContract && !out.policy.publication_contracts?.includes(PUBLICATION_CONTRACT);
+      next = { ...base, capability: 'evidence', policy: out.policy, fetchedAt: now, ...(awaitingContract ? { backoffUntil: now + BACKOFF_MS } : {}) };
     } else if (out.kind === 'legacy') {
       next = { ...base, capability: 'legacy', probedAt: now, backoffUntil: now + BACKOFF_MS };
     } else {
@@ -176,5 +201,5 @@ export async function refreshPolicy(id: NamespaceId, input: RefreshInput): Promi
   } catch (err) {
     logger.debug(`[policy-cache] refresh failed: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
   }
-  return getPolicyState(id, { now });
+  return getPolicyState(id, { now, needContract: input.needContract });
 }

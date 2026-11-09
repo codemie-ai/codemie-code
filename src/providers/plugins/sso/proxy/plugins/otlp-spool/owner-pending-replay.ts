@@ -6,6 +6,8 @@ import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
 import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
 import { createOrRead, recordKey } from '@/agents/core/evidence/record-store.js';
+import { scopeViolation } from '@/agents/core/evidence/session-scope.js';
+import { writeStop } from '@/agents/core/evidence/stop-marker.js';
 import {
   entryFirstAt,
   fpDirName,
@@ -96,6 +98,22 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
     created = await createOrRead(key, fields, { pendingSessionIds: await pendingSpoolSessionIds() });
   }
   if (created.kind !== 'created' && created.kind !== 'existing') return false; // retried on a later tick
+
+  // An already-recorded session was not scope-checked at hook time (no owner then). Its held content must still fit the
+  // record's project, generation and consent-covered folder; otherwise the session stops and the content is dropped, never published.
+  if (created.kind === 'existing') {
+    const violation = await scopeViolation(created.record, {
+      cwd: entry.cwd,
+      projectAtCwd: entry.project_at_cwd ?? '',
+      generation: entry.fields.collection_generation ?? 0,
+    });
+    if (violation) {
+      await writeStop(key, violation, entry.session_id);
+      await unlink(path);
+      logger.warn('[owner-pending] held hook events dropped: session scope changed during the identity outage', ...sanitizeLogArgs({ reason: violation, events: entry.events.length }));
+      return true;
+    }
+  }
 
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
   const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));

@@ -34,6 +34,12 @@ vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));
 vi.mock('@/agents/core/hook-credentials.js', () => ({ resolveHookCredentials: vi.fn(async () => null) }));
+// These tests derive events for sessions already under way. With no credentials the transition gate cannot key a record, so give
+// every session an explicit recorded scope; the no-owner unknown-session rule has dedicated tests (claude-code-otlp.transitions.test.ts).
+vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  hasRecordForSession: vi.fn(async () => true),
+}));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: vi.fn(async () => '9.9.9') }));
 vi.mock('@/agents/core/identity-resolver.js', () => ({
   resolveGitEmail: vi.fn(async () => 'git@example.com'),

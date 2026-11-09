@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  recordKey, createOrRead, readRecord, touch, sweepRecords, evidenceDir,
+  recordKey, createOrRead, readRecord, touch, sweepRecords, evidenceDir, publicationModeFileName,
   type EvidenceFields,
 } from '../record-store.js';
 
@@ -113,6 +113,7 @@ describe('record-store', () => {
     setLastUsed(keyOf(b), now - 91 * DAY);
     setLastUsed(keyOf(c), now - 10 * DAY);
     writeFileSync(join(evidenceDir(), 'notes.txt'), 'x');
+    for (const f of [a, b]) writeFileSync(join(evidenceDir(), publicationModeFileName(keyOf(f))), '"legacy"');
     const res = await sweepRecords({ pendingKeys: new Set([keyOf(b)]) });
     expect(res.capacityBlocked).toBe(false);
     const names = readdirSync(evidenceDir());
@@ -120,6 +121,8 @@ describe('record-store', () => {
     expect(names).not.toContain(`${keyOf(a)}.json`);
     expect(names).toContain(`${keyOf(b)}.json`);
     expect(names).toContain(`${keyOf(c)}.json`);
+    expect(names).not.toContain(publicationModeFileName(keyOf(a)));
+    expect(names).toContain(publicationModeFileName(keyOf(b)));
   });
 
   it('over cap evicts oldest non-pending first', async () => {

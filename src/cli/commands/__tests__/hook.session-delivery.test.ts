@@ -213,8 +213,8 @@ function syntheticEnd(transcript = '') {
 }
 
 /** The end metric answers 200 at once; every other request is answered only by its abort. Times are the fake clock's. */
-function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] } {
-  const times = { endMetricAt: [] as number[], abortedAt: [] as number[] };
+function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[]; othersStarted: number } {
+  const times = { endMetricAt: [] as number[], abortedAt: [] as number[], othersStarted: 0 };
   vi.mocked(globalThis.fetch).mockImplementation((_url, init) => {
     const metric = JSON.parse(String((init as RequestInit).body)) as Captured;
     requests.push(metric);
@@ -222,6 +222,7 @@ function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] }
       times.endMetricAt.push(Date.now());
       return Promise.resolve(ok());
     }
+    times.othersStarted++;
     return new Promise((_resolve, reject) => {
       (init as RequestInit).signal?.addEventListener('abort', () => {
         times.abortedAt.push(Date.now());
@@ -603,10 +604,12 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const times = endMetricOkOthersHang();
     let startedAt = 0;
 
+    // The fake clock stands still until the sync's first request is in flight (bounded real wait): slow real I/O
+    // before it must not spend the 3500 ms deadline, or the sync is skipped and nothing is left to abort.
     await onFakeClock(async () => {
       startedAt = Date.now();
       await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session, { deadlineMs: startedAt + 3500 }));
-    });
+    }, { while: () => times.othersStarted === 0, maxRealMs: 10_000 });
 
     expect(times.endMetricAt).toHaveLength(1);
     expect(times.abortedAt.length).toBeGreaterThan(0);
@@ -2590,8 +2593,14 @@ describe('SessionStart source=clear closes the previous generation', () => {
     const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
     // The holder lets go right after the start's first lock attempt has met it
     let firstTry = true;
+    let lockTaken = false;
     const before = Date.now();
     vi.mocked(writeFile).mockImplementation(async (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]) === lockPath && !firstTry) {
+        const written = await actual.writeFile(...args);
+        lockTaken = true;
+        return written;
+      }
       if (String(args[0]) !== lockPath || !firstTry) return actual.writeFile(...args);
       firstTry = false;
       try {
@@ -2602,9 +2611,8 @@ describe('SessionStart source=clear closes the previous generation', () => {
     });
 
     try {
-      // Real clock: the lock frees after one 25 ms poll, so no clock needs faking. A fake clock
-      // advanced in fixed steps burns the 2 s close budget on slow file I/O and marks it dropped.
-      await processEvent(clearStart(), config(session));
+      // The wait needs the clock to retry the lock; once the start holds it, the 2 s close budget must not be spent by real I/O
+      await onFakeClock(() => processEvent(clearStart(), config(session)), { while: () => lockTaken, maxRealMs: 10_000 });
     } finally {
       vi.mocked(writeFile).mockImplementation(actual.writeFile);
     }
