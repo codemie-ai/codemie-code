@@ -1,10 +1,18 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
+import {
+  exec,
+  detectGitBranch,
+  detectGitRemoteRepo,
+  processStartedAt,
+  WRAPPER_PID_ENV,
+  WRAPPER_STARTED_AT_ENV,
+} from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
+import { constants as osConstants } from 'os';
 import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../providers/plugins/sso/index.js';
 import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
@@ -13,6 +21,7 @@ import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
+import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
@@ -35,6 +44,20 @@ import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 import { applySystemProxyEnvironment } from '../../utils/system-proxy.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
+import {
+  ignoreClosedOutputStreams,
+  installPosixSignalHandlers,
+  installWin32SignalHandlers,
+  type SignalHandlers,
+} from './signal-handlers.js';
+import {
+  EXIT_DEADLINE_ENV,
+  finalizeOwnRecord,
+  reconcileOtherSessions,
+  type ReconcilePass,
+} from './session/stale-session-reconciliation.js';
+import { noticeDeliveryAtExit } from './session/exit-notice.js';
+import { EXIT_NETWORK_BUDGET_MS, START_PASS_EXIT_BUDGET_MS, settleStartPass } from './session/start-pass.js';
 
 /**
  * Base class for all agent adapters
@@ -42,6 +65,8 @@ import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatche
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  /** The start pass over other sessions' records; awaited at exit within the budget */
+  private startPass: ReconcilePass | null = null;
   public readonly metadata: AgentMetadata;
   public readonly type = AgentAdapterType.BASE;
 
@@ -523,6 +548,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
+    try {
+      await this.runSession(args, envOverrides, runOptions);
+    } catch (error) {
+      // A setup step that throws before the exit step leaves the start pass unsettled
+      await this.settleStartPass(Date.now());
+      throw error;
+    }
+  }
+
+  private async runSession(
+    args: string[],
+    envOverrides?: Record<string, string>,
+    runOptions?: { dryRun?: boolean },
+  ): Promise<void> {
+    ignoreClosedOutputStreams();
+
     // Version handling (EPMCDME-13734): known-broken versions are refused,
     // everything else is a one-time recommendation — no prompts, no re-nagging.
     await this.blockIfBelowMinimum();
@@ -556,7 +597,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       CODEMIE_AGENT: this.metadata.name,
       CODEMIE_CLIENT_TYPE: this.metadata.ssoConfig?.clientType || 'codemie-cli',
       CODEMIE_REPOSITORY: sessionRepository,
-      ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch })
+      ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch }),
+      // The session's owner: a later start finalizes the record once this process is gone
+      [WRAPPER_PID_ENV]: String(process.pid),
+      [WRAPPER_STARTED_AT_ENV]: String(processStartedAt())
     };
 
     // Initialize logger with session ID
@@ -573,6 +617,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: session start (provider-aware)
     await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
 
+    // Finalize and deliver other sessions' stranded / undelivered records through this launch
+    if (!runOptions?.dryRun) {
+      this.startPass = reconcileOtherSessions({ env, ownSessionId: sessionId });
+    }
+
     // Show welcome message with session info (skip in silent mode)
     if (!this.metadata.silentMode) {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
@@ -580,6 +629,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
       const model = env.CODEMIE_MODEL || 'unknown';
       const codeMieUrl = env.CODEMIE_URL;
+      // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
+      const project = describeProjectBinding(
+        parseProjectBinding(env[PROJECT_BINDING_ENV]),
+        env.CODEMIE_PROJECT || undefined
+      );
 
       // Display ASCII logo with configuration
       console.log(
@@ -588,6 +642,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           provider,
           model,
           codeMieUrl,
+          project,
           agent: this.metadata.name,
           cliVersion,
           sessionId
@@ -719,11 +774,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     logger.debug('=== End Configuration ===');
 
-    // Shared cleanup: stop proxy and flush analytics
-    const cleanup = async () => {
+    // Shared cleanup: stop proxy and flush analytics (the final sync stops at the deadline)
+    const cleanup = async (deadlineMs?: number) => {
       if (this.proxy) {
         logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
-        await this.proxy.stop();
+        await this.proxy.stop({ deadlineMs });
         this.proxy = null;
         logger.debug(`[${this.displayName}] Proxy cleanup complete`);
       }
@@ -734,14 +789,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // throw here would skip cleanup(), stranding the proxy and its final metrics
     // sync, and would leave the exit handler's promise unsettled. Since this now
     // runs on signal exits too, that would happen on every Ctrl+C.
+    //
+    // Every network step from here shares one EXIT_NETWORK_BUDGET_MS deadline: the start pass
+    // still running (its first half at most), the plugin's session end, the own-record step and the proxy's final sync.
     const endSessionAndCleanup = async (exitCode: number) => {
+      const deadlineMs = Date.now() + EXIT_NETWORK_BUDGET_MS;
+      env[EXIT_DEADLINE_ENV] = String(deadlineMs);
       try {
-        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[${this.displayName}] onSessionEnd hook failed (non-blocking): ${msg}`);
+        await this.settleStartPass(Date.now() + START_PASS_EXIT_BUDGET_MS);
+        try {
+          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${this.displayName}] onSessionEnd hook failed (non-blocking): ${msg}`);
+        }
+        try {
+          await finalizeOwnRecord(sessionId, { env, deadlineMs });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${this.displayName}] Own session record step failed (non-blocking): ${msg}`);
+        }
+        await noticeDeliveryAtExit(sessionId, processStartedAt(), !this.metadata.silentMode);
       } finally {
-        await cleanup();
+        await cleanup(deadlineMs);
       }
     };
 
@@ -858,26 +928,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         windowsHide: isWindows // Hide console window on Windows
       });
 
-      // Signal handler for graceful shutdown
-      const handleSignal = async (signal: NodeJS.Signals) => {
-        logger.debug(`Received ${signal}, cleaning up proxy...`);
-        await cleanup();
-        // Kill child process gracefully
-        child.kill(signal);
-      };
-
-      // Register signal handlers
-      const sigintHandler = () => handleSignal('SIGINT');
-      const sigtermHandler = () => handleSignal('SIGTERM');
-
-      process.once('SIGINT', sigintHandler);
-      process.once('SIGTERM', sigtermHandler);
+      const { removeSignalHandlers, removeInterruptHandlers, reapOrphans, onChildGone, fallbackSignal } =
+        this.installSignalHandlers(child, isWindows);
 
       return new Promise((resolve, reject) => {
         child.on('error', async (error) => {
+          onChildGone();
           // Remove signal handlers to prevent memory leaks
-          process.off('SIGINT', sigintHandler);
-          process.off('SIGTERM', sigtermHandler);
+          removeSignalHandlers();
 
           // Lifecycle hook: session end, then proxy cleanup (triggers final sync)
           await endSessionAndCleanup(1);
@@ -889,49 +947,67 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
 
         child.on('exit', async (code, signal) => {
-          // Remove signal handlers to prevent memory leaks
-          process.off('SIGINT', sigintHandler);
-          process.off('SIGTERM', sigtermHandler);
+          try {
+            // Before onChildGone: the fallback timer and the signal handlers must
+            // outlive the wait for what a launcher left behind.
+            await reapOrphans(signal);
+            onChildGone();
+            // POSIX keeps only its SIGHUP handler until this path ends, so a
+            // closing terminal does not kill the wrapper mid-finalization.
+            removeInterruptHandlers();
 
-          // Show shutting down message (skip in silent mode)
-          if (!this.metadata.silentMode) {
-            console.log(''); // Empty line for spacing
-            console.log(chalk.yellow('Shutting down...'));
-          }
+            // Show shutting down message (skip in silent mode)
+            if (!this.metadata.silentMode) {
+              console.log(''); // Empty line for spacing
+              console.log(chalk.yellow('Shutting down...'));
+            }
 
-          // Grace period: wait for any final API calls from the external agent
-          // Many agents (Claude, Gemini) send telemetry/session data on shutdown
-          if (this.proxy) {
-            const gracePeriodMs = 2000; // 2 seconds
-            logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
-            await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
-          }
+            // Grace period: wait for any final API calls from the external agent
+            // Many agents (Claude, Gemini) send telemetry/session data on shutdown
+            if (this.proxy) {
+              const gracePeriodMs = 2000; // 2 seconds
+              logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
+              await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
+            }
 
-          // Preserve signal information for lifecycle hooks. A null exit code
-          // means the process was terminated by a signal; agents still need the
-          // session-end hook to finalize metrics.
-          if (signal) {
-            env.CODEMIE_EXIT_SIGNAL = signal;
-          }
-          const effectiveExitCode = code ?? 1;
+            // Preserve signal information for lifecycle hooks. A null exit code
+            // means the process was terminated by a signal; agents still need the
+            // session-end hook to finalize metrics. After the fallback's SIGKILL the
+            // hooks see the signal the wrapper forwarded, not SIGKILL.
+            const exitSignal = fallbackSignal() ?? signal;
+            if (exitSignal) {
+              env.CODEMIE_EXIT_SIGNAL = exitSignal;
+            }
+            const effectiveExitCode = code ?? 1;
 
-          // Lifecycle hook: session end, then proxy cleanup
-          await endSessionAndCleanup(effectiveExitCode);
+            // Lifecycle hook: session end, then proxy cleanup
+            await endSessionAndCleanup(effectiveExitCode);
 
-          // Lifecycle hook: afterRun (provider-aware)
-          if (code !== null) {
-            await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
-          }
+            // Lifecycle hook: afterRun (provider-aware)
+            if (code !== null) {
+              await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
+            }
 
-          // Write the per-session analytics report (gated, non-fatal).
-          await this.maybeWriteSessionReport(env);
+            // Write the per-session analytics report (gated, non-fatal).
+            await this.maybeWriteSessionReport(env);
 
-          this.renderSessionEnd();
+            this.renderSessionEnd();
 
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`${this.displayName} exited with code ${code}`));
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`${this.displayName} exited with code ${code}`));
+            }
+          } catch (error) {
+            reject(error);
+          } finally {
+            removeSignalHandlers();
+            // A rejection would end in the CLI's generic failure exit (1); the
+            // killed agent's wrapper exits as the forwarded signal instead.
+            const firedFor = fallbackSignal();
+            if (firedFor) {
+              process.exit(128 + osConstants.signals[firedFor]);
+            }
           }
         });
       });
@@ -945,6 +1021,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       throw error;
     }
+  }
+
+  private async settleStartPass(deadlineMs: number): Promise<void> {
+    const pass = this.startPass;
+    this.startPass = null;
+    if (pass) await settleStartPass(pass, deadlineMs, this.displayName);
+  }
+
+  /**
+   * Install the wrapper's signal handlers for a spawned agent. `fallbackSignal`
+   * is the forwarded signal the 10 s fallback fired for, if it did.
+   */
+  private installSignalHandlers(child: ChildProcess, isWindows: boolean): SignalHandlers {
+    return isWindows
+      ? installWin32SignalHandlers(child, this.displayName)
+      : installPosixSignalHandlers(child, this.displayName);
   }
 
   /**

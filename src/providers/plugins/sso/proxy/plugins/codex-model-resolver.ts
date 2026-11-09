@@ -12,6 +12,8 @@
  * plugin, which installs independently of the provider stack.
  */
 
+import { normalizeModelName } from '@/utils/model-normalizer.js';
+
 /**
  * Release date embedded in a CodeMie deployment name, e.g. `-2026-07-09`.
  *
@@ -47,7 +49,7 @@ export interface CodexModelResolution {
  * for `gpt-5`.
  */
 function parseIdentity(name: string): ModelIdentity | null {
-  const lower = name.trim().toLowerCase();
+  const lower = normalizeModelName(name.trim()).toLowerCase();
   const dateMatch = lower.match(DEPLOYMENT_DATE_PATTERN);
   const withoutDate = dateMatch ? lower.slice(0, dateMatch.index) : lower;
 
@@ -88,7 +90,7 @@ const COMPATIBLE_NAME_PATTERN = /codex|^gpt[-._]?5(?:[-._]|\b)|^gpt[-._]?6(?:[-.
  */
 export function isCodexServableDeployment(name: string): boolean {
   if (INCOMPATIBLE_NAME_PATTERN.test(name)) return false;
-  return COMPATIBLE_NAME_PATTERN.test(name);
+  return COMPATIBLE_NAME_PATTERN.test(normalizeModelName(name.trim()));
 }
 
 /**

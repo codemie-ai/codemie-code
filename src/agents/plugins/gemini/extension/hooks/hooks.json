@@ -44,7 +44,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie User Prompt Submit",
-            "timeout": 60000
+            "timeout": 180000
           }
         ]
       }

@@ -12,7 +12,7 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/providers/plugins/sso/session/BaseProcessor.js';
-import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
+import { shouldStopSync, SyncStoppedError } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
@@ -25,8 +25,8 @@ import {
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { readJSONL } from '../../utils/jsonl-reader.js';
-import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
+import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import {
   DEFAULT_API_TIMEOUT_MS,
   DEFAULT_RETRY_ATTEMPTS,
@@ -61,8 +61,11 @@ export function createSyncProcessor(): SessionProcessor {
     try {
       // Read conversation payloads from JSONL
       const conversationsFile = getSessionConversationPath(session.sessionId);
-      const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
-      const pendingPayloads = await prepareSendList(allPayloads, conversationsFile, context);
+      const allPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsFile, `[${CONVERSATION_PROCESSOR_NAME}]`);
+      const pendingPayloads = await prepareSendList(allPayloads, session.sessionId, context);
+      if (pendingPayloads === undefined) {
+        return { success: true, message: 'Sync deferred: conversation file gone' };
+      }
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -80,7 +83,10 @@ export function createSyncProcessor(): SessionProcessor {
         retryAttempts: DEFAULT_RETRY_ATTEMPTS,
         version: context.version,
         clientType: context.clientType,
-        dryRun: context.dryRun
+        dryRun: context.dryRun,
+        deadlineMs: context.syncDeadlineMs,
+        abortSignal: context.abortSignal,
+        credentialsSuperseded: context.credentialsSuperseded
       });
 
       // Send each pending payload to API
@@ -91,6 +97,9 @@ export function createSyncProcessor(): SessionProcessor {
       let lastSentConversationId: string | undefined;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
+      // payloadId -> syncError of the payloads sent this run whose outcome is not on disk yet, in send order;
+      // a persisted outcome is never applied again, so a failed send counts one attempt
+      const unpersistedOutcomes = new Map<string, string | undefined>();
 
       for (const pendingPayload of pendingPayloads) {
         // Stop BEFORE sending the next payload when the caller's sync deadline
@@ -142,6 +151,12 @@ export function createSyncProcessor(): SessionProcessor {
           }
 
         } catch (error: any) {
+          if (error instanceof SyncStoppedError) {
+            // Stopped by the caller's abort / deadline: this payload stays pending
+            deferred = true;
+            consumedCount--;
+            break;
+          }
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Error syncing conversation ${conversationId}:`, error.message);
           syncError = error.message || 'Unknown error';
         }
@@ -150,15 +165,30 @@ export function createSyncProcessor(): SessionProcessor {
           failedByPayloadId.set(payloadId, syncError);
         }
 
-        // Persist THIS payload's outcome immediately (atomic full-file rewrite).
-        // A kill mid-loop must never lose progress made so far.
+        // Persist the outcomes immediately (atomic full-file rewrite).
+        // A kill mid-loop must never lose progress made so far. The file is re-read under its lock and
+        // every outcome of this run applied by payloadId, so a payload appended during the network wait is kept.
         applyPayloadOutcome(allPayloads, payloadId, syncError);
+        unpersistedOutcomes.set(payloadId, syncError);
+        let rewritten: boolean;
         try {
-          await writeJSONLAtomic(conversationsFile, allPayloads);
+          rewritten = await rewriteSessionFile<ConversationPayloadRecord>('conversation', session.sessionId, (current) => {
+            for (const [outcomeId, outcomeError] of unpersistedOutcomes) {
+              applyPayloadOutcome(current, outcomeId, outcomeError);
+            }
+            return current;
+          }, context);
         } catch (writeError) {
-          // Keep going: in-memory state is ahead of disk, a later iteration may persist it
+          // Keep going: the next payload's rewrite applies this outcome; after the last one it stays pending on disk
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist payload outcome:`, writeError);
+          continue;
         }
+        if (!rewritten) {
+          logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Conversation file of session ${session.sessionId} is gone, sync outcome dropped; run stopped`);
+          deferred = true;
+          break;
+        }
+        unpersistedOutcomes.clear();
       }
 
       const syncedAt = Date.now();
@@ -181,10 +211,13 @@ export function createSyncProcessor(): SessionProcessor {
       // rewriting it here from the latest *successful* payload rewound it past turns
       // that were queued but not yet synced, re-queueing them as duplicates.
       let maxHistoryIndex = -1;
+      const historyIndexByConversation: Record<string, number> = {};
       for (const payload of pendingPayloads) {
         if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
+        const { conversationId } = payload.payload;
         for (const historyIndex of payload.historyIndices || []) {
           maxHistoryIndex = Math.max(maxHistoryIndex, historyIndex);
+          historyIndexByConversation[conversationId] = Math.max(historyIndexByConversation[conversationId] ?? -1, historyIndex);
         }
       }
 
@@ -209,6 +242,7 @@ export function createSyncProcessor(): SessionProcessor {
           syncUpdates: successCount > 0 ? {
             conversations: {
               lastSyncedHistoryIndex: maxHistoryIndex,
+              historyIndexByConversation,
               conversationId: lastSentConversationId,
               totalMessagesSynced: totalMessages,
               totalSyncAttempts: 1,
@@ -271,16 +305,17 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
  * anything is sent, so even a run that defers immediately keeps them.
  *
  * The per-run cap applies only to unbounded runs (proxy timer, onProxyStop). A
- * deadline-bounded run (SessionEnd) has no next run — its queue is renamed to
- * `completed_` right after — so it defers only on the deadline.
+ * deadline-bounded run (SessionEnd, the wrapper's exit) defers only on the deadline;
+ * whatever it leaves stays pending and keeps the session undelivered — its record
+ * is not renamed `completed_` — until a later run delivers it.
  *
- * @returns the payloads to send this run, in queue order
+ * @returns the payloads to send this run, in queue order; undefined when the live file is gone
  */
 async function prepareSendList(
   allPayloads: ConversationPayloadRecord[],
-  conversationsFile: string,
+  sessionId: string,
   context: ProcessingContext
-): Promise<ConversationPayloadRecord[]> {
+): Promise<ConversationPayloadRecord[] | undefined> {
   // Heal: a candidate whose payloadId already has a success record was synced.
   const healedCount = healSyncedDuplicates(allPayloads);
 
@@ -296,7 +331,15 @@ async function prepareSendList(
       `${supersededCount} fully covered payload(s)`
     );
     try {
-      await writeJSONLAtomic(conversationsFile, allPayloads);
+      const rewritten = await rewriteSessionFile<ConversationPayloadRecord>('conversation', sessionId, (current) => {
+        healSyncedDuplicates(current);
+        collapseSupersededPayloads(current.filter(isSendCandidate));
+        return current;
+      }, context);
+      if (!rewritten) {
+        logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Conversation file of session ${sessionId} is gone; nothing sent`);
+        return undefined;
+      }
     } catch (writeError) {
       logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
     }

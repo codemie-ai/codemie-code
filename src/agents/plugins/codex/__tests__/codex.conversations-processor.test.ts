@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -83,6 +83,30 @@ describe('CodexConversationsProcessor — incremental', () => {
     writeFileSync(sessionPath, JSON.stringify(session));
   }
 
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
+    const messages = [
+      { type: 'event_msg', payload: { type: 'user_message', message: 'hello' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: 'hi' }] } },
+    ];
+    const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const record = join(tempHome, 'sessions', 'sess-conv-1.json');
+    const file = join(tempHome, 'sessions', 'sess-conv-1_conversation.jsonl');
+    const hidden = join(tempHome, 'sessions', 'completed_sess-conv-1.json');
+
+    // A SessionEnd rename in flight: the record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const dropped = await new CodexConversationsProcessor().process(buildSession(messages), ctx);
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+
+    renameSync(hidden, record);
+    const retried = await new CodexConversationsProcessor().process(buildSession(messages), ctx);
+    expect(retried.metadata?.syncUpdates).toBeDefined();
+    expect(readFileSync(file, 'utf-8').trim().split('\n')).toHaveLength(1);
+  });
+
   it('appends only new messages on subsequent runs', async () => {
     const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
     const processor = new CodexConversationsProcessor();
@@ -138,6 +162,33 @@ describe('CodexConversationsProcessor — incremental', () => {
     });
     expect(lines[1].messageCount).toBe(1);
     expect(lines[1].payload.history[0].history_index).toBe(1);
+  });
+
+  it('reads the conversation file past a torn line and appends the next payload after it', async () => {
+    const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
+    const processor = new CodexConversationsProcessor();
+    const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const turn = (question: string, answer: string) => [
+      { type: 'event_msg', payload: { type: 'user_message', message: question } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: answer }] } },
+    ];
+    const conversationsPath = join(tempHome, 'sessions', 'sess-conv-1_conversation.jsonl');
+
+    await processor.process(buildSession(turn('first', 'one')), ctx);
+    await processor.process(buildSession([...turn('first', 'one'), ...turn('second', 'two')]), ctx);
+    const [first, second] = readFileSync(conversationsPath, 'utf-8').trim().split('\n');
+    writeFileSync(conversationsPath, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    const result = await processor.process(
+      buildSession([...turn('first', 'one'), ...turn('second', 'two'), ...turn('third', 'three')]),
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsPath, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    expect(JSON.parse(lines[3]).payload.history.map((h: { message: string }) => h.message)).toEqual(['third', 'three']);
   });
 
   it('returns recordsProcessed=0 when there are no new messages beyond lastSyncedHistoryIndex', async () => {

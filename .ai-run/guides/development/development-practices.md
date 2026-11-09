@@ -23,6 +23,7 @@ Core development practices for CodeMie Code: error handling, logging, process ex
 | `ToolExecutionError` | Tool exec failed | Command execution errors | src/utils/errors.ts:29-34 |
 | `PathSecurityError` | Path validation failed | Path traversal attempt | src/utils/errors.ts:36-41 |
 | `NpmError` | npm operations | Network, permission, package issues | src/utils/errors.ts:57-66 |
+| `ReconcileLockHeldError` | Session reconcile lock held | Another process holds a Desktop session's reconcile lock at finalization | src/utils/errors.ts:77-82 |
 
 ### Pattern: Throw & Catch
 
@@ -127,7 +128,7 @@ logger.debug(JSON.stringify(request)); // ❌ No sanitization
 - ❌ Log in performance-critical paths
 
 **Log File Location**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
-**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs in console
+**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs on stderr (a hook process writes every log level to the log file only; its stderr carries only its own message to the agent on a blocking exit)
 
 ---
 
@@ -274,7 +275,7 @@ GOOGLE_AI_API_KEY=...                 # For Gemini
 
 **Optional**:
 ```bash
-CODEMIE_DEBUG=true                    # Debug logging to console (default: false)
+CODEMIE_DEBUG=true                    # Debug logging to stderr (default: false)
 CODEMIE_PROFILE=work                  # Default profile (default: default)
 NODE_ENV=development                  # Environment mode
 ```

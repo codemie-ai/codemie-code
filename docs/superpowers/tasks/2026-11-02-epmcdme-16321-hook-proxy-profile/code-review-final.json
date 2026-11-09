@@ -1,0 +1,240 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran; two spec requirements are only partly met (scope not logged on a successful cold start; connect skips the record write when every target fails, a decision for the human), and the standards audit found over-length functions plus an unrecorded security review for the new attribution source. Reachability was confirmed in code; 13 candidates were dismissed as noise (narrow legacy-daemon mismatch that the hook's seed path heals, by-design seeding, doc wording, perf nits). 2 deferred (local-profile steering, cold-start race) in code-review-deferred.local.md.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: hook cold start restarts the daemon with the recorded profile whatever the cwd; log states global or local scope",
+      "status": "partial",
+      "notes": "Recorded-profile restart works; scope is logged only on skip paths, not on a successful start."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: unusable recorded profile starts no daemon on another profile; reason logged with profile name; hooks return fast",
+      "status": "pass",
+      "notes": "skip() warns with profile and scope; no spawn reached when credentials are missing or expired."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: 'Starting proxy' line names the profile used",
+      "status": "pass",
+      "notes": "ensureDaemon logs 'Starting proxy (profile: <name>)...'."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: proxy connect against a running matching daemon creates or refreshes the record",
+      "status": "partial",
+      "notes": "Written after wiring only when at least one target succeeded; spec says always write."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: no record and no daemon starts nothing; no record with live daemon seeds from state",
+      "status": "pass",
+      "notes": "Single warn and return; seedConnectionRecord in the alive branches."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: proxy start/restart change an existing record only with --profile",
+      "status": "pass",
+      "notes": "shouldWriteConnectionRecord used by start, restartStopped and restartRunning."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: hook path writes nothing to stdout/stderr and never exits",
+      "status": "pass",
+      "notes": "assertSsoCredentials is non-exiting; logger only."
+    },
+    {
+      "kind": "spec",
+      "item": "Record stored via getCodemiePath, identity only, no secrets",
+      "status": "pass",
+      "notes": "Only profile, project, clientType, telemetryMode, updatedAt."
+    },
+    {
+      "kind": "spec",
+      "item": "One writer called after the daemon is up, from spawnDaemon and the matched-daemon branch of ensureDaemon",
+      "status": "partial",
+      "notes": "Connect passes writeRecord:false and writes from connectTargets; ensureDaemon matched branch has no write."
+    },
+    {
+      "kind": "spec",
+      "item": "proxy connect, hook restart and matched-daemon refresh always write the record",
+      "status": "partial",
+      "notes": "Connect write requires results.some(r => r.ok)."
+    },
+    {
+      "kind": "spec",
+      "item": "proxy start/restart write the record only with --profile or when none exists; documented",
+      "status": "pass",
+      "notes": "launch-daemon.ts and docs/COMMANDS.md."
+    },
+    {
+      "kind": "spec",
+      "item": "Hook restores record as is; agent name as clientType only when record has none",
+      "status": "pass",
+      "notes": "spawnIdentity derivation in ensureOtlpProxy."
+    },
+    {
+      "kind": "spec",
+      "item": "Hook 'requested' identity built from record so a sibling hook does not stop a healthy daemon",
+      "status": "pass",
+      "notes": "requested.clientType from getEffectiveClientType(spawnIdentity)."
+    },
+    {
+      "kind": "spec",
+      "item": "Same-named local profile honoured via ConfigLoader.load(cwd,{name}); log states the scope",
+      "status": "partial",
+      "notes": "Local-first resolution done; scope logged only in skip warnings."
+    },
+    {
+      "kind": "spec",
+      "item": "Recorded project takes precedence over cwd workspace project",
+      "status": "pass",
+      "notes": "codeMieProject overridden with record.project."
+    },
+    {
+      "kind": "spec",
+      "item": "Record is never deleted by disconnect, stop, checkStatus or cleanup",
+      "status": "pass",
+      "notes": "No unlink except the writer's own tmp file."
+    },
+    {
+      "kind": "spec",
+      "item": "proxy stop keeps today's behaviour",
+      "status": "pass",
+      "notes": "stopDaemon unchanged."
+    },
+    {
+      "kind": "spec",
+      "item": "Missing/malformed record with no daemon: one log line, no fallback to cwd profile",
+      "status": "pass",
+      "notes": "readConnectionRecord returns null; getActiveProfileName no longer called."
+    },
+    {
+      "kind": "spec",
+      "item": "Missing record with live daemon is seeded from live state",
+      "status": "pass",
+      "notes": "Hook alive branch and proxy start early return."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-exiting credential check; exiting verifySsoCredentials becomes a thin wrapper",
+      "status": "pass",
+      "notes": "assertSsoCredentials throws ConfigurationError."
+    },
+    {
+      "kind": "spec",
+      "item": "Existence check: recorded name must be in the scope used and loaded name must equal it",
+      "status": "pass",
+      "notes": "Name checks in ensureOtlpProxy."
+    },
+    {
+      "kind": "spec",
+      "item": "Spawn failure logged with profile name before it propagates",
+      "status": "pass",
+      "notes": "catch warns 'cold start failed (profile: name)' then rethrows."
+    },
+    {
+      "kind": "spec",
+      "item": "Failed record write never fails the spawn and is logged at warn",
+      "status": "pass",
+      "notes": "writeConnectionRecord catches and returns false."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goals respected: no race fix, stop marker, back-off, status surface, port/gatewayKey recording",
+      "status": "pass",
+      "notes": "None of these appear in the diff."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Change is uncommitted; no commit subjects to check against git-workflow.md. Check subjects once committed."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "connect-orchestrator.ts grew 948 to 1037 lines; ensureOtlpProxy ~77 lines; readConnectionRecord ~57 and writeConnectionRecord ~54 lines (limit 50). Other rules hold."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "No secrets logged; record holds identity only. ensureOtlpProxy now takes project/clientType from the persisted record (connect-orchestrator.ts:537-558); no recorded security-review sign-off found."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 460,
+      "title": "Cold start success log omits profile scope",
+      "problem": "The spec requires the hook cold-start log to state whether the global or the local (cwd) profile was loaded. ensureOtlpProxy computes scope but only skip() uses it; ensureDaemon's success path logs 'Starting proxy (profile: <name>)...' with no scope.",
+      "impact": "After a successful hook restart the log cannot show which profile source (global or a repo-local same-named one) built the daemon, so the AC1 spec requirement is only partly met. Reachability confirmed in code.",
+      "recommendation": "Include the resolved scope (global or local) in the successful hook cold-start log line, e.g. pass scope from ensureOtlpProxy into ensureDaemon or log it before calling ensureDaemon."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 487,
+      "title": "Over-length functions in hook cold start and record helpers",
+      "problem": "code-quality.md limits functions to 50 lines and files to 500. ensureOtlpProxy is ~77 lines, readConnectionRecord (daemon-manager.ts:73) ~57, writeConnectionRecord (daemon-manager.ts:138) ~54; connect-orchestrator.ts grew from 948 to 1037 lines.",
+      "impact": "The change adds to an already oversized file and introduces over-length functions, a documented standard that blocks the workflow.",
+      "recommendation": "Extract the profile and credential resolution in ensureOtlpProxy into a helper, split readConnectionRecord into validate and field-normalize helpers, and move the connection-record functions or the hook cold-start code out of connect-orchestrator.ts."
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 537,
+      "title": "Attribution source changed without recorded security review",
+      "problem": "security-practices.md (Project and User Attribution Headers, rule 2) forbids deriving project or client attribution from a new source without security review. ensureOtlpProxy now sources record.project and clientType from proxy-connection.json for the spawned daemon, which feeds the X-CodeMie-Project and X-CodeMie-Client headers.",
+      "impact": "Without recorded sign-off the change breaches the guide; usage could be misattributed across projects or clients on hook cold starts.",
+      "recommendation": "Record the security-review sign-off in the PR and mark the change CRITICAL. Also document that the record is the intended source of project and clientType on hook cold start, and that an absent value means no attribution, not a guessed default."
+    },
+    {
+      "id": "CR-004",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 1024,
+      "title": "Connect skips record write when every target fails",
+      "problem": "spec.md says proxy connect and a matched-daemon refresh always write the record, from spawnDaemon and the matched-daemon branch of ensureDaemon. The code writes from connectTargets only when results.some(r => r.ok), passes writeRecord:false on connect, and ensureDaemon's matched branch has no write; plan.md deliberately chose this and a test asserts it.",
+      "impact": "A connect against a matching running daemon where every target fails leaves the record absent or stale, so hook cold starts may use an older profile than the one the user just connected. Spec and plan disagree, so the intent needs a human call.",
+      "recommendation": "Decide whether spec.md (always write, including a matched daemon) or plan.md (write only when at least one target was wired) governs. Either update the spec to the plan's behaviour or write the record on a matched daemon regardless of target outcome."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 511,
+      "title": "Local same-named profile can steer hook-started daemon",
+      "problem": "A repo-local profile with the recorded name supplies baseUrl, provider and codeMieUrl for the daemon a global hook starts.",
+      "preexisting": "Hook previously loaded the cwd profile outright; this change narrows it and the spec keeps local-over-global."
+    },
+    {
+      "id": "DF-002",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 552,
+      "title": "Concurrent hook cold-start race",
+      "problem": "Two hooks can both pass the liveness re-check and spawn, or ensureDaemon can stop a just-started non-matching daemon.",
+      "preexisting": "ensureDaemon's check-then-spawn race predates this change; the spec lists it as a non-goal."
+    }
+  ],
+  "reviewed_head": null
+}

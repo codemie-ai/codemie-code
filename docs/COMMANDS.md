@@ -85,11 +85,14 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
+codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
+codemie proxy connect --omp              # Give oh-my-pi the live CodeMie model catalog
+codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
@@ -315,6 +318,38 @@ The daemon keeps running — it may still be serving other connected targets. St
 
 The `codemie-codex` CLI agent isolates its own state under `~/.codex/codemie/home`, while the desktop app uses the default `~/.codex`. That is deliberate, so running the CLI never disturbs the app. The consequence is that the two surfaces have separate sessions, history and settings; the same conversation will not appear in both. If you set `CODEX_HOME` yourself, the connector honours it and prints the config path it resolved.
 
+### oh-my-pi (omp)
+
+Give [oh-my-pi](https://github.com/can1357/oh-my-pi) the models of the active CodeMie profile — the same list `codemie models list` prints — with their cost, context window, output cap, and image input:
+
+```bash
+codemie proxy connect --omp
+codemie proxy connect --omp --profile work
+```
+
+The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/codemie-models.js` (`PI_CODING_AGENT_DIR` and `PI_CONFIG_DIR` are honoured the way omp honours them). omp loads it on startup, and it registers two providers whose model lists are fetched live from the proxy daemon's `/v1/llm_models?include_all=true`:
+
+| omp provider | Wire | Models |
+|---|---|---|
+| `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything else |
+| `codemie-claude` | Anthropic Messages | Claude deployments (id contains `claude` or `anthropic`) and routers whose tiers are all Claude |
+
+An omp provider binds one base URL, API and auth mode, so the OpenAI wire uses `<daemon>/v1` with a Bearer key while the Anthropic Messages wire uses the `<daemon>` root with `authHeader`. Per-model API overrides within one provider are unverified against omp v18.12.3.
+
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation and embedding deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. A router's `maxTokens` is the lowest `max_output_tokens` among its tier targets (128,000 on the current catalog). This value comes from metadata, and a `max_tokens: 128001` request was accepted, so it is not a proven hard limit. When no tier cap is known, 32,000 is used. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) once when omp loads the extension, and uses it for both model discovery and inference, so restart omp after the daemon's port or key changes; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
+
+To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
+
+When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. It cannot be combined with `--vscode`, because the two need different identities. A later `connect --vscode` restarts the shared daemon as `vscode-byok`, and omp traffic carries that identity until `--omp` is re-run. When `--omp` is combined with `--claude-desktop`/`--vscode-claude-code`, `--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp` or `--codex-desktop`, the daemon takes that target's identity in this priority order: `claude-desktop`, `claude-code-otlp`, `copilot-chat-otlp`, `copilot-cli-otlp`, `codex-desktop`. omp traffic is then attributed to that client, and under every identity except `codex-desktop` it also loses the encrypted reasoning-content recovery that `codemie-daemon` enables. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped before the daemon starts: omp is still installed and the daemon keeps the `codemie-daemon` identity. Without an interactive terminal that combination needs `--silent`, otherwise the whole run fails before omp is configured. An analytics hook (`--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp`) never restarts a running daemon, but when none is running it starts one with its own identity, which omp then shares until `--omp` is re-run.
+
+`--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
+
+```bash
+codemie proxy disconnect --omp
+```
+
+Disconnect deletes the extension only if CodeMie installed it. Restart omp to drop the two providers.
+
 ### Global Options
 
 ```bash
@@ -341,7 +376,7 @@ All agent shortcuts support these options:
 --api-key <key>          # Override API key
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
--s, --silent             # Enable silent mode
+-s, --silent             # Enable silent mode (long form only for codex and gemini, which use -s natively)
 --task <prompt>          # Run a single task in headless (non-interactive) mode and exit
 --reasoning-effort <level> # Reasoning/thinking effort: minimal|low|medium|high|xhigh|max (see below)
 --resume <session-id>    # Resume a previous agent session by id (see below)
@@ -648,7 +683,7 @@ codemie analytics --last 30d --export -o ./team.html   # Custom path
 codemie analytics --export both                 # Write both .html and .report.json (shared stem)
 
 # View specific session
-codemie analytics --session abc-123-def         # Single session details
+codemie analytics --session abc-123-def         # Single session details (a UUID also selects its /clear generations <uuid>-<gen>)
 ```
 
 ### HTML Dashboard (`--export`)
@@ -686,18 +721,24 @@ authoritative per-model usage rollup that is matched against the pricing table. 
 Cost view shows a **Coverage by agent** table (sessions priced / native-log found per
 tool), so unpriced tools are explicit. Sessions whose native log is absent, or whose
 agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
-"priced N of M" and never silently counted as `$0`.
+"priced N of M" and never silently counted as `$0`. Both counts, like the terminal's
+`Priced sessions`, are over the sessions the report keeps: a session with no recorded
+activity and no token usage is dropped and counted in neither.
 
 **Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
-scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
+scans native agent logs (Claude Code, Codex, Gemini, GitHub Copilot CLI, Pi and oh-my-pi — see
+[`docs/ANALYTICS-REPORT.md#session-provenance`](ANALYTICS-REPORT.md#session-provenance)) and deduplicates them by path against
 tracked sessions. By default only sessions CodeMie launched are counted; pass
 `--include-external` to also count sessions from agents run directly — e.g. the plain
-`claude` command on your Anthropic subscription.
+`claude` command on your Anthropic subscription, or a bare `pi`/`omp` run.
 
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by
 `(message.id, requestId)` across all sessions (the earliest session owns a shared response),
-counting each response once — without this the figure inflates ~2–3×. On a subscription you
+counting each response once — without this the figure inflates ~2–3×. GitHub Copilot CLI keeps
+one native session for every run that resumed it: each run is priced from the usage records of its
+own run window (its start up to the next run's start), or, for a resumed run on a build that writes none, from the
+growth of the session's cumulative per-model counters over that run's shutdown; never added to the session it resumed. On a subscription you
 don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
 API value of your usage, not dollars billed.
 
@@ -760,8 +801,8 @@ codemie log --level error               # Show only errors
 codemie log --profile work              # Filter by profile
 
 # Date filtering
-codemie log --from 2026-02-01           # From specific date
-codemie log --to 2026-02-04             # Until specific date
+codemie log --from 2026-02-01           # From specific date (UTC, inclusive)
+codemie log --to 2026-02-04             # Until specific date (UTC, includes the whole day)
 codemie log --last 7d                   # Last 7 days
 codemie log --last 24h                  # Last 24 hours
 codemie log --last 30m                  # Last 30 minutes
@@ -1267,6 +1308,10 @@ export CODEMIE_AUTO_UPDATE=true
 codemie --version
 ```
 
+A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
+
+A command run with `--json` (for example `codemie proxy analytics status --json`) also runs pending migrations silently (file log only) and skips the update check and the what's-new notice, so on every run, including the first one in an empty `CODEMIE_HOME`, its stdout carries only the JSON.
+
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default
 - First invocation may take up to 5 seconds (network check)
@@ -1380,13 +1425,15 @@ codemie analytics [options]
 ```
 
 **Filter Options:**
-- `--session <id>` - Filter by session ID
+- `--session <id>` - Filter by session ID (a full UUID also matches its `/clear` generations `<uuid>-<gen>`)
 - `--project <pattern>` - Filter by project path (basename, partial, or full path)
 - `--agent <name>` - Filter by agent name (claude, gemini, etc.)
 - `--branch <name>` - Filter by git branch
-- `--from <date>` - Filter sessions from date (YYYY-MM-DD)
-- `--to <date>` - Filter sessions to date (YYYY-MM-DD)
+- `--from <date>` - Start date, inclusive (YYYY-MM-DD)
+- `--to <date>` - End date, inclusive: includes the entire day (YYYY-MM-DD)
 - `--last <duration>` - Filter sessions from last duration (e.g., 7d, 24h)
+
+Dates are UTC calendar days and must be real calendar dates (`2026-02-30` is rejected). Sessions are matched on their start time. For a date-only `--to`, the report's `periodEnd` is `23:59:59.999Z` of that day.
 
 **Output Options:**
 - `-v, --verbose` - Show detailed session-level breakdown
@@ -1420,8 +1467,8 @@ codemie log <subcommand> [options] # Execute subcommand
 - `--agent <name>` - Filter by agent (claude, gemini, etc.)
 - `--profile <name>` - Filter by profile name
 - `--level <level>` - Filter by log level (debug, info, warn, error)
-- `--from <date>` - Filter from date (YYYY-MM-DD)
-- `--to <date>` - Filter to date (YYYY-MM-DD)
+- `--from <date>` - Filter from date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
+- `--to <date>` - Filter to date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
 - `--last <duration>` - Filter last duration (e.g., 7d, 24h, 30m)
 - `--grep <pattern>` - Search pattern (supports regex)
 - `-n, --lines <number>` - Number of lines to show (default: 50)
@@ -1511,7 +1558,7 @@ codemie log clean --yes                  # Skip confirmation
 
 Options:
 - `--days <number>` - Retention period in days (default: 5)
-- `--sessions` - Also delete old sessions (not just debug logs)
+- `--sessions` - Also delete old sessions (not just debug logs). A live `<id>.json` older than N days may be an undelivered record (completed, waiting for delivery) — its pending data is lost with it; completed sessions (`completed_*`) are never deleted
 - `--dry-run` - Preview without deleting
 - `--yes` - Skip confirmation prompt
 
@@ -1617,11 +1664,13 @@ With that configuration, the selected profile's URL is shown:
 ✓ Claude Code Analytics configured successfully
 
 Analytics Configuration:
-Profile           │ preview
-CodeMie URL       │ https://codemie-preview.lab.epam.com
-Scope             │ project
-Tracked projects  │ /path/to/control-plane
+Using profile │ preview
+CodeMie URL   │ https://codemie-preview.lab.epam.com
+Scope         │ project
+  First-time setup needs a Claude Code restart; allowlist changes apply immediately.
 ```
+
+The connect output does not list tracked projects or hook wiring details.
 
 When SSO credentials are missing, the CLI checks the selected profile's API URL and the workspace CodeMie URL, and suggests an explicit login URL for the selected profile. If the workspace URL belongs to another environment or is absent, the profile API URL's origin is used:
 
@@ -1633,12 +1682,19 @@ When the `preview` profile has `baseUrl: "https://codemie-preview.lab.epam.com/c
 
 | Command                                               | Allowlist result                                                                         |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                               |
-| `connect --claude-code-otlp --scope project`          | adds the current project root (deduplicated); run it in each project to track            |
+| `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                             |
+| `connect --claude-code-otlp --scope user`             | `[]` - every project is tracked (resets any existing list); identical to omitting `--scope` |
+| `connect --claude-code-otlp --scope project`          | explicit opt-in: adds the current project root (deduplicated), preserving any other listed projects; run it in each project to track |
 | `disconnect --claude-code-otlp --scope project`       | removes the current project root; when the list becomes empty everything is disconnected |
 | `disconnect --claude-code-otlp`                       | removes hooks, OTel variables and the allowlist                                          |
 
-`--scope user` (the default) tracks every project by clearing the project allowlist. `--scope project` adds only the current project root to the allowlist; only projects listed there are tracked.
+Omitting `--scope` selects Global, exactly like `--scope user`: the allowlist becomes `[]` and every project is tracked. If the existing allowlist lists projects, Global replaces it and expands tracking to all projects; the confirmation states that analytics are configured for all Claude Code sessions in any project. `--scope project` is an explicit opt-in: it adds the current project and keeps the other entries. If the existing allowlist is `[]` (Global), it becomes the current project only.
+
+The allowlist in `~/.claude/settings.json` is the only source of truth. An empty allowlist means Global, a non-empty one means Project, and a missing key means Claude Code analytics has never been configured. Nothing is stored in CodeMie profiles, project config, or setup state, and the scope is not remembered between commands.
+
+**Confirmation.** Before the proxy starts or `~/.claude/settings.json` is changed, `connect --claude-code-otlp` asks once. The prompt shows the profile and the CodeMie URL when configured, then one line saying what will be enabled ("Global analytics will be enabled for all your Claude Code sessions." for Global; for `--scope project`, "Analytics will be enabled for your Claude Code sessions in the project:" followed by the current project's path), and then offers **Confirm** or **Decline** in the same list style as `codemie setup`. **Decline** or Ctrl+C stop the command: the proxy is not started, `settings.json` is not written, and the existing allowlist is left untouched (a cancelled prompt is never treated as Global). An already running proxy keeps running.
+
+**`--silent` and non-interactive use.** `--silent` (a flag of `proxy connect` that applies to `--claude-code-otlp`) skips the prompt. Without `--scope` it writes Global and replaces existing project entries without asking; `--scope project --silent` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-code-otlp` without `--silent` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--silent` for unattended runs. An invalid allowlist still stops `connect` unless `--force` is passed, with or without `--silent`.
 
 A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--force` to discard it. `--force` never edits a valid list.
 
@@ -1649,3 +1705,77 @@ A `cwd` inside any listed path is tracked (nested directories included). An inva
 Allowlist changes apply immediately; the first-time setup needs a Claude Code restart.
 
 **Backup lifecycle.** `connect` snapshots `~/.claude/settings.json` to `settings.json.codemie-backup` before writing its own hooks/env, and refreshes that backup on every subsequent `connect` that still finds the file already under CodeMie's management (not just the first time) — so it always reflects the state right before the most recent `connect`, not whichever one ran first. Only values that are genuinely foreign (or that a `--force` connect displaced and the live file still carries CodeMie's own replacement for) are ever kept in it; a value you change after `connect` is never recorded as "pre-connect" and is never resurrected by a later `disconnect`. `disconnect` deletes the backup once it finishes: a value you changed or removed since `connect` is left exactly as you set it, never restored from the backup; a value a `--force` connect displaced is put back, but only if nothing has touched it since. If nothing is left in the file after removal, the file itself is deleted. No "restored from backup" message is printed — the backup is bookkeeping, not something you interact with directly.
+
+### Claude Code OTLP analytics — disable
+
+`codemie proxy analytics` turns collection off/on or excludes one project without touching the hooks, OTel environment, or allowlist that `connect`/`disconnect` manage. It stores its own state in a CodeMie-owned file (`~/.codemie/claude-analytics.json`), so it survives `connect`, `disconnect`, and scope switches: `disconnect` uninstalls the wiring, while `analytics disable`/`exclude` turn collection off and keep the hooks installed (re-enabling is instant, no reinstall).
+
+| Command | Effect |
+|---|---|
+| `codemie proxy analytics disable` | Stop all hook-based analytics collection. While it is off, no hook event is forwarded, nothing is written to the daemon spool, and the hooks trigger no SSO check or daemon start, even though they stay installed. See "What is and is not covered" below. |
+| `codemie proxy analytics enable` | Resume collection. |
+| `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
+| `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). It only undoes an `exclude`: it does not touch the `settings.json` allowlist and does not start tracking a project that is outside the Project-scope allowlist (the command tells you when that is the case). |
+| `codemie proxy analytics status [--json]` | When an OTLP connector (Claude Code, Copilot CLI or Copilot Chat) is connected, show a Delivery section first (`Delivery: healthy`, `unhealthy (<reason>)`, `unknown (...)` or `proxy not running`, plus `Pending:` when bytes are unsent and, only when unhealthy, a `Run:` remedy; the spool is shared by the whole machine, so `Pending:` and the identity-mismatch and sending-failed reasons cover every session on this machine, not only this proxy's), then (always) the connector state (hooks installed, or connected), the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. With `--json` the output keeps its shape and adds a `delivery` key (same object as `analytics` in `proxy status --json`; `null` when the daemon is stopped or no connector is connected). |
+
+A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
+
+**What is and is not covered.** These commands control the **hook pipeline**: the hooks that `connect --claude-code-otlp` installs in `~/.claude/settings.json`. `codemie claude` sessions load the same global hooks, so they are covered too. They do **not** control:
+
+- the daily analytics collector, a separate scheduled job (outside this repository) that exports local session data;
+- the session sync that `codemie claude` runs through its own plugin hooks (`codemie hook` without `--agent`).
+
+`disable` and `exclude` repeat this boundary in their output, and `status` repeats it as a closing sentence.
+
+**What happens when collection resumes.** Nothing is sent while collection is off, but usage is read from the session transcript, which keeps growing. After `enable` or `include`, the next collected hook event reports usage that was written to the transcript during the off period. `enable` and `include` print a note when this applies. The same holds for the existing Project-scope allowlist. Copilot CLI behaves similarly: a session that was running while collection was off reports its whole-session usage when it ends. Copilot Chat forwards per-event data only and has no such catch-up.
+
+`status` reports `current.tracked: false` with `current.reason: "hooks-not-installed"` when no CodeMie hooks are installed, even if the exclusion settings alone would allow the directory.
+
+**Which command do I use?**
+
+| I want to... | Use |
+|---|---|
+| Pause analytics but keep the integration installed | `analytics disable`, later `analytics enable` |
+| Stop one project, even under Global scope | `analytics exclude [path]`, later `analytics include [path]` |
+| Track only chosen projects (an opt-in list) | `connect --claude-code-otlp --scope project` in each project; `disconnect --claude-code-otlp --scope project` removes one |
+| Remove the integration entirely | `disconnect --claude-code-otlp` |
+| See what is collected and why | `analytics status` |
+
+`include` and `enable` only edit the opt-out layer, which is separate from the Project-scope allowlist that `connect` manages. So after `include` or `enable` the command prints whether the project is collected right now and, if it is not, the exact command that changes that (for example `connect --claude-code-otlp --scope project` when the project is not in the allowlist). `status` shows the same as a `Run:` line. This is advice only: it never changes the result of the command.
+
+### Copilot CLI and Copilot Chat analytics — disable
+
+The same `codemie proxy analytics` commands control the two Copilot analytics connectors. Without a connector flag they act on Claude Code (see above); add **exactly one** of these flags to target a Copilot connector:
+
+| Flag | Connector |
+|---|---|
+| `--copilot-cli-otlp` | Native GitHub Copilot CLI (`codemie proxy connect --copilot-cli-otlp`) |
+| `--copilot-chat-otlp` | VS Code Copilot Chat (`codemie proxy connect --copilot-chat-otlp`) |
+
+`--claude-code-otlp` is also accepted and means the default. Passing more than one connector flag exits with an error and writes nothing.
+
+```bash
+# Stop analytics collection for Copilot CLI; hooks stay installed
+codemie proxy analytics disable --copilot-cli-otlp
+
+# Exclude the current project from Copilot Chat analytics
+codemie proxy analytics exclude --copilot-chat-otlp
+
+# Remove an exclusion / resume collection
+codemie proxy analytics include /path/to/project --copilot-chat-otlp
+codemie proxy analytics enable --copilot-cli-otlp
+
+# Effective state for one connector (add --json for machine-readable output)
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+**Where state lives.** `~/.codemie/copilot-analytics.json` holds one `{ "enabled": ..., "excludedProjects": [...] }` record per connector. It is deliberately separate from `copilot-connectors.json` (the connector scope written by `connect`/`disconnect`), so reconnecting, switching `--scope`, or disconnecting never resets your exclusions. A connector with no record is fully enabled with nothing excluded.
+
+**What these settings can and cannot do.** They only narrow collection. A connector that was never connected, or was disconnected, collects nothing whatever these settings say, and `enable`/`include` do not connect it; use `codemie proxy connect` for that. `connect --scope project` does not clear an earlier exclusion; `status` shows both the connector scope and the exclusions. Managed `codemie copilot-cli` launches are not collected by the native Copilot CLI hook (an existing guard), so these settings do not apply to them, and the daily collector is not controlled by them either. After `include` or `enable` the command reports whether the project is collected now and what to run if it is not, exactly as described for Claude Code above.
+
+**Failure behavior.**
+- A corrupt `copilot-analytics.json` fails closed on the hook path (nothing is collected) and `status` reports `preferencesCorrupt`. `disable`/`enable`/`exclude`/`include` refuse to touch a corrupt file and exit with an error, leaving its bytes unchanged. The reader and the writer apply the same validity rules.
+- A hook event with no working directory counts as excluded whenever at least one project is excluded (fail closed). With nothing excluded, behavior is unchanged.
+- Copilot Chat never blocks you because you opted out. With analytics disabled, the project excluded, or the preferences file unreadable, Chat sessions, prompts and tool calls proceed untouched and nothing is collected. The existing safety blocks (corrupt connector scope, missing session identity) still apply while analytics is on.
+
+**When changes take effect (all connectors, including Claude Code).** The decision is made on every hook event; it is not pinned when a session starts. `disable`, `exclude`, `include` and `enable` therefore apply immediately, including to sessions that are already running: events sent before the change stay sent, events after it follow the new setting.

@@ -227,7 +227,8 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id.startsWith('claude-sonnet-4-6') ||
     id.startsWith('claude-sonnet-5') ||
     /^claude-opus-4-[6-8]/.test(id) ||
-    id.startsWith('claude-opus-5')
+    id.startsWith('claude-opus-5') ||
+    id.startsWith('claude-haiku-5')
   ) {
     entry.compat = { forceAdaptiveThinking: true };
   }

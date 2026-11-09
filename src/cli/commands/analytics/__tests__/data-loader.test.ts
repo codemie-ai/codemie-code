@@ -8,6 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { MetricsDataLoader, type RawSessionData } from '../data-loader.js';
+import { AnalyticsAggregator } from '../aggregator.js';
+import { parseDateOnly } from '../../../../utils/date-filter.js';
 
 function rawSession(sessionId: string): RawSessionData {
   return {
@@ -46,6 +48,28 @@ describe('MetricsDataLoader.sessionMatchesFilter', () => {
     const loader = new MetricsDataLoader('/nonexistent');
     const session = rawSession('abc-123');
     expect(loader.sessionMatchesFilter(session, { agentName: 'claude' })).toBe(true);
+  });
+});
+
+describe('MetricsDataLoader.sessionMatchesFilter — inclusive date-only --to', () => {
+  const startedAt = (iso: string): RawSessionData => {
+    const session = rawSession('s');
+    session.startEvent.data.startTime = Date.parse(iso);
+    return session;
+  };
+  const filter = {
+    fromDate: parseDateOnly('2026-10-25', 'from')!,
+    toDate: parseDateOnly('2026-10-25', 'to')!,
+  };
+
+  it.each([
+    ['2026-10-24T12:00:00Z', false],
+    ['2026-10-25T09:00:00Z', true],
+    ['2026-10-25T18:00:00Z', true],
+    ['2026-10-26T09:00:00Z', false],
+  ])('session starting %s matches --from D --to D: %s', (iso, expected) => {
+    const loader = new MetricsDataLoader('/nonexistent');
+    expect(loader.sessionMatchesFilter(startedAt(iso), filter)).toBe(expected);
   });
 });
 
@@ -185,6 +209,51 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions[0].agentSessionFile).toBe(agentSessionFile);
   });
 
+  it('takes runtimeCheckpoint.transcriptPath when the agentSessionFile is gone (a Desktop folder switch)', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const livePath = join(dir, 'folder-b-transcript.jsonl');
+    writeFileSync(livePath, '');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: join(dir, 'folder-a-gone.jsonl'), retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: livePath, lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(livePath);
+  });
+
+  it('keeps the agentSessionFile when the runtimeCheckpoint transcript is gone too', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const gone = join(dir, 'folder-a-gone.jsonl');
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/folder-a',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile: gone, retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'local_1', transcriptPath: join(dir, 'folder-b-gone.jsonl'), lastDiscoveredAt: 2000 },
+      })
+    );
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId });
+
+    expect(sessions[0].agentSessionFile).toBe(gone);
+  });
+
   it('leaves agentSessionFile undefined when the session has no correlation', () => {
     const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
     writeCompletedSession(sessionId); // helper writes no correlation key
@@ -266,5 +335,71 @@ describe('MetricsDataLoader.loadSessions — marker sidecars and malformed recor
       'claude-1',
     ]);
     expect(new MetricsDataLoader(dir).loadSessions()).toHaveLength(2);
+  });
+});
+
+describe('MetricsDataLoader.loadSessions — /clear generations', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-gen-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeRecord(name: string): void {
+    writeFileSync(
+      join(dir, name),
+      JSON.stringify({ startTime: 1000, endTime: 2000, status: 'completed', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/p' })
+    );
+  }
+
+  it('--session <uuid> selects the uuid and its generations <uuid>-<gen>, nothing else', () => {
+    const id = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    writeRecord(`completed_${id}.json`);
+    writeRecord(`completed_${id}-gen-alpha.json`);
+    writeRecord('completed_086cca74-d58d-4007-a529-fa73910c085e.json');
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId: id });
+
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([id, `${id}-gen-alpha`]);
+  });
+
+  it('a partial id still matches the whole id only', () => {
+    writeRecord('completed_eddd66b2-0e73-4167-841c-9263207870ae.json');
+
+    expect(new MetricsDataLoader(dir).loadSessions({ sessionId: 'eddd66b2' })).toHaveLength(0);
+  });
+});
+
+describe('report / export inclusion of a live session', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-active-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('an active session with metrics is exported (no end yet)', () => {
+    const id = 'aaaaaaaa-1111-4222-8333-444444444444';
+    writeFileSync(
+      join(dir, `${id}.json`),
+      JSON.stringify({ sessionId: id, startTime: 1000, status: 'active', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/project' })
+    );
+    writeFileSync(
+      join(dir, `${id}_metrics.jsonl`),
+      JSON.stringify({ recordId: 'd1', sessionId: id, agentSessionId: id, timestamp: 2000, gitBranch: 'main', tools: { Read: 1 }, syncStatus: 'pending', syncAttempts: 0 }) + '\n'
+    );
+
+    const loaded = new MetricsDataLoader(dir).loadSessions();
+    const analytics = AnalyticsAggregator.aggregate(loaded);
+
+    expect(loaded.map((s) => [s.sessionId, s.endEvent])).toEqual([[id, undefined]]);
+    expect(analytics.totalSessions).toBe(1);
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.16.0",
+  "version": "0.16.6",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in CodeMie agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -36,9 +36,10 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "build": "tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline",
+    "build": "tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline && npm run bundle-omp-extension",
     "copy-plugin": "node scripts/copy-plugins.js",
     "bundle-statusline": "node scripts/bundle-statusline.mjs",
+    "bundle-omp-extension": "node scripts/bundle-omp-extension.mjs",
     "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
     "dev": "tsc --watch",
     "test": "vitest run --project unit && vitest run --project cli && vitest run --project agent",
