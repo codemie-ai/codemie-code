@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BaseAgentAdapter } from '../../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../../types.js';
-import { launchMode, oauthAccountPays, routedViaCodemie, type RoutingInput } from '../routing.js';
+import { launchMode, localProxyCandidate, oauthAccountPays, routedViaCodemie, type RoutingInput } from '../routing.js';
 
 vi.mock('../../../../providers/core/registry.js', () => {
   const providers: Record<string, { authType: string }> = {
@@ -259,6 +259,69 @@ describe('routedViaCodemie - native', () => {
     it('unreadable settings (settingsUnknown) is unproven even with no endpoint anywhere', () => {
       expect(routedViaCodemie({ ...base, settingsUnknown: true })).toEqual(UNPROVEN);
       expect(routedViaCodemie({ ...base })).toEqual({ routed: false, routing_proof: 'proven' });
+    });
+  });
+});
+
+describe('routedViaCodemie - native via local proxy daemon', () => {
+  const PROXY = 'http://127.0.0.1:4001';
+  const env = { ANTHROPIC_BASE_URL: PROXY, ANTHROPIC_AUTH_TOKEN: 'gw' };
+  const daemon = { url: PROXY, targetUrl: GATEWAY };
+  const PROVEN_ROUTED = { routed: true, routing_proof: 'proven' };
+  const NOT_PROVEN = { routed: false, routing_proof: 'unproven' };
+
+  it('endpoint is the live daemon and its target is the profile route => routed/proven', () => {
+    expect(routedViaCodemie(input(env, { profileBaseUrl: GATEWAY, localProxy: daemon }))).toEqual(PROVEN_ROUTED);
+  });
+
+  it('localhost and 127.0.0.1 on the same port are the same proxy', () => {
+    const r = routedViaCodemie(input({ ...env, ANTHROPIC_BASE_URL: 'http://localhost:4001' }, { profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(r).toEqual(PROVEN_ROUTED);
+    const v6 = routedViaCodemie(input({ ...env, ANTHROPIC_BASE_URL: 'http://[::1]:4001/' }, { profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(v6).toEqual(PROVEN_ROUTED);
+  });
+
+  it('a loopback endpoint on another port is unproven', () => {
+    const r = routedViaCodemie(input({ ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:4002' }, { profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(r).toEqual(NOT_PROVEN);
+  });
+
+  it('no localProxy is unproven', () => {
+    expect(routedViaCodemie(input(env, { profileBaseUrl: GATEWAY }))).toEqual(NOT_PROVEN);
+  });
+
+  it('a daemon target that is not the profile route is unproven', () => {
+    const r = routedViaCodemie(input(env, { profileBaseUrl: GATEWAY, localProxy: { url: PROXY, targetUrl: 'https://other.example.com' } }));
+    expect(r).toEqual(NOT_PROVEN);
+  });
+
+  it('a non-CodeMie provider is never proven routed', () => {
+    const r = routedViaCodemie(input(env, { codemieProvider: false, profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(r.routed).toBe(false);
+  });
+
+  it('a settings.json endpoint pointing at the proxy is proven', () => {
+    const r = routedViaCodemie(input({}, { settingsEnv: { ANTHROPIC_BASE_URL: PROXY }, profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(r).toEqual(PROVEN_ROUTED);
+  });
+
+  it('a cloud provider base URL is never compared to the proxy', () => {
+    const r = routedViaCodemie(input({ CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BEDROCK_BASE_URL: PROXY }, { profileBaseUrl: GATEWAY, localProxy: daemon }));
+    expect(r.routed).toBe(false);
+  });
+
+  describe('localProxyCandidate', () => {
+    it('is true for a native CodeMie launch on a loopback endpoint', () => {
+      expect(localProxyCandidate(input(env))).toBe(true);
+      expect(localProxyCandidate(input({}, { settingsEnv: { ANTHROPIC_BASE_URL: PROXY } }))).toBe(true);
+    });
+
+    it('is false for a remote endpoint, a managed launch, a non-CodeMie provider or unreadable settings', () => {
+      expect(localProxyCandidate(input({ ANTHROPIC_BASE_URL: GATEWAY }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CODEMIE_SESSION_ID: 's' }))).toBe(false);
+      expect(localProxyCandidate(input(env, { codemieProvider: false }))).toBe(false);
+      expect(localProxyCandidate(input(env, { settingsUnknown: true }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CLAUDE_CODE_USE_BEDROCK: '1' }))).toBe(false);
     });
   });
 });

@@ -26,6 +26,16 @@ describe('fundingRoute', () => {
     expect(funding(i)).toBe('api_based');
   });
 
+  it('api_based on a native session routed through the live local proxy daemon', () => {
+    const i = base({
+      codemieProvider: true,
+      env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4001', ANTHROPIC_AUTH_TOKEN: 'gw' },
+      profileBaseUrl: 'https://llm.example.com/v1',
+      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com/v1' },
+    });
+    expect(funding(i)).toBe('api_based');
+  });
+
   it('api_based for a first-party API key on the first-party endpoint only', () => {
     expect(funding(base({ env: { ANTHROPIC_API_KEY: 'k' } }))).toBe('api_based');
     expect(funding(base({ env: { ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 't' } }))).toBe('unknown');

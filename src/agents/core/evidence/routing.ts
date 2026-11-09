@@ -18,6 +18,11 @@ export interface RoutingInput {
   codemieProvider: boolean;
   /** Configured profile model base URL; defaults to CODEMIE_PROFILE_CONFIG.baseUrl. */
   profileBaseUrl?: string;
+  /**
+   * The running CodeMie proxy daemon, from its state file, only when alive; resolved by the caller,
+   * keeps this function pure.
+   */
+  localProxy?: { url: string; targetUrl?: string };
 }
 
 export interface RoutingResult {
@@ -58,6 +63,24 @@ function profileUrl(input: RoutingInput): string | undefined {
 function isLoopback(url: string | undefined): boolean {
   try {
     return !!url && LOOPBACK.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when both URLs are loopback and name the same proxy: the hostname is normalized to 127.0.0.1
+ * (localhost / [::1] are the same listener), then scheme, port and path must match. Parse errors are false.
+ */
+function sameLocalProxy(endpoint: string | undefined, proxyUrl: string): boolean {
+  if (!endpoint || !isLoopback(endpoint) || !isLoopback(proxyUrl)) return false;
+  try {
+    const a = new URL(endpoint);
+    const b = new URL(proxyUrl);
+    a.hostname = '127.0.0.1';
+    b.hostname = '127.0.0.1';
+    const left = identity(a.href);
+    return !!left && left === identity(b.href);
   } catch {
     return false;
   }
@@ -163,6 +186,19 @@ export function fundingRoute(input: RoutingInput & { apiKeyHelper?: boolean }, r
   return onlyApiKey && firstParty ? 'api_based' : 'unknown';
 }
 
+/**
+ * True when it is worth resolving the local proxy daemon for this session: a native launch with a
+ * CodeMie provider, readable settings, no cloud provider flag on, and an effective ANTHROPIC_BASE_URL
+ * that is loopback. Callers use it as the gate before reading daemon state.
+ */
+export function localProxyCandidate(input: RoutingInput): boolean {
+  if (launchMode(input.env) !== 'native' || !input.codemieProvider || input.settingsUnknown) return false;
+  const effective = effectiveEndpointEnv(input);
+  if (!effective) return false;
+  if (CLOUD_FLAGS.some((name) => flagState(effective[name]) !== 'off')) return false;
+  return isLoopback(effective.ANTHROPIC_BASE_URL);
+}
+
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
   const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);
@@ -190,6 +226,14 @@ export function routedViaCodemie(input: RoutingInput): RoutingResult {
       !!endpointId && isLoopback(proxy) && endpointId === identity(proxy) &&
       !!target && target === identity(profileUrl(input));
     return ok ? PROVEN(true) : UNPROVEN;
+  }
+
+  // Native launch through the running CodeMie proxy daemon: the endpoint must be the live daemon's
+  // listener, and the daemon's upstream must be the configured model route.
+  if (launchMode(env) === 'native' && input.codemieProvider && !cloud && input.localProxy &&
+      sameLocalProxy(endpoint, input.localProxy.url)) {
+    const target = identity(input.localProxy.targetUrl);
+    if (target && target === identity(profileUrl(input))) return PROVEN(true);
   }
 
   // No proxy ran: the effective endpoint must itself be under the configured CodeMie model route
