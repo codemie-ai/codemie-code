@@ -179,6 +179,14 @@ If npm reports `404 Not Found`, verify that you are installing `@codemieai/code`
 
 If the installer says `@codemieai/code` is not visible in the registry, ask IT to expose the package through the approved virtual npm repository.
 
+On Windows, run the read-only diagnostic script to collect system requirements, user rights, PATH and installation state, and network reachability in one report:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install\windows\clidiag.ps1
+```
+
+Group Policy PATH checks are skipped by default; add `-RunGpoCheck` to include them. See [install/README.md](install/README.md#windows-diagnostics-installwindowsclidiagps1) for all parameters.
+
 ### From Source
 
 ```bash
@@ -536,6 +544,7 @@ codemie-pi --resume <session-id>              # open a specific session
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
 | **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 

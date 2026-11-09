@@ -692,10 +692,11 @@ agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
 activity and no token usage is dropped and counted in neither.
 
 **Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
-scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
+scans native agent logs (Claude Code, Codex, Gemini, GitHub Copilot CLI, Pi and oh-my-pi — see
+[`docs/ANALYTICS-REPORT.md#session-provenance`](ANALYTICS-REPORT.md#session-provenance)) and deduplicates them by path against
 tracked sessions. By default only sessions CodeMie launched are counted; pass
 `--include-external` to also count sessions from agents run directly — e.g. the plain
-`claude` command on your Anthropic subscription.
+`claude` command on your Anthropic subscription, or a bare `pi`/`omp` run.
 
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by
