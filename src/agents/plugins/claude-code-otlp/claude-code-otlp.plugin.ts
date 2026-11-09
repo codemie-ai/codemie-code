@@ -467,6 +467,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       'PreCompact',
       envCheckInput(hookInput)
     );
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [hookInput, ...pass.events],
@@ -498,6 +501,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       'StopFailure',
       envCheckInput(hookInput)
     );
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [hookInput, ...pass.events],

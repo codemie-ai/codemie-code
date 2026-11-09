@@ -3703,4 +3703,40 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
 
     expect(idle.suppressLifecycle).toBe(true);
   });
+  it('keeps a reopened session silent when the reopen only appends non-message records', async () => {
+    const sessionId = 'session-reopen-records-only';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'attachment', uuid: 'att-1', timestamp: '2026-11-07T18:17:46.000Z', attachment: { type: 'hook_success', hookEvent: 'SessionStart' } }),
+        JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId }),
+        JSON.stringify({ type: 'last-prompt', leafUuid: 'a1', sessionId }),
+      ].join('\n') + '\n'
+    );
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+  });
+
+  it('survives a corrupt inheritedUuids value in the saved state', async () => {
+    const sessionId = 'session-corrupt-inherited';
+    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z'), assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z')]);
+    const stateDir = join(codemieHome, 'analytics', 'state');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, `${sessionId}.json`), JSON.stringify({ inheritedUuids: 'oops', inheritedResolved: true }));
+
+    const events = await mainEvents(sessionId, path, 'Stop');
+
+    expect(events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+  });
 });

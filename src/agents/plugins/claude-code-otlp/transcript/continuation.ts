@@ -53,6 +53,8 @@ function parentUuids(raw: string, sessionId: string): string[] | null {
  * and there is no parent, `null` when the directory cannot be read. Never throws.
  */
 export async function resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null> {
+  // dirname('') is '.', which would scan the process working directory.
+  if (!transcriptPath) return null;
   const directory = dirname(transcriptPath);
   const own = basename(transcriptPath);
   try {
@@ -68,15 +70,23 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
     );
     dated.sort((a, b) => b.mtime - a.mtime);
 
+    // "No parent" is only a definitive answer for a complete scan: a truncated or partly unreadable
+    // one must not be recorded as resolved, or the parent's copies are counted for good.
+    let complete = dated.length <= MAX_SIBLING_FILES;
     for (const { name } of dated.slice(0, MAX_SIBLING_FILES)) {
       let raw: string;
       try {
         raw = await readFile(join(directory, name), 'utf-8');
       } catch {
+        complete = false;
         continue;
       }
       const uuids = parentUuids(raw, sessionId);
       if (uuids) return uuids;
+    }
+    if (!complete) {
+      logger.debug('[claude-code-otlp] parent lookup of a continued session was incomplete', { sessionId });
+      return null;
     }
     return [];
   } catch (error) {

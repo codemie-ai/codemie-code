@@ -1910,4 +1910,19 @@ describe('ClaudeCodeOtlpPlugin reopened session without activity (EPMCDME-16993)
 
     expect(forwardedEvents().map((e) => e.type)).toContain('agent.session.stop');
   });
+  it('forwards nothing for a PreCompact while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('PreCompact', { trigger: 'manual' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards nothing for a StopFailure while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('StopFailure', { error: 'rate_limit' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
 });

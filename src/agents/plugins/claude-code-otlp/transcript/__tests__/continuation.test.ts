@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveInheritedUuids } from '../continuation.js';
@@ -42,5 +42,22 @@ describe('resolveInheritedUuids', () => {
 
   it('returns null when the transcript directory is unreadable', async () => {
     expect(await resolveInheritedUuids(join(dir, 'missing', 'C.jsonl'), 'C')).toBeNull();
+  });
+  it('returns null when an empty transcript path would make it scan the working directory', async () => {
+    expect(await resolveInheritedUuids('', 'C')).toBeNull();
+  });
+
+  it('returns null, not "no parent", when more siblings exist than the scan covers', async () => {
+    for (let i = 0; i < 205; i += 1) writeFileSync(join(dir, `other-${i}.jsonl`), msg(`o${i}`, `other-${i}`) + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
+  });
+
+  it('returns null, not "no parent", when a sibling transcript cannot be read', async () => {
+    mkdirSync(join(dir, 'unreadable.jsonl'));
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
   });
 });

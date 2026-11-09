@@ -527,7 +527,7 @@ async function ensureInherited(
       state.inheritedResolved = true;
     }
   }
-  return new Set(state.inheritedUuids ?? []);
+  return new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
 }
 
 function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
@@ -618,8 +618,12 @@ async function deriveMainEvents(
     }
 
     const parsed = parseUsageLine(line, 'main', '', '', '');
-    // A synthetic assistant line (Claude Code's own placeholder) is not work the user did.
-    if (!(parsed && isSyntheticModel(parsed.model))) ownActivity = true;
+    // Only work the user did counts: a real assistant answer or a genuine prompt. Records Claude Code
+    // appends on a reopen (hook attachments, mode / permission-mode / last-prompt lines) and its
+    // synthetic placeholder answers are not activity.
+    if (head && ((head.type === 'assistant' && !(parsed && isSyntheticModel(parsed.model))) || isGenuineUserTurn(head))) {
+      ownActivity = true;
+    }
     if (parsed) {
       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
