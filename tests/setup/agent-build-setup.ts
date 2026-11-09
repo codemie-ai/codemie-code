@@ -1,6 +1,6 @@
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { config as loadEnv } from 'dotenv';
@@ -158,13 +158,20 @@ export async function setup(): Promise<void> {
   // Pre-installing here ensures all concurrent callers see action=already_exists
   // and skip the destructive rm/cp entirely.
   console.log('[agent-integration] Pre-installing Claude CodeMie extension...');
+  // Runs in a child node process, not in-process: the installer bakes the running
+  // entry (process.argv[1]) into ~/.codemie/claude-plugin/hooks/hooks.json, and inside
+  // vitest that entry is node_modules/.bin/vitest, which broke every codemie-claude session.
   try {
-    const { ClaudePluginInstaller } = await import(
-      resolve(root, 'dist/agents/plugins/claude/claude.plugin-installer.js')
-    ) as { ClaudePluginInstaller: new (m: { name: string }) => { install(): Promise<{ action: string; targetPath: string }> } };
-    const installer = new ClaudePluginInstaller({ name: 'claude' });
-    const result = await installer.install();
-    console.log(`[agent-integration] Claude extension ${result.action} at ${result.targetPath}.\n`);
+    const installerUrl = pathToFileURL(resolve(root, 'dist/agents/plugins/claude/claude.plugin-installer.js')).href;
+    const script =
+      `const { ClaudePluginInstaller } = await import(${JSON.stringify(installerUrl)});` +
+      `const r = await new ClaudePluginInstaller({ name: 'claude' }).install();` +
+      `console.log(r.action + ' at ' + r.targetPath);`;
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: root,
+      stdio: 'pipe',
+    }).toString().trim().split('\n').pop();
+    console.log(`[agent-integration] Claude extension ${out}.\n`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[agent-integration] Claude extension pre-install warning (non-fatal): ${msg}\n`);

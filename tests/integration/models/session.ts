@@ -18,8 +18,8 @@ const SyncMetricsSchema = z.object({
 const SyncConversationsSchema = z.object({
   lastSyncedMessageUuid: z.string(),
   lastSyncedHistoryIndex: z.number().int(),
-  totalMessagesSynced: z.number().int(),
-  totalSyncAttempts: z.number().int(),
+  totalMessagesSynced: z.number().int().optional(), // absent when no backend conversation sync has been recorded
+  totalSyncAttempts: z.number().int().optional(), // absent when no backend conversation sync has been recorded
   conversationId: z.string().optional(), // absent when SSO sync has not run (e.g. JWT mode)
   lastSyncAt: z.number().int().optional(), // absent when SSO sync has not run (e.g. JWT mode)
 }).passthrough();

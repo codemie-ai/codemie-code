@@ -3,10 +3,12 @@ import type { PtySession } from './pty-session.js';
 /**
  * Claude Code's interactive input is ready to accept keystrokes.
  * - Up to 2.1.2xx: the startup box closes with a rounded `╰─` corner.
- * - 2.1.269+: the prompt is a bare `❯` between two horizontal rules. The TUI redraws
+ * - 2.1.269+: the prompt is a `❯` between two horizontal rules. The TUI redraws
  *   with carriage returns only, so after ANSI stripping it reads `────❯ ────`.
+ * - 2.1.281+: an empty prompt shows a placeholder hint after the `❯` (`❯ Try "how do I ..."`),
+ *   so anything but a rule may sit between the `❯` and the closing rule.
  */
-const CLAUDE_READY_RE = /╰─|─{3,}\s*❯\s*─{3,}/;
+const CLAUDE_READY_RE = /╰─|─{3,}\s*❯[^─]*─{3,}/;
 
 /** Workspace-trust dialog Claude Code shows for directories it has not seen before. */
 const TRUST_DIALOG_RE = /trust.*folder|trustthisfolder/i;
