@@ -522,6 +522,10 @@ const MAX_PARENT_LOOKUPS = 3;
  * so a session is not taken to have no parent just because the scan could not finish.
  * Lines already reported before a late find stay reported, but every later event and the summary
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
+ *
+ * Accepted by the owner, not to be re-raised as findings (see docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): D-1 the repeated
+ * scan for a directory with more than 200 transcripts, and D-2 the copies a first pass reports when
+ * the parent's record is not on disk yet.
  */
 async function ensureInherited(
   state: TranscriptParseState,
@@ -775,6 +779,9 @@ export async function openSessionStartPass(
     const state = await loadParseState(sessionId);
     // A resume of a session already started announces nothing: its start was reported once, and a
     // start stamped at the reopen would move the session's activity window (EPMCDME-16993).
+    // Accepted limit (D-3 in docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): without a saved sessionStartedAt a resume is a
+    // first start here (the transition gate already stops a resume without an evidence record), and
+    // a state with offset 0 is not moved to the file size, which would drop never-reported work.
     const reopened = source === 'resume' && Boolean(state.sessionStartedAt);
     if (reopened) {
       state.reopened = true;
