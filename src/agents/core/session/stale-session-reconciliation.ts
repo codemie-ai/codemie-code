@@ -19,6 +19,7 @@ import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { BaseHookEvent } from '../types.js';
 import type { Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
+import { isLegacyGateSkip } from './legacy-metrics-gate.js';
 import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
 import { latestRecordTime } from './BaseSessionAdapter.js';
 import { syntheticSessionEnd } from './synthetic-session-end.js';
@@ -142,8 +143,11 @@ async function hasUndeliveredData(record: Session): Promise<boolean> {
   if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return true;
   if (record.correlation?.status !== 'matched') return false;
   try {
-    const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[reconcile]');
-    if (deltas.some((delta) => delta.syncStatus !== 'synced')) return true;
+    // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
+    if (!isLegacyGateSkip(record.endMetricSkipped)) {
+      const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[reconcile]');
+      if (deltas.some((delta) => delta.syncStatus !== 'synced')) return true;
+    }
     const payloads = await readJSONLTolerant<ConversationPayloadRecord>(getSessionConversationPath(record.sessionId), '[reconcile]');
     const sent = new Set(payloads.filter((p) => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).map(getPayloadId));
     return payloads.some((p) =>

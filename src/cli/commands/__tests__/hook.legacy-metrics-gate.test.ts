@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +36,8 @@ vi.mock('@/agents/core/evidence/hook-identity.js', () => ({
 }));
 
 const { processEvent } = await import('../hook.js');
+const { isDeliveryDone } = await import('../hook/delivery.js');
+const { getSessionMetricsPath } = await import('@/agents/core/session/session-config.js');
 const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
 const { getCodemiePath } = await import('@/utils/paths.js');
 const { consentStorePath, connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
@@ -153,6 +155,35 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
     expect(lifecycleStatuses()).toEqual(['started']);
     expect(await endMetricSkipped(sessionId)).toBe('destination-held');
+  });
+
+  it('without consent, transcript deltas are withheld at Stop and SessionEnd and the session counts as delivered', async () => {
+    const sessionId = 'gate-17054-deltas';
+    const transcript = join(repo, 'deltas.jsonl');
+    const lines = ['2026-11-01T10:00:01Z', '2026-11-01T10:00:02Z'].map((timestamp, i) => JSON.stringify({
+      type: i % 2 === 0 ? 'user' : 'assistant',
+      uuid: `msg-${i}`,
+      sessionId: NATIVE_ID,
+      timestamp,
+      message: i % 2 === 0
+        ? { role: 'user', content: 'prompt' }
+        : { role: 'assistant', id: 'api-1', content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }], usage: { input_tokens: 1, output_tokens: 1 } },
+    }));
+    writeFileSync(transcript, `${lines.join('\n')}\n`);
+    const base = { session_id: NATIVE_ID, transcript_path: transcript, permission_mode: 'default', cwd: repo };
+    const config = { ...baseConfig, provider: 'anthropic-subscription', sessionId };
+
+    await processEvent({ ...base, hook_event_name: 'SessionStart', source: 'startup', startTime: Date.parse('2026-11-01T10:00:00Z') } as never, config);
+    await processEvent({ ...base, hook_event_name: 'Stop' } as never, config);
+    await processEvent({ ...base, hook_event_name: 'SessionEnd', reason: 'exit' } as never, config);
+
+    // Delivered records are renamed to completed_; the deltas were extracted either way
+    const live = getSessionMetricsPath(sessionId);
+    const deltaFile = existsSync(live) ? live : join(getCodemiePath('sessions'), `completed_${sessionId}_metrics.jsonl`);
+    expect(readFileSync(deltaFile, 'utf-8').trim()).not.toBe('');
+    expect(metricCalls()).toEqual([]);
+    expect(await endMetricSkipped(sessionId)).toBe('no-work-consent');
+    expect(await isDeliveryDone(sessionId, config)).toBe(true);
   });
 
   it('(d) ai-run-sso without consent still sends start and end', async () => {
