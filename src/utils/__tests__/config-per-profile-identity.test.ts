@@ -13,6 +13,9 @@ import type { MultiProviderConfig, ProviderProfile, WorkspaceConfig } from '../.
 import * as paths from '../paths.js';
 import { logger } from '../logger.js';
 
+// identity-fields (hook side) pulls in the updater, which reads a path at import time.
+vi.mock('../cli-updater.js', () => ({ getCurrentCliVersion: vi.fn(async () => '0.0.0') }));
+
 const TEST_DIR = path.join(process.cwd(), 'tmp-test-per-profile-identity');
 const GLOBAL_CONFIG_DIR = path.join(TEST_DIR, '.codemie');
 const GLOBAL_CONFIG_PATH = path.join(GLOBAL_CONFIG_DIR, 'codemie-cli.config.json');
@@ -352,6 +355,101 @@ describe('ConfigLoader — per-profile CodeMie identity (EPMCDME-15411)', () => 
       await writeGlobal('b', { a: sso({ codeMieProject: 'pa' }), b: sso() });
       const { sources } = await ConfigLoader.loadWithSources(WORKING_DIR);
       expect(sources.codeMieProject).toEqual({ value: 'mtlx-amsd', source: 'global' });
+    });
+  });
+
+  describe('traceable cases', () => {
+    it('two global profiles on different environments keep their own trio through save and switch-back', async () => {
+      // @case global-profiles-share-workspace-identity_TC_001
+      await ConfigLoader.saveProfile('env-a', sso({
+        codeMieUrl: 'https://a.example.com',
+        codeMieProject: 'proj-a',
+        codeMieIntegration: { id: 'int-a', alias: 'ia' },
+      }));
+      const afterA = await readGlobal();
+      expect(afterA.profiles['env-a']).toMatchObject({
+        codeMieUrl: 'https://a.example.com',
+        codeMieProject: 'proj-a',
+        codeMieIntegration: { id: 'int-a', alias: 'ia' },
+      });
+
+      await ConfigLoader.saveProfile('env-b', sso({
+        baseUrl: 'https://b.example.com/code-assistant-api',
+        codeMieUrl: 'https://b.example.com',
+        codeMieProject: 'proj-b',
+        codeMieIntegration: { id: 'int-b', alias: 'ib' },
+      }));
+      const afterB = await readGlobal();
+      expect(afterB.profiles['env-a']).toMatchObject({
+        codeMieUrl: 'https://a.example.com',
+        codeMieProject: 'proj-a',
+        codeMieIntegration: { id: 'int-a', alias: 'ia' },
+      });
+      expect(afterB.workspace?.codeMieProject).toBeUndefined();
+      expect(afterB.workspace?.codeMieUrl).toBeUndefined();
+      expect(afterB.workspace?.codeMieIntegration).toBeUndefined();
+
+      const launchEnv = async (name: string): Promise<Record<string, string>> =>
+        ConfigLoader.exportProviderEnvVars(await ConfigLoader.load(WORKING_DIR, { name }));
+
+      for (const [name, url, project, integration] of [
+        ['env-a', 'https://a.example.com', 'proj-a', 'int-a'],
+        ['env-b', 'https://b.example.com', 'proj-b', 'int-b'],
+        ['env-a', 'https://a.example.com', 'proj-a', 'int-a'],
+      ] as const) {
+        const env = await launchEnv(name);
+        expect(env.CODEMIE_URL).toBe(url);
+        expect(env.CODEMIE_PROJECT).toBe(project);
+        expect(env.CODEMIE_INTEGRATION_ID).toBe(integration);
+      }
+    });
+
+    it('local identity resolution is unchanged and non-identity workspace keys still merge into the shared workspace', async () => {
+      // @case global-profiles-share-workspace-identity_TC_002
+      await writeGlobal('g', { g: sso({ codeMieProject: 'global-own' }) });
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({
+        version: 2,
+        activeProfile: 'team',
+        profiles: { team: sso() },
+        workspace: { codeMieProject: 'repo-proj' },
+      }));
+      const resolved = await ConfigLoader.resolveProfileIdentity(WORKING_DIR);
+      expect(resolved.state).toBe('local');
+      expect(resolved.identity.codeMieProject).toBe('repo-proj');
+      await fs.rm(LOCAL_CONFIG_PATH);
+
+      await ConfigLoader.saveProfile('other', {
+        ...sso({ codeMieProject: 'other-own' }),
+        skillsSearchUrl: 'https://skills.example.com',
+        claudeAutocompactPct: 55,
+      } as ProviderProfile);
+      const saved = await readGlobal();
+      expect(saved.workspace).toMatchObject({
+        codeMieProject: SHARED.codeMieProject,
+        skillsSearchUrl: 'https://skills.example.com',
+        claudeAutocompactPct: 55,
+      });
+      expect(saved.profiles.other.codeMieProject).toBe('other-own');
+      expect((saved.profiles.other as Record<string, unknown>).skillsSearchUrl).toBeUndefined();
+    });
+
+    it('launch exports the profile project and the session project is that profile project, not the workspace one', async () => {
+      // @case global-profiles-share-workspace-identity_TC_004
+      await writeGlobal('bound', {
+        bound: sso({ codeMieProject: 'epm-cdme-cp' }),
+        other: sso({ codeMieProject: 'last-saved' }),
+      }, { ...SHARED, codeMieProject: 'workspace-proj' });
+
+      const env = ConfigLoader.exportProviderEnvVars(await ConfigLoader.load(WORKING_DIR, { name: 'bound' }));
+      expect(env.CODEMIE_PROJECT).toBe('epm-cdme-cp');
+      expect(env.CODEMIE_PROJECT).not.toBe('workspace-proj');
+
+      // Hook side: the stamped project is the active profile's own project.
+      const { resolveSessionProject } = await import('../../agents/core/event-fields/identity-fields.js');
+      expect(await resolveSessionProject(WORKING_DIR, undefined)).toBe('epm-cdme-cp');
+      // And the launcher's exported project wins when present.
+      process.env.CODEMIE_PROJECT = env.CODEMIE_PROJECT;
+      expect(await resolveSessionProject(WORKING_DIR, undefined)).toBe('epm-cdme-cp');
     });
   });
 
