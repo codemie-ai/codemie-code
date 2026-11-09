@@ -26,7 +26,15 @@ import { ConfigLoader } from '@/utils/config.js';
 import { SyncGitError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
-import { deleteSyncSettings, validateInstallOptions, writeSyncSettings } from './config-store.js';
+import {
+  DEFAULT_AT,
+  deleteSyncSettings,
+  readSyncSettingsRaw,
+  restoreSyncSettingsRaw,
+  validateAt,
+  validateInstallOptions,
+  writeSyncSettings
+} from './config-store.js';
 import { lookbackText, webhookHost } from './format.js';
 import { EMAIL_REGEX, realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { errorMessage, redactSecrets } from './redact.js';
@@ -42,6 +50,10 @@ export interface InstallDeps {
   scheduler: Scheduler;
   writeSettings(settings: SyncSettings): Promise<void>;
   deleteSettings(): Promise<boolean>;
+  /** The current settings file as stored, or `null` when there is none. */
+  readSettingsRaw(): Promise<string | null>;
+  /** Puts back a file returned by `readSettingsRaw`. */
+  restoreSettingsRaw(raw: string): Promise<void>;
   /** Config email, then `git config --global user.email` (`./identity.ts`); throws
    * `SyncIdentityMissingError` when neither resolves. */
   resolveIdentity(): Promise<string>;
@@ -190,30 +202,91 @@ async function testGitTarget(deps: InstallDeps, settings: SyncSettings, email: s
   }
 }
 
-/**
- * Replace any existing job with a fresh one: unregister (same job identities as the standalone
- * collector, see ./scheduler/generators.ts, so this removes either the collector's job or a
- * previous CLI install's — tolerant of neither existing), write settings, register. A register
- * failure rolls back both the job files written before the failing OS call and the settings,
- * so nothing half-installed is left; a rollback failure never masks the register error.
- * Returns `null` (after printing why) on any failure.
- */
-async function replaceJob(deps: InstallDeps, settings: SyncSettings): Promise<RegisterResult | null> {
+/** What `install` is about to replace: the settings file as stored and whether a job ran. */
+interface PreviousInstall {
+  settingsRaw: string | null;
+  jobEnabled: boolean;
+  /** The previous run time, or the default when the old file names none (or is unreadable). */
+  at: string;
+}
+
+async function snapshotPreviousInstall(deps: InstallDeps): Promise<PreviousInstall> {
+  const settingsRaw = await deps.readSettingsRaw().catch(() => null);
+  const jobEnabled = (await deps.scheduler.query().catch(() => 'disabled')) === 'enabled';
+  return { settingsRaw, jobEnabled, at: previousRunTime(settingsRaw) };
+}
+
+function previousRunTime(settingsRaw: string | null): string {
   try {
-    await deps.scheduler.unregister();
-    await deps.writeSettings(settings);
-  } catch (err) {
-    printFailure(deps, err);
-    return null;
+    const at = (JSON.parse(settingsRaw ?? '{}') as { at?: unknown }).at;
+    return validateAt(typeof at === 'string' ? at : undefined);
+  } catch {
+    return DEFAULT_AT;
+  }
+}
+
+/**
+ * After a failed replace, puts back what was there before it — the settings file as stored,
+ * and a daily job when one was enabled — and tells the developer which state the machine is
+ * in. The job is re-registered as the CLI's own, from the restored settings: a standalone
+ * collector's settings are collector-compatible, so its daily delivery carries on.
+ */
+async function restorePreviousInstall(deps: InstallDeps, previous: PreviousInstall, cmd: JobCommand): Promise<void> {
+  await deps.scheduler.unregister().catch(() => undefined);
+
+  if (previous.settingsRaw === null) {
+    await deps.deleteSettings().catch(() => undefined);
+  } else {
+    try {
+      await deps.restoreSettingsRaw(previous.settingsRaw);
+    } catch (err) {
+      deps.print(`Your previous settings could not be restored: ${errorMessage(err)}`);
+      deps.print('Daily delivery is stopped on this machine until install succeeds.');
+      return;
+    }
+  }
+
+  if (!previous.jobEnabled) {
+    deps.print(
+      previous.settingsRaw === null
+        ? 'Nothing was installed.'
+        : 'Your previous settings were restored. No daily job was enabled before this install, so none is now.'
+    );
+    return;
   }
 
   try {
-    const cmd = await deps.resolveJobCommand();
+    await deps.scheduler.register(cmd, previous.at);
+    deps.print(`Your previous settings and daily job (${previous.at} local) were restored; delivery continues as before.`);
+  } catch (err) {
+    deps.print(`Your previous settings were restored, but the daily job could not be registered again: ${errorMessage(err)}`);
+    deps.print('Daily delivery is stopped on this machine until install succeeds.');
+  }
+}
+
+/**
+ * Replaces the OS job and settings with `settings`. On any failure after the old job was
+ * removed, restores the previous settings and job ({@link restorePreviousInstall}), so a
+ * failed install never silently stops a delivery that used to work.
+ */
+async function replaceJob(deps: InstallDeps, settings: SyncSettings): Promise<RegisterResult | null> {
+  let cmd: JobCommand;
+  try {
+    cmd = await deps.resolveJobCommand();
+  } catch (err) {
+    printFailure(deps, err);
+    deps.print('Nothing was changed.');
+    return null;
+  }
+
+  const previous = await snapshotPreviousInstall(deps);
+  try {
+    await deps.scheduler.unregister();
+    await deps.writeSettings(settings);
     return await deps.scheduler.register(cmd, settings.at);
   } catch (err) {
-    await deps.scheduler.unregister().catch(() => undefined);
-    await deps.deleteSettings().catch(() => undefined);
     printFailure(deps, err);
+    await restorePreviousInstall(deps, previous, cmd);
     return null;
   }
 }
@@ -252,6 +325,8 @@ export function createRealInstallDeps(): InstallDeps {
     scheduler: createScheduler(createRealSchedulerDeps()),
     writeSettings: (settings: SyncSettings) => writeSyncSettings(settings),
     deleteSettings: () => deleteSyncSettings(),
+    readSettingsRaw: () => readSyncSettingsRaw(),
+    restoreSettingsRaw: (raw: string) => restoreSyncSettingsRaw(raw),
     resolveIdentity: () => resolveSyncIdentity(realIdentityDeps),
     isTTY: Boolean(process.stdin.isTTY),
     promptEmail: async (): Promise<string> => {

@@ -28,6 +28,7 @@ interface Harness {
   scheduler: Scheduler;
   writeSettings: ReturnType<typeof vi.fn>;
   deleteSettings: ReturnType<typeof vi.fn>;
+  restoreSettingsRaw: ReturnType<typeof vi.fn>;
   saveUserEmail: ReturnType<typeof vi.fn>;
   promptEmail: ReturnType<typeof vi.fn>;
   testGitPush: ReturnType<typeof vi.fn>;
@@ -39,6 +40,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
   const scheduler = overrides.scheduler ?? makeScheduler();
   const writeSettings = vi.fn(async () => {});
   const deleteSettings = vi.fn(async () => true);
+  const restoreSettingsRaw = vi.fn(async () => {});
   const saveUserEmail = vi.fn(async () => {});
   const promptEmail = vi.fn(async () => 'dev@example.com');
   const testGitPush = vi.fn(async () => {});
@@ -48,6 +50,8 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     scheduler,
     writeSettings,
     deleteSettings,
+    readSettingsRaw: async () => null,
+    restoreSettingsRaw,
     resolveIdentity: async () => 'dev@example.com',
     isTTY: false,
     promptEmail,
@@ -66,7 +70,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     ...overrides,
   };
 
-  return { deps, printed, scheduler, writeSettings, deleteSettings, saveUserEmail, promptEmail, testGitPush, removeWorkingCopy };
+  return { deps, printed, scheduler, writeSettings, deleteSettings, restoreSettingsRaw, saveUserEmail, promptEmail, testGitPush, removeWorkingCopy };
 }
 
 const VALID_OPTS: InstallOptions = { webhook: FAKE_WEBHOOK };
@@ -147,6 +151,66 @@ describe('runInstall', () => {
     expect(code).toBe(1);
     expect(writeSettings).toHaveBeenCalledTimes(1);
     expect(deleteSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the previous settings and re-registers the previous job when register throws', async () => {
+    const previousRaw = JSON.stringify({ webhookUrl: 'https://old.example.invalid/x?sig=OLD', at: '05:30' });
+    const register = vi
+      .fn<Scheduler['register']>()
+      .mockRejectedValueOnce(new Error('schtasks /Create failed: access denied'))
+      .mockResolvedValueOnce({});
+    const scheduler = makeScheduler({ register, query: vi.fn(async () => 'enabled' as const) });
+    const { deps, deleteSettings, restoreSettingsRaw, printed } = makeDeps({
+      scheduler,
+      readSettingsRaw: async () => previousRaw,
+    });
+
+    const code = await runInstall(VALID_OPTS, deps);
+
+    expect(code).toBe(1);
+    expect(restoreSettingsRaw).toHaveBeenCalledWith(previousRaw);
+    expect(deleteSettings).not.toHaveBeenCalled();
+    expect(register).toHaveBeenLastCalledWith(expect.anything(), '05:30');
+    const output = printed.join('\n');
+    expect(output).toContain('Install failed: schtasks /Create failed: access denied');
+    expect(output).toContain('previous settings and daily job (05:30 local) were restored');
+  });
+
+  it('says delivery is stopped when the previous job cannot be registered again', async () => {
+    const scheduler = makeScheduler({
+      register: vi.fn(async () => {
+        throw new Error('systemctl --user enable --now failed: boom');
+      }),
+      query: vi.fn(async () => 'enabled' as const),
+    });
+    const { deps, restoreSettingsRaw, printed } = makeDeps({
+      scheduler,
+      readSettingsRaw: async () => JSON.stringify({ webhookUrl: 'https://old.example.invalid/x' }),
+    });
+
+    const code = await runInstall(VALID_OPTS, deps);
+
+    expect(code).toBe(1);
+    expect(restoreSettingsRaw).toHaveBeenCalledTimes(1);
+    expect(printed.join('\n')).toContain('Daily delivery is stopped on this machine until install succeeds.');
+  });
+
+  it('restores the previous settings and also the job when writing the new settings fails', async () => {
+    const scheduler = makeScheduler({ query: vi.fn(async () => 'enabled' as const) });
+    const previousRaw = JSON.stringify({ webhookUrl: 'https://old.example.invalid/x' });
+    const { deps, restoreSettingsRaw } = makeDeps({
+      scheduler,
+      readSettingsRaw: async () => previousRaw,
+      writeSettings: vi.fn(async () => {
+        throw new Error('EACCES: permission denied');
+      }),
+    });
+
+    const code = await runInstall(VALID_OPTS, deps);
+
+    expect(code).toBe(1);
+    expect(restoreSettingsRaw).toHaveBeenCalledWith(previousRaw);
+    expect(scheduler.register).toHaveBeenCalledWith(expect.anything(), '03:00');
   });
 
   it('removes the half-registered job files when register throws', async () => {

@@ -19,7 +19,12 @@ export const PRIVATE_FILE_MODE = 0o600;
  * exist, so a pre-existing wider-mode file would otherwise keep its old mode).
  */
 export async function writePrivateJson(path: string, data: unknown): Promise<void> {
+  await writePrivateText(path, JSON.stringify(data, null, 2));
+}
+
+/** Write `text` to `path` as-is, with the same mode guarantees as {@link writePrivateJson}. */
+export async function writePrivateText(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(data, null, 2), { mode: PRIVATE_FILE_MODE });
+  await writeFile(path, text, { mode: PRIVATE_FILE_MODE });
   await chmod(path, PRIVATE_FILE_MODE);
 }

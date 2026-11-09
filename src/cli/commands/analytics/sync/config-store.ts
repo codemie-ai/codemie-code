@@ -14,7 +14,7 @@ import { posix as posixPath } from 'path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
-import { writePrivateJson } from './private-file.js';
+import { writePrivateJson, writePrivateText } from './private-file.js';
 import { decodeWebhook } from './webhook-encoding.js';
 import { redactSecrets } from './redact.js';
 import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
@@ -213,7 +213,7 @@ function validateFormat(format: string | undefined): 'json' {
   return SYNC_FORMAT;
 }
 
-function validateAt(at: string | undefined): string {
+export function validateAt(at: string | undefined): string {
   if (at === undefined) {
     return DEFAULT_AT;
   }
@@ -392,6 +392,27 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
  */
 export async function writeSyncSettings(settings: SyncSettings, path: string = getSyncSettingsPath()): Promise<void> {
   await writePrivateJson(path, settings);
+}
+
+/**
+ * The settings file at `path` exactly as stored, or `null` when there is none. `install`
+ * keeps it before overwriting, so a failed install can put back the previous file —
+ * including a standalone collector's, whose shape `writeSyncSettings` would not reproduce.
+ */
+export async function readSyncSettingsRaw(path: string = getSyncSettingsPath()): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** Put back a settings file read by {@link readSyncSettingsRaw}, mode `0o600`. */
+export async function restoreSyncSettingsRaw(raw: string, path: string = getSyncSettingsPath()): Promise<void> {
+  await writePrivateText(path, raw);
 }
 
 /**
