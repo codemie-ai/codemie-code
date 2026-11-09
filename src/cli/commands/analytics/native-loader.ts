@@ -13,10 +13,10 @@
  */
 
 import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
-import type { MetricDelta } from '../../../agents/core/metrics/types.js';
+import type { FileOperation, MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionDescriptor } from '../../../agents/core/session/discovery-types.js';
 import { AgentRegistry } from '../../../agents/registry.js';
@@ -25,17 +25,25 @@ import { logger } from '../../../utils/logger.js';
 import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
 import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 import { isCodexFamilyAgent } from './cost/codex-agent.js';
+import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
-import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
+import { PI_FORKED_CONTINUATION, PI_SUBAGENT_RUN, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
+import { extractPiNamedInvocations, sumPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
+import { extractPiFileOperations, type PiFileOperationContext } from '../../../agents/plugins/pi/session/pi-file-operations.js';
+import {
+  extractPiToolCalls,
+  isPiAssistantMessage,
+  isPiMessageEntry,
+  isPiToolResultMessage,
+  piEntryTimestamp,
+  type PiEntry,
+  type PiToolCall,
+} from '../../../agents/plugins/pi/pi.types.js';
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
-
-function isPiAgent(agentName: string): boolean {
-  return agentName.toLowerCase() === 'pi';
-}
 
 /**
  * Agents CodeMie only reads analytics for and never installs, launches, or manages.
@@ -64,7 +72,7 @@ export interface NativeLoaderDeps {
   /** Real paths of native logs already tracked by CodeMie (skip these to avoid double counting). */
   trackedLogPaths(): Set<string>;
   /** Discover native sessions for discovery-capable agents within the age window. */
-  discover(maxAgeDays: number): Promise<DiscoveredNative[]>;
+  discover(maxAgeDays?: number): Promise<DiscoveredNative[]>;
   /** Parse a native log into a unified session. */
   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
   /** Resolve a path to its real (symlink-free) form for dedup comparison. */
@@ -79,6 +87,16 @@ function safeRealPath(p: string): string {
   } catch {
     return p;
   }
+}
+
+/** The transcript paths a record names: `agentSessionFile` and the checkpoint's `transcriptPath` (equal once the daemon re-tracks a switched transcript; a record of an earlier build keeps the old path in the first; callers collect them in a set). */
+function recordTranscriptPaths(meta: {
+  correlation?: { agentSessionFile?: string };
+  runtimeCheckpoint?: { transcriptPath?: string };
+}): string[] {
+  return [meta.correlation?.agentSessionFile, meta.runtimeCheckpoint?.transcriptPath].filter(
+    (path): path is string => typeof path === 'string' && path !== ''
+  );
 }
 
 /** Build the set of native log paths already tracked by CodeMie (from session correlations). */
@@ -100,10 +118,10 @@ function readTrackedLogPaths(): Set<string> {
     try {
       const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
         correlation?: { agentSessionFile?: string };
+        runtimeCheckpoint?: { transcriptPath?: string };
       };
-      const asf = meta.correlation?.agentSessionFile;
-      if (asf) {
-        out.add(safeRealPath(asf));
+      for (const path of recordTranscriptPaths(meta)) {
+        out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed metadata
@@ -114,8 +132,10 @@ function readTrackedLogPaths(): Set<string> {
 
 /**
  * Lazy-built ownership index: union of
- *   (a) agentSessionFile real-paths from correlation records (*.json, non-metrics, non-marker)
+ *   (a) the transcript paths a correlation record names (`agentSessionFile`, `runtimeCheckpoint.transcriptPath`)
  *   (b) transcriptPath values from sidecar marker files (*-codemie-marker.json)
+ * Sidecars of either naming scheme are read — `<path hash>-<codemieSessionId>-codemie-marker.json`
+ * and the earlier `<transcript basename>-codemie-marker.json` — since each names its transcript inside.
  * Cached for the lifetime of the process — analytics runs are short-lived.
  */
 let ownershipIndexCache: Set<string> | null = null;
@@ -144,14 +164,14 @@ function buildOwnershipIndex(): Set<string> {
       } else if (!f.endsWith('_metrics.json')) {
         const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
           correlation?: { agentSessionFile?: string };
+          runtimeCheckpoint?: { transcriptPath?: string };
           origin?: string;
         };
         // A confirmed external-resume session must never re-adopt its transcript into the
         // ownership index — that would silently exclude it from `native-external` filtering
         // again, undoing the whole point of flagging it. See EPMCDME-12992.
         if (meta.origin === SESSION_ORIGIN.EXTERNAL_RESUME) continue;
-        const asf = meta.correlation?.agentSessionFile;
-        if (asf) out.add(safeRealPath(asf));
+        for (const path of recordTranscriptPaths(meta)) out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed files
@@ -181,7 +201,7 @@ export const realNativeDeps: NativeLoaderDeps = {
     return found;
   },
   async parse(agentName, filePath, sessionId) {
-    const adapter = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+    const adapter = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
     if (!adapter) {
       return null;
     }
@@ -198,7 +218,9 @@ export const realNativeDeps: NativeLoaderDeps = {
     if (!ownershipIndexCache) ownershipIndexCache = buildOwnershipIndex();
     if (ownershipIndexCache.has(safeRealPath(filePath))) return true;
 
-    // CR-002: bounded transcript scan (4 KB) for legacy sessions without sidecar
+    // Bounded transcript scan: transcripts written by earlier versions carry an in-band
+    // `codemie_session_start` line instead of a sidecar, recognised only within the scanned head
+    // (the first 4 KB, at most 10 lines). Nothing written today adds one.
     try {
       const fd = openSync(filePath, 'r');
       const buf = Buffer.alloc(4096);
@@ -472,46 +494,6 @@ interface PiSessionLine {
 }
 
 /**
- * Every entry of the conversation this transcript belongs to, each counted once.
- *
- * `/fork` writes a NEW file that replays the prior conversation VERBATIM — entry ids included —
- * and {@link foldPiForkFamilies} attaches those continuations to the transcript they grew out
- * of. Concatenating blindly would count the replayed history once per fork: on a real 12-file
- * corpus that is 121 turns for 21 real prompts, and every fork claiming the full multi-hour
- * duration it inherited. De-duplicating on the entry id each file writes about itself collapses
- * the family back to the single conversation it is.
- */
-function piConversationLines(parsed: ParsedSession): PiSessionLine[] {
-  const own = (parsed.messages ?? []) as PiSessionLine[];
-  const continuations = piForkedContinuations(parsed);
-  if (continuations.length === 0) {
-    return own;
-  }
-
-  const lines: PiSessionLine[] = [];
-  const seenIds = new Set<string>();
-  for (const line of [...own, ...continuations.flatMap((fork) => (fork.messages ?? []) as PiSessionLine[])]) {
-    if (line?.id) {
-      if (seenIds.has(line.id)) {
-        continue; // replayed copy of an entry an earlier transcript in the family already had
-      }
-      seenIds.add(line.id);
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-
-function piLineTimestamp(line: PiSessionLine): number | null {
-  const messageTs = line.message?.timestamp;
-  if (typeof messageTs === 'number' && Number.isFinite(messageTs)) {
-    return messageTs;
-  }
-  const entryTs = line.timestamp ? Date.parse(line.timestamp) : NaN;
-  return Number.isFinite(entryTs) ? entryTs : null;
-}
-
-/**
  * Turns in a Pi transcript = user prompts.
  *
  * Pi gives tool results their own `toolResult` role, so a `user` message is always a real prompt
@@ -522,6 +504,59 @@ function piLineTimestamp(line: PiSessionLine): number | null {
 function countPiTurns(lines: PiSessionLine[]): number {
   const prompts = lines.filter((l) => l.type === 'message' && l.message?.role === 'user').length;
   return Math.max(prompts, 1);
+}
+
+/**
+ * Per-tool call counts and outcomes. A call is counted when its `toolResult` arrives, so a call
+ * still running (or cut off) when the transcript ends is not reported — the same rule the
+ * managed path's metrics processor applies.
+ */
+function piToolStats(lines: readonly unknown[]): Pick<NonNullable<ParsedSession['metrics']>, 'tools' | 'toolStatus'> {
+  const callNames = new Map<string, string>();
+  const tools: Record<string, number> = {};
+  const toolStatus: Record<string, { success: number; failure: number }> = {};
+  for (const raw of lines) {
+    const entry = raw as PiEntry;
+    if (!isPiMessageEntry(entry)) continue;
+    const message = entry.message;
+    if (isPiAssistantMessage(message)) {
+      for (const call of extractPiToolCalls(message)) callNames.set(call.id, call.name);
+    } else if (isPiToolResultMessage(message)) {
+      const name = callNames.get(message.toolCallId);
+      if (!name) continue;
+      callNames.delete(message.toolCallId);
+      tools[name] = (tools[name] ?? 0) + 1;
+      const status = (toolStatus[name] ??= { success: 0, failure: 0 });
+      if (message.isError === true) status.failure++;
+      else status.success++;
+    }
+  }
+  return { tools, toolStatus };
+}
+
+/**
+ * File operations of successful tool calls. Mirrors {@link piToolStats}: a call counts when its
+ * matching, non-error `toolResult` arrives, so the result `details` (resolved paths, diffs) are
+ * available to the extractor.
+ */
+function piFileOperations(entries: readonly unknown[], context: PiFileOperationContext): FileOperation[] {
+  const calls = new Map<string, PiToolCall>();
+  const operations: FileOperation[] = [];
+  for (const raw of entries) {
+    const entry = raw as PiEntry;
+    if (!isPiMessageEntry(entry)) continue;
+    const message = entry.message;
+    if (isPiAssistantMessage(message)) {
+      for (const call of extractPiToolCalls(message)) calls.set(call.id, call);
+    } else if (isPiToolResultMessage(message)) {
+      const call = calls.get(message.toolCallId);
+      if (!call) continue;
+      calls.delete(message.toolCallId);
+      if (message.isError === true) continue;
+      operations.push(...extractPiFileOperations(call.name, call.arguments, message.details, context));
+    }
+  }
+  return operations;
 }
 
 /**
@@ -545,8 +580,8 @@ export function synthesizePiRawSession(
   descriptor: SessionDescriptor,
   parsed: ParsedSession
 ): RawSessionData {
-  const lines = piConversationLines(parsed);
-  const timestamps = lines.map(piLineTimestamp).filter((n): n is number => n !== null);
+  const lines = piConversationEntries(parsed) as PiSessionLine[];
+  const timestamps = lines.map(piEntryTimestamp).filter((n): n is number => n !== null);
   const meta = parsed.metadata as { projectPath?: string } | undefined;
 
   const models = lines
@@ -554,7 +589,33 @@ export function synthesizePiRawSession(
     .map((l) => l.message?.responseModel ?? l.message?.model)
     .filter((m): m is string => !!m);
 
-  return buildNativeRawSession(agentName, descriptor, parsed, {
+  // The Pi adapter attaches no metrics today, so derive them from the fork-deduplicated lines —
+  // otherwise every native Pi session reports zero tools, skills and agents. Anything the
+  // adapter does supply wins. Child transcripts (omp sub-agent runs) contribute file operations
+  // and skill/agent names; turns, tools, timestamps and models stay parent-only.
+  const children = (parsed.subagents ?? [])
+    .filter((s) => s.agentType === PI_SUBAGENT_RUN && Array.isArray(s.messages))
+    .map((s) => s.messages as unknown[]);
+  const fileOpContext: PiFileOperationContext = {
+    cwd: meta?.projectPath ?? descriptor.projectPath,
+    sessionDir: dirname(descriptor.filePath),
+  };
+  const fileOperations = [lines, ...children].flatMap((entries) => piFileOperations(entries, fileOpContext));
+  const { skillInvocations, agentInvocations } = sumPiNamedInvocations(
+    [lines, ...children].map(extractPiNamedInvocations)
+  );
+  const withMetrics: ParsedSession = {
+    ...parsed,
+    metrics: {
+      ...piToolStats(lines),
+      ...(fileOperations.length > 0 && { fileOperations }),
+      ...(Object.keys(skillInvocations).length > 0 && { skillInvocations }),
+      ...(Object.keys(agentInvocations).length > 0 && { agentInvocations }),
+      ...parsed.metrics,
+    },
+  };
+
+  return buildNativeRawSession(agentName, descriptor, withMetrics, {
     // The adapter reads cwd from the transcript's own session header, which is authoritative:
     // `--session <path>` can run Pi under a directory other than the one it was launched from.
     cwd: meta?.projectPath ?? descriptor.projectPath ?? 'Unknown',
@@ -583,7 +644,7 @@ export function synthesizeRawSession(
   if (isCodexFamilyAgent(agentName)) {
     return synthesizeCodexRawSession(agentName, descriptor, parsed);
   }
-  if (isPiAgent(agentName)) {
+  if (isPiFamilyAgent(agentName)) {
     return synthesizePiRawSession(agentName, descriptor, parsed);
   }
   const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
@@ -601,7 +662,17 @@ export function synthesizeRawSession(
   });
 }
 
-/** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
+/**
+ * Number of days from a filter's fromDate to now (for the discovery window).
+ *
+ * When fromDate is absent (no lower bound requested — whether or not sessionId is set), this
+ * stays at 3650 ("effectively all time") rather than deferring to each adapter's own ~30-day
+ * default (CR-003): a sessionId-scoped request still needs discover() to find the target file
+ * regardless of its age — the memory-safety fix is the parse-time `scoped` short-circuit in
+ * loadNativeSessions, not a narrower discovery window — and an unscoped/broad report must keep
+ * its pre-existing "all native history" default rather than silently losing anything older
+ * than ~30 days.
+ */
 function windowDays(filter?: AnalyticsFilter): number {
   if (filter?.fromDate) {
     const days = Math.ceil((Date.now() - filter.fromDate.getTime()) / 86_400_000);
@@ -623,12 +694,12 @@ interface PiTranscript {
 /** Parse every discovered Pi transcript once and resolve the fork source each header names. */
 async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoaderDeps): Promise<PiTranscript[]> {
   const piDiscoveredPaths = new Set(
-    discovered.filter((d) => isPiAgent(d.agentName)).map((d) => deps.realPath(d.descriptor.filePath))
+    discovered.filter((d) => isPiFamilyAgent(d.agentName)).map((d) => deps.realPath(d.descriptor.filePath))
   );
 
   const transcripts: PiTranscript[] = [];
   for (const { agentName, descriptor } of discovered) {
-    if (!isPiAgent(agentName)) {
+    if (!isPiFamilyAgent(agentName)) {
       continue;
     }
     const parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
@@ -720,6 +791,12 @@ export async function loadNativeSessions(
 ): Promise<RawSessionData[]> {
   const tracked = deps.trackedLogPaths();
   const discovered = await deps.discover(windowDays(filter));
+  // A session-scoped request needs exactly one file's content, never the rest of the window —
+  // narrow here, before any parse (including the per-family passes below), so report generation
+  // for one session never pays the memory cost of the full discovery window.
+  const scoped = filter?.sessionId
+    ? discovered.filter(({ descriptor }) => descriptor.sessionId === filter.sessionId)
+    : discovered;
 
   // Parse each Codex session ONCE (cached for reuse below) and collect the child thread IDs each
   // parent references via spawn/wait collaboration events, so those sub-agent rollouts are not
@@ -727,7 +804,7 @@ export async function loadNativeSessions(
   // readCodexSubagentUsage in the cost enricher).
   const codexParsed = new Map<string, ParsedSession | null>();
   const codexChildThreads = new Set<string>();
-  for (const { agentName, descriptor } of discovered) {
+  for (const { agentName, descriptor } of scoped) {
     if (!isCodexFamilyAgent(agentName)) {
       continue;
     }
@@ -742,17 +819,30 @@ export async function loadNativeSessions(
 
   // Same shape for Pi, one level up: parse each transcript ONCE, then drop the `/fork`
   // continuations the adapter already folded into the transcript they grew out of.
-  const piTranscripts = await readPiTranscripts(discovered, deps);
+  // Fold over the FULL discovery window — never just `scoped` — so a fork's data still reaches
+  // its root when the request targets the root's sessionId. But only pay that cost when the
+  // request actually concerns a Pi session (or lists broadly, filter unset): parsing every
+  // discovered Pi transcript to serve a Claude/Codex-scoped report would reintroduce the same
+  // unbounded-parse OOM risk this ticket exists to fix, just shifted onto Pi volume.
+  const needsPiFamily =
+    !filter?.sessionId || scoped.some(({ agentName }) => isPiFamilyAgent(agentName));
+  const piTranscripts = needsPiFamily ? await readPiTranscripts(discovered, deps) : [];
   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
   const piForkedChildren = foldPiForkFamilies(piTranscripts);
 
   const out: RawSessionData[] = [];
-  for (const { agentName, descriptor } of discovered) {
+  for (const { agentName, descriptor } of scoped) {
     if (isCodexFamilyAgent(agentName) && codexChildThreads.has(descriptor.sessionId)) {
       continue; // linked sub-agent rollout — already counted inside its parent
     }
-    if (isPiAgent(agentName) && piForkedChildren.has(deps.realPath(descriptor.filePath))) {
+    if (
+      !filter?.sessionId &&
+      isPiFamilyAgent(agentName) &&
+      piForkedChildren.has(deps.realPath(descriptor.filePath))
+    ) {
       continue; // forked continuation — already counted inside the transcript it grew out of
+      // (only when listing broadly; a request scoped to this exact sessionId wants ITS data,
+      // not to be silently absorbed into the root it would otherwise fold into)
     }
     if (tracked.has(deps.realPath(descriptor.filePath))) {
       continue; // already tracked by CodeMie — avoid double counting
@@ -760,7 +850,7 @@ export async function loadNativeSessions(
     let parsed: ParsedSession | null;
     if (isCodexFamilyAgent(agentName)) {
       parsed = codexParsed.get(descriptor.filePath) ?? null;
-    } else if (isPiAgent(agentName)) {
+    } else if (isPiFamilyAgent(agentName)) {
       parsed = piByRealPath.get(deps.realPath(descriptor.filePath))?.parsed ?? null;
     } else {
       parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);

@@ -5,11 +5,13 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  buildCompactionDoneEvent,
   collectClientVersions,
   collectCompactions,
   collectEditLineStats,
   countTurns,
   latestTitle,
+  type Compaction,
   type SignalLine,
 } from '../session-signals.js';
 
@@ -61,7 +63,7 @@ describe('collectEditLineStats', () => {
   it('counts the lines of a created file, without counting a trailing newline as a line', () => {
     const create = (content: string): SignalLine => ({
       type: 'user',
-      toolUseResult: { type: 'create', content },
+      toolUseResult: { type: 'create', structuredPatch: [], originalFile: null, content },
     });
     expect(collectEditLineStats([create('a\nb\nc')]).linesAdded).toBe(3);
     expect(collectEditLineStats([create('a\nb\nc\n')]).linesAdded).toBe(3);
@@ -69,9 +71,61 @@ describe('collectEditLineStats', () => {
     expect(collectEditLineStats([create('a\nb')]).linesRemoved).toBe(0);
   });
 
+  it('sums a new-file Write and a later Edit of the same session', () => {
+    const stats = collectEditLineStats([
+      {
+        type: 'user',
+        toolUseResult: {
+          type: 'create',
+          structuredPatch: [],
+          originalFile: null,
+          content: 'one\ntwo\nthree\nfour\nfive\n',
+        },
+      },
+      patchResult(['-old', '+new']),
+    ]);
+    expect(stats).toEqual({ linesAdded: 6, linesRemoved: 1 });
+  });
+
+  it('counts an overwrite (type update) by its patch', () => {
+    expect(
+      collectEditLineStats([
+        {
+          type: 'user',
+          toolUseResult: { type: 'update', structuredPatch: [{ lines: ['-a', '+b', '+c'] }] },
+        },
+      ])
+    ).toEqual({ linesAdded: 2, linesRemoved: 1 });
+  });
+
+  it('counts an overwrite that changed nothing (type update, empty patch) as zero, not by its content', () => {
+    expect(
+      collectEditLineStats([
+        { type: 'user', toolUseResult: { type: 'update', structuredPatch: [], content: 'a\nb\n' } },
+      ])
+    ).toEqual({ linesAdded: 0, linesRemoved: 0 });
+  });
+
+  it('counts a create that carries a non-empty patch by its patch', () => {
+    expect(
+      collectEditLineStats([
+        { type: 'user', toolUseResult: { type: 'create', structuredPatch: [{ lines: ['+a', '+b'] }] } },
+      ])
+    ).toEqual({ linesAdded: 2, linesRemoved: 0 });
+  });
+
+  it('counts a create without a structuredPatch field by its content', () => {
+    expect(
+      collectEditLineStats([{ type: 'user', toolUseResult: { type: 'create', content: 'a\nb\nc\n' } }])
+    ).toEqual({ linesAdded: 3, linesRemoved: 0 });
+  });
+
   it('skips a result of type create that has no string content', () => {
     expect(
       collectEditLineStats([{ type: 'user', toolUseResult: { type: 'create' } }])
+    ).toEqual({ linesAdded: null, linesRemoved: null });
+    expect(
+      collectEditLineStats([{ type: 'user', toolUseResult: { type: 'create', structuredPatch: [] } }])
     ).toEqual({ linesAdded: null, linesRemoved: null });
   });
 
@@ -216,6 +270,30 @@ describe('collectCompactions', () => {
       post_tokens: null,
       dropped_tokens: null,
       trigger: '',
+    });
+  });
+});
+
+describe('buildCompactionDoneEvent', () => {
+  it('builds agent.session.compact.done from a Compaction, using its end as the record timestamp', () => {
+    const compaction: Compaction = {
+      start: '2026-10-01T00:09:00.000Z',
+      end: '2026-10-01T00:10:00.000Z',
+      duration_ms: 60_000,
+      trigger: 'auto',
+      pre_tokens: 1000,
+      post_tokens: 300,
+      dropped_tokens: 700,
+    };
+
+    expect(buildCompactionDoneEvent('sid-1', compaction)).toEqual({
+      type: 'agent.session.compact.done',
+      session_id: 'sid-1',
+      pre_tokens: 1000,
+      post_tokens: 300,
+      dropped_tokens: 700,
+      duration_ms: 60_000,
+      timestamp: '2026-10-01T00:10:00.000Z',
     });
   });
 });

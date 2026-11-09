@@ -56,6 +56,22 @@ describe('SessionStore.indexSessionsByExternalId', () => {
     expect(readFile).not.toHaveBeenCalledWith(join(SESSIONS_DIR, 'notes.txt'), 'utf-8');
   });
 
+  it('leaves out the records keep rejects, indexing another record of the same external id', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    const files: Record<string, string> = {
+      'a.json': sessionFile('a', 'claude-desktop', 'local_1'),
+      'b.json': sessionFile('b', 'claude-desktop', 'local_1'),
+    };
+    vi.mocked(readdir).mockResolvedValue(Object.keys(files) as never);
+    vi.mocked(readFile).mockImplementation((async (path: string) =>
+      files[basename(path)]) as never);
+
+    const { SessionStore } = await import('../SessionStore.js');
+    const index = await new SessionStore().indexSessionsByExternalId('claude-desktop', (session) => session.sessionId !== 'a');
+
+    expect(index).toEqual(new Map([['local_1', 'b']]));
+  });
+
   it('skips unreadable session files instead of failing the index', async () => {
     const { readdir, readFile } = await import('fs/promises');
     vi.mocked(readdir).mockResolvedValue(['broken.json', 'ok.json'] as never);

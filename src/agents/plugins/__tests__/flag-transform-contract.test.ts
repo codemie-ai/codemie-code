@@ -96,7 +96,7 @@ describe('flag-transform contract — --task', () => {
     // enrichArgs detects --task as a prompt indicator and adds --allow-all-tools
     // for non-interactive auto-approval, then --task is rewritten to --prompt.
     expect(await finalArgs(CopilotCliPluginMetadata, ['--task', 'do X'])).toEqual([
-      '--prompt', 'do X', '--allow-all-tools', '--model', 'test-model',
+      '--prompt', 'do X', '--allow-all-tools', '--model', 'test-model', '--session-id', 'test-session-id',
     ]);
   });
 });

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-05T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 48,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Evidence core (consent-store, stop-marker, publication-contract, routing, stamp, classify), claude-code-otlp plugin/notice/preferences, SSO proxy otlp-spool (forwarder, tick-processor, policy-cache, delivery-state), header-injection plugin, and CLI analytics command: multiple subsystems, new abstractions." },
+    { "dimension": "technical_risk", "reason": "Privacy-sensitive consent and private-session semantics, monotonic stop marker and connection incarnation, contract negotiation and header stamping, forwarder/tick concurrency. Live manual acceptance (TUI notice visibility, interactive cd->/clear) is still pending the user and is not counted as verified." },
+    { "dimension": "file_change_estimate", "reason": "48 files changed (2897 insertions, 37 deletions) across src, unit tests and a new tests/e2e/subscription-analytics PG17 harness; mostly additive." },
+    { "dimension": "affected_layers", "reason": "CLI command, plugin hook service logic, file-based persistence (consent/stop marker/spool state), proxy infrastructure, and external backend publication contract; no new dependencies." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk held at XL: consent/privacy handling and stop-marker state transitions are security-sensitive.",
+    "Multi-subsystem change: scored on diffstat and changed-file paths only; file contents were not re-read (token economy)."
+  ],
+  "split_recommendation": null
+}

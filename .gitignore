@@ -17,6 +17,7 @@ artifacts/
 # IDE
 .vscode/
 .idea/
+.air/
 *.swp
 *.swo
 *~

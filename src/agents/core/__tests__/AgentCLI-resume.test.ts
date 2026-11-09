@@ -5,6 +5,9 @@ import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import * as auditModule from '../session/session-origin-audit.js';
 import { logger } from '../../../utils/logger.js';
+import { CopilotCliPlugin } from '../../plugins/copilot-cli/copilot-cli.plugin.js';
+import { OpenCodePlugin } from '../../plugins/opencode/opencode.plugin.js';
+import { CodeMieCodePlugin } from '../../plugins/codemie-code.plugin.js';
 
 class ExitError extends Error {
   constructor(public code?: string | number | null) {
@@ -269,5 +272,104 @@ describe('handleRun resume ownership flow', () => {
       }),
       undefined,
     );
+  });
+});
+
+describe('handleRun hands the launch\'s resume id to the plugin', () => {
+  const copilotExtract = CopilotCliPlugin.prototype.extractNativeResumeId;
+  const opencodeExtract = OpenCodePlugin.prototype.extractNativeResumeId;
+  const codemieCodeExtract = CodeMieCodePlugin.prototype.extractNativeResumeId;
+  const previousResumeId = process.env.CODEMIE_RESUME_SESSION_ID;
+
+  beforeEach(() => {
+    vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'setAgentName').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'setProfileName').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    if (previousResumeId === undefined) delete process.env.CODEMIE_RESUME_SESSION_ID;
+    else process.env.CODEMIE_RESUME_SESSION_ID = previousResumeId;
+    vi.restoreAllMocks();
+  });
+
+  async function resumeEnvOf(
+    args: string[],
+    options: Record<string, unknown>,
+    extractNativeResumeId?: (args: string[]) => string | undefined
+  ): Promise<string | undefined> {
+    mockHandleRunDependencies();
+    const run = vi.fn().mockResolvedValue(undefined);
+    const cli = new AgentCLI(createAdapter({ run, extractNativeResumeId })) as unknown as {
+      handleRun: (args: string[], options: Record<string, unknown>) => Promise<void>;
+    };
+    await cli.handleRun(args, options);
+    return (run.mock.calls[0][1] as Record<string, string>).CODEMIE_RESUME_SESSION_ID;
+  }
+
+  it.each([
+    ['--resume <id>', [], { resume: 'b7e2c1d0-1111-4222-8333-444455556666' }, copilotExtract, 'b7e2c1d0-1111-4222-8333-444455556666'],
+    ['copilot -r <id>', ['-r', 'b7e2c1d0-1111-4222-8333-444455556666'], {}, copilotExtract, 'b7e2c1d0-1111-4222-8333-444455556666'],
+    ['copilot --session-id <id>', ['--session-id', 'copilot-native-1'], {}, copilotExtract, 'copilot-native-1'],
+    ['copilot --session-id=<id>', ['--session-id=copilot-native-2'], {}, copilotExtract, 'copilot-native-2'],
+    ['opencode --session <ses_>', ['--session', 'ses_abc123'], {}, opencodeExtract, 'ses_abc123'],
+    ['opencode --session=<ses_>', ['--session=ses_def456'], {}, opencodeExtract, 'ses_def456'],
+    ['codemie-code --session <ses_>', ['--session', 'ses_ghi789'], {}, codemieCodeExtract, 'ses_ghi789'],
+  ])('%s → the id', async (_form, args, options, extract, expected) => {
+    expect(await resumeEnvOf(args as string[], options, extract)).toBe(expected);
+  });
+
+  it('a launch that names no session → empty', async () => {
+    expect(await resumeEnvOf(['--continue'], {}, opencodeExtract)).toBe('');
+  });
+
+  it('a launch inside an agent whose env carries a parent id, naming no session → empty, the parent value overwritten', async () => {
+    process.env.CODEMIE_RESUME_SESSION_ID = 'ses_parent';
+
+    expect(await resumeEnvOf([], {}, opencodeExtract)).toBe('');
+  });
+
+  async function continueEnvOf(args: string[]): Promise<string | undefined> {
+    mockHandleRunDependencies();
+    const run = vi.fn().mockResolvedValue(undefined);
+    const continuesNativeSession = OpenCodePlugin.prototype.continuesNativeSession;
+    const cli = new AgentCLI(createAdapter({ run, continuesNativeSession })) as unknown as {
+      handleRun: (args: string[], options: Record<string, unknown>) => Promise<void>;
+    };
+    await cli.handleRun(args, {});
+    return (run.mock.calls[0][1] as Record<string, string>).CODEMIE_CONTINUE_SESSION;
+  }
+
+  it('a continued launch (`--continue`) → the continue flag "1" in the spawned env', async () => {
+    expect(await continueEnvOf(['--continue'])).toBe('1');
+  });
+
+  it('a launch that does not continue → an empty continue flag', async () => {
+    expect(await continueEnvOf([])).toBe('');
+  });
+
+  it('a launch that does not continue inside a parent whose env carries "1" → the parent value overwritten', async () => {
+    const previous = process.env.CODEMIE_CONTINUE_SESSION;
+    process.env.CODEMIE_CONTINUE_SESSION = '1';
+    try {
+      expect(await continueEnvOf([])).toBe('');
+    } finally {
+      if (previous === undefined) delete process.env.CODEMIE_CONTINUE_SESSION;
+      else process.env.CODEMIE_CONTINUE_SESSION = previous;
+    }
+  });
+});
+
+describe.each([
+  ['opencode', OpenCodePlugin.prototype.continuesNativeSession],
+  ['codemie-code', CodeMieCodePlugin.prototype.continuesNativeSession],
+])('%s continuesNativeSession reads flags only before a bare --', (_agent, continuesNativeSession) => {
+  it.each([
+    [['-c'], true],
+    [['--', '-c'], false],
+    [['--continue', '--', 'x'], true],
+  ])('%j → %s', (args, expected) => {
+    expect(continuesNativeSession(args)).toBe(expected);
   });
 });

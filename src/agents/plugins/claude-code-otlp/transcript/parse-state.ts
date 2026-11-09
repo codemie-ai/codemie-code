@@ -8,9 +8,11 @@
  * state to disk between parse passes, keyed by session id.
  */
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
+import { acquirePidLock } from '@/utils/pid-lock.js';
+import type { SessionEnvFields } from '../event-fields/session-env-fields.js';
 
 export interface OpenUsageRequest {
   /** API request id (`req_...`); `''` when the transcript has none (e.g. behind the proxy). */
@@ -39,6 +41,12 @@ export interface OpenUsageRequest {
   stopReason: string;
   isApiError: boolean;
   gitBranch: string;
+  /** The line's `requestedModel` (Claude Code 2.1.295+), in the form SessionStart `model` and the
+   *  model-switch hooks use; `''` when the line has none; absent in a record saved before it existed. */
+  requestedModel?: string;
+  /** The line's `attributionSkill` — the skill or command Claude Code attributes the request to;
+   *  `''` when the line has none; absent in a record saved before it existed. */
+  attributionSkill?: string;
 }
 
 export interface TranscriptParseState {
@@ -47,6 +55,46 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
+  gitHeadStart: string;
+  sessionStartedAt: string;
+  lastSessionEnvFields: SessionEnvFields | null;
+  /** The `end` timestamp of the last `compact_boundary` line reported as `agent.session.compact.done`
+   *  — `''` when none yet. Not an offset: `openPostCompactPass` scans the whole transcript for
+   *  `compact_boundary` lines independently of `mainOffset`, since a sibling hook can advance
+   *  `mainOffset` past one without ever looking for it. */
+  lastCompactionEnd: string;
+  /** `uuid`s of the main transcript's `user` / `assistant` lines already counted, so a re-written
+   *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
+   *  a state saved before it existed. */
+  seenMessageUuids?: string[];
+  /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
+   *  absent in a state saved before it existed. */
+  deferredAgentIds?: string[];
+  /** The file facts of each deferred subagent, by `agentId`: its actual transcript path (which
+   *  directory discovery may not find, or may not find yet) and the ids that resolved it, so a later
+   *  `Stop`/`SessionEnd`, also after a restart, resolves the same candidate. */
+  deferredSubagentFiles?: Record<
+    string,
+    {
+      filePath: string;
+      toolUseId?: string;
+      agentType?: string;
+      spawnDepth?: number;
+      description?: string;
+      /** Positive skill evidence already established for a resolved subagent whose file had no
+       *  content yet; kept so the late content is sent with that scope. */
+      skillName?: string;
+      /** Scope already established and sent with: later passes only append new usage (stat vs
+       *  offset) and never resolve this subagent again. Absent in older state = unsettled. */
+      settled?: boolean;
+      /** The subagent's `promptId`, once its file shows one (for the slash-fork confirmation). */
+      promptId?: string;
+      /** Its file head was read completely: no further probing. */
+      headDone?: boolean;
+      /** File size at the last incomplete head probe (probe again only after it changed). */
+      headSize?: number;
+    }
+  >;
 }
 
 /**
@@ -59,6 +107,10 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
+    gitHeadStart: '',
+    sessionStartedAt: '',
+    lastSessionEnvFields: null,
+    lastCompactionEnd: '',
   };
 }
 
@@ -104,40 +156,16 @@ export async function saveParseState(sessionId: string, state: TranscriptParseSt
   await rename(tmpPath, filePath);
 }
 
-const LOCK_RETRY_MS = 25;
-const LOCK_WAIT_BUDGET_MS = 10_000;
-const EMPTY_LOCK_STALE_MS = 5_000;
-// Windows reports EPERM/EACCES/EBUSY, not EEXIST, when creating a lock whose deletion is pending.
-const LOCK_CONTENTION_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
-
 function getLockPath(sessionId: string): string {
   return `${getParseStatePath(sessionId)}.lock`;
 }
 
-/** A pid we cannot signal for any reason other than ESRCH (e.g. EPERM) is treated as alive. */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-}
-
-/** Remove the lock only if it still holds `expected`, so a lock created meanwhile is never removed. */
-async function removeLockIfUnchanged(lockPath: string, expected: string): Promise<void> {
-  if ((await readFile(lockPath, 'utf-8').catch(() => null)) === expected) {
-    await rm(lockPath, { force: true }).catch(() => {});
-  }
-}
-
 /**
  * Acquire the per-session parse-state lock across concurrent hook processes (e.g. sibling
- * `SubagentStop` fires for the same session), via an exclusive-create lock file holding the
- * owner's pid. Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
+ * `SubagentStop` fires for the same session), via {@link acquirePidLock} in `wait` mode.
+ * Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
  *
- * A lock is reclaimed only when its owner pid is dead, never by age, so a slow holder keeps it.
- * If the lock is not acquired within {@link LOCK_WAIT_BUDGET_MS}, this throws rather than
+ * If the lock is not acquired within the helper's wait budget, this throws rather than
  * returning a release function; the caller skips its pass and the next hook resumes from the
  * saved offsets.
  *
@@ -148,43 +176,11 @@ export async function acquireParseStateLock(sessionId: string): Promise<() => Pr
   const lockPath = getLockPath(sessionId);
   await mkdir(dirname(lockPath), { recursive: true });
 
-  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
-  for (;;) {
-    try {
-      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
-      break;
-    } catch (err) {
-      if (!LOCK_CONTENTION_CODES.has((err as NodeJS.ErrnoException).code ?? '')) {
-        throw err;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
-      }
-
-      const holder = await readFile(lockPath, 'utf-8').catch(() => null);
-      const holderPid = Number.parseInt(holder ?? '', 10);
-      if (holder !== null && !Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
-        await removeLockIfUnchanged(lockPath, holder);
-        continue;
-      }
-      if (holder === '') {
-        // Created but not yet written, or its creator died in between.
-        const info = await stat(lockPath).catch(() => null);
-        if (info && Date.now() - info.mtimeMs > EMPTY_LOCK_STALE_MS) {
-          await removeLockIfUnchanged(lockPath, holder);
-          continue;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
-    }
+  const lock = await acquirePidLock(lockPath, { mode: 'wait', pidOnlyLiveness: true });
+  if (!lock) {
+    throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
   }
-
-  let released = false;
-  return async () => {
-    if (released) return;
-    released = true;
-    await rm(lockPath, { force: true }).catch(() => {});
-  };
+  return () => lock.release();
 }
 
 /**

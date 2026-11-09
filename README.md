@@ -179,6 +179,14 @@ If npm reports `404 Not Found`, verify that you are installing `@codemieai/code`
 
 If the installer says `@codemieai/code` is not visible in the registry, ask IT to expose the package through the approved virtual npm repository.
 
+On Windows, run the read-only diagnostic script to collect system requirements, user rights, PATH and installation state, and network reachability in one report:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install\windows\clidiag.ps1
+```
+
+Group Policy PATH checks are skipped by default; add `-RunGpoCheck` to include them. See [install/README.md](install/README.md#windows-diagnostics-installwindowsclidiagps1) for all parameters.
+
 ### From Source
 
 ```bash
@@ -536,6 +544,7 @@ codemie-pi --resume <session-id>              # open a specific session
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
 | **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
@@ -603,7 +612,74 @@ Existing CodeMie-tracked sessions and other agents are still included as usual.
 Use an absolute path for scheduled jobs and set the variable in the job's environment;
 an alias or function in your interactive shell does not configure the scheduler.
 
-For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
+### Claude Code OTLP analytics
+
+Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
+
+```bash
+# Track every project (the default; same as --scope user). Asks for confirmation first.
+codemie proxy connect --claude-code-otlp
+
+# Track only the current project; run from its root (explicit opt-in)
+codemie proxy connect --claude-code-otlp --scope project
+
+# Unattended or CI run: skip the confirmation prompt
+codemie proxy connect --claude-code-otlp --silent
+
+# Optional: use the preview profile for this command only
+codemie proxy connect --claude-code-otlp --scope project --profile preview
+```
+
+| Option | Description |
+|---|---|
+| `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
+| `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
+| `--silent` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
+| `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
+| `--force` | Discard an invalid project allowlist so setup can continue; valid allowlists are not changed. |
+| `--verbose` | Show detailed command output. |
+
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--silent` writes the Global scope and replaces any listed projects; with `--scope project --silent` the current project is added and existing entries are kept.
+
+Disconnect a project or remove the integration entirely:
+
+```bash
+# Stop tracking the current project
+codemie proxy disconnect --claude-code-otlp --scope project
+
+# Remove the Claude Code hooks, OTel environment variables, and project allowlist
+codemie proxy disconnect --claude-code-otlp
+```
+
+Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
+
+```bash
+# Stop all analytics collection; hooks stay installed
+codemie proxy analytics disable
+
+# Exclude the current project, even when Global scope is enabled
+codemie proxy analytics exclude
+
+# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+codemie proxy analytics status
+```
+
+`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
+
+`include`/`enable` only undo `disable`/`exclude`; they do not add a project to the Project-scope allowlist. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
+
+For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
+
+The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+
+```bash
+# Copilot CLI or VS Code Copilot Chat
+codemie proxy analytics disable --copilot-cli-otlp
+codemie proxy analytics exclude --copilot-chat-otlp
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
 
 ## Codebase Memory MCP
 
@@ -692,6 +768,7 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 ```bash
 codemie proxy status
 codemie proxy inspect desktop --limit 5
+codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
 

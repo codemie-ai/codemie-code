@@ -4,6 +4,8 @@
  * Type definitions for metrics sync API integration
  */
 
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
 /**
  * Base identity fields shared by all metric types
  */
@@ -152,8 +154,16 @@ export interface MetricsApiConfig {
   cookies?: string;      // SSO cookies (session token)
   apiKey?: string;       // API key for localhost development (user-id header)
   timeout?: number;      // Request timeout (ms)
-  retryAttempts?: number; // Max retry attempts
+  retryAttempts?: number; // RETRIES after the first request (0 = one request, no retry); default 3
   retryDelays?: number[]; // Backoff delays [1s, 2s, 5s]
   version?: string;      // CLI version (from CODEMIE_CLI_VERSION env var)
   clientType?: string;   // Client type (codemie-claude, gemini-cli, etc.)
+  /**
+   * Epoch ms past which no attempt or backoff starts; a request's timeout is capped by what is left.
+   * Stopping throws SyncStoppedError('deadline').
+   */
+  deadlineMs?: number;
+  /** Aborts the request in flight and the backoff at once; stopping throws SyncStoppedError('aborted'). */
+  abortSignal?: AbortSignal;
+  credentialsSuperseded?: CredentialsSupersededCheck; // True when a newer sign-in replaced the cookies that were sent
 }
