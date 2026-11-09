@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-17038-local-proxy-routing-proof",
+  "head": "8faf86b4da01d449d82efff160d1f78d7a61613d",
+  "runner": "npm",
+  "started_at": "2026-11-09T15:57:40Z",
+  "completed_at": "2026-11-09T16:12:02Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2940,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10154,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7003,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 21895,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 171834,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "6 failures in 2 files unrelated to diff: hook.session-delivery.test.ts (timing assertions 12775<12000, 2100<2000) and copilot-managed-report.test.ts (4x 30s timeouts). Both files pass in isolation (174/174) - load-sensitive, but recorded as FAIL per exit code."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 84333,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1093,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: exit 0 with output 'No staged changes to scan' (script scans only git diff --staged). Branch content scanned by ci-secrets-branch instead; to enable this gate stage the changes."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2670,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11529,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 146330,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Composite; failed at vitest --project unit: copilot-managed-report.test.ts 2x 30s timeouts (same file as unit gate). license-check, lint, build passed inside it."
+    },
+    {
+      "id": "hook-lint-staged-eslint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 5610,
+      "command": "npx eslint --max-warnings=0 --no-warn-ignored src/agents/core/evidence/__tests__/classify.test.ts src/agents/core/evidence/__tests__/funding-route.test.ts src/agents/core/evidence/__tests__/routing.test.ts src/agents/core/evidence/routing.ts src/agents/plugins/claude-code-otlp/__tests__/claude-evidence-inputs.test.ts src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts src/agents/plugins/claude-code-otlp/event-fields/local-proxy.ts",
+      "exit_code": 0,
+      "notes": "From .husky/pre-commit -> npx lint-staged (.lintstagedrc.mjs '*.ts' eslint step), applied to the 7 .ts files changed vs merge base."
+    },
+    {
+      "id": "hook-lint-staged-tests",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 4692,
+      "command": "node ./node_modules/vitest/vitest.mjs run --passWithNoTests <29 __tests__ files adjacent to changed .ts files per .lintstagedrc.mjs>",
+      "exit_code": 0,
+      "notes": "From .lintstagedrc.mjs '*.ts' vitest step: 29 test files, 640 tests passed."
+    },
+    {
+      "id": "hook-commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 971,
+      "command": "npx --no -- commitlint --from c77969d8d8b1a39a3ada7d49cc67d0972e485310 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "From .husky/commit-msg; covers all 3 branch commits (guide commitlint:last covers only HEAD~1..HEAD)."
+    },
+    {
+      "id": "ci-secrets-branch",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1162,
+      "command": "git diff c77969d8d8b1a39a3ada7d49cc67d0972e485310...HEAD | docker run --rm -i -v $PWD/.gitleaks.toml:/gitleaks.toml ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Local stand-in for CI reusable-secrets-detection job (gitleaks v8.30.1, repo .gitleaks.toml) over the merge-base...HEAD diff; no leaks found."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Requires a Windows runner; not reachable locally. CRLF repro hint in quality-gates.md. Only CI can settle this."
+    },
+    {
+      "id": "hook-license-check-package-json",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run license-check",
+      "exit_code": null,
+      "notes": "lint-staged 'package.json' rule; package.json not in diff. Equivalent command already ran as guide gate license-check (PASS)."
+    }
+  ],
+  "failures": {
+    "unit": "    122|     const by = (id: string) => r.sessions.find((s) => s.sessionId === …\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > keeps the report shape the Collector consumes\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:134:3\n    132|   });\n    133|\n    134|   it('keeps the report shape the Collector consumes', async () => {\n       |   ^\n    135|     const r = await report('copilot-cli');\n    136|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > leaves Claude output unchanged by the Copilot data\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:148:3\n    146|   });\n    147|\n    148|   it('leaves Claude output unchanged by the Copilot data', async () =>…\n       |   ^\n    149|     const r = await report('claude');\n    150|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics cost over copilot runs and kept sessions > prices a resumed copilot run from its own window of the shared native session, not into the session it resumed\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:178:3\n    176|   }\n    177|\n    178|   it('prices a resumed copilot run from its own window of the shared n…\n       |   ^\n    179|     const base = NOW - HOUR / 2;\n    180|     const file = resumedSession(base);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯\n\n\n Test Files  2 failed | 528 passed (530)\n      Tests  6 failed | 9316 passed (9322)\n   Start at  17:58:35\n   Duration  169.57s (transform 48.69s, setup 0ms, import 374.64s, tests 556.69s, environment 120ms)\n\n",
+    "ci": "\n(node:80220) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:81268) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[33m⚠️  CodeMie profile \"work\" has no project of its own; this session uses project \"config-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m(node:84901) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n- Fetching user integrations...\n- Fetching user integrations...\n\u001b[33m⚠️  CodeMie profile \"g\" has no project of its own; this session uses project \"profile-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K ❯ |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts (8 tests | 2 failed) 125605ms\n     × reports correct turns, model and token totals, and keeps a zero-turn session at 0 turns 30204ms\n     × keeps the report shape the Collector consumes 30107ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > reports correct turns, model and token totals, and keeps a zero-turn session at 0 turns\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:120:3\n    118|   });\n    119|\n    120|   it('reports correct turns, model and token totals, and keeps a zero-…\n       |   ^\n    121|     const r = await report('copilot-cli');\n    122|     const by = (id: string) => r.sessions.find((s) => s.sessionId === …\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > keeps the report shape the Collector consumes\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:134:3\n    132|   });\n    133|\n    134|   it('keeps the report shape the Collector consumes', async () => {\n       |   ^\n    135|     const r = await report('copilot-cli');\n    136|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  1 failed | 529 passed (530)\n      Tests  2 failed | 9320 passed (9322)\n   Start at  18:03:22\n   Duration  129.09s (transform 36.13s, setup 0ms, import 224.13s, tests 508.84s, environment 69ms)\n\n"
+  }
+}
