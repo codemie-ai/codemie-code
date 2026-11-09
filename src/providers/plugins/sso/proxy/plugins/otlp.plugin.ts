@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
+import type { ProxyPlugin, PluginContext, ProxyInterceptor, AnalyticsHealthReply } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
@@ -67,6 +67,10 @@ class OtlpInterceptor implements ProxyInterceptor {
     private credentials: SSOCredentials | JWTCredentials | undefined,
     private readonly config: ProxyConfig | undefined
   ) {}
+
+  healthStatus(): AnalyticsHealthReply {
+    return { credentials: areCredentialsStale() ? 'stale' : 'ok' };
+  }
 
   async onProxyStart(): Promise<void> {
     // Recovery pass for anything a previous process left on disk (crash, or a

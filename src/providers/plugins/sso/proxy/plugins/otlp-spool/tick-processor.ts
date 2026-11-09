@@ -2,6 +2,10 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { isStopped, writeNotice } from '@/agents/core/evidence/stop-marker.js';
+import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
+import { holdsCheckpoint, owedStop, tryStop } from './stop-intent.js';
+import { advertisesContract } from './policy-cache.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
@@ -30,6 +34,7 @@ import { heldRetentionMs } from './spool-config.js';
 import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
 import { classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
+import { publicationMode } from './publication-mode.js';
 
 const currentlyForwarding = new Set<string>();
 
@@ -47,12 +52,16 @@ async function stickyPersonalOf(key: string): Promise<boolean> {
 async function tickPolicyState(
   credentials: SSOCredentials | JWTCredentials,
   endpoint: AnalyticsEndpoint,
-  reprobe: boolean
+  reprobe: boolean,
+  sessionId: string
 ): Promise<PolicyState | undefined> {
   const id = endpoint.identity;
   if (!id) return undefined;
   const ns = { ...id, ...(endpoint.profile ? { profile: endpoint.profile } : {}) };
-  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe);
+  // Only a new-contract session needs the backend to advertise the contract (bounded refresh when it does not).
+  const found = await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId));
+  const needContract = (found?.kind === 'existing' || found?.kind === 'created') && found.record.funding_route !== undefined;
+  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe, needContract);
 }
 
 /**
@@ -80,11 +89,23 @@ async function applySessionEvidenceLocked(
   const id = forwarderIdentity(credentials);
   const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
   const heldSince = status.holds?.session?.since;
+  const found = key ? await readRecord(key) : undefined;
+  // A recorded session without a frozen generation cannot prove privacy continuity: suspended whatever the wire protocol.
+  const unproven = (found?.kind === 'existing' || found?.kind === 'created') && !hasScopeEvidence(found.record);
+  if (key && unproven) await tryStop(key, 'scope_unproven', sessionId); // the marker carries the one-shot notice; unproven stays stopped if this fails
+  // A stop whose marker is still unwritten (status.stopIntent) is retried here and keeps the session stopped meanwhile.
+  const owed = key ? owedStop(key, status) : undefined; // an intent, or a previous process's unresolved send checkpoint
+  if (key && owed && (await tryStop(key, owed, sessionId))) {
+    delete status.stopIntent;
+    if (!holdsCheckpoint(key)) delete status.sendCheckpoint; // a previous process's checkpoint is resolved by the marker
+  }
   let decision: TickEvidenceDecision = evaluateSessionEvidence({
     hasHooks: hooksGroupPresent(spool),
     marked: status.evidenceMarked === true,
-    record: key ? await readRecord(key) : undefined,
+    record: found,
     capability: policy?.capability ?? 'unknown',
+    stopped: unproven || (key ? (await isStopped(key)) || owed !== undefined : false),
+    contractAdvertised: policy ? advertisesContract(policy) : false,
     // An unreadable verdict may hide a sticky Personal: treated as Personal (fail closed, never legacy).
     stickyPersonal: key ? await stickyPersonalOf(key) : false,
     preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
@@ -101,15 +122,32 @@ async function applySessionEvidenceLocked(
       return { decision: cls };
     }
     if (cls.action === 'hold') decision = holdOrLose(cls.reason, heldSince, now, heldRetentionMs());
-    else result = cls.result;
+    else if (decision.record.funding_route !== undefined &&
+      !(await publicationMode(key, decision.record, policy ?? { policy: null, capability: 'unknown', usable: false, refreshDue: true }, cls.result))) {
+      decision = holdOrLose('publication_contract_unavailable', heldSince, now, heldRetentionMs());
+    } else result = cls.result;
   }
 
   if (decision.action === 'hold') {
     const since = status.holds?.session?.since ?? now;
     if (status.holds?.session?.reason !== decision.reason) {
       logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
+      // First hold on an unadvertised contract: the user is told once (marker notice; the hold itself may recover).
+      if (decision.reason === 'publication_contract_unavailable' && !heldSince && key) {
+        // Authoritative only when the backend was actually consulted: absent or unknown capability is transient (still held, still bounded).
+        const authoritative = !!policy && policy.capability !== 'unknown';
+        await writeNotice(key, authoritative ? 'hold_contract_unavailable' : 'hold_state_unknown', sessionId).catch(() => undefined);
+        logger.warn(authoritative
+          ? '[otlp-tick] analytics publication held: the backend does not advertise the publication contract'
+          : '[otlp-tick] analytics publication held: the backend capability could not be confirmed');
+      }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };
+  } else if (decision.action === 'lose' && decision.reason === 'publication_contract_unavailable' && key &&
+    !(await tryStop(key, 'hold_expired', sessionId))) {
+    // The required stop is not recorded: the hold stays and the backlog is kept (nothing sends); the next tick retries.
+    decision = { action: 'hold', reason: decision.reason };
+    status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
   } else {
     clearHold(status, 'session');
     if (decision.action === 'lose') {
@@ -179,7 +217,7 @@ export async function processSessionTick(
   const endpoint = areCredentialsStale() ? undefined : await resolveAnalyticsEndpoint(credentials);
   if (endpoint === null) return holdEndpointMismatch(sessionId);
   const reprobe = (await readStatus(sessionId))?.holds?.session?.reason === 'organization_encoding_unsupported';
-  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe) : undefined;
+  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe, sessionId) : undefined;
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);

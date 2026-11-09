@@ -4,6 +4,7 @@ import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
+import type { FundingRoute } from './routing.js';
 import { parseProjectBinding, type ProjectBindingState } from '@/utils/project-binding.js';
 import {
   evidenceRecordIdleDays,
@@ -32,6 +33,14 @@ export interface EvidenceFields {
   api_identity: string;
   owner_hash: string;
   profile?: string;
+  /** Frozen funding evidence: absent = a session recorded before the publication contract (never upgraded). */
+  funding_route?: FundingRoute;
+  /** Only newly recorded sessions may negotiate a legacy wire protocol before their first send. */
+  negotiate_publication?: true;
+  /** Frozen `collection_generation` at the first stamp; absent = 0. */
+  collection_generation?: number;
+  /** Frozen reference of the explicit work-consent entry that applied at the first stamp (no path); absent = no consent. */
+  consent_ref?: string;
   /** Local-only: how the launcher bound `project` (CODEMIE_PROJECT_BINDING); never sent to the backend. */
   projectBinding?: ProjectBindingState;
 }
@@ -72,6 +81,18 @@ export function evidenceDir(): string {
 export function verdictFileName(key: string): string {
   return `${key}.verdict.json`;
 }
+
+/** Publication-stop marker file name for a record key (never matches RECORD_RE). */
+export function stopFileName(key: string): string {
+  return `${key}.stop.json`;
+}
+
+/** Notice-acknowledgement file for a stop marker; swept with it (never matches RECORD_RE or STOP_MARKER_RE). */
+export function stopAckFileName(key: string): string {
+  return `${key}.stop-ack.json`;
+}
+
+export const publicationModeFileName = (key: string): string => `${key}.publication.json`;
 
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
@@ -118,6 +139,11 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (typeof r.routed_via_codemie !== 'boolean') return undefined;
   if (r.routing_proof !== 'proven' && r.routing_proof !== 'unproven') return undefined;
   if (!['linked_folder', 'profile', 'none'].includes(r.project_source as string)) return undefined;
+  if (r.funding_route !== undefined && !['api_based', 'subscription', 'unknown'].includes(r.funding_route as string)) return undefined;
+  if (r.negotiate_publication !== undefined && (r.negotiate_publication !== true || r.funding_route === undefined)) return undefined;
+  if (r.collection_generation !== undefined && !(Number.isSafeInteger(r.collection_generation) && (r.collection_generation as number) >= 0)) return undefined;
+  if (r.consent_ref !== undefined && !(typeof r.consent_ref === 'string' && /^[0-9a-f]{16}$/.test(r.consent_ref))) return undefined;
+  if (r.consent_ref !== undefined && r.funding_route === undefined) return undefined; // consent exists only on the new contract
   if (r.projectBinding !== undefined && !parseProjectBinding(r.projectBinding)) return undefined;
   if (typeof r.created !== 'number' || typeof r.last_used !== 'number') return undefined;
   if (limitViolation(r, raw)) return undefined;
@@ -149,8 +175,32 @@ async function listRecordFiles(): Promise<string[]> {
   }
 }
 
+/** Whether any owner has a readable record for this session (an owner-less outage hook cannot compute the key). Never throws. */
+export async function hasRecordForSession(sessionId: string): Promise<boolean> {
+  return (await recordForSession(sessionId)) !== undefined;
+}
+
+/**
+ * The profile a session's record froze (undefined when the record has none), or `not-recorded`. Narrowed to one backend so another
+ * login's record is never read as this one's. For hook-time evidence captured while the owner is unknown.
+ */
+export async function frozenProfileOf(sessionId: string, apiIdentity: string): Promise<{ profile?: string } | 'not-recorded'> {
+  const r = await recordForSession(sessionId, apiIdentity);
+  return r ? { profile: typeof r.profile === 'string' ? r.profile : undefined } : 'not-recorded';
+}
+
+async function recordForSession(sessionId: string, apiIdentity?: string): Promise<{ profile?: unknown } | undefined> {
+  for (const name of await listRecordFiles()) {
+    try {
+      const r = JSON.parse(await readFile(join(evidenceDir(), name), 'utf-8')) as { session_id?: unknown; api_identity?: unknown; profile?: unknown };
+      if (r.session_id === sessionId && (apiIdentity === undefined || r.api_identity === apiIdentity)) return r;
+    } catch { /* unreadable: not proof */ }
+  }
+  return undefined;
+}
+
 /** Publish via temp + hard link (EEXIST = lost the race); `wx` fallback where link is unsupported. */
-async function publish(finalPath: string, content: string): Promise<'won' | 'lost'> {
+export async function publish(finalPath: string, content: string, opts: { strict?: boolean } = {}): Promise<'won' | 'lost'> {
   const tmp = `${finalPath}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(tmp, content, { mode: 0o600 });
   try {
@@ -158,6 +208,7 @@ async function publish(finalPath: string, content: string): Promise<'won' | 'los
     return 'won';
   } catch (err) {
     if (code(err) === 'EEXIST') return 'lost';
+    if (opts.strict) throw err; // atomic-only (stop marker, publication mode): never expose a partial final file
     // ponytail: wx fallback can expose a partially written file to readers; losers retry the read.
     try {
       await writeFile(finalPath, content, { flag: 'wx', mode: 0o600 });
@@ -247,12 +298,15 @@ export async function sweepRecords(
     entries.push({ key, lastUsed });
   }
   let evicted = 0;
+  const evictedKeys = new Set<string>();
   const evict = async (key: string): Promise<boolean> => {
     try {
       await unlink(join(dir, `${key}.json`));
       evicted++;
+      evictedKeys.add(key);
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
+      await unlink(join(dir, publicationModeFileName(key))).catch(() => undefined);
       return true;
     } catch { return false; }
   };
@@ -270,5 +324,38 @@ export async function sweepRecords(
       if (!pendingKeys.has(e.key) && (await evict(e.key))) live--;
     }
   }
+  await sweepStopMarkers(dir, now, idleMs, (key, sessionId) =>
+    (entries.some((e) => e.key === key) && !evictedKeys.has(key)) || pendingKeys.has(key) ||
+    (!!sessionId && !!opts.pendingSessionIds?.has(sessionId)));
   return { evicted, capacityBlocked: live > cap };
+}
+
+const STOP_MARKER_RE = /^[0-9a-f]{64}\.stop\.json$/;
+/** Margin past record idle expiry before an unreferenced marker may go (a later resume then lacks scope evidence and fails closed). */
+const STOP_MARKER_MARGIN_MS = 7 * DAY_MS;
+
+/** A marker is pinned while its record or queued data can still authorize publication; only then does it age out. */
+async function sweepStopMarkers(
+  dir: string,
+  now: number,
+  idleMs: number,
+  pinned: (key: string, sessionId: string | undefined) => boolean,
+): Promise<void> {
+  let names: string[];
+  try { names = (await readdir(dir)).filter((n) => STOP_MARKER_RE.test(n)); } catch { return; }
+  for (const name of names) {
+    const key = name.slice(0, -'.stop.json'.length);
+    let sessionId: string | undefined;
+    try {
+      const m = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { session_id?: unknown };
+      if (typeof m.session_id === 'string') sessionId = m.session_id;
+    } catch { /* unreadable marker: pinned by age only */ }
+    try {
+      if (pinned(key, sessionId)) continue;
+      if (now - (await stat(join(dir, name))).mtimeMs > idleMs + STOP_MARKER_MARGIN_MS) {
+        await unlink(join(dir, name));
+        await unlink(join(dir, stopAckFileName(key))).catch(() => undefined); // a later marker for this key must show its notice
+      }
+    } catch { /* best effort */ }
+  }
 }

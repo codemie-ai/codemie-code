@@ -508,7 +508,7 @@ export class MetricsSender {
    * Called when agent process exits
    *
    * @param session - Session metadata (with optional model)
-   * @param workingDirectory - Current working directory (for git branch detection)
+   * @param workingDirectory - Current working directory (for git branch detection when the session has no branch)
    * @param status - Session end status object with status and optional reason
    * @param durationMs - Wall-clock session duration in milliseconds
    * @param error - Optional error information (for failed sessions)
@@ -516,7 +516,7 @@ export class MetricsSender {
    * @param endTime - The session's end (epoch ms); default now
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository' | 'gitBranch'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
@@ -524,8 +524,7 @@ export class MetricsSender {
     activeDurationMs?: number,
     endTime?: number
   ): Promise<MetricsSyncResponse> {
-    // Detect git branch
-    const branch = await detectGitBranch(workingDirectory);
+    const branch = session.gitBranch || await detectGitBranch(workingDirectory);
 
     // Use canonical owner/repo from session if available; fall back to filesystem derivation
     const repository = session.repository ?? extractRepository(workingDirectory);

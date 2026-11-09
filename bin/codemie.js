@@ -7,6 +7,7 @@
 
 import { logger } from '../dist/utils/logger.js';
 import { isScheduledSyncRun } from '../dist/utils/scheduled-run.js';
+import { isMachineOutputInvocation } from '../dist/utils/machine-output.js';
 
 // Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
 // (e.g. `codemie | head -1`). Without a handler, Node throws on the next write
@@ -35,6 +36,11 @@ if (isHookProcess) {
 // today's normal interactive startup.
 const isScheduledRun = isScheduledSyncRun(process.argv);
 
+// A `--json` invocation: its stdout is the command's answer and a script parses it, so
+// start-up chatter (migration progress, update prompts, what's-new) stays off it. Unlike a
+// hook, the console stream is left alone: the command itself still prints to stdout.
+const isMachineOutput = isMachineOutputInvocation(process.argv.slice(2));
+
 // Imported after the console switch: their module graph logs at import time.
 const { MigrationRunner } = await import('../dist/migrations/index.js');
 const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js');
@@ -43,9 +49,16 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
   if (await MigrationRunner.hasPending()) {
-    await MigrationRunner.runPending({
-      silent: isHookProcess || isScheduledRun  // Show migration messages to user, except in a hook or unattended run
+    const migrationResult = await MigrationRunner.runPending({
+      // Show migration messages to user, except in a hook, an unattended run or for --json output
+      silent: isHookProcess || isScheduledRun || isMachineOutput
     });
+    // A silent run prints no failure line, and the logger writes errors to the console only in
+    // debug mode, so a --json caller would never learn that a migration failed (it retries on
+    // every start-up). One line on stderr keeps stdout pure JSON. A hook's console is nulled.
+    if (isMachineOutput && !isHookProcess && migrationResult.failed > 0) {
+      console.error(`Warning: ${migrationResult.failed} migration(s) failed; see the log file for details`);
+    }
   }
 } catch (error) {
   // Don't block CLI if migration fails
@@ -61,7 +74,7 @@ try {
 // Skip for the unattended scheduled analytics sync job (no user to notify)
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment && !isHookProcess && !isScheduledRun) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -73,10 +86,10 @@ if (!isTestEnvironment && !isHookProcess && !isScheduledRun) {
 // CODEMIE_TIPS off switch with feature tips). Non-blocking, minimal stdout.
 // shouldRunUpgradeNotice skips non-TTY stdout, `hook` invocations, and
 // invocations with their own output contract (--version/-V/--task/--help);
-// a hook process (`hook`, `sound`) never reaches it. A skipped notice writes
-// no marker, so it shows on the next run in a terminal.
+// a hook process (`hook`, `sound`) or a `--json` invocation never reaches it. A
+// skipped notice writes no marker, so it shows on the next run in a terminal.
 // Also skipped for the unattended scheduled analytics sync job.
-if (!isTestEnvironment && !isHookProcess && !isScheduledRun) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
   try {
     const { readFileSync } = await import('node:fs');
     const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');

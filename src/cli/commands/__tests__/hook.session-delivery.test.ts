@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from 'fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'os';
 import { basename, join } from 'path';
 import { Readable } from 'node:stream';
@@ -212,8 +213,8 @@ function syntheticEnd(transcript = '') {
 }
 
 /** The end metric answers 200 at once; every other request is answered only by its abort. Times are the fake clock's. */
-function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] } {
-  const times = { endMetricAt: [] as number[], abortedAt: [] as number[] };
+function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[]; othersStarted: number } {
+  const times = { endMetricAt: [] as number[], abortedAt: [] as number[], othersStarted: 0 };
   vi.mocked(globalThis.fetch).mockImplementation((_url, init) => {
     const metric = JSON.parse(String((init as RequestInit).body)) as Captured;
     requests.push(metric);
@@ -221,6 +222,7 @@ function endMetricOkOthersHang(): { endMetricAt: number[]; abortedAt: number[] }
       times.endMetricAt.push(Date.now());
       return Promise.resolve(ok());
     }
+    times.othersStarted++;
     return new Promise((_resolve, reject) => {
       (init as RequestInit).signal?.addEventListener('abort', () => {
         times.abortedAt.push(Date.now());
@@ -597,10 +599,12 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const times = endMetricOkOthersHang();
     let startedAt = 0;
 
+    // The fake clock stands still until the sync's first request is in flight (bounded real wait): slow real I/O
+    // before it must not spend the 3500 ms deadline, or the sync is skipped and nothing is left to abort.
     await onFakeClock(async () => {
       startedAt = Date.now();
       await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session, { deadlineMs: startedAt + 3500 }));
-    });
+    }, { while: () => times.othersStarted === 0, maxRealMs: 10_000 });
 
     expect(times.endMetricAt).toHaveLength(1);
     expect(times.abortedAt.length).toBeGreaterThan(0);
@@ -800,6 +804,35 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const moved = JSON.parse(readFileSync(movedPath, 'utf-8')) as Session;
     expect(moved.startTime).toBe(Date.parse('2026-10-01T09:00:00Z'));
     expect(readRecord(id, 'completed_').startTime).toBe(Date.parse('2026-10-01T10:00:00Z'));
+  });
+
+  it('a later launch delivers a record under the record\'s client and branch, not its own client and the checkout\'s branch', async () => {
+    execFileSync('git', ['init', '-q', '-b', 'checkout-branch'], { cwd: home });
+    const session = baseRecord({
+      status: 'completed',
+      endTime: Date.parse('2026-10-01T10:30:00Z'),
+      clientType: 'codemie-claude-acp',
+      gitBranch: 'record-branch',
+    });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    vi.stubEnv('CODEMIE_CLIENT_TYPE', 'codemie-codex');
+    const clientHeaders: Record<string, string> = {};
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      const metric = JSON.parse(String((init as RequestInit).body)) as Captured;
+      requests.push(metric);
+      clientHeaders[metric.name] = ((init as RequestInit).headers as Record<string, string>)['X-CodeMie-Client'];
+      return ok();
+    });
+    const launch = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_CLIENT_TYPE: 'codemie-codex' };
+
+    await reconcileOtherSessions({ env: launch, ownSessionId: 'own' }).done;
+
+    const [end] = endMetrics();
+    expect(clientHeaders.codemie_cli_session_total).toBe('codemie-claude-acp');
+    expect(end.attributes.branch).toBe('record-branch');
+    expect(clientHeaders.codemie_cli_tool_usage_total).toBe('codemie-claude-acp');
+    expect(requests.find((r) => r.name === 'codemie_cli_tool_usage_total')?.attributes.codemie_client).toBe('codemie-claude-acp');
   });
 });
 
@@ -2555,8 +2588,14 @@ describe('SessionStart source=clear closes the previous generation', () => {
     const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
     // The holder lets go right after the start's first lock attempt has met it
     let firstTry = true;
+    let lockTaken = false;
     const before = Date.now();
     vi.mocked(writeFile).mockImplementation(async (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]) === lockPath && !firstTry) {
+        const written = await actual.writeFile(...args);
+        lockTaken = true;
+        return written;
+      }
       if (String(args[0]) !== lockPath || !firstTry) return actual.writeFile(...args);
       firstTry = false;
       try {
@@ -2567,7 +2606,8 @@ describe('SessionStart source=clear closes the previous generation', () => {
     });
 
     try {
-      await onFakeClock(() => processEvent(clearStart(), config(session)));
+      // The wait needs the clock to retry the lock; once the start holds it, the 2 s close budget must not be spent by real I/O
+      await onFakeClock(() => processEvent(clearStart(), config(session)), { while: () => lockTaken, maxRealMs: 10_000 });
     } finally {
       vi.mocked(writeFile).mockImplementation(actual.writeFile);
     }

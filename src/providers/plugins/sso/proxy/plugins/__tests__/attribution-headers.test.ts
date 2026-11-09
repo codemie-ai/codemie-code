@@ -74,6 +74,30 @@ describe('central attribution header contract', () => {
     });
   });
 
+  it('the model interceptor strips mixed-case analytics-only headers a client supplied, keeping the rest', async () => {
+    const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: { clientType: 'codemie-codex' } } as unknown as PluginContext);
+    const request = context();
+    request.headers['X-CodeMie-Work-Consent'] = 'explicit-folder';
+    request.headers['x-codemie-funding-route'] = 'api_based';
+    request.headers['X-CODEMIE-PUBLICATION-CONTRACT'] = '1';
+    request.headers['custom-header'] = 'keep';
+    await interceptor.onRequest!(request);
+    const names = Object.keys(request.headers).map((k) => k.toLowerCase());
+    expect(names).not.toContain('x-codemie-work-consent');
+    expect(names).not.toContain('x-codemie-funding-route');
+    expect(names).not.toContain('x-codemie-publication-contract');
+    expect(request.headers['custom-header']).toBe('keep');
+  });
+
+  it('consent is never sent without a project: a non-Latin1 project omits both (the session then fails closed on the unverified echo)', () => {
+    const { headers } = buildAttributionHeaders({
+      ...analytics, project: 'Проект', contract: { fundingRoute: 'subscription', consent: true },
+    });
+    expect(headers).not.toHaveProperty('X-CodeMie-Project');
+    expect(headers).not.toHaveProperty('X-CodeMie-Work-Consent');
+    expect(headers['X-CodeMie-Funding-Route']).toBe('subscription');
+  });
+
   it('preserves Desktop/Cowork resolution and configured-branch precedence', async () => {
     const resolveForRequest = vi.fn().mockResolvedValue({ repository: '', branch: 'detected', isCowork: true });
     const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: {
@@ -87,6 +111,40 @@ describe('central attribution header contract', () => {
     expect(request.headers).toMatchObject({
       'X-CodeMie-Repository': '', 'X-CodeMie-Branch': 'configured', 'X-CodeMie-Client': 'claude-desktop',
       'x-litellm-session-id': 's1',
+    });
+  });
+
+  describe('metrics requests', () => {
+    const launch = { clientType: 'codemie-claude', version: '1.2', repository: 'launch/repo', branch: 'launch-branch', project: 'launch-project' };
+    const send = async (url: string, headers: Record<string, string>): Promise<ProxyContext['headers']> => {
+      const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: launch } as PluginContext);
+      const request = { ...context(), url, headers };
+      await interceptor.onRequest!(request);
+      return request.headers;
+    };
+    // Node lower-cases incoming header names.
+    const own = {
+      'x-codemie-repository': 'own/repo', 'x-codemie-branch': 'own-branch',
+      'x-codemie-project': 'own-project', 'x-codemie-client': 'codemie-codex',
+    };
+
+    it.each(['/v1/metrics', '/v1/metrics?source=cli'])('%s keeps the attribution the client sent', async (url) => {
+      expect(await send(url, { ...own })).toEqual({
+        ...own, 'X-CodeMie-Request-ID': 'r1', 'X-CodeMie-Session-ID': 's1', 'X-CodeMie-CLI': 'codemie-cli/1.2',
+      });
+    });
+
+    it.each(['/v1/metrics', '/v1/metrics?source=cli'])('%s adds no attribution when the client sent none', async (url) => {
+      expect(await send(url, {})).toEqual({
+        'X-CodeMie-Request-ID': 'r1', 'X-CodeMie-Session-ID': 's1', 'X-CodeMie-CLI': 'codemie-cli/1.2',
+      });
+    });
+
+    it('a model request still gets the attribution of the launch', async () => {
+      expect(await send('/v1/messages?beta=true', { ...own })).toMatchObject({
+        'X-CodeMie-Repository': 'launch/repo', 'X-CodeMie-Branch': 'launch-branch',
+        'X-CodeMie-Project': 'launch-project', 'X-CodeMie-Client': 'codemie-claude',
+      });
     });
   });
 });

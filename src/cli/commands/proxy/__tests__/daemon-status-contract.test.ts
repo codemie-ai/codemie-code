@@ -258,5 +258,13 @@ describe('proxy status --json: stopped shape (no live daemon)', () => {
     expect(parsed).not.toHaveProperty('url');
     expect(parsed).not.toHaveProperty('port');
     expect(parsed).not.toHaveProperty('level');
+    expect(parsed).not.toHaveProperty('analytics');
+  });
+
+  it('prints only "Status: stopped" in text mode, with no Analytics line', async () => {
+    const proxy = createProxyCommand();
+    await proxy.parseAsync(['status'], { from: 'user' });
+
+    expect(logSpy).toEqual(['Status: stopped']);
   });
 });

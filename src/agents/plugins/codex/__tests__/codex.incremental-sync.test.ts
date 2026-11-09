@@ -255,6 +255,28 @@ describe('codex.incremental-sync', () => {
     );
   });
 
+  it('uploads under the client type of the launch', async () => {
+    process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '50';
+    discoverSessions.mockResolvedValue([
+      { sessionId: 'codex-uuid', filePath: '/tmp/rollout.jsonl', createdAt: Date.now(), agentName: 'codex' },
+    ]);
+    parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+    processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+    const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+    startCodexIncrementalSync({
+      ...commonOptions(),
+      ssoUrl: 'https://codemie.example.com',
+      syncApiUrl: 'https://sync.example.com',
+      env: { CODEMIE_CLIENT_TYPE: 'codemie-codex-acp' },
+    });
+
+    await waitFor(() => mockSync.mock.calls.length >= 1);
+    expect(mockSync.mock.calls[0][1].clientType).toBe('codemie-codex-acp');
+  });
+
   it('hands the sender a supersede check that re-reads the same credentials', async () => {
     process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '50';
     discoverSessions.mockResolvedValue([

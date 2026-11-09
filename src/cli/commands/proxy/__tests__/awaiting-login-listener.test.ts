@@ -38,7 +38,12 @@ describe('awaiting-login listener', () => {
 
     const health = await fetch(`${url}/health`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ status: 'ok', port, pid: process.pid });
+    expect(await health.json()).toEqual({
+      status: 'ok',
+      port,
+      pid: process.pid,
+      analytics: { credentials: 'stale' },
+    });
     // ...while the authenticated deep probe is rejected, which the watcher reads as "unauthorized".
     expect((await fetch(`${url}/v1/llm_models?include_all=true`)).status).toBe(401);
   });

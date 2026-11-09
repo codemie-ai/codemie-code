@@ -9,6 +9,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { MetricsDataLoader, type RawSessionData } from '../data-loader.js';
 import { AnalyticsAggregator } from '../aggregator.js';
+import { parseDateOnly } from '../../../../utils/date-filter.js';
 
 function rawSession(sessionId: string): RawSessionData {
   return {
@@ -47,6 +48,28 @@ describe('MetricsDataLoader.sessionMatchesFilter', () => {
     const loader = new MetricsDataLoader('/nonexistent');
     const session = rawSession('abc-123');
     expect(loader.sessionMatchesFilter(session, { agentName: 'claude' })).toBe(true);
+  });
+});
+
+describe('MetricsDataLoader.sessionMatchesFilter — inclusive date-only --to', () => {
+  const startedAt = (iso: string): RawSessionData => {
+    const session = rawSession('s');
+    session.startEvent.data.startTime = Date.parse(iso);
+    return session;
+  };
+  const filter = {
+    fromDate: parseDateOnly('2026-10-25', 'from')!,
+    toDate: parseDateOnly('2026-10-25', 'to')!,
+  };
+
+  it.each([
+    ['2026-10-24T12:00:00Z', false],
+    ['2026-10-25T09:00:00Z', true],
+    ['2026-10-25T18:00:00Z', true],
+    ['2026-10-26T09:00:00Z', false],
+  ])('session starting %s matches --from D --to D: %s', (iso, expected) => {
+    const loader = new MetricsDataLoader('/nonexistent');
+    expect(loader.sessionMatchesFilter(startedAt(iso), filter)).toBe(expected);
   });
 });
 

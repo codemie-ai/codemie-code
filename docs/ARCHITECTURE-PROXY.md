@@ -630,6 +630,8 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 **Conditionally Injected:**
 
+On `/v1/metrics` the proxy does not inject `X-CodeMie-Client`, `X-CodeMie-Repository`, `X-CodeMie-Branch` or `X-CodeMie-Project`, because a metric can belong to another session or agent than the running launch: `MetricsApiClient` sets them, the client from its sender's client type, the other three from the metric's attributes (the end metric detects the branch only when the record has none), and a request without one stays without it. The entries below for these four headers describe every other path; the remaining entries also apply to `/v1/metrics`.
+
 - `X-CodeMie-Session-ID`: Session UUID for correlation, only `if (context.sessionId && context.sessionId !== 'unknown')`
 - `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-gemini`, `codemie-code`), only `if (config.clientType)`
 - `X-CodeMie-Integration`: Integration ID (only when provider requires integration via `requiresIntegration` flag)

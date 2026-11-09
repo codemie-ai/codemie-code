@@ -6,7 +6,8 @@ import { resolveHookCredentials } from '../hook-credentials.js';
 import { resolveEmailFromCredentials } from '../identity-resolver.js';
 import { loadHookConfig, resolveSessionProject } from '../event-fields/identity-fields.js';
 import { apiIdentity, ownerHash } from './api-identity.js';
-import { launchMode, type RoutingResult } from './routing.js';
+import { launchMode, type FundingRoute, type RoutingResult } from './routing.js';
+import { resolveConsent } from './consent-store.js';
 import { parseProjectBinding, PROJECT_BINDING_ENV, type ProjectBindingState } from '@/utils/project-binding.js';
 import { createOrRead, readRecord, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
 import type { PendingFields } from './owner-pending.js';
@@ -17,6 +18,9 @@ import { isSSOCredentials, type SSOCredentials } from '@/providers/core/types.js
 export interface EvidenceInputs {
   organization?: string;
   routing: RoutingResult;
+  /** New publication contract: supplied by the adapter, frozen at the first stamp. Absent = legacy recording. */
+  funding_route?: FundingRoute;
+  collection_generation?: number;
 }
 
 /**
@@ -51,6 +55,9 @@ async function hookTimeFields(
     api_identity: api,
     profile: hookConfig?.config.name,
     projectBinding: projectBindingFor(project),
+    ...(inputs.funding_route !== undefined ? { funding_route: inputs.funding_route, negotiate_publication: true as const } : {}),
+    // The generation is scope evidence in its own right (a new-contract stamp always has one); never invented for a stamp without it.
+    ...(inputs.funding_route !== undefined || inputs.collection_generation !== undefined ? { collection_generation: inputs.collection_generation ?? 0 } : {}),
   };
 }
 
@@ -130,7 +137,12 @@ export async function stampEvidence(
       return { ok: true, record: found.record };
     }
 
-    const fields = { ...(await hookTimeFields(context, inputs, sessionId, api)), owner_hash: ownerHash(email) };
+    const hookFields = await hookTimeFields(context, inputs, sessionId, api);
+    // Explicit work consent is frozen as a path-free reference; only the new contract carries it, and only with a project.
+    const consent_ref = hookFields.funding_route !== undefined && hookFields.project
+      ? await resolveConsent({ owner_hash: ownerHash(email), api_identity: api, project: hookFields.project }, context.cwd)
+      : undefined;
+    const fields = { ...hookFields, ...(consent_ref ? { consent_ref } : {}), owner_hash: ownerHash(email) };
     let created = await createOrRead(key, fields);
     if (created.kind === 'evidence_capacity') {
       // At the cap: evict idle records whose sessions have no undelivered spool now, not at the next sweep.

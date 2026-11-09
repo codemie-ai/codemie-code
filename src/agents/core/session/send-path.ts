@@ -33,21 +33,30 @@ export function sameHost(record: Session, env: NodeJS.ProcessEnv): boolean {
   return recordHost !== undefined && recordHost === hostOf(env.CODEMIE_URL);
 }
 
+/** A record's client type, else its own agent's: the launch delivering it may run another agent. */
+async function recordClientType(record: Session): Promise<string | undefined> {
+  if (record.clientType) return record.clientType;
+  // Lazy: the registry loads the plugins, which import this module
+  const { AgentRegistry } = await import('../../registry.js');
+  return AgentRegistry.getAgent(record.agentName)?.metadata.ssoConfig?.clientType;
+}
+
 /**
  * The config a record is processed with: its own agent / provider / project / client type / model,
  * this launch's URL and send path when it delivers, none when it is finalized locally.
  */
-export function recordHookConfig(
+export async function recordHookConfig(
   record: Session,
   env: NodeJS.ProcessEnv,
   options: { deliver: boolean; abortSignal?: AbortSignal; deadlineMs?: number }
-): HookProcessingConfig {
+): Promise<HookProcessingConfig> {
+  const clientType = await recordClientType(record);
   return {
     agentName: record.agentName,
     sessionId: record.sessionId,
     provider: record.provider,
     ...(record.project && { project: record.project }),
-    ...(record.clientType && { clientType: record.clientType }),
+    ...(clientType && { clientType }),
     ...(record.model && { model: record.model }),
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,

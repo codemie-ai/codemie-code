@@ -882,8 +882,8 @@ codemie log --level error               # Show only errors
 codemie log --profile work              # Filter by profile
 
 # Date filtering
-codemie log --from 2026-02-01           # From specific date
-codemie log --to 2026-02-04             # Until specific date
+codemie log --from 2026-02-01           # From specific date (UTC, inclusive)
+codemie log --to 2026-02-04             # Until specific date (UTC, includes the whole day)
 codemie log --last 7d                   # Last 7 days
 codemie log --last 24h                  # Last 24 hours
 codemie log --last 30m                  # Last 30 minutes
@@ -1391,6 +1391,8 @@ codemie --version
 
 A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
 
+A command run with `--json` (for example `codemie proxy analytics status --json`) also runs pending migrations silently (file log only) and skips the update check and the what's-new notice, so on every run, including the first one in an empty `CODEMIE_HOME`, its stdout carries only the JSON.
+
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default
 - First invocation may take up to 5 seconds (network check)
@@ -1508,9 +1510,11 @@ codemie analytics [options]
 - `--project <pattern>` - Filter by project path (basename, partial, or full path)
 - `--agent <name>` - Filter by agent name (claude, gemini, etc.)
 - `--branch <name>` - Filter by git branch
-- `--from <date>` - Filter sessions from date (YYYY-MM-DD)
-- `--to <date>` - Filter sessions to date (YYYY-MM-DD)
+- `--from <date>` - Start date, inclusive (YYYY-MM-DD)
+- `--to <date>` - End date, inclusive: includes the entire day (YYYY-MM-DD)
 - `--last <duration>` - Filter sessions from last duration (e.g., 7d, 24h)
+
+Dates are UTC calendar days and must be real calendar dates (`2026-02-30` is rejected). Sessions are matched on their start time. For a date-only `--to`, the report's `periodEnd` is `23:59:59.999Z` of that day.
 
 **Output Options:**
 - `-v, --verbose` - Show detailed session-level breakdown
@@ -1544,8 +1548,8 @@ codemie log <subcommand> [options] # Execute subcommand
 - `--agent <name>` - Filter by agent (claude, gemini, etc.)
 - `--profile <name>` - Filter by profile name
 - `--level <level>` - Filter by log level (debug, info, warn, error)
-- `--from <date>` - Filter from date (YYYY-MM-DD)
-- `--to <date>` - Filter to date (YYYY-MM-DD)
+- `--from <date>` - Filter from date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
+- `--to <date>` - Filter to date (YYYY-MM-DD or YYYY-MM-DDTHH:MM timestamp)
 - `--last <duration>` - Filter last duration (e.g., 7d, 24h, 30m)
 - `--grep <pattern>` - Search pattern (supports regex)
 - `-n, --lines <number>` - Number of lines to show (default: 50)
@@ -1793,7 +1797,7 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics enable` | Resume collection. |
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). It only undoes an `exclude`: it does not touch the `settings.json` allowlist and does not start tracking a project that is outside the Project-scope allowlist (the command tells you when that is the case). |
-| `codemie proxy analytics status [--json]` | Show whether hooks are installed, the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. |
+| `codemie proxy analytics status [--json]` | When an OTLP connector (Claude Code, Copilot CLI or Copilot Chat) is connected, show a Delivery section first (`Delivery: healthy`, `unhealthy (<reason>)`, `unknown (...)` or `proxy not running`, plus `Pending:` when bytes are unsent and, only when unhealthy, a `Run:` remedy; the spool is shared by the whole machine, so `Pending:` and the identity-mismatch and sending-failed reasons cover every session on this machine, not only this proxy's), then (always) the connector state (hooks installed, or connected), the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. With `--json` the output keeps its shape and adds a `delivery` key (same object as `analytics` in `proxy status --json`; `null` when the daemon is stopped or no connector is connected). |
 
 A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
 
@@ -1802,7 +1806,7 @@ A corrupt `claude-analytics.json` fails closed on the hook path (collection stop
 - the daily analytics collector, a separate scheduled job (outside this repository) that exports local session data;
 - the session sync that `codemie claude` runs through its own plugin hooks (`codemie hook` without `--agent`).
 
-`disable` and `exclude` repeat this boundary in their output, and `status` lists it as "Not affected by these settings".
+`disable` and `exclude` repeat this boundary in their output, and `status` repeats it as a closing sentence.
 
 **What happens when collection resumes.** Nothing is sent while collection is off, but usage is read from the session transcript, which keeps growing. After `enable` or `include`, the next collected hook event reports usage that was written to the transcript during the off period. `enable` and `include` print a note when this applies. The same holds for the existing Project-scope allowlist. Copilot CLI behaves similarly: a session that was running while collection was off reports its whole-session usage when it ends. Copilot Chat forwards per-event data only and has no such catch-up.
 
@@ -1818,7 +1822,7 @@ A corrupt `claude-analytics.json` fails closed on the hook path (collection stop
 | Remove the integration entirely | `disconnect --claude-code-otlp` |
 | See what is collected and why | `analytics status` |
 
-`include` and `enable` only edit the opt-out layer, which is separate from the Project-scope allowlist that `connect` manages. So after `include` or `enable` the command prints whether the project is collected right now and, if it is not, the exact command that changes that (for example `connect --claude-code-otlp --scope project` when the project is not in the allowlist). `status` shows the same as a `Hint:` line. This is advice only: it never changes the result of the command.
+`include` and `enable` only edit the opt-out layer, which is separate from the Project-scope allowlist that `connect` manages. So after `include` or `enable` the command prints whether the project is collected right now and, if it is not, the exact command that changes that (for example `connect --claude-code-otlp --scope project` when the project is not in the allowlist). `status` shows the same as a `Run:` line. This is advice only: it never changes the result of the command.
 
 ### Copilot CLI and Copilot Chat analytics — disable
 
