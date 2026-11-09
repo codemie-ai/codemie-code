@@ -355,8 +355,11 @@ async function reportUpdateResult(latestVersion: string, silent: boolean): Promi
     for (const line of formatStaleWarning(verdict)) {
       console.log(line.startsWith('    ') ? chalk.white(line) : chalk.yellow(line));
     }
-  } else {
+  } else if (verdict.status === 'current') {
     console.log(chalk.dim('  💡 The update will take effect on the next command.'));
+  } else {
+    // We couldn't verify which codemie is first on PATH, so don't assert it's already current.
+    console.log(chalk.dim('  💡 Open a new terminal to make sure you pick up the new version.'));
   }
   console.log();
 }

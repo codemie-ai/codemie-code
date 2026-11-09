@@ -64,7 +64,9 @@ async function lookupCommandPath(): Promise<string | null | 'timeout'> {
     timer = setTimeout(() => resolve('timeout'), LOOKUP_TIMEOUT_MS);
   });
   try {
-    return await Promise.race([getCommandPath('codemie'), timeout]);
+    // Same deadline passed into getCommandPath so the where.exe/which child is actually
+    // killed when the lookup is slow, instead of being abandoned to the race and left running.
+    return await Promise.race([getCommandPath('codemie', LOOKUP_TIMEOUT_MS), timeout]);
   } finally {
     clearTimeout(timer);
   }
