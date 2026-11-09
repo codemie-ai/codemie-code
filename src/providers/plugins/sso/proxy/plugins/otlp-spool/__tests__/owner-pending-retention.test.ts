@@ -98,11 +98,11 @@ describe('owner-pending handover keeps the original age as an exact range', () =
   async function holdAtT0(d: Daemon): Promise<void> {
     const fields = {
       session_id: SESSION, launch_mode: 'native' as const, routed_via_codemie: false, routing_proof: 'unproven' as const,
-      project: 'A', project_source: 'none' as const, api_identity: d.apiIdentity(API),
+      project: 'A', project_source: 'none' as const, api_identity: d.apiIdentity(API), collection_generation: 0,
     };
     const stored = await d.enqueuePendingOwner({
       fp: d.credentialFingerprint(credentials), agentName: 'claude-code-otlp', api_identity: d.apiIdentity(API),
-      session_id: SESSION, fields, events: [hookEvent(1)],
+      session_id: SESSION, fields, cwd: '/work', project_at_cwd: 'A', events: [hookEvent(1)],
     }, T0);
     expect(stored).toBe(true);
   }

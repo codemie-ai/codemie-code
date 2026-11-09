@@ -835,10 +835,14 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
         await flush();
       },
     });
-    await onFakeClock(async () => {
+    const work = async () => {
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
       doneAt = Date.now();
-    });
+    };
+    // Once the clock has reached the attempt's deadline it stands still: the timers are spent, and the real I/O still
+    // finishing the pass must not add fake time to what is measured. A pass that waited past the deadline stays frozen
+    // for the hold's bound, then runs on and fails the upper bound.
+    await onFakeClock(work, { while: () => flushedAt !== 0 && Date.now() >= flushedAt + 10_000, maxRealMs: 2_000 });
     return doneAt - flushedAt;
   }
 

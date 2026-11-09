@@ -16,6 +16,7 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
+import { collectVisibleDeliveryHealth, formatAnalyticsLines } from './analytics-delivery-lines.js';
 import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -46,6 +47,7 @@ interface UnifiedConnectOptions {
   force?: boolean;
   insiders?: boolean;
   model?: string;
+  omp?: boolean;
   profile?: string;
   scope?: AllowlistScope;
   silent?: boolean;
@@ -234,7 +236,9 @@ export function createProxyCommand(): Command {
         port: state.port,
         gatewayKey: state.gatewayKey,
         deep: Boolean(opts.deep),
+        expectedPid: state.pid,
       });
+      const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
 
       const otlp = await checkClaudeCodeOtlpEndpoint(state);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
@@ -263,6 +267,9 @@ export function createProxyCommand(): Command {
         }
         if (otlpMismatch) {
           payload.otlpEndpointMismatch = { configured: otlpMismatch.configured, expected: otlpMismatch.expected };
+        }
+        if (analytics) {
+          payload.analytics = analytics;
         }
         console.log(JSON.stringify(payload, null, 2));
         return;
@@ -302,6 +309,12 @@ export function createProxyCommand(): Command {
       }
       console.log(`  Uptime:  ${uptime}`);
 
+      if (analytics) {
+        for (const line of formatAnalyticsLines(analytics)) {
+          console.log(line);
+        }
+      }
+
       if (otlpMismatch) {
         const keyOnly = otlpMismatch.configured === otlpMismatch.expected;
         console.log(chalk.yellow(
@@ -336,6 +349,7 @@ export function createProxyCommand(): Command {
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
+    .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
@@ -365,6 +379,7 @@ export function createProxyCommand(): Command {
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
+          omp: Boolean(opts.omp),
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
@@ -380,6 +395,7 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
+    .option('--omp', 'Remove the CodeMie model catalog extension from oh-my-pi')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
     .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Remove Copilot Chat analytics hook file, settings entry and project scope')
     .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Remove Copilot CLI analytics hook file and project scope')
@@ -396,6 +412,7 @@ export function createProxyCommand(): Command {
       copilotChatOtlp?: boolean;
       copilotCliOtlp?: boolean;
       codexDesktop?: boolean;
+      omp?: boolean;
       scope?: 'user' | 'project';
     }) => {
       await disconnectTargets({
@@ -404,6 +421,7 @@ export function createProxyCommand(): Command {
           copilotChatOtlp: Boolean(opts.copilotChatOtlp),
           copilotCliOtlp: Boolean(opts.copilotCliOtlp),
           codexDesktop: Boolean(opts.codexDesktop),
+          omp: Boolean(opts.omp),
         },
         scope: opts.scope,
       });

@@ -20,6 +20,11 @@ export interface CallbackResult {
  */
 export async function startCallbackServer(options?: {
   timeoutMs?: number;
+  /**
+   * Port to listen on if it is free (falls back to an OS-assigned one). A later login in the same
+   * process reuses the earlier port so the redirect URI registered with the client stays valid.
+   */
+  preferredPort?: number;
 }): Promise<{
   redirectUrl: string;
   waitForCallback: Promise<CallbackResult>;
@@ -76,11 +81,24 @@ export async function startCallbackServer(options?: {
     settle(() => resolveCallback({ code, state }));
   });
 
-  // Listen on OS-assigned port
-  await new Promise<void>((resolve, reject) => {
-    server.listen(0, 'localhost', () => resolve());
-    server.on('error', reject);
-  });
+  const listen = (port: number) =>
+    new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, 'localhost', () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+
+  try {
+    await listen(options?.preferredPort ?? 0);
+  } catch (error) {
+    if (!options?.preferredPort || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    logger.debug(`[mcp-proxy] Callback port ${options.preferredPort} is taken, using an OS-assigned port`);
+    await listen(0);
+  }
+  // Errors after startup (e.g. a failed accept) must not crash the proxy
+  server.on('error', (error) => logger.debug(`[mcp-proxy] Callback server error: ${error.message}`));
 
   const address = server.address();
   if (!address || typeof address === 'string') {

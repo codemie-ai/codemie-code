@@ -59,7 +59,7 @@ describe('claude-code-otlp.preferences', () => {
       await writeFile(path, JSON.stringify({ version: 1, enabled: false }), 'utf-8');
 
       const result = await readClaudeAnalyticsPreferences();
-      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [] } });
+      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [], collectionGeneration: 0 } });
     });
 
     it.each([
@@ -91,7 +91,18 @@ describe('claude-code-otlp.preferences', () => {
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
 
       const result = await readClaudeAnalyticsPreferences();
-      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [] } });
+      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [], collectionGeneration: 0 } });
+    });
+
+    it('persists collectionGeneration and treats an invalid one as corrupt', async () => {
+      const { updateClaudeAnalyticsPreferences, readClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath } = await import(
+        '../claude-code-otlp.preferences.js'
+      );
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, collectionGeneration: 3 }));
+      expect(await readClaudeAnalyticsPreferences()).toMatchObject({ kind: 'ok', value: { collectionGeneration: 3 } });
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(getClaudeAnalyticsPreferencesPath(), JSON.stringify({ collectionGeneration: -1 }), 'utf-8');
+      expect(await readClaudeAnalyticsPreferences()).toEqual({ kind: 'corrupt' });
     });
 
     it('throws ConfigurationError on a corrupt existing file and leaves bytes unchanged', async () => {

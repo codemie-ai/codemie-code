@@ -45,17 +45,18 @@ export async function sessionPolicyState(
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
   force?: true,
-  reprobe?: boolean
+  reprobe?: boolean,
+  needContract?: boolean
 ): Promise<PolicyState> {
-  const state = force ? undefined : await getPolicyState(ns);
+  const state = force ? undefined : await getPolicyState(ns, { needContract });
   // A session held on organization_encoding_unsupported re-reads a usable policy that does not advertise
   // the encoding at most hourly (refreshPolicy's own backoff applies), so a backend upgrade is noticed
   // without waiting for the 24 h policy expiry.
   const staleForReprobe =
     reprobe && !!state?.policy && !state.policy.organization_encodings?.includes(ORG_ENCODING_V1) && !state.backoffUntil &&
     state.fetchedAt !== undefined && Date.now() - state.fetchedAt >= LEGACY_REPROBE_MS;
-  if (state && !staleForReprobe && (state.policy || !state.refreshDue || !baseUrl)) return state;
-  return refreshPolicy(ns, { baseUrl, headers: authHeadersFor(credentials), force });
+  if (state && !staleForReprobe && ((state.policy && !(needContract && state.refreshDue)) || !state.refreshDue || !baseUrl)) return state;
+  return refreshPolicy(ns, { baseUrl, headers: authHeadersFor(credentials), force, needContract });
 }
 
 export const evidenceOf = (r: EvidenceRecord): Evidence => ({

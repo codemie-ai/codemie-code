@@ -21,6 +21,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { seedLegacyHookSession } from '../helpers/legacy-hook-session.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BIN = join(REPO_ROOT, 'bin', 'codemie.js');
@@ -260,10 +261,13 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     async function runColdOtlpHook(
       extraEnv: Record<string, string>,
       recordedProfile?: string,
-      activeProfile = 'hook-stdout-test'
+      activeProfile = 'hook-stdout-test',
+      recordedSession = true
     ): Promise<{ home: string; res: RunResult }> {
       const home = freshHome();
       daemonHomes.push(home);
+      // Notification belongs to an existing session; an unknown owner-less mid-session hook must not start a daemon.
+      if (recordedSession) seedLegacyHookSession(home, 'agent-session-under-test');
       writeFileSync(
         join(home, 'codemie-cli.config.json'),
         JSON.stringify({
@@ -309,6 +313,15 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       return { home, res };
     }
 
+    it('an unknown mid-session notification without an owner does not start a daemon', async () => {
+      const { home, res } = await runColdOtlpHook({}, undefined, 'hook-stdout-test', false);
+      expect(res.code).toBe(0);
+      expect(res.stdout).toBe('');
+      expect(res.stderr).toBe('');
+      expect(existsSync(join(home, 'proxy-daemon.json'))).toBe(false);
+      expect(fileLog(home)).not.toContain('[daemon-manager] Spawning daemon');
+    });
+
     /** The daemon the hook started holds its port: it answers /health and a 401 that names the login command. */
     async function expectPortHeldAwaitingLogin(home: string): Promise<void> {
       const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as {
@@ -317,7 +330,12 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       expect(state.health).toBe('unhealthy');
       const health = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(5000) });
       expect(health.status).toBe(200);
-      expect(await health.json()).toEqual({ status: 'ok', port: state.port, pid: state.pid });
+      expect(await health.json()).toEqual({
+        status: 'ok',
+        port: state.port,
+        pid: state.pid,
+        analytics: { credentials: 'stale' },
+      });
       const response = await fetch(`http://127.0.0.1:${state.port}/v1/messages`, {
         method: 'POST',
         body: '{}',
