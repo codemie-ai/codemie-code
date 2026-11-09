@@ -198,6 +198,9 @@ const mocks = vi.hoisted(() => {
     ensureCallbackServer = vi.fn().mockResolvedValue(undefined);
     waitForAuthorizationCode = vi.fn().mockResolvedValue('auth-code');
     dispose = vi.fn();
+    // Persisted-login restore at connect: nothing persisted, so nothing to renew
+    restorePersistedLogin = vi.fn();
+    tokenNeedsRenewal = vi.fn().mockReturnValue(false);
     constructor() {
       oauthInstances.push(this);
     }
