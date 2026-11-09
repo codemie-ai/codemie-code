@@ -21,6 +21,11 @@ import { normalizeModelName } from '@/utils/model-normalizer.js';
 /**
  * Aggregates raw session data into hierarchical analytics
  */
+/** A delta counts as a turn unless a processor explicitly marked it as non-turn supplement activity. */
+function countTurns(deltas: MetricDelta[]): number {
+  return deltas.filter((d) => d.isTurn !== false).length;
+}
+
 export class AnalyticsAggregator {
   private static shouldNormalizeModels = true;
 
@@ -138,7 +143,7 @@ export class AnalyticsAggregator {
           sessions: contributingSessions, // Sessions that contributed to this branch
           totalSessions: branchSessionIds.size, // Count unique sessions on this branch
           totalDuration: 0, // Will be calculated from sessions
-          totalTurns: deltas.length,
+          totalTurns: countTurns(deltas),
           totalFileOperations: 0,
           totalLinesAdded: 0,
           totalLinesRemoved: 0,
@@ -412,7 +417,7 @@ export class AnalyticsAggregator {
       startTime: startEvent.data.startTime,
       endTime,
       duration,
-      totalTurns: deltas.length,
+      totalTurns: countTurns(deltas),
       totalFileOperations,
       totalLinesAdded,
       totalLinesRemoved,

@@ -1,0 +1,9 @@
+{
+  "sessionId": "aaaaaaaa-0000-4000-8000-000000000001",
+  "cwd": "<cwd>",
+  "codemieEventName": "postToolUseFailure",
+  "timestamp": 1760000000000,
+  "toolName": "bash",
+  "toolArgs": "<args>",
+  "error": "<text>"
+}

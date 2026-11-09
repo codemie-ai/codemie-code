@@ -91,24 +91,26 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
     .map((turn, i) => ({ turn, recordId: `${agentSessionId}-turn-${i}` }))
     .filter(({ turn, recordId }) => !written.has(recordId) && inRun(turn, window));
 
-  const build = (recordId: string, timestamp: string | number, branch: string | undefined, model: string | undefined, carry: boolean): DeltaRow => ({
+  const build = (recordId: string, timestamp: string | number, branch: string | undefined, model: string | undefined, carry: boolean, isTurn: boolean): DeltaRow => ({
     recordId,
     sessionId: session.sessionId,
     agentSessionId,
     timestamp,
     gitBranch: branch ?? fallbackBranch,
+    isTurn,
     tools: carry ? pending.tools : {},
     ...(carry && {
       ...(Object.keys(pending.toolStatus).length > 0 && { toolStatus: pending.toolStatus }),
       ...(pending.fileOperations.length > 0 && { fileOperations: pending.fileOperations }),
       ...(Object.keys(pending.skillInvocations).length > 0 && { skillInvocations: pending.skillInvocations }),
+      ...(Object.keys(pending.commandInvocations).length > 0 && { commandInvocations: pending.commandInvocations }),
     }),
     ...(model && { models: [model] }),
     ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
   });
 
   const deltas = runTurns.map(({ turn, recordId }, i) =>
-    build(recordId, turn.timestamp ?? lastRecordAt ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0)
+    build(recordId, turn.timestamp ?? lastRecordAt ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0, true)
   );
 
   // Activity with no turn of this run to ride on (it arrived after every turn was written) is kept
@@ -117,7 +119,7 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
   if (runTurns.length === 0 && hasActivity(pending)) {
     const inWindowAt = lastRecordAt !== undefined && lastRecordAt >= window.startTime ? lastRecordAt : undefined;
     const stamp = inWindowAt ?? (Number.isFinite(window.startTime) ? window.startTime : Date.now());
-    deltas.push(build(`${agentSessionId}-supplement-${existing.length}`, stamp, undefined, undefined, true));
+    deltas.push(build(`${agentSessionId}-supplement-${existing.length}`, stamp, undefined, undefined, true, false));
   }
   return deltas;
 }
@@ -127,6 +129,7 @@ interface PendingActivity {
   toolStatus: Record<string, { success: number; failure: number }>;
   fileOperations: NonNullable<MetricDelta['fileOperations']>;
   skillInvocations: Record<string, number>;
+  commandInvocations: Record<string, number>;
 }
 
 function hasActivity(p: PendingActivity): boolean {
@@ -134,7 +137,8 @@ function hasActivity(p: PendingActivity): boolean {
     Object.keys(p.tools).length > 0 ||
     Object.keys(p.toolStatus).length > 0 ||
     p.fileOperations.length > 0 ||
-    Object.keys(p.skillInvocations).length > 0
+    Object.keys(p.skillInvocations).length > 0 ||
+    Object.keys(p.commandInvocations).length > 0
   );
 }
 
@@ -150,11 +154,13 @@ function subtractCounts(total: Record<string, number> | undefined, done: Record<
 function subtractWritten(session: ParsedSession, existing: MetricDelta[]): PendingActivity {
   const toolsDone: Record<string, number> = {};
   const skillsDone: Record<string, number> = {};
+  const commandsDone: Record<string, number> = {};
   const statusDone: Record<string, { success: number; failure: number }> = {};
   let fileOpsDone = 0;
   for (const d of existing) {
     for (const [k, n] of Object.entries(d.tools ?? {})) toolsDone[k] = (toolsDone[k] ?? 0) + n;
     for (const [k, n] of Object.entries(d.skillInvocations ?? {})) skillsDone[k] = (skillsDone[k] ?? 0) + n;
+    for (const [k, n] of Object.entries(d.commandInvocations ?? {})) commandsDone[k] = (commandsDone[k] ?? 0) + n;
     for (const [k, v] of Object.entries(d.toolStatus ?? {})) {
       const b = statusDone[k] ?? { success: 0, failure: 0 };
       b.success += v.success;
@@ -176,5 +182,6 @@ function subtractWritten(session: ParsedSession, existing: MetricDelta[]): Pendi
     toolStatus,
     fileOperations: ((session.metrics?.fileOperations ?? []) as NonNullable<MetricDelta['fileOperations']>).slice(fileOpsDone),
     skillInvocations: subtractCounts(session.metrics?.skillInvocations, skillsDone),
+    commandInvocations: subtractCounts(session.metrics?.commandInvocations, commandsDone),
   };
 }

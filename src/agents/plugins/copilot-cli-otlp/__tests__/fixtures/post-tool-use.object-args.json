@@ -1,0 +1,16 @@
+{
+  "sessionId": "aaaaaaaa-0000-4000-8000-000000000001",
+  "cwd": "<cwd>",
+  "codemieEventName": "postToolUse",
+  "timestamp": 1760000000000,
+  "toolName": "view",
+  "toolArgs": {
+    "path": "<path>"
+  },
+  "toolResult": {
+    "textResultForLlm": "<text>",
+    "resultType": "success",
+    "sessionLog": "<text>",
+    "toolTelemetry": {}
+  }
+}
