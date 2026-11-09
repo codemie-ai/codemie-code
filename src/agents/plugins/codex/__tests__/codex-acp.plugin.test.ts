@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp } from 'fs/promises';
+import { mkdtemp, readFile, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { CodexAcpPlugin, CodexAcpPluginMetadata } from '../codex-acp.plugin.js';
+// The CodeMie-owned CODEX_HOME resolves under the real home; keep it under the per-test CODEMIE_HOME.
+vi.mock('../../../../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../utils/paths.js')>();
+  return {
+    ...actual,
+    resolveHomeDir: (dir: string) => join(process.env.CODEMIE_HOME ?? tmpdir(), dir),
+  };
+});
+
+import { CodexAcpPlugin, CodexAcpPluginMetadata, syncModelCatalogToConfigToml } from '../codex-acp.plugin.js';
 import { CodexPluginMetadata } from '../codex.plugin.js';
 
 const ORIGINAL_CODEMIE_HOME = process.env.CODEMIE_HOME;
@@ -55,9 +64,10 @@ describe('CodexAcpPluginMetadata', () => {
   });
 
   describe('beforeRun', () => {
-    const callBeforeRun = (env: NodeJS.ProcessEnv) =>
+    // An explicit CODEX_HOME counts as the user's own, so beforeRun leaves its config.toml alone.
+    const callBeforeRun = async (env: NodeJS.ProcessEnv) =>
       (CodexAcpPluginMetadata.lifecycle!.beforeRun as (env: NodeJS.ProcessEnv, config: never) => Promise<NodeJS.ProcessEnv>)(
-        env,
+        { CODEX_HOME: await mkdtemp(join(tmpdir(), 'codemie-codex-acp-home-')), ...env },
         {} as never,
       );
 
@@ -170,5 +180,73 @@ describe('CodexAcpPlugin', () => {
 
     installSpy.mockRestore();
     isInstalledSpy.mockRestore();
+  });
+});
+
+describe('syncModelCatalogToConfigToml', () => {
+  const setup = async (initial?: string) => {
+    const home = await mkdtemp(join(tmpdir(), 'codemie-codex-toml-'));
+    if (initial !== undefined) await writeFile(join(home, 'config.toml'), initial);
+    return { home, read: () => readFile(join(home, 'config.toml'), 'utf-8') };
+  };
+
+  it('creates config.toml with a top-level model_catalog_json', async () => {
+    const { home, read } = await setup();
+    await syncModelCatalogToConfigToml(home, '/x/models.json');
+    expect(await read()).toBe('model_catalog_json = "/x/models.json"\n');
+  });
+
+  it('puts the key above existing tables and keeps them untouched', async () => {
+    const table = '[projects."/work"]\ntrust_level = "trusted"\n';
+    const { home, read } = await setup(table);
+    await syncModelCatalogToConfigToml(home, '/x/models.json');
+    expect(await read()).toBe(`model_catalog_json = "/x/models.json"\n${table}`);
+  });
+
+  it('replaces a stale pointer instead of duplicating it', async () => {
+    const { home, read } = await setup('model_catalog_json = "/old.json"\n[a]\nb = 1\n');
+    await syncModelCatalogToConfigToml(home, '/new.json');
+    expect(await read()).toBe('model_catalog_json = "/new.json"\n[a]\nb = 1\n');
+  });
+
+  it('does not touch a same-named key inside a table', async () => {
+    const table = '[a]\nmodel_catalog_json = "keep"\n';
+    const { home, read } = await setup(table);
+    await syncModelCatalogToConfigToml(home, '/x.json');
+    expect(await read()).toBe(`model_catalog_json = "/x.json"\n${table}`);
+  });
+
+  it('removes the pointer when no catalog is configured', async () => {
+    const { home, read } = await setup('model_catalog_json = "/old.json"\n[a]\nb = 1\n');
+    await syncModelCatalogToConfigToml(home, undefined);
+    expect(await read()).toBe('[a]\nb = 1\n');
+  });
+
+  it('is a no-op (no file created) when there is nothing to write', async () => {
+    const { home } = await setup();
+    await syncModelCatalogToConfigToml(home, undefined);
+    await expect(readFile(join(home, 'config.toml'), 'utf-8')).rejects.toThrow();
+  });
+
+  const beforeRun = (env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> =>
+    (CodexAcpPluginMetadata.lifecycle!.beforeRun as (env: NodeJS.ProcessEnv, config: never) => Promise<NodeJS.ProcessEnv>)(
+      env,
+      {} as never,
+    );
+
+  it('is wired into beforeRun via CODEMIE_CODEX_MODEL_CATALOG_JSON for the CodeMie-owned CODEX_HOME', async () => {
+    const result = await beforeRun({ CODEMIE_CODEX_MODEL_CATALOG_JSON: '/cat/models.json' });
+
+    expect(result.CODEX_HOME).toBe(join(process.env.CODEMIE_HOME!, '.codex/codemie/home'));
+    const toml = await readFile(join(result.CODEX_HOME!, 'config.toml'), 'utf-8');
+    expect(toml).toContain('model_catalog_json = "/cat/models.json"');
+  });
+
+  it('never rewrites a CODEX_HOME the user set', async () => {
+    const { home, read } = await setup('model_catalog_json = "/mine.json"\n');
+
+    await beforeRun({ CODEX_HOME: home, CODEMIE_CODEX_MODEL_CATALOG_JSON: '/cat/models.json' });
+
+    expect(await read()).toBe('model_catalog_json = "/mine.json"\n');
   });
 });

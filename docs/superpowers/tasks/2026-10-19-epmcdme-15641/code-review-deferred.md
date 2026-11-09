@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-10-19-epmcdme-15641 (2026-10-19)
+
+- **setup.ts function and file size over guideline** — `src/cli/commands/setup.ts:236` — `handlePluginSetup` (~285 lines), `promptForModelsSelection` (~145 lines) and the 1202-line file exceed the code-quality.md structure guideline (functions under 50 lines, files under 500). Pre-existing: both functions and the file were already far over the limit before this change; the change adds roughly 70 lines to `handlePluginSetup`. Extracting the harness gate into a separate kebab-case module is advisable but not a defect introduced here.
