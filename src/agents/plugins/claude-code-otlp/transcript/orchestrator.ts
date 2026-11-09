@@ -510,14 +510,16 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
   return seen;
 }
 
-/** Passes that may look for a parent before a session is taken to have none (EPMCDME-16992). */
+/** Complete lookups that found no parent before a session is taken to have none (EPMCDME-16992). */
 const MAX_PARENT_LOOKUPS = 3;
 
 /**
  * The uuids a continued session copied from its parent transcript (EPMCDME-16992), kept in `state`.
- * A found parent is final. "No parent" and an incomplete lookup are not: the parent's `continued-in`
- * record may not be flushed yet on the first pass, and an unreadable directory may recover, so the
- * lookup is repeated on the next passes (at most {@link MAX_PARENT_LOOKUPS}), whatever the offset.
+ * A found parent is final. A complete lookup that found nothing is repeated on the next passes (at
+ * most {@link MAX_PARENT_LOOKUPS} of them), because the parent's `continued-in` record may not be
+ * flushed yet on the first pass. An incomplete lookup (unreadable directory or sibling, more
+ * candidates than the scan covers) is never final: it is repeated on every pass until it completes,
+ * so a session is not taken to have no parent just because the scan could not finish.
  * Lines already reported before a late find stay reported, but every later event and the summary
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  */
@@ -528,16 +530,21 @@ async function ensureInherited(
 ): Promise<ReadonlySet<string>> {
   if (!state.inheritedResolved) {
     const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
-    const lookups = (state.inheritedLookups ?? 0) + 1;
-    state.inheritedLookups = lookups;
     if (uuids && uuids.length > 0) {
       state.inheritedUuids = uuids;
       state.inheritedResolved = true;
-    } else if (lookups >= MAX_PARENT_LOOKUPS) {
-      state.inheritedResolved = true;
+    } else if (uuids) {
+      const previous = Number.isFinite(state.inheritedLookups) ? (state.inheritedLookups as number) : 0;
+      state.inheritedLookups = previous + 1;
+      if (state.inheritedLookups >= MAX_PARENT_LOOKUPS) state.inheritedResolved = true;
     }
   }
   return new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
+}
+
+/** A `resume` reopened the session and no pass has read activity of its own since (EPMCDME-16993). */
+function isReopenedIdle(state: TranscriptParseState): boolean {
+  return state.reopened === true && state.reopenActive !== true;
 }
 
 function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
@@ -655,7 +662,7 @@ async function deriveMainEvents(
   // A reopened session stays silent until it has done something: opening it must not change its
   // analytics (EPMCDME-16993).
   if (state.reopened && ownActivity) state.reopenActive = true;
-  if (state.reopened && !state.reopenActive) return [];
+  if (isReopenedIdle(state)) return [];
 
   for (const key of touchedKeys) {
     const request = state.openRequests[key];
@@ -931,7 +938,9 @@ export async function openSessionEnvCheckPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const candidate = await computeSessionEnvUpdate(state, input);
+    // A reopened session with no activity of its own announces nothing, not even an env change; the
+    // change stays uncommitted and is reported by the first check once the session is active again.
+    const candidate = isReopenedIdle(state) ? null : await computeSessionEnvUpdate(state, input);
 
     if (!candidate) {
       await release();
@@ -1111,7 +1120,7 @@ export async function openMainTranscriptPass(
     return {
       events,
       finalize: finalizeOf(sessionId, state, release),
-      suppressLifecycle: state.reopened === true && state.reopenActive !== true,
+      suppressLifecycle: isReopenedIdle(state),
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1159,6 +1168,11 @@ export async function openPostCompactPass(
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
+    // A reopened session with no activity of its own announces nothing; `lastCompactionEnd` stays
+    // put, so a compaction is reported by the first pass after the session is active again.
+    if (isReopenedIdle(state)) {
+      return { events: [], finalize: finalizeOf(sessionId, state, release) };
+    }
 
     // Catch up with anything appended while the lock was being acquired; only the appended bytes
     // are read, so this stays cheap even on a large transcript (and no-ops while it is unchanged).
@@ -1523,7 +1537,7 @@ export async function openSessionEndPass(
       finalize: finalizeOf(sessionId, state, release),
       gitHeadStart: state.gitHeadStart,
       sessionStartedAt: state.sessionStartedAt,
-      suppressLifecycle: state.reopened === true && state.reopenActive !== true,
+      suppressLifecycle: isReopenedIdle(state),
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
