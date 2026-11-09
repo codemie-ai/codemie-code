@@ -98,7 +98,7 @@ export class StdioHttpBridge {
 
   constructor(options: BridgeOptions) {
     this.serverUrl = new URL(options.serverUrl);
-    this.oauthProvider = new McpOAuthProvider();
+    this.oauthProvider = new McpOAuthProvider(this.serverUrl.toString());
     this.stdioTransport = new StdioServerTransport();
     log(`[mcp-proxy] Bridge created for ${this.serverUrl}`);
   }
