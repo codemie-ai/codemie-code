@@ -1,5 +1,8 @@
+import { countContentLines } from '@/utils/file-operations.js';
+
 /**
- * Transcript signals for `agent.session.summary`.
+ * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
+ * `agent.session.compact.done`.
  *
  * Pure functions over already-parsed main-transcript lines: edit-diff line counts, user turns,
  * compaction boundaries, client versions and the session title. No I/O — the orchestrator reads
@@ -66,13 +69,6 @@ function countPatchLines(patch: unknown[]): { added: number; removed: number } {
   return { added, removed };
 }
 
-/** Lines in a file body; a trailing newline does not start another line. */
-function countContentLines(content: string): number {
-  if (content.length === 0) return 0;
-  const lines = content.split('\n').length;
-  return content.endsWith('\n') ? lines - 1 : lines;
-}
-
 /**
  * Sum the diff stats of every tool result that reports one.
  *
@@ -95,12 +91,14 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
 
     let added: number | null = null;
     let removed = 0;
-    if (Array.isArray(structuredPatch)) {
+    // A create without a non-empty patch is counted by its content; any non-empty patch wins.
+    const hasPatch = Array.isArray(structuredPatch) && structuredPatch.length > 0;
+    if (type === 'create' && !hasPatch) {
+      if (typeof content === 'string') added = countContentLines(content);
+    } else if (Array.isArray(structuredPatch)) {
       const counts = countPatchLines(structuredPatch);
       added = counts.added;
       removed = counts.removed;
-    } else if (type === 'create' && typeof content === 'string') {
-      added = countContentLines(content);
     }
     if (added === null) continue;
 
@@ -163,6 +161,19 @@ export function collectCompactions(lines: readonly SignalLine[]): Compaction[] {
     });
   }
   return compactions;
+}
+
+/** Builds the `agent.session.compact.done` record from a `Compaction` found by `openPostCompactPass`. */
+export function buildCompactionDoneEvent(sessionId: string, compaction: Compaction): Record<string, unknown> {
+  return {
+    type: 'agent.session.compact.done',
+    session_id: sessionId,
+    pre_tokens: compaction.pre_tokens,
+    post_tokens: compaction.post_tokens,
+    dropped_tokens: compaction.dropped_tokens,
+    duration_ms: compaction.duration_ms,
+    timestamp: compaction.end,
+  };
 }
 
 /** Distinct client versions, in order of first appearance. */

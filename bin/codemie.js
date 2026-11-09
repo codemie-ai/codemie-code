@@ -5,8 +5,8 @@
  * Entry point for the codemie executable
  */
 
-import { MigrationRunner } from '../dist/migrations/index.js';
-import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
+import { logger } from '../dist/utils/logger.js';
+import { isMachineOutputInvocation } from '../dist/utils/machine-output.js';
 
 // Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
 // (e.g. `codemie | head -1`). Without a handler, Node throws on the next write
@@ -18,24 +18,53 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
+// A process an agent runs as a hook: its stdout is the agent's protocol channel
+// (Claude Code adds a hook's stdout to the model's context), so start-up output
+// stays off it, and no update check or prompt runs inside the agent's hook.
+// The agent also reads a hook's stderr on a blocking exit as the block reason,
+// so the logger never writes to the console there: the log file only.
+const isHookProcess = process.argv[2] === 'hook' || process.argv[2] === 'sound';
+if (isHookProcess) {
+  logger.setConsoleStream(null);
+}
+
+// A `--json` invocation: its stdout is the command's answer and a script parses it, so
+// start-up chatter (migration progress, update prompts, what's-new) stays off it. Unlike a
+// hook, the console stream is left alone: the command itself still prints to stdout.
+const isMachineOutput = isMachineOutputInvocation(process.argv.slice(2));
+
+// Imported after the console switch: their module graph logs at import time.
+const { MigrationRunner } = await import('../dist/migrations/index.js');
+const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js');
+
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
   if (await MigrationRunner.hasPending()) {
-    await MigrationRunner.runPending({
-      silent: false  // Show migration messages to user
+    const migrationResult = await MigrationRunner.runPending({
+      silent: isHookProcess || isMachineOutput  // Show migration messages to user, except in a hook or for --json output
     });
+    // A silent run prints no failure line, and the logger writes errors to the console only in
+    // debug mode, so a --json caller would never learn that a migration failed (it retries on
+    // every start-up). One line on stderr keeps stdout pure JSON. A hook's console is nulled.
+    if (isMachineOutput && !isHookProcess && migrationResult.failed > 0) {
+      console.error(`Warning: ${migrationResult.failed} migration(s) failed; see the log file for details`);
+    }
   }
 } catch (error) {
   // Don't block CLI if migration fails
-  console.error('Warning: Migration failed:', error.message);
+  if (isHookProcess) {
+    logger.warn('Warning: Migration failed:', error.message);
+  } else {
+    console.error('Warning: Migration failed:', error.message);
+  }
 }
 
 // Check for CLI updates (silent by default, configurable via CODEMIE_AUTO_UPDATE)
 // Skip in test environments to avoid timeouts and network calls during testing
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment) {
+if (!isTestEnvironment && !isHookProcess && !isMachineOutput) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -45,39 +74,20 @@ if (!isTestEnvironment) {
 
 // Once-per-upgrade "What's new" notice from CHANGELOG.md (shares the
 // CODEMIE_TIPS off switch with feature tips). Non-blocking, minimal stdout.
-// Skipped for scripted/piped use (stdout not a TTY) and for invocations that
-// produce their own output contract (--version/-V/--task/--help).
-const skipNoticeArgs = new Set(['--version', '-V', '--task', '--help']);
-const hasOutputContractArg = process.argv.slice(2).some(arg => skipNoticeArgs.has(arg));
-const isInteractiveTerminal = process.stdout.isTTY !== false; // undefined -> treat as TTY
-if (!isTestEnvironment && isInteractiveTerminal && !hasOutputContractArg) {
+// shouldRunUpgradeNotice skips non-TTY stdout, `hook` invocations, and
+// invocations with their own output contract (--version/-V/--task/--help);
+// a hook process (`hook`, `sound`) or a `--json` invocation never reaches it. A
+// skipped notice writes no marker, so it shows on the next run in a terminal.
+if (!isTestEnvironment && !isHookProcess && !isMachineOutput) {
   try {
     const { readFileSync } = await import('node:fs');
-    const { default: chalk } = await import('chalk');
-    const {
-      isWhatsNewEnabled,
-      getLastSeenVersion,
-      getReleaseNotes,
-      renderReleaseNotes,
-      markVersionSeen
-    } = await import('../dist/utils/whatsnew.js');
+    const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');
 
-    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
-    const currentVersion = packageJson.version;
-
-    if (currentVersion && isWhatsNewEnabled()) {
-      const lastSeenVersion = getLastSeenVersion();
-      if (lastSeenVersion === null) {
-        // Fresh install (no marker) — record silently, no "Updated to" banner
-        markVersionSeen(currentVersion);
-      } else if (lastSeenVersion !== currentVersion) {
-        const entries = getReleaseNotes(currentVersion);
-        if (entries.length > 0) {
-          console.log(chalk.dim(`✨ Updated to ${currentVersion} — here's what changed:`));
-          renderReleaseNotes(entries, { maxItems: 6 });
-        }
-        // Mark seen even when this version has no changelog entry — don't nag again
-        markVersionSeen(currentVersion);
+    if (shouldRunUpgradeNotice(process.argv.slice(2), process.stdout.isTTY)) {
+      const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+      const currentVersion = packageJson.version;
+      if (currentVersion) {
+        showUpgradeNotice(currentVersion);
       }
     }
   } catch (error) {

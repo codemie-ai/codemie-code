@@ -98,6 +98,31 @@ describe('analytics-auth-status', () => {
     expect(await getAnalyticsAuthStatus()).toBeNull();
   });
 
+  it('clear with ifDetectedAt removes only a marker that still carries that detection time', async () => {
+    await markAnalyticsAuthInvalid('HTTP 403', BASE_URL);
+    const judged = (await getAnalyticsAuthStatus())!.detectedAt;
+
+    await clearAnalyticsAuthStatus({ ifDetectedAt: judged + 1 });
+    expect(existsSync(markerPath())).toBe(true);
+
+    await clearAnalyticsAuthStatus({ ifDetectedAt: judged });
+    expect(existsSync(markerPath())).toBe(false);
+  });
+
+  it('clear with ifDetectedAt keeps a newer marker written after the one that was judged', async () => {
+    await markAnalyticsAuthInvalid('HTTP 403', BASE_URL);
+    const judged = (await getAnalyticsAuthStatus())!.detectedAt;
+    writeFileSync(
+      markerPath(),
+      JSON.stringify({ status: 'invalid', reason: 'fresh', baseUrl: BASE_URL, detectedAt: judged + 5_000 }),
+      'utf-8'
+    );
+
+    await clearAnalyticsAuthStatus({ ifDetectedAt: judged });
+
+    expect((await getAnalyticsAuthStatus())?.reason).toBe('fresh');
+  });
+
   it('get returns null when the marker file is missing', async () => {
     expect(existsSync(markerPath())).toBe(false);
     expect(await getAnalyticsAuthStatus()).toBeNull();

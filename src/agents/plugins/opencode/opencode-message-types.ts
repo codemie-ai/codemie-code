@@ -19,6 +19,7 @@ export interface OpenCodeSession {
   };
   // Optional fields from Session.Info that may be useful
   projectID?: string;  // Git root commit hash or 'global'
+  parentID?: string;   // The parent session of a subagent (child) session
   slug?: string;       // Human-readable session slug
   version?: string;    // OpenCode version
 }
@@ -239,6 +240,7 @@ export interface OpenCodeMetadata {
   openCodeVersion?: string;  // Track OpenCode version for compatibility
   partsMap?: Record<string, OpenCodePart[]>;  // Pre-loaded parts from SQLite (keyed by messageId)
   storageType?: 'sqlite' | 'file';            // Storage backend used for this session
+  parentId?: string;                          // The parent session of a subagent (child) session
 }
 
 /**

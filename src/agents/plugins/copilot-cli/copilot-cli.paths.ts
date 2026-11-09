@@ -8,16 +8,16 @@
 import { join } from 'path';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-/** `~/.copilot`, or `$COPILOT_HOME` when set. */
-export function getCopilotHome(): string {
-  const override = process.env.COPILOT_HOME?.trim();
+/** `~/.copilot`, or the environment's `COPILOT_HOME` when set. */
+export function getCopilotHome(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.COPILOT_HOME?.trim();
   if (override) {
     return override;
   }
   return resolveHomeDir('.copilot');
 }
 
-/** Directory holding one subdirectory per session. */
-export function getCopilotSessionStateRoot(): string {
-  return join(getCopilotHome(), 'session-state');
+/** Directory holding one subdirectory per session, under `home` when given. */
+export function getCopilotSessionStateRoot(home?: string): string {
+  return join(home ?? getCopilotHome(), 'session-state');
 }

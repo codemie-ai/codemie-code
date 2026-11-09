@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head><meta charset="UTF-8"><title>Deck gallery</title><style>/* __CODEMIE_CSS__ */</style></head>
+<!--
+  Every deck visual once, each on the shape of evidence it is for (references/deck.md, section 3).
+  For people choosing a look and for the tests; the figures are invented. Build it to view:
+    node scripts/build.mjs style-guide/deck-gallery.src.html --out deck-gallery.html
+-->
+<body data-deck="Deck gallery · AI-assisted support triage">
+
+<section class="slide cover" data-notes="The cover carries the deck's model: the three levels the story climbs, each in its own colour.">
+  <p class="context">Support operations · quarterly review · illustrative</p>
+  <h1>Support triage moves to <span class="c1">level 2</span> by April</h1>
+  <p class="lede">First response fell from 9 h to 2 h in three quarters; drafts now come from the assistant and people send them.</p>
+  <ul><li>Tags on every ticket since January.</li><li>Drafts for billing and shipping since February.</li><li>Routine replies sampled 1 in 10 from April.</li></ul>
+  <div class="cover-art">
+    <div class="ladder"><div><b>01</b><h3>Manual</h3><p>People read every ticket</p><p class="foot">Q1 · 9 h first response</p></div><div><b>02</b><h3>Assisted</h3><p>The assistant tags and drafts</p><p class="foot">Q3 · 2 h first response</p></div><div><b>03</b><h3>Automated</h3><p>Routine replies go out alone</p><p class="foot">plan · sampled 1 in 10</p></div></div>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Many into one" data-notes="Four channels, one queue. The total is the number the rest of the deck explains.">
+  <h2>Four channels feed one queue of 3,140 tickets a week</h2>
+  <div class="slide-body">
+    <div class="into">
+      <div><div><b>Email<small>shared inbox</small></b><span>1,420</span></div><div><b>Chat<small>web widget</small></b><span>980</span></div><div><b>Phone<small>call notes</small></b><span>510</span></div><div><b>Web form<small>billing page</small></b><span>230</span></div></div>
+      <i></i>
+      <div class="focus"><span>One queue, week 40</span><b class="num-xl">3,140</b><p>tickets a week across four channels</p></div>
+    </div>
+    <p class="fine">Illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide c4" data-section="Inputs into one system" data-notes="A hub for what feeds one system and what it gives back. Rows in, the core, rows out; the runtime draws each connector in its row's colour.">
+  <h2>The assistant reads three sources and hands back three things</h2>
+  <div class="slide-body">
+    <div class="hub">
+      <div class="rows"><p class="cap">Reads</p><div class="c2"><i class="ico" data-i="ticket"></i><b>Helpdesk<small>every new ticket</small></b><span class="chip">live</span></div><div class="c1"><i class="ico" data-i="database"></i><b>Order system<small>orders and refunds</small></b><span class="chip">read-only</span></div><div class="c5"><i class="ico" data-i="file"></i><b>Policy library<small>refund and shipping rules</small></b><span class="chip">weekly</span></div></div>
+      <div class="pane fill"><i class="ico" data-i="bot"></i><h3>Triage assistant</h3><p>Tags each ticket, finds similar ones and drafts the first reply.</p><p class="chips"><span>one container</span><span>own database</span></p><p class="foot">about 40 seconds a ticket</p></div>
+      <div class="rows"><p class="cap">Gives back</p><div class="c3"><i class="ico" data-i="check"></i><b>Tags<small>on 98% of tickets</small></b></div><div class="c3"><i class="ico" data-i="mail"></i><b>Draft replies<small>for the agent to edit or send</small></b></div><div class="c3"><i class="ico" data-i="chart"></i><b>Weekly report<small>for the support lead</small></b></div></div>
+    </div>
+    <p class="fine">Illustrative architecture and figures.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Grows over stages" data-notes="Bars for a number that changes across stages; the range shows the plan, the fill the quarter to stress.">
+  <h2>First response fell from 9 h to 2 h in three quarters</h2>
+  <div class="slide-body">
+    <div class="split rev">
+      <div class="bars" style="--max: 9"><div style="--v: 9"><b>9 h</b><span>Q1</span></div><div style="--v: 5"><b>5 h</b><span>Q2</span></div><div class="fill" style="--v: 2"><b>2 h</b><span>Q3</span></div><div style="--v: 1; --hi: 1.5"><b>1–1.5 h</b><span>Q4 plan</span></div></div>
+      <ol class="callouts"><li><b>Q2: tags on arrival</b><span>The assistant routes each ticket to its queue.</span></li><li><b>Q3: drafts</b><span>People edit and send the assistant's draft.</span></li></ol>
+    </div>
+    <p class="fine">Median first response, illustrative figures; Q4 is the plan.</p>
+  </div>
+</section>
+
+<section class="slide c2" data-section="Parts of one total" data-notes="A stack for one total cut into parts; the focus number is the total it adds up to.">
+  <h2>An agent's 8-hour shift: 3 h on new tickets, 2 h on follow-ups</h2>
+  <div class="slide-body">
+    <div class="split aside">
+      <div><div class="stack"><i style="--v: 3"><b>3 h</b>new tickets</i><i style="--v: 2"><b>2 h</b>follow-ups</i><i style="--v: 2"><b>2 h</b>escalations</i><i class="lo" style="--v: 1"><b>1 h</b>training</i></div>
+        <ol class="callouts" style="margin-top: 1.2em"><li><b>Follow-ups shrink first</b><span>drafts answer the second question in the first reply</span></li><li><b>Escalations stay with people</b><span>refunds and complaints are never drafted</span></li></ol></div>
+      <div class="focus"><span>One shift</span><b class="num-l">8 h</b><p>time-tracking sample of 40 shifts</p></div>
+    </div>
+    <p class="fine">Illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Compared across things" data-notes="Horizontal bars for amounts side by side; the fill row is the one the title is about.">
+  <h2>Billing questions take the longest: 14 minutes a ticket</h2>
+  <div class="slide-body">
+    <div class="hbars" style="--max: 14"><div class="fill" style="--v: 14"><span>Billing</span><i></i><b>14 min</b></div><div style="--v: 9"><span>Account access</span><i></i><b>9 min</b></div><div style="--v: 6"><span>Shipping</span><i></i><b>6 min</b></div><div style="--v: 4"><span>Returns</span><i></i><b>4 min</b></div></div>
+    <p class="fine">Median handling time per ticket, illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide c4" data-section="Counts of outcomes" data-notes="A waffle for n of N: every square is one draft.">
+  <h2>Of 100 drafts, agents sent 71 as written and rejected 7</h2>
+  <div class="slide-body">
+    <div class="split">
+      <div><div class="waffle"><i class="ok" data-n="71"></i><i class="warn" data-n="22"></i><i class="bad" data-n="7"></i></div>
+        <p class="legend" style="margin-top: 0.8em"><span class="ok">71 sent as written</span><span class="warn">22 edited</span><span class="bad">7 rejected</span></p></div>
+      <div class="kpis col"><div><b class="num-l">93%</b><span>of drafts sent, edited or not</span></div><div><b class="num-l">7</b><span>rejected, each with a reason the next draft learns from</span></div></div>
+    </div>
+    <p class="fine">One week of drafts, illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide c2" data-section="Levels that build up" data-notes="A ladder for levels or a path, each level in its own colour; the fill step is where we are.">
+  <h2><span class="chip c2">Level 2</span>Four levels of triage automation; the team reached level 2</h2>
+  <div class="slide-body">
+    <div class="ladder">
+      <div><b>01</b><h3>Manual</h3><p>People read, tag and answer every ticket</p><p class="foot">Q1 · every reply by hand</p></div>
+      <div class="fill"><b>02</b><h3>Assisted</h3><p>The assistant tags and drafts; people send</p><p class="foot">now · 93% of drafts sent</p></div>
+      <div><b>03</b><h3>Supervised</h3><p>Routine replies go out; people sample 1 in 10</p><p class="foot">April · plan</p></div>
+      <div><b>04</b><h3>Automated</h3><p>People handle exceptions and refunds only</p><p class="foot">not planned this year</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-section="Before and after" data-notes="Two panes and the drawn arrow for then and now.">
+  <h2>Agents stopped writing first replies; they check and send them</h2>
+  <div class="slide-body">
+    <div class="cols-2 flow">
+      <div class="pane c0"><span class="n">Before · Q1</span><h3>Read, tag, write</h3><ul><li>Every ticket read in full</li><li>Tags chosen by hand</li><li>Replies written from scratch</li></ul><p class="foot"><b class="num-m">9 h</b> median first response</p></div>
+      <div class="pane c1"><span class="n">Now · Q3</span><h3>Check and send</h3><ul><li>The assistant tags on arrival</li><li>It drafts the first reply</li><li>The agent edits, sends or rejects</li></ul><p class="foot"><b class="num-m">2 h</b> median first response</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Who does what" data-notes="Zones for who owns which part, a chain inside each, the loop for work that goes back.">
+  <h2>The assistant drafts, the agent decides, and a rejected draft goes back</h2>
+  <div class="slide-body">
+    <div class="cols-2">
+      <div class="zone c1"><header><b>Assistant</b><span>On arrival</span></header><div class="chain"><b>Tag</b><b>Find similar</b><b class="fill">Draft</b></div></div>
+      <div class="zone c2"><header><b>Agent</b><span>Within the hour</span></header><div class="chain"><b class="who">Check</b><i>edit or reject</i><b>Send</b></div></div>
+    </div>
+    <div class="loop" style="--from: 22%; --to: 22%"><span>a rejected draft and its reason go back to the assistant</span></div>
+    <p class="legend"><span class="c1">Assistant</span><span class="c2">Agent</span><span class="who">A person decides</span></p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Rows of things" data-notes="Rows for a set of real things, each with its icon, its detail and its unit.">
+  <h2>The assistant reads four sources before it drafts a reply</h2>
+  <div class="slide-body">
+    <div class="split even">
+      <div><p class="cap" style="margin-bottom: 0.7em">What one draft reads</p>
+        <div class="rows">
+          <div><i class="ico" data-i="ticket"></i><b>The ticket<small>the customer's own words</small></b><span class="chip c1">1 message</span></div>
+          <div class="c2"><i class="ico" data-i="user"></i><b>Customer history<small>orders, refunds, past tickets</small></b><span class="chip">12 months</span></div>
+          <div class="c4"><i class="ico" data-i="file"></i><b>Policy library<small>refund, shipping and access rules</small></b><span class="chip">184 articles</span></div>
+          <div class="c3"><i class="ico" data-i="search"></i><b>Similar tickets<small>closed, with the reply that worked</small></b><span class="chip">top 5</span></div>
+        </div></div>
+      <ol class="callouts"><li><b>Every draft cites its sources</b><span>the agent sees which policy and which ticket each line came from</span></li><li><b>History stops at 12 months</b><span>older orders are out of scope for the pilot</span></li></ol>
+    </div>
+    <p class="fine">Illustrative sources and counts.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="One case end to end" data-notes="A chain of cards for one piece of work: each part's colour, what it does, and its value.">
+  <h2><span class="chip c1">Assisted</span>One billing ticket goes from arrival to a sent reply in 38 minutes</h2>
+  <div class="slide-body">
+    <p class="cap">Ticket 48213, 6 October</p>
+    <div class="chain">
+      <b class="c1">Arrives<small>email to the shared inbox</small><em>09:02</em></b>
+      <b class="c2">Tagged<small>billing · refund, by the assistant</small><em>09:02</em></b>
+      <b class="c4">Drafted<small>2 policies and 1 similar ticket cited</small><em>09:05</em></b>
+      <b class="who c5">Checked<small>the agent edits one line</small><em>09:31</em></b>
+      <b class="c3">Sent<small>the customer's reply goes out</small><em>09:40</em></b>
+    </div>
+    <p class="fine">One ticket from the pilot log, times as recorded; illustrative.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="Layers of a system" data-notes="Layers for an architecture, top first; the fill part is the one this deck changes.">
+  <h2>The assistant works inside the helpdesk; models stay behind the platform</h2>
+  <div class="slide-body">
+    <div class="layers">
+      <div class="c0"><b>Helpdesk<small>the tool agents use</small></b><span>Ticket queue</span><span>Macros</span><span>Customer history</span></div>
+      <div class="c1"><b>Assistant<small>runs on every new ticket</small></b><span>Tagger</span><span class="fill">Drafter<small>cites the policy it used</small></span><span>Similar tickets</span></div>
+      <div><b>Platform<small>our tenant</small></b><span>Workflows</span><span>Policy library</span><span>Approved models</span></div>
+    </div>
+    <p class="fine">Illustrative architecture.</p>
+  </div>
+</section>
+
+<section class="slide c2" data-section="Steps over time" data-notes="Steps for a plan; the fill step is the current one.">
+  <h2>Rollout runs in four steps from January to April</h2>
+  <div class="slide-body">
+    <ol class="steps"><li><b>January</b>Tags on for all channels</li><li class="fill"><b>February</b>Drafts for billing and shipping</li><li><b>March</b>Drafts for every queue</li><li><b>April</b>Routine replies sampled 1 in 10</li></ol>
+    <p class="note">February is under way: drafts cover 2 of 4 queues.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="The real thing" data-notes="The product's screen with numbered callouts; its small print is the product's.">
+  <h2>Each ticket shows its draft, its tags and why the assistant chose them</h2>
+  <div class="slide-body">
+    <div class="split rev">
+      <div class="screen"><div class="bar"><span>Ticket 48213 · billing</span><span>draft ready</span></div><div class="body"><h4>Charged twice for the October invoice <i class="mk">1</i></h4><dl class="kv"><dt>Tags</dt><dd>billing · refund <i class="mk">2</i></dd><dt>Similar</dt><dd>12 tickets this month</dd><dt>Draft</dt><dd class="ok">ready, 2 sources cited <i class="mk">3</i></dd></dl></div></div>
+      <ol class="callouts"><li><b>The customer's words</b><span>shown first, never rewritten</span></li><li><b>Tags with a reason</b><span>the agent can change either</span></li><li><b>Sources</b><span>each draft cites the policy it used</span></li></ol>
+    </div>
+    <p class="fine">Mock-up of the ticket view; ticket number is a stand-in.</p>
+  </div>
+</section>
+
+<section class="slide c4" data-section="A set of names" data-notes="Chips for a set of named things.">
+  <h2>Drafts cover six languages, 94% of the tickets, from day one</h2>
+  <div class="slide-body">
+    <div class="split rev">
+      <div><p class="chips"><span class="c4">English</span><span>Polish</span><span>Ukrainian</span><span>German</span><span>Spanish</span><span>French</span></p>
+        <p class="note" style="margin-top: 1.2em">Other languages fall back to an English draft for the agent to translate.</p></div>
+      <div class="focus"><span>Tickets in these six languages</span><b class="num-xl">94%</b><p>of 3,140 a week, week 40</p></div>
+    </div>
+    <p class="fine">Illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide" data-section="Options compared" data-notes="A table for several things on several attributes.">
+  <h2>Building on the current helpdesk is the cheapest of three options</h2>
+  <div class="slide-body">
+    <div class="table-wrapper"><table class="table"><thead><tr><th>Option</th><th>Set-up</th><th>Running cost</th><th>Data stays in</th></tr></thead>
+      <tbody><tr><td>Helpdesk add-on</td><td>2 weeks</td><td class="td-number">$1,900 a month</td><td>vendor cloud</td></tr><tr><td>Separate triage tool</td><td>6 weeks</td><td class="td-number">$3,400 a month</td><td>vendor cloud</td></tr><tr><td>Build on the current helpdesk</td><td>4 weeks</td><td class="td-number">$1,200 a month</td><td>our tenant</td></tr></tbody></table></div>
+    <p class="fine">Quotes from October, illustrative figures.</p>
+  </div>
+</section>
+
+<section class="slide c1" data-section="The ask" data-notes="The ask: each decision with who makes it and by when.">
+  <h2>Two decisions let drafts reach every queue in March</h2>
+  <div class="slide-body">
+    <ol class="decisions">
+      <li class="head"><b>Decision</b><span>Who</span><span>By</span></li>
+      <li><b>Approve drafts for every queue from 1 March<small>same review rule: the agent sends every draft</small></b><span>Head of support</span><span>14 February</span></li>
+      <li><b>Fund the build on the current helpdesk<small>$1,200 a month after a 4-week build</small></b><span>Finance lead</span><span>21 February</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="slide close" data-notes="Close on the verbs, each in the colour of its part.">
+  <p><b class="c1">Tag</b> every ticket on arrival.</p>
+  <p><b class="c2">Draft</b> every reply with its sources.</p>
+  <p><b class="c3">Send</b> only what an agent checked.</p>
+</section>
+
+</body>
+</html>

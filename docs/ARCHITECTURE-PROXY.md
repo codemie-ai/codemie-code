@@ -166,7 +166,13 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 - `authMethod` (`'sso' | 'jwt'`), `jwtToken`
 - `repository` / `branch` / `project` (header injection), `gatewayKey` (local daemon auth)
 - `syncApiUrl` / `syncCodeMieUrl` (session sync target and credential lookup, independent of the main upstream)
-- `telemetryMode` (`'none' | 'claude-desktop'`) and related poll/inactivity timeouts
+- `telemetryMode` (`'none' | 'claude-desktop'`) and related poll/inactivity timeouts (10 s poll, 5 min idle). The Desktop telemetry runtime owns its records (`ownerPid` / `ownerStartedAt` = the daemon process) and:
+  - ends a session at its last activity (the later of the in-memory and the saved `lastSeenActivityAt`, else `lastDiscoveredAt`, else `startTime`), never at the moment it is finalized; reasons: `desktop-inactive-timeout` (5 min idle), `desktop-daemon-stop` (daemon stop), `desktop-daemon-restart` (the start-up scan);
+  - at start, scans its client's `<id>.json` records without blocking the start: an `active` record whose owning daemon is gone is finalized `desktop-daemon-restart` and delivered; an ownerless (legacy) `active` record idle longer than 72 h is closed locally, nothing sent; an undelivered `completed` record with an owner (also one a CLI start closed locally as `desktop-daemon-gone`, flushed first) is delivered. A record of another CodeMie host (its `codemieUrl`) is never delivered by this daemon: an active one of a gone daemon is closed locally as `desktop-daemon-gone` and left for a daemon of that host, a completed one is left as it is;
+  - delivers a finalized record (sync, then the end metric) and renames its set `completed_*` only once delivered; a failed delivery is logged and the record stays `<id>.json`; each daemon start spends one of at most 3 attempts, after which the record is renamed unsent; an attempt is made only with stored cookies and the analytics auth not marked invalid (otherwise nothing is sent and the record waits for a re-login), and one the server answers with rejected credentials (401, or an SSO login page) is given back and marks the auth invalid; a live daemon retries every 10 minutes without spending attempts, sending nothing while the mark holds, so an outage of any length never drops a record unsent; ownerless records are never re-delivered;
+  - reopens a `completed` record when its conversation gets new activity: under the record's reconcile lock (waited up to 30 s, else retried at the next poll) the `completed_*` set moves back to its live names (a `completed_*` metrics or conversation file left beside a live `<id>.json` is merged in front of the live lines), the end and delivery state is cleared (`droppedAt` included) and the resumed stretch gets its own end metric: its start is the activity seen when the record reopened (`stretchStartTime`) and its duration runs from there, so the earlier stretch and the idle gap are not reported again (when the earlier stretch's end metric never left, `stretchStartTime` is kept and the next end metric covers that stretch, the gap and the resumed one); the record keeps its `startTime`;
+  - follows a folder switch: a changed transcript path or working directory replaces `correlation.agentSessionFile` / `workingDirectory`, with `gitBranch`, `repository` and `project` detected from the new folder (the start metric and earlier deltas keep the old folder's);
+  - never stops on one session: a failed poll, session, start metric or finalization is logged and retried at the next poll; the start metric is not re-sent.
 
 ### 3.2 PluginRegistry
 
@@ -624,14 +630,17 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 **Conditionally Injected:**
 
+On `/v1/metrics` the proxy does not inject `X-CodeMie-Client`, `X-CodeMie-Repository`, `X-CodeMie-Branch` or `X-CodeMie-Project`, because a metric can belong to another session or agent than the running launch: `MetricsApiClient` sets them, the client from its sender's client type, the other three from the metric's attributes (the end metric detects the branch only when the record has none), and a request without one stays without it. The entries below for these four headers describe every other path; the remaining entries also apply to `/v1/metrics`.
+
 - `X-CodeMie-Session-ID`: Session UUID for correlation, only `if (context.sessionId && context.sessionId !== 'unknown')`
 - `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-gemini`, `codemie-code`), only `if (config.clientType)`
 - `X-CodeMie-Integration`: Integration ID (only when provider requires integration via `requiresIntegration` flag)
 - `X-CodeMie-CLI-Model`: Model name from config (if configured) — this fires for `vscode-byok` too whenever the active profile has a `model` set, since the daemon receives `--model` for every target (see §6.13)
 - `X-CodeMie-CLI-Timeout`: Timeout value from config (if configured)
-- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`
-- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`
-- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13)
+- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13); sent raw, omitted if not valid Latin-1 (see Encoding)
+- Encoding: `X-CodeMie-Repository` and `X-CodeMie-Branch` values are percent-encoded per `/`-separated segment with `encodeURIComponent` (`encodeAttributionHeader` in `src/utils/header-value.ts`), but only for a segment containing a character outside printable ASCII (`0x20–0x7E`). Other segments are sent unchanged, so `org/repo`, `my repo` and `fix/100%` stay byte-identical, `/` stays readable, and non-Latin-1 characters cannot make Node reject the header. Lone surrogates become U+FFFD, and an already-encoded non-ASCII value is encoded again (not idempotent). `X-CodeMie-Project` is sent raw via `rawProjectHeader` and omitted if the value is not valid Latin-1 (`0x20–0x7E`, `0xA0–0xFF`), so the backend falls back to the user's default project. Consumers decode Repository and Branch only; Project is used as sent. Invalid-header errors naming an `X-CodeMie-*` header map to `INVALID_HEADER_VALUE` (500) rather than an authentication error.
 - `x-litellm-session-id`: session ID, injected only for `codemie-codex`/`codemie-copilot` client types (`header-injection.plugin.ts:41-43`) — not a `X-CodeMie-*` header, easy to miss when scanning for the CodeMie prefix
 
 **Architecture**:
@@ -650,7 +659,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 **Log Destinations**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
 
-**Log Level**: DEBUG (file only, console when CODEMIE_DEBUG=1)
+**Log Level**: DEBUG (file only, stderr when CODEMIE_DEBUG=1)
 
 **Lifecycle Hooks**:
 
@@ -679,7 +688,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 - ✅ **Unified Orchestration**: Sessions are discovered and read once, then handed to multiple pluggable processors (metrics, conversations) — zero duplicated I/O
 - ✅ **Agent-Agnostic**: Adapters support Claude, Gemini, and others behind a common interface
-- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session)
+- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session); other sessions' stranded / undelivered records are delivered by the wrapper's start pass through this launch's own send path, same CodeMie host only
 - ✅ **SSO-Only Operation**: Only runs when credentials are SSO cookies (guards against JWT-only sessions)
 - ✅ **Opt-Out via createInterceptor()**: Throws `ConfigurationError` (not a separate flag) when session ID, SSO credentials, client type, or sync-enabled config is missing — the plugin simply isn't registered for that session
 
@@ -839,8 +848,8 @@ This path is intentionally separate from the hook-based `codemie-claude` flow. C
 
 **Scalability**:
 
-- Session-scoped: Only syncs current session
-- No cross-session interference
+- Session-scoped: the timer syncs only the current session
+- Other sessions' stranded / undelivered records go through the same send path from the wrapper's start pass (≤ 5 per start, same host only), never through the timer
 - Timer-based: Predictable resource usage
 
 #### 6.12.9 Monitoring
@@ -1142,8 +1151,12 @@ src/providers/plugins/sso/session/
     Desktop or VS Code BYOK, spawned via src/cli/commands/proxy/daemon-manager.ts):
    ├─ Parse CLI args (--target-url, --state-file, --gateway-key, --port, ...)
    ├─ new CodeMieProxy(config) and await proxy.start()
+   ├─ Persist state file atomically (pid, port, url, health, timestamps); the CLI
+   │   reads the daemon alive when its pid runs and started within 60 s of the
+   │   state's `startedAt` (Windows: the pid alone), or, failing that start check,
+   │   when the shallow `/health` on the state's port answers with that port and
+   │   the state's pid
    ├─ Optionally start DesktopTelemetryRuntime (--telemetry-mode claude-desktop)
-   ├─ Persist state file atomically (pid, port, url, health, timestamps)
    ├─ Start ProxyWatcher: deep-checks /health every 30s, restarts the proxy
    │   in-process on the SAME pinned port (up to 3 attempts) on failure,
    │   records health: 'unhealthy' in the state file if it gives up
@@ -1167,9 +1180,34 @@ src/providers/plugins/sso/session/
 ```
 1. User exits agent (Ctrl+C or normal exit), or sends SIGTERM/SIGINT to the daemon
 
+   CLI wrapper (POSIX): SIGINT / SIGTERM / SIGHUP
+   ├─ Forwarded to the agent process alone first (not its helpers: the agent's
+   │  SessionEnd hook is one of them); the proxy keeps running. The agent's
+   │  descendants are remembered; if the agent ends by the signal (a launcher such
+   │  as copilot's npm loader), the tops of the subtrees still alive get the signal
+   │  (not what runs under them), are waited for up to 10 s, then their trees are
+   │  killed as they are then
+   ├─ Agent exits (no exit within 10 s of the first SIGTERM / SIGHUP / SIGINT
+   │  within 2 s of the previous one → the agent's process tree is killed and the
+   │  exit path below finalizes, then the wrapper exits 128 + signal; any other
+   │  SIGINT is forwarded and arms nothing, since the agent may only interrupt its
+   │  turn)
+   ├─ 2 s grace period for the agent's final API calls
+   ├─ onSessionEnd
+   └─ Cleanup below (proxy.stop())
+   EIO / EPIPE on the wrapper's stdout / stderr (closed terminal or pipe) are
+   ignored from run() until the wrapper process ends.
+   Windows: SIGINT / SIGTERM / SIGHUP (console close) terminate the agent
+   (any signal is TerminateProcess there; no proxy stop first); the exit path
+   above then finalizes (grace period, onSessionEnd, proxy.stop()); the handlers
+   are one-shot, a second signal takes Node's default action; after a console
+   close Windows ends the wrapper a few seconds later, so that finalization is
+   best-effort.
+
 2. Cleanup
    ├─ Stop the ProxyWatcher (daemon mode only)
-   ├─ Stop the Desktop telemetry runtime, if running
+   ├─ Stop the Desktop telemetry runtime, if running (each tracked session finalized
+   │  `desktop-daemon-stop` at its last activity and delivered; one failure never skips the rest)
    └─ await proxy.stop()
        ├─ Call onProxyStop() hooks
        │   └─ SSOSessionSyncPlugin: Final sync

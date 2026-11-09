@@ -10,7 +10,17 @@ import { createLoginCommand, createLogoutCommand, createRefreshCommand } from '.
 import { buildSingleChoiceRow, buildTopLine } from '../shared/selection/ui.js';
 import { ANSI, KEY } from '../shared/selection/constants.js';
 import { COLOR } from '../shared/constants.js';
-import type { ProfileInfo } from './display.js';
+import type { ProfileInfo, ProfileIdentityDisplay } from './display.js';
+import { describeProjectBinding } from '../../../utils/project-binding.js';
+
+/** Resolved URL and project text of one profile, as the launcher would use it. */
+async function resolveIdentityDisplay(workingDir: string, profileName?: string): Promise<ProfileIdentityDisplay> {
+  const resolution = await ConfigLoader.resolveProfileIdentity(workingDir, profileName);
+  return {
+    codeMieUrl: resolution.identity.codeMieUrl,
+    project: describeProjectBinding(resolution.state, resolution.identity.codeMieProject)
+  };
+}
 
 export interface ProfileSelectionChoiceNameOptions {
   name: string;
@@ -54,18 +64,19 @@ async function listProfiles(): Promise<void> {
     const workingDir = process.cwd();
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
-    const localWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, true);
-    const globalWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+    // Each profile resolves its own identity by name: two global profiles can use
+    // different CodeMie URLs and projects (EPMCDME-15411).
+    const identities = new Map<string, ProfileIdentityDisplay>();
+    for (const p of profiles) {
+      identities.set(p.name, await resolveIdentityDisplay(workingDir, p.name));
+    }
 
     // Show context indicator
     if (hasLocal) {
       console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
     }
 
-    ProfileDisplay.formatList(profiles, {
-      local: localWorkspace.codeMieUrl,
-      global: globalWorkspace.codeMieUrl
-    });
+    ProfileDisplay.formatList(profiles, identities);
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);
@@ -155,7 +166,7 @@ async function handleStatus(): Promise<void> {
     : chalk.cyan('(source: global ~/.codemie/)');
 
   // Display profile + auth status
-  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, config.codeMieUrl);
+  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, await resolveIdentityDisplay(workingDir));
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
 }

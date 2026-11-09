@@ -1,4 +1,6 @@
 import { logger } from '../../../utils/logger.js';
+import { processStartedAt } from '../../../utils/processes.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY } from './types.js';
 
 /**
  * Ensure session metadata file exists for SessionSyncer.
@@ -45,24 +47,36 @@ export async function ensureSessionFile(
       }
     }
 
-    // Estimate startTime from grace period (session ended ~2 seconds ago during grace period)
-    // This prevents negative session durations in metrics aggregation
-    const estimatedStartTime = Date.now() - 2000;
+    const codemieUrl = env.CODEMIE_URL;
+    const clientType = env.CODEMIE_CLIENT_TYPE;
+    const model = env.CODEMIE_MODEL;
+    // The launch flags the SessionStart record would carry, so the run window resolves the same way
+    const resumeSessionId = env[RESUME_SESSION_ENV_KEY];
+    const continuesPriorSession = env[CONTINUE_SESSION_ENV_KEY] === '1';
 
+    // A live record owned by this process (it runs in the wrapper): it ends by the agent's
+    // onSessionEnd, or — if the wrapper dies first — as a stranded record of a later start.
     const session = {
       sessionId,
       agentName,
       provider,
       ...(project && { project }),
-      startTime: estimatedStartTime,
+      ownerPid: process.pid,
+      ownerStartedAt: processStartedAt(),
+      ...(codemieUrl && { codemieUrl }),
+      ...(clientType && { clientType }),
+      ...(model && { model }),
+      startTime: Date.now(),
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
-      status: 'completed' as const,
+      status: 'active' as const,
       activeDurationMs: 0,
+      ...(resumeSessionId && { resumeSessionId }),
+      ...(continuesPriorSession && { continuesPriorSession: true as const }),
       correlation: {
         status: 'matched' as const,
-        agentSessionId: 'unknown',
+        agentSessionId: sessionId,
         retryCount: 0
       }
     };

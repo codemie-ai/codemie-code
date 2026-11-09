@@ -35,6 +35,14 @@ describe('forwardOtlpEventsToSpool', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('CR001: an evidence loss report is posted with no events; without it an empty list still sends nothing', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
+    const ok = await forwardOtlpEventsToSpool([], 'claude-code-otlp', { evidenceLoss: { sessionId: 's1', reason: 'unavailable', events: 2 } });
+    expect(ok).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({ hookEvents: [], evidence_loss: { session_id: 's1', reason: 'unavailable', events: 2 } });
+  });
+
   it('POSTs one batch body with every event and the gateway key, and returns true on 2xx', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
     const events = [{ type: 'agent.usage.request' }, { type: 'agent.session.summary' }];
@@ -48,6 +56,20 @@ describe('forwardOtlpEventsToSpool', () => {
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer gw-key');
     expect(JSON.parse(init.body as string)).toEqual({ agentName: 'claude-code-otlp', hookEvents: events });
+  });
+
+  it('CR008: the serialized body carries evidence_v: 1 exactly when the caller stamped, and no such key otherwise', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
+    const events = [{ type: 'agent.session.start' }];
+    const bodyOf = () => JSON.parse(fetchMock.mock.calls.at(-1)![1].body as string) as Record<string, unknown>;
+
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp', { evidenceV: 1 });
+    expect(bodyOf()).toEqual({ agentName: 'claude-code-otlp', hookEvents: events, evidence_v: 1 });
+
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp', {});
+    expect(Object.keys(bodyOf())).not.toContain('evidence_v');
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp');
+    expect(Object.keys(bodyOf())).not.toContain('evidence_v');
   });
 
   it('returns false for a non-2xx response', async () => {

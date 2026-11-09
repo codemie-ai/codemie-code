@@ -215,6 +215,21 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
       expect(body).not.toHaveProperty('top_p');
     });
 
+    it('transforms thinking enabled → adaptive with effort for claude-opus-5-5', async () => {
+      harness = await startHarness({ clientType: 'codemie-claude', model: 'claude-opus-5-5' });
+
+      const res = await postJson(harness.proxyUrl, '/v1/messages', {
+        model: 'claude-opus-5-5',
+        thinking: { type: 'enabled', budget_tokens: 10000 },
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(res.status).toBe(200);
+
+      const body = harness.lastForwarded()?.body as Record<string, unknown>;
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config).toEqual({ effort: 'high' });
+    });
+
     it('strips the thinking field entirely for a no-thinking model (claude-haiku-4-5)', async () => {
       harness = await startHarness({ clientType: 'codemie-claude', model: 'claude-haiku-4-5' });
 

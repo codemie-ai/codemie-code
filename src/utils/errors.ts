@@ -62,6 +62,28 @@ export class AmbiguousIdentifierError extends CodeMieError {
   }
 }
 
+export class SessionRecordNotFoundError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Session record not found: ${sessionId}`);
+    this.name = 'SessionRecordNotFoundError';
+  }
+}
+
+const SESSION_FILE_LOCK_TIMEOUT = 'Timed out waiting for lock';
+
+export class SessionFileLockTimeoutError extends CodeMieError {
+  constructor(lockPath: string) {
+    super(`${SESSION_FILE_LOCK_TIMEOUT} ${lockPath}`);
+    this.name = 'SessionFileLockTimeoutError';
+  }
+}
+
+/** Whether an error, or a processor's failure message carrying its text, is a session file lock timeout. */
+export function isSessionFileLockTimeout(reason: unknown): boolean {
+  return reason instanceof SessionFileLockTimeoutError ||
+    (typeof reason === 'string' && reason.includes(SESSION_FILE_LOCK_TIMEOUT));
+}
+
 export class PartialRegistrationError extends CodeMieError {
   constructor(
     public readonly written: string[],
@@ -71,6 +93,13 @@ export class PartialRegistrationError extends CodeMieError {
     const writtenSummary = written.length > 0 ? written.join(', ') : 'none';
     super(`Registration stopped after a failure. Already registered: ${writtenSummary}. Cause: ${causeMessage}`);
     this.name = 'PartialRegistrationError';
+  }
+}
+
+export class ReconcileLockHeldError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Reconcile lock of ${sessionId} is held by another process`);
+    this.name = 'ReconcileLockHeldError';
   }
 }
 

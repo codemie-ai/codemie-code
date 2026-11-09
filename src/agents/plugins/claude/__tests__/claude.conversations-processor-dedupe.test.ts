@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -143,6 +143,28 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
     expect(syncUpdates?.conversations.lastSyncedMessageUuid).toBe(uuid);
   });
 
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    await seedSession();
+    const record = join(tempHome, 'sessions', `${SESSION_ID}.json`);
+    const hidden = join(tempHome, 'sessions', `completed_${SESSION_ID}.json`);
+
+    // A SessionEnd rename in flight: the live record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const pointerBefore = await loadPointer();
+    const dropped = await processSession();
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(conversationsFile)).toBe(false);
+    expect(existsSync(record)).toBe(false);
+    expect(await loadPointer()).toBe(pointerBefore);
+
+    renameSync(hidden, record);
+    const retried = await processSession();
+    expect(retried.message).toBe('Generated 1 turn');
+    expect(readQueued()).toHaveLength(1);
+    expect(await loadPointer()).toBe(await nextTurnUuid());
+  });
+
   it('still queues the next turn after skipping an already-queued one in the same drain', async () => {
     const twoTurns = [
       ...messages,
@@ -188,6 +210,102 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
     expect(queued[1].payloadId).not.toBe(turn1.lastProcessedMessageUuid);
     expect(queued[1].historyIndices).toEqual([1, 1]);
     expect(await loadPointer()).toBe(turn2.lastProcessedMessageUuid);
+  });
+
+  it('reads the queue past a torn line and appends the next turn after it', async () => {
+    const turn = (n: number) => [
+      { type: 'user', uuid: `u${n}`, timestamp: new Date(1_700_000_000_000 + n * 2000).toISOString(), message: { role: 'user', content: `question ${n}` } },
+      { type: 'assistant', uuid: `a${n}`, timestamp: new Date(1_700_000_001_000 + n * 2000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: `answer ${n}` }] } },
+    ];
+    await seedSession();
+    await processSession(turn(1));
+    await processSession([...turn(1), ...turn(2)]);
+    const [first, second] = readFileSync(conversationsFile, 'utf8').trim().split('\n');
+    writeFileSync(conversationsFile, `${first}\n{"payloadId":"torn\n${second}\n`);
+
+    const result = await processSession([...turn(1), ...turn(2), ...turn(3)]);
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsFile, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([first, '{"payloadId":"torn', second]);
+    const appended = JSON.parse(lines[3]) as { payload: { history: Array<{ message: string }> } };
+    expect(appended.payload.history.map(h => h.message)).toEqual(['question 3', 'answer 3']);
+  });
+
+  describe('head lines re-written after compact_boundary', () => {
+    const line = (type: string, uuid: string, ms: number, extra: Record<string, unknown> = {}) => ({
+      type,
+      uuid,
+      timestamp: new Date(ms).toISOString(),
+      ...(type === 'user'
+        ? { message: { role: 'user', content: `${uuid} question` } }
+        : type === 'assistant'
+          ? { message: { role: 'assistant', content: [{ type: 'text', text: `${uuid} answer` }] } }
+          : {}),
+      ...extra,
+    });
+    // The pointer sits on a2, which is not re-written; the re-written u1/a1 move past it under keep-last.
+    const head = [
+      line('user', 'u1', 1_700_000_000_000),
+      line('assistant', 'a1', 1_700_000_001_000),
+      line('user', 'u2', 1_700_000_002_000),
+      line('assistant', 'a2', 1_700_000_003_000),
+    ];
+    const grown = [
+      ...head,
+      line('system', 'cb', 1_700_000_004_000, { subtype: 'compact_boundary' }),
+      line('user', 'u1', 1_700_000_005_000),
+      line('assistant', 'a1', 1_700_000_006_000),
+      line('user', 'u3', 1_700_000_007_000),
+      line('assistant', 'a3', 1_700_000_008_000),
+    ];
+
+    async function syncFile(
+      lines: unknown[],
+      dropConversationView = false
+    ): Promise<void> {
+      const transcript = join(tempHome, 'transcript.jsonl');
+      writeFileSync(transcript, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+      const { ClaudeSessionAdapter } = await import('../claude.session.js');
+      const { ClaudePluginMetadata } = await import('../claude.plugin.js');
+      const parsed = await new ClaudeSessionAdapter(ClaudePluginMetadata).parseSessionFile(transcript, SESSION_ID);
+      if (dropConversationView) delete parsed.conversationMessages;
+      const { ConversationsProcessor } = await import('../session/processors/claude.conversations-processor.js');
+      await new ConversationsProcessor().process(parsed, { agentSessionId: AGENT_SESSION_ID } as never);
+    }
+
+    function queuedHistory(): Array<{ historyIndices: number[]; texts: string[] }> {
+      return (readQueued() as unknown as Array<{
+        historyIndices: number[];
+        payload: { history: Array<{ message: string }> };
+      }>).map(r => ({ historyIndices: r.historyIndices, texts: r.payload.history.map(h => h.message) }));
+    }
+
+    it('queues only the new turn on the second pass', async () => {
+      await seedSession();
+      await syncFile(head);
+      await syncFile(grown);
+
+      expect(queuedHistory()).toEqual([
+        { historyIndices: [0, 0], texts: ['u1 question', 'a1 answer'] },
+        { historyIndices: [1, 1], texts: ['u2 question', 'a2 answer'] },
+        { historyIndices: [2, 2], texts: ['u3 question', 'a3 answer'] },
+      ]);
+    });
+
+    it('re-processes the head turn when the sync reads the keep-last view', async () => {
+      await seedSession();
+      await syncFile(head, true);
+      await syncFile(grown, true);
+
+      // The re-processed head turn is skipped by its queued payloadId but still takes history_index 2.
+      expect(queuedHistory()).toEqual([
+        { historyIndices: [0, 0], texts: ['u1 question', 'a1 answer'] },
+        { historyIndices: [1, 1], texts: ['u2 question', 'a2 answer'] },
+        { historyIndices: [3, 3], texts: ['u3 question', 'a3 answer'] },
+      ]);
+    });
   });
 
   it('queues a turn once when two hook events start from the same pointer', async () => {

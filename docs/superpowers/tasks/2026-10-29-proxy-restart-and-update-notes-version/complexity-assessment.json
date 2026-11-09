@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Add a `codemie proxy restart` subcommand and fix the post-update What's-new banner so it shows notes for the installed version, stays silent in hook invocations, and stops flip-flopping between installs.",
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two independent surfaces bundled in one run: the proxy command group (new restart subcommand reusing daemon-manager checkStatus/stopDaemon/spawnDaemon) and the update-notice path (bin/codemie.js startup notice, the shared whatsnew utility also used by the whatsnew command, and the shared last-seen-version marker). That is 3-4 components across the CLI and utility/bin layers, and one of them is a shared utility." },
+    { "dimension": "requirements_clarity", "reason": "Several design decisions are still open. Does restart reuse the running daemon's recorded identity (clientType, telemetryMode, port) or the start defaults? Should the notes be exact-version or the range between previous and current? How are downgrades handled? How is the marker redesigned so multiple installs on different PATHs stop flip-flopping? The flip-flop root cause is also unverified on the user's machine." },
+    { "dimension": "technical_risk", "reason": "Closest pattern: connect-orchestrator ensureDaemon, which already does stop-then-spawn, so restart has a precedent. Base S. Bumped to M because the acceptance criteria list variant cases (hook or piped invocation, mismatched version, multi-install marker) and no whatsnew or bin-notice test template exists. Port stability on restart (Claude Desktop and VS Code configs pin the URL) is a moderate, non-security concern." },
+    { "dimension": "file_change_estimate", "reason": "About 5-7 modified files (proxy/index.ts, possibly daemon-manager.ts, bin/codemie.js, utils/whatsnew.ts, commands/whatsnew.ts, CHANGELOG.md, docs/COMMANDS.md and README.md) plus 1-2 new test files. The docs edits are trivial, so this stays in the M band." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
