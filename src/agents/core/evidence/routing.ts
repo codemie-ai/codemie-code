@@ -1,6 +1,17 @@
 import { apiIdentity } from './api-identity.js';
 
 /**
+ * A live CodeMie proxy daemon as read from its state file: the local listener URL and the upstream
+ * gateway it forwards to. Shared contract between the hook-time daemon lookup and routing proof.
+ */
+export interface LocalProxy {
+  /** Local listener URL of the proxy daemon. */
+  url: string;
+  /** Upstream URL the daemon forwards to, when recorded. */
+  targetUrl?: string;
+}
+
+/**
  * Routing evidence, separate from launch mode and from the analytics destination.
  * Pure: callers pass process env, the settings.json `env` block, and profile facts.
  */
@@ -22,7 +33,7 @@ export interface RoutingInput {
    * The running CodeMie proxy daemon, from its state file, only when alive; resolved by the caller,
    * keeps this function pure.
    */
-  localProxy?: { url: string; targetUrl?: string };
+  localProxy?: LocalProxy;
 }
 
 export interface RoutingResult {
