@@ -6,6 +6,7 @@ import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../.
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
+import { filterToProfileModels } from '../../core/profile-model-filter.js';
 
 interface CodexCatalogReasoningLevel {
   effort: 'low' | 'medium' | 'high' | 'xhigh';
@@ -473,11 +474,18 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     currentModel && rankedIds.includes(currentModel)
       ? currentModel
       : catalogModels[0].id;
+
+  // CODEMIE_PROFILE_MODELS must narrow native Codex's own /model picker, not just
+  // --model flag validation (CODEMIE_CODEX_AVAILABLE_MODELS / assertExplicitCodexModelAllowed
+  // in codex.plugin.ts) — the picker is driven entirely by this catalog file
+  // (model_catalog_json), which filterAvailableModelsToProfile never touches.
+  const pickerModels = filterCatalogModelsToProfile(catalogModels, selectedModel, env);
+
   const catalogPath = await writeCatalogFile(
     // Codex marks the first row as its default, so the selected model leads (keeping the marker
     // on the model actually in use), then routers, then the rest; `priority` is the position.
     buildCodexCatalog(
-      orderModelsForPicker(catalogModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
+      orderModelsForPicker(pickerModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
       buildModelLabelIndex(rawModels))
   );
 
@@ -493,6 +501,45 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     catalogPath,
     availableModels: rankedIds,
   };
+}
+
+/**
+ * Narrow an available-model id list to the active profile's own models, keeping the
+ * configured CODEMIE_MODEL (CR-003) — setupProxy assigns env.CODEMIE_MODEL right before
+ * calling this, so a retirement-healed active model survives the narrowing. Falls back to
+ * the unfiltered list (CR-004) so Codex's --model validation never ends up with zero usable
+ * models (AC22). Logs only: the picker narrowing below already tells the user.
+ */
+export function filterAvailableModelsToProfile(
+  availableModels: string[],
+  env: NodeJS.ProcessEnv
+): string[] {
+  return filterToProfileModels(availableModels, env.CODEMIE_PROFILE_MODELS, {
+    getId: id => id,
+    activeModel: env.CODEMIE_MODEL,
+    noMatchMessage:
+      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the available models — showing the full catalog instead',
+    noMatchLevel: 'warn',
+  });
+}
+
+/**
+ * Narrow the ranked catalog entries used to build Codex's on-disk model_catalog_json —
+ * the file native Codex's own /model picker renders from (codex.plugin.ts passes it via
+ * `--config model_catalog_json=...`) — to the active profile's own models. A separate
+ * artifact from CODEMIE_CODEX_AVAILABLE_MODELS, which only gates --model flag validation.
+ */
+function filterCatalogModelsToProfile(
+  catalogModels: RankedModel[],
+  selectedModel: string,
+  env: NodeJS.ProcessEnv
+): RankedModel[] {
+  return filterToProfileModels(catalogModels, env.CODEMIE_PROFILE_MODELS, {
+    getId: entry => entry.id,
+    activeModel: selectedModel,
+    noMatchMessage:
+      '[codex-models] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog',
+  });
 }
 
 export function assertExplicitCodexModelAllowed(model: string, availableModels: string[]): void {

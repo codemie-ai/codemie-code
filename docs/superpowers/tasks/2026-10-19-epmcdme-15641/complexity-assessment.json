@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Harness-first CLI setup: pick the agentic harness first, offer only compatible models (catalog filtering, name-rule validation with override for catalog-less providers), and warn at launch on legacy mismatched profiles.",
+  "generated": "2026-10-06T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Setup wizard (setup.ts, setup-ui.ts), a new shared harness-to-model compatibility abstraction, per-agent predicates (codex, gemini, and a new one for claude), AgentCLI launch validation and possibly profile/config typing. Four or more components, new abstraction, and a new cli -> agents/plugins coupling." },
+    { "dimension": "technical_risk", "reason": "No exact precedent: compatibility today lives in runtime-only per-agent models modules and setup is harness-agnostic. Name-regex heuristics can misclassify routers, setup gets only string ids with no catalog metadata, catalog-less providers (ollama, litellm, manual entry) need an override path, profiles are shared across harnesses, and legacy mismatched profiles must not break. Closest pattern, codex-models.ts predicates plus assertExplicitCodexModelAllowed, does not cover profile-time validation. Moderate risk, no security surface." },
+    { "dimension": "file_change_estimate", "reason": "About 6-10 source files modified (setup.ts, setup-ui.ts, AgentCLI.ts, codex/gemini/claude models modules, agent metadata, env types or config) plus 2-4 new files (shared compat module, tests) across cli, agents and providers directories." },
+    { "dimension": "affected_layers", "reason": "CLI/UI wizard, service/agent plugin layer, config/profile persistence (possible harness field with legacy profile compatibility), and provider model listing. Persistence schema implications push this to L. Borderline 20->21 total, leaning higher because Component Scope is XL." }
+  ],
+  "red_flags_applied": [
+    "Borderline total (20->21): leaned higher because Component Scope is XL",
+    "Touches core shared config/profile shape (legacy profile compatibility): reflected in Affected Layers"
+  ],
+  "split_recommendation": null
+}
