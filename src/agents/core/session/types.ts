@@ -193,6 +193,8 @@ export interface Session {
   endMetricSentAt?: number;
   /** Why no end metric applies to this session (e.g. no analytics auth configured) */
   endMetricSkipped?: string;
+  /** Work consent frozen at SessionStart for the legacy /v1/metrics gate (anthropic-subscription only). Hashes, no PII. */
+  legacyMetricsConsent?: { ref: string; apiIdentity: string; ownerHash: string };
   /** Delivery attempts of a completed but undelivered record */
   deliveryAttempts?: number;
   /** Finalization attempts of a stranded or legacy record */

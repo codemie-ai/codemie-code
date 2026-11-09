@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
@@ -87,6 +87,16 @@ export async function isStopped(key: string): Promise<boolean> {
     return m.stop !== false;
   } catch (err) {
     if (err instanceof SyntaxError) return true; // corrupt marker
+    return (err as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
+/** Whether any marker exists, a stop or a notice. Fail closed: false only when it is absent. */
+export async function hasMarker(key: string): Promise<boolean> {
+  try {
+    await access(pathOf(key));
+    return true;
+  } catch (err) {
     return (err as NodeJS.ErrnoException).code !== 'ENOENT';
   }
 }
