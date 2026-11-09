@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDeliveryError } from '@/utils/errors.js';
 
 import { buildInstallCommand } from '../../install-command.js';
-import { UPDATE_HINT } from '../setup-check.js';
+import { updateHint } from '../setup-check.js';
 import type { BootstrapDeps, BootstrapPrompter } from '../types.js';
 import type { BootstrapState } from '../state-store.js';
 import { saveBootstrapState } from '../state-store.js';
@@ -113,6 +113,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
       isTTY: true,
       cwd: dir,
       now: () => new Date('2026-11-04T21:33:07.123Z'),
+      cliVersion: async () => '0.17.0',
       out: vi.fn(),
       err: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
@@ -517,6 +518,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
       isTTY: true,
       cwd: dir,
       now: () => new Date('2026-11-04T21:33:07.123Z'),
+      cliVersion: async () => '0.17.0',
       out: vi.fn(),
       err: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
@@ -728,7 +730,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     expect(saved.lookbackDays).toBe(14);
   });
 
-  it('step 8 sends exactly one out line built by toInstallCommandOptions, then UPDATE_HINT on err', async () => {
+  it('step 8 sends exactly one out line built by toInstallCommandOptions, then the versioned update hint on err', async () => {
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
@@ -743,6 +745,6 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(outLine).toBe(buildInstallCommand({ webhook: VALID_TRIGGER_URL, includeExternal: 'always' }));
     const lines = errLines(deps);
-    expect(lines[lines.length - 1]).toBe(UPDATE_HINT);
+    expect(lines[lines.length - 1]).toBe(updateHint('0.17.0'));
   });
 });

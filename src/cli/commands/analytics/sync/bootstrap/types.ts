@@ -40,4 +40,7 @@ export interface BootstrapDeps {
   openUrl: (url: string) => Promise<void>;
   prompt: BootstrapPrompter;
   statePath: string;
+  /** The running CLI's version, named in the update hint as the minimum developers need;
+   * `null` when it cannot be read. */
+  cliVersion: () => Promise<string | null>;
 }

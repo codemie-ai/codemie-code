@@ -85,7 +85,7 @@ Paste the command your team lead sent:
 codemie analytics sync install --webhook-b64 <value> --include-external "never"
 ```
 
-If you see `unknown command 'sync'`, update the CLI first with `codemie self-update`.
+Your team lead's output names the minimum CodeMie CLI version for this command. If your CLI is older, or you see `unknown command 'sync'`, update first with `codemie self-update`.
 
 Install asks for your email only if neither the CodeMie CLI config nor
 `git config --global user.email` has one.

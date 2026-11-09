@@ -31,7 +31,7 @@ vi.mock('inquirer', () => ({
   default: { createPromptModule: (...a: unknown[]) => createPromptModuleMock(...a) },
 }));
 
-import { createRealBootstrapDeps, runBootstrap, setupCheckReport, UPDATE_HINT } from '../run-bootstrap.js';
+import { createRealBootstrapDeps, runBootstrap, setupCheckReport, UPDATE_HINT, updateHint } from '../run-bootstrap.js';
 import { encodeWebhook } from '../../webhook-encoding.js';
 
 const VALID_WEBHOOK = 'https://contoso.example/trigger?sig=FAKESIG';
@@ -41,6 +41,7 @@ function createDeps(overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
     isTTY: true,
     cwd: '/work',
     now: () => new Date('2026-11-04T21:33:07.123Z'),
+    cliVersion: async () => '0.17.0',
     out: vi.fn(),
     err: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
@@ -157,7 +158,7 @@ describe('runBootstrap — --webhook mode, success and failure', () => {
 
     const lines = errLines(deps);
     expect(lines.length).toBeGreaterThanOrEqual(3);
-    expect(lines.some((l) => l.includes(UPDATE_HINT))).toBe(true);
+    expect(lines.some((l) => l.includes('CodeMie CLI 0.17.0 or newer'))).toBe(true);
     for (const line of lines) {
       expect(line).not.toContain('FAKESIG');
       expect(line).not.toContain('sig=');
@@ -167,7 +168,15 @@ describe('runBootstrap — --webhook mode, success and failure', () => {
     expect(saveBootstrapStateMock).not.toHaveBeenCalled();
   });
 
-  it('prints UPDATE_HINT after the install command, as its last line', async () => {
+  it('falls back to the version-less hint when the CLI version cannot be read', async () => {
+    const deps = createDeps({ cliVersion: async () => null });
+
+    await runBootstrap({ webhook: VALID_WEBHOOK }, deps);
+
+    expect(errLines(deps)[errLines(deps).length - 1]).toBe(UPDATE_HINT);
+  });
+
+  it('prints the update hint after the install command, as its last line', async () => {
     const order: string[] = [];
     const deps = createDeps({
       out: vi.fn((line: string) => {
@@ -180,7 +189,7 @@ describe('runBootstrap — --webhook mode, success and failure', () => {
 
     await runBootstrap({ webhook: VALID_WEBHOOK }, deps);
 
-    expect(order[order.length - 1]).toBe(`err:${UPDATE_HINT}`);
+    expect(order[order.length - 1]).toBe(`err:${updateHint('0.17.0')}`);
     expect(order.findIndex((line) => line.startsWith('out:'))).toBe(order.length - 2);
   });
 

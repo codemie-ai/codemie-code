@@ -35,11 +35,20 @@ export function setupCheckReport(now: Date): SyncReport {
   };
 }
 
-/** Printed to `deps.err` after every successful test send (both modes), right before the
- * install command. Names no version, so it reads the same across CLI releases (spec.md
- * "Install command", decision AR-5). */
+/** The update hint when the running CLI's version cannot be read. */
 export const UPDATE_HINT =
   'Developers who see "unknown command" need a newer CodeMie CLI: have them run `codemie self-update`.';
+
+/**
+ * Printed to `deps.err` after the install command (both modes). Names the lead's own CLI
+ * version as the minimum: the command was built and test-sent by that version, so it is
+ * always enough, though an older release may be too.
+ */
+export function updateHint(cliVersion: string | null): string {
+  return cliVersion === null
+    ? UPDATE_HINT
+    : `Developers need CodeMie CLI ${cliVersion} or newer for this command; anyone on an older version should run \`codemie self-update\` first.`;
+}
 
 /**
  * The "flow on / Anyone / whole URL" hint shown after a failed test send whose cause was a

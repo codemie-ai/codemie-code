@@ -15,12 +15,13 @@
  *
  * Output split (spec.md "Install command", "Constraints and left to the builder"): only the
  * install command goes to `deps.out`/stdout; everything else — including `--webhook` mode's
- * check and cleanup lines and {@link UPDATE_HINT} — goes to `deps.err`/stderr. No display
+ * check and cleanup lines and {@link updateHint} — goes to `deps.err`/stderr. No display
  * anywhere here names the webhook's `sig` value.
  */
 
 import type { PromptModule } from 'inquirer';
 
+import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { validateIncludeExternal, validateLookbackDays } from '../config-store.js';
@@ -30,7 +31,7 @@ import { validateTriggerUrl } from '../trigger-url.js';
 import type { SyncReport } from '../types.js';
 import { decodeWebhook } from '../webhook-encoding.js';
 import { runGuided } from './guided.js';
-import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT } from './setup-check.js';
+import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT, updateHint } from './setup-check.js';
 import { getBootstrapStatePath } from './state-store.js';
 import type { BootstrapDeps, BootstrapOptions, BootstrapPrompter } from './types.js';
 
@@ -40,7 +41,7 @@ export type { BootstrapDeps, BootstrapOptions, BootstrapPrompter };
 
 // Re-exported (plan task 8) so existing imports/tests of this module keep working unchanged
 // now that both live in `./setup-check.js`, which the guided wizard's step 5 also imports.
-export { setupCheckReport, UPDATE_HINT };
+export { setupCheckReport, UPDATE_HINT, updateHint };
 
 /** Printed to `deps.err` after a successful `--webhook` test send, naming where the test file
  * should show up — never the webhook URL itself. */
@@ -88,7 +89,7 @@ function resolveWebhookOption(opts: BootstrapOptions): string {
  * first — webhook, then lookback, then policy — with no network call before all three pass;
  * each failure names its own flag. Test-sends {@link setupCheckReport} through `deps.send`; on
  * a 2xx it prints the check and cleanup lines to `deps.err`, then the install command to
- * `deps.out`, then {@link UPDATE_HINT} to `deps.err` (spec.md "after the command"), and
+ * `deps.out`, then {@link updateHint} to `deps.err` (spec.md "after the command"), and
  * returns 0. On any failure it prints no command and
  * returns a non-zero exit code. Never reads or writes `deps.statePath`.
  */
@@ -123,7 +124,7 @@ async function runWebhookMode(opts: BootstrapOptions, deps: BootstrapDeps): Prom
       ...(lookbackDays !== undefined && { lookbackDays })
     })
   );
-  deps.err(UPDATE_HINT);
+  deps.err(updateHint(await deps.cliVersion()));
   return 0;
 }
 
@@ -193,6 +194,7 @@ export function createRealBootstrapDeps(): BootstrapDeps {
     isTTY: Boolean(process.stdin.isTTY) && Boolean(process.stderr.isTTY),
     cwd: process.cwd(),
     now: (): Date => new Date(),
+    cliVersion: getCurrentCliVersion,
     out: (line: string): void => {
       console.log(line);
     },

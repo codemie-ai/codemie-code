@@ -805,7 +805,7 @@ would otherwise split a raw URL at `&`) and cmd.exe (which would otherwise expan
 it). The value is not encryption: it still carries the trigger signature — **treat the whole
 line as secret**.
 
-**If developers see "unknown command":** have them run `codemie self-update`.
+**Minimum CLI version:** after the command, bootstrap prints the lead's own CLI version as the minimum developers need ("Developers need CodeMie CLI <version> or newer…"). Anyone on an older version, or who sees "unknown command", runs `codemie self-update`.
 
 **State:** Lead's answers saved in `~/.codemie/analytics-sync-bootstrap.json` (mode 600) for
 resuming; includes trigger signature. `--webhook` mode reads/writes nothing.

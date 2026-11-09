@@ -17,7 +17,7 @@ import type { IncludeExternalPolicy } from '../types.js';
 import { askValidated } from './guided-support.js';
 import type { SaveBootstrapState } from './guided-support.js';
 import { cleanPaste } from './links.js';
-import { sendFailure4xxHint, setupCheckReport, UPDATE_HINT } from './setup-check.js';
+import { sendFailure4xxHint, setupCheckReport, updateHint } from './setup-check.js';
 import { toInstallCommandOptions } from './state-store.js';
 import type { BootstrapState } from './state-store.js';
 import { stepHeading } from './steps.js';
@@ -199,14 +199,14 @@ async function step7Lookback(deps: BootstrapDeps, state: BootstrapState, save: S
 /**
  * Step 8, "Developers": the one line that goes to `deps.out` in the whole guided wizard —
  * the install command built from `state` via {@link toInstallCommandOptions} — followed by
- * {@link UPDATE_HINT} on `deps.err`.
+ * {@link updateHint} on `deps.err`.
  */
 async function step8Developers(deps: BootstrapDeps, state: BootstrapState): Promise<void> {
   deps.err('');
   deps.err(stepHeading(7));
 
   deps.out(buildInstallCommand(toInstallCommandOptions(state)));
-  deps.err(UPDATE_HINT);
+  deps.err(updateHint(await deps.cliVersion()));
 }
 
 /**
