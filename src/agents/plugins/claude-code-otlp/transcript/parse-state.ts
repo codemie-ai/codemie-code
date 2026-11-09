@@ -70,8 +70,10 @@ export interface TranscriptParseState {
   /** `uuid`s of the lines a continued session copied from its parent transcript (found through the
    *  parent's `continued-in` record); never counted or summarised. Absent = none known. */
   inheritedUuids?: string[];
-  /** The parent lookup ran (found or definitively absent), so it is not repeated. */
+  /** The parent lookup is final (a parent was found, or the retries were used up), so it is not repeated. */
   inheritedResolved?: boolean;
+  /** Parent lookups that found nothing (or did not complete) so far; bounds the retries. */
+  inheritedLookups?: number;
   /** A `resume` SessionStart was suppressed: lifecycle events stay suppressed until a pass reads
    *  own activity ({@link reopenActive}). */
   reopened?: boolean;

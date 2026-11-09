@@ -510,20 +510,30 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
   return seen;
 }
 
+/** Passes that may look for a parent before a session is taken to have none (EPMCDME-16992). */
+const MAX_PARENT_LOOKUPS = 3;
+
 /**
- * The uuids a continued session copied from its parent transcript (EPMCDME-16992). Looked up once,
- * on the session's first transcript pass (`mainOffset === 0`), and kept in `state`; an unreadable
- * directory leaves the lookup open for the next first pass. Empty for a session with no parent.
+ * The uuids a continued session copied from its parent transcript (EPMCDME-16992), kept in `state`.
+ * A found parent is final. "No parent" and an incomplete lookup are not: the parent's `continued-in`
+ * record may not be flushed yet on the first pass, and an unreadable directory may recover, so the
+ * lookup is repeated on the next passes (at most {@link MAX_PARENT_LOOKUPS}), whatever the offset.
+ * Lines already reported before a late find stay reported, but every later event and the summary
+ * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  */
 async function ensureInherited(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string
 ): Promise<ReadonlySet<string>> {
-  if (!state.inheritedResolved && state.mainOffset === 0) {
+  if (!state.inheritedResolved) {
     const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
-    if (uuids) {
+    const lookups = (state.inheritedLookups ?? 0) + 1;
+    state.inheritedLookups = lookups;
+    if (uuids && uuids.length > 0) {
       state.inheritedUuids = uuids;
+      state.inheritedResolved = true;
+    } else if (lookups >= MAX_PARENT_LOOKUPS) {
       state.inheritedResolved = true;
     }
   }
