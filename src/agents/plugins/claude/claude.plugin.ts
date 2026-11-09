@@ -26,6 +26,8 @@ import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
+import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
+import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -83,6 +85,26 @@ const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
  * https://code.claude.com/docs/en/auto-mode-classifier-billing
  */
 const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
+
+/**
+ * Upper bound on the pre-spawn OTLP endpoint refresh (EPMCDME-16647 QA fix): ensureOtlpProxy can
+ * run SSO credential checks and a daemon health check/spawn with no timeout of its own, and
+ * `beforeRun` runs synchronously before Claude Code's process starts. A slow check must degrade
+ * to relying on the existing SessionStart hook-time rewrite rather than stall every launch.
+ */
+const PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS = 3000;
+
+/**
+ * Races `promise` against `timeoutMs`; rejects with `message` on expiry so the caller's own
+ * catch block treats a timeout the same as any other non-blocking failure.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Claude Code installer URLs
@@ -237,7 +259,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
-    async beforeRun(env) {
+    // `this: BaseAgentAdapter` explicit: the pre-spawn OTLP refresh below reads
+    // this.metadata.name, and hook.call(context, ...) in lifecycle-helpers.ts binds
+    // `this` to the launching adapter instance (claude or claude-acp).
+    async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
       // Whether this provider's gateway is known to carry the tool-search payload — see
       // TOOL_SEARCH_VERIFIED_PROVIDERS. CODEMIE_PROVIDER is populated before this hook runs.
       const toolSearchVerified = TOOL_SEARCH_VERIFIED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '');
@@ -572,6 +597,32 @@ export const ClaudePluginMetadata: AgentMetadata = {
               `[Claude] ${label} tier not provisioned — subagents dispatched with model: "${name}" will fall back to ${subagentFallback} rather than the requested ${label} model. Provision CODEMIE_${name.toUpperCase()}_MODEL or omit the \`model\` parameter to silence this warning.`
             );
           }
+        }
+      }
+
+      // Pre-spawn OTLP endpoint refresh (EPMCDME-16647 QA fix): rewrite
+      // ~/.claude/settings.json's endpoint before Claude Code's own process
+      // reads it, not only during the SessionStart hook that runs after.
+      // Gated on claude-code-otlp already being connected so an unconnected
+      // launch never starts the proxy daemon as a side effect. Mirrors
+      // OtlpAgentAdapter.ts's own non-blocking contract: a failure here must
+      // never fail the launch. this.metadata.name (not the OTLP adapter's own
+      // 'claude-code-otlp' name) is the real launching client — 'claude' or
+      // 'claude-acp' — so the daemon/connection record attributes correctly.
+      // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
+      // checks have no timeout of their own and must not stall this synchronous path.
+      if (await isClaudeCodeOtlpConnected()) {
+        try {
+          await withTimeout(
+            ensureOtlpProxy(this.metadata.name),
+            PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS,
+            `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`
+          );
+        } catch (error) {
+          logger.warn(
+            '[claude] pre-spawn OTLP endpoint refresh failed (non-blocking)',
+            ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
+          );
         }
       }
 
