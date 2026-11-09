@@ -81,6 +81,18 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     expect(appendSpoolMock).not.toHaveBeenCalled();
   });
 
+  it('inbound analytics-only headers (cloned settings, any case) never reach the spooled record', async () => {
+    const res = await postHooks(
+      { agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] },
+      { headers: { 'X-CodeMie-Work-Consent': 'explicit-folder', 'x-codemie-funding-route': 'forged-route', 'X-CODEMIE-PUBLICATION-CONTRACT': '9' } }
+    );
+    expect(res.statusCode).toBe(202);
+    const spooled = appendSpoolMock.mock.calls.map((c) => c[2]).join('').toLowerCase();
+    expect(spooled).not.toContain('explicit-folder');
+    expect(spooled).not.toContain('forged-route');
+    expect(spooled).not.toContain('x-codemie-');
+  });
+
   it('rejects with 400 on an empty body', async () => {
     const res = await postHooks('');
     expect(res.statusCode).toBe(400);

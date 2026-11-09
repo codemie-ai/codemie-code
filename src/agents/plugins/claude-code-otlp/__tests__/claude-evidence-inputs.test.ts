@@ -43,7 +43,7 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
 
   it('reads settings for the hook cwd; native with the settings.json endpoint on the gateway is routed and proven; a gateway session is not paid by the saved login', async () => {
     settings({ ANTHROPIC_BASE_URL: GATEWAY });
-    expect(await call()).toEqual({ organization: undefined, routing: PROVEN_ROUTED });
+    expect(await call()).toEqual({ organization: undefined, routing: PROVEN_ROUTED, funding_route: 'api_based', collection_generation: 0 });
     expect(readSettingsMock).toHaveBeenCalledWith('/x');
   });
 

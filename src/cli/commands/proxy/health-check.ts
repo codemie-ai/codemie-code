@@ -9,6 +9,7 @@
  * ProxyWatcher. Never throws — always resolves to a typed result.
  */
 import { logger } from '../../../utils/logger.js';
+import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 
 export type ProxyHealthLevel = 'shallow' | 'deep';
 
@@ -23,6 +24,8 @@ export interface ProxyHealthResult {
   level: ProxyHealthLevel;
   code: ProxyHealthCode;
   reason?: string;
+  /** Analytics delivery health from the daemon `/health` reply; set only when `expectedPid` matched the replying daemon */
+  analytics?: AnalyticsHealthReply;
 }
 
 export interface ProxyHealthOptions {
@@ -30,6 +33,8 @@ export interface ProxyHealthOptions {
   gatewayKey: string;
   deep?: boolean;
   host?: string;
+  /** Pid of the daemon this check is about; when set, the reply's analytics field is read and trusted only if its pid matches */
+  expectedPid?: number;
 }
 
 export const SHALLOW_TIMEOUT_MS = 1500;
@@ -57,11 +62,34 @@ export function fetchProxyHealth(port: number, host = '127.0.0.1'): Promise<Resp
   return fetch(`http://${host}:${port}/health`, { method: 'GET', signal: AbortSignal.timeout(SHALLOW_TIMEOUT_MS) });
 }
 
+/**
+ * Reads the analytics health from a `/health` reply body. Accepts it only when the body's `pid` is the daemon
+ * we expect (a port can be taken over by another process) and `credentials` is exactly `'ok'` or `'stale'`.
+ */
+export function parseAnalyticsReply(body: unknown, expectedPid: number): AnalyticsHealthReply | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const { pid, analytics } = body as { pid?: unknown; analytics?: unknown };
+  if (pid !== expectedPid) return undefined;
+  if (typeof analytics !== 'object' || analytics === null) return undefined;
+  const { credentials } = analytics as { credentials?: unknown };
+  return credentials === 'ok' || credentials === 'stale' ? { credentials } : undefined;
+}
+
+async function readAnalyticsReply(res: Response, expectedPid: number): Promise<AnalyticsHealthReply | undefined> {
+  try {
+    return parseAnalyticsReply(await res.json(), expectedPid);
+  } catch (error) {
+    logger.debug('[proxy-health] Could not read analytics from /health reply', error);
+    return undefined;
+  }
+}
+
 export async function checkProxyHealth(
   opts: ProxyHealthOptions
 ): Promise<ProxyHealthResult> {
   const host = opts.host ?? '127.0.0.1';
   const base = `http://${host}:${opts.port}`;
+  let analytics: AnalyticsHealthReply | undefined;
 
   // 1. Shallow liveness
   try {
@@ -74,6 +102,9 @@ export async function checkProxyHealth(
         reason: `Health endpoint returned ${res.status}`,
       };
     }
+    if (opts.expectedPid !== undefined) {
+      analytics = await readAnalyticsReply(res, opts.expectedPid);
+    }
   } catch (error) {
     return {
       healthy: false,
@@ -83,8 +114,10 @@ export async function checkProxyHealth(
     };
   }
 
+  const analyticsField = analytics ? { analytics } : {};
+
   if (!opts.deep) {
-    return { healthy: true, level: 'shallow', code: 'ok' };
+    return { healthy: true, level: 'shallow', code: 'ok', ...analyticsField };
   }
 
   // 2. Deep: authenticated upstream call via the gateway
@@ -100,6 +133,7 @@ export async function checkProxyHealth(
         level: 'deep',
         code: 'unauthorized',
         reason: 'SSO session expired — run `codemie profile login` and restart the proxy.',
+        ...analyticsField,
       };
     }
     if (!res.ok) {
@@ -108,6 +142,7 @@ export async function checkProxyHealth(
         level: 'deep',
         code: 'upstream-error',
         reason: `Upstream model discovery returned ${res.status}`,
+        ...analyticsField,
       };
     }
     const contentType = res.headers.get('content-type') ?? '';
@@ -117,9 +152,10 @@ export async function checkProxyHealth(
         level: 'deep',
         code: 'unauthorized',
         reason: 'SSO session expired — run `codemie proxy stop && codemie profile login` to re-authenticate.',
+        ...analyticsField,
       };
     }
-    return { healthy: true, level: 'deep', code: 'ok' };
+    return { healthy: true, level: 'deep', code: 'ok', ...analyticsField };
   } catch (error) {
     logger.debug('[proxy-health] Deep check failed', error);
     return {
@@ -127,6 +163,7 @@ export async function checkProxyHealth(
       level: 'deep',
       code: 'upstream-error',
       reason: `Upstream check failed: ${error instanceof Error ? error.message : String(error)}`,
+      ...analyticsField,
     };
   }
 }

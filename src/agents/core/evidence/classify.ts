@@ -17,6 +17,8 @@ export interface Policy {
   version: string;
   /** Optional backend advertisement (e.g. `utf8-b64u.v1`); not part of the policy version. */
   organization_encodings?: string[];
+  /** Backend-advertised publication contracts (e.g. `1`); absent = none. Not part of the policy version. */
+  publication_contracts?: string[];
 }
 
 export interface ClassResult {

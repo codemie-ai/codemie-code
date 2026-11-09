@@ -74,6 +74,30 @@ describe('central attribution header contract', () => {
     });
   });
 
+  it('the model interceptor strips mixed-case analytics-only headers a client supplied, keeping the rest', async () => {
+    const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: { clientType: 'codemie-codex' } } as unknown as PluginContext);
+    const request = context();
+    request.headers['X-CodeMie-Work-Consent'] = 'explicit-folder';
+    request.headers['x-codemie-funding-route'] = 'api_based';
+    request.headers['X-CODEMIE-PUBLICATION-CONTRACT'] = '1';
+    request.headers['custom-header'] = 'keep';
+    await interceptor.onRequest!(request);
+    const names = Object.keys(request.headers).map((k) => k.toLowerCase());
+    expect(names).not.toContain('x-codemie-work-consent');
+    expect(names).not.toContain('x-codemie-funding-route');
+    expect(names).not.toContain('x-codemie-publication-contract');
+    expect(request.headers['custom-header']).toBe('keep');
+  });
+
+  it('consent is never sent without a project: a non-Latin1 project omits both (the session then fails closed on the unverified echo)', () => {
+    const { headers } = buildAttributionHeaders({
+      ...analytics, project: 'Проект', contract: { fundingRoute: 'subscription', consent: true },
+    });
+    expect(headers).not.toHaveProperty('X-CodeMie-Project');
+    expect(headers).not.toHaveProperty('X-CodeMie-Work-Consent');
+    expect(headers['X-CodeMie-Funding-Route']).toBe('subscription');
+  });
+
   it('preserves Desktop/Cowork resolution and configured-branch precedence', async () => {
     const resolveForRequest = vi.fn().mockResolvedValue({ repository: '', branch: 'detected', isCowork: true });
     const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: {

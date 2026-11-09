@@ -138,6 +138,31 @@ export function oauthAccountPays(input: RoutingInput & { apiKeyHelper?: boolean 
   return !endpoint || identity(endpoint) === identity(ANTHROPIC_DIRECT);
 }
 
+export type FundingRoute = 'api_based' | 'subscription' | 'unknown';
+
+/**
+ * Who pays, claimed once at the first stamp from the same routing evidence as `classify()` (first-wins, frozen in the record).
+ * A client claim for the backend's funding breakdown only: never access, billing proof or a comparison key.
+ * - api_based: only on positive proof: the CodeMie route is proven, or a first-party API key is positively in
+ *   use on the first-party endpoint with no contradicting source.
+ * - subscription: only when the saved OAuth login pays (`oauthAccountPays`) AND the route is proven not CodeMie.
+ * - unknown: everything else (apiKeyHelper, gateway auth outside the CodeMie route, cloud providers, unreadable settings, contradictions).
+ */
+export function fundingRoute(input: RoutingInput & { apiKeyHelper?: boolean }, routing: RoutingResult): FundingRoute {
+  if (routing.routing_proof !== 'proven') return 'unknown';
+  if (routing.routed) return 'api_based';
+  if (input.settingsUnknown || input.apiKeyHelper) return 'unknown';
+  if (oauthAccountPays(input)) return 'subscription';
+  const effective = effectiveEndpointEnv(input, [...ENDPOINT_KEYS, ...CLOUD_FLAGS, ...CREDENTIAL_KEYS]);
+  if (!effective) return 'unknown';
+  const onlyApiKey = !!effective.ANTHROPIC_API_KEY &&
+    !CLOUD_FLAGS.some((name) => flagSet(effective[name])) &&
+    !CREDENTIAL_KEYS.some((name) => name !== 'ANTHROPIC_API_KEY' && effective[name]);
+  const endpoint = effective.ANTHROPIC_BASE_URL;
+  const firstParty = !endpoint || identity(endpoint) === identity(ANTHROPIC_DIRECT);
+  return onlyApiKey && firstParty ? 'api_based' : 'unknown';
+}
+
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
   const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);

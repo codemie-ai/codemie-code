@@ -144,3 +144,38 @@ describe('policy-cache', () => {
     );
   });
 });
+
+describe('policy-cache publication contracts', () => {
+  const withList = json(200, { organizations: ['Org A'], version: 'v1', publication_contracts: ['1'] });
+  const opts = (now: number, fetchImpl: typeof fetch) => ({ baseUrl: 'https://a.example.com/api/', headers: auth, fetchImpl, now, needContract: true });
+
+  it('no list: one refresh, then backoff holds; never advertised', async () => {
+    let calls = 0;
+    const f = (async (u: string) => { calls++; return okFetch(u); }) as unknown as typeof fetch;
+    const s = await refreshPolicy(ns, opts(T0, f));
+    expect(s.publicationContracts).toBeUndefined();
+    expect(s.refreshDue).toBe(false); // under the 5 min backoff, even though a list is missing
+    await refreshPolicy(ns, opts(T0 + 1000, f));
+    expect(calls).toBe(1);
+    expect((await getPolicyState(ns, { now: T0 + BACKOFF_MS + 1, needContract: true })).refreshDue).toBe(true);
+    expect((await getPolicyState(ns, { now: T0 + BACKOFF_MS + 1 })).refreshDue).toBe(false); // legacy callers unaffected
+  });
+
+  it('a usable cached policy lacking the list is refresh-due after backoff, and an upgraded backend is picked up', async () => {
+    await refreshPolicy(ns, opts(T0, okFetch));
+    const s = await refreshPolicy(ns, opts(T0 + BACKOFF_MS + 1, withList));
+    expect(s.publicationContracts).toEqual(['1']);
+    expect(s.refreshDue).toBe(false);
+  });
+
+  it('an expired policy still informs the hold decision with its list but is not usable', async () => {
+    await refreshPolicy(ns, opts(T0, withList));
+    const old = await getPolicyState(ns, { now: T0 + POLICY_USABLE_MS + 1, needContract: true });
+    expect(old).toMatchObject({ usable: false, policy: null, publicationContracts: ['1'] });
+  });
+
+  it('a malformed list is treated as none advertised', async () => {
+    const s = await refreshPolicy(ns, opts(T0, json(200, { organizations: [], version: 'v', publication_contracts: 'yes' })));
+    expect(s.publicationContracts).toBeUndefined();
+  });
+});
