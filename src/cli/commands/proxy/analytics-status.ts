@@ -3,6 +3,7 @@
  * projects, the enabled flag, and whether the current directory is tracked right now and why.
  */
 
+import chalk from 'chalk';
 import {
   inferAllowlistScope,
   readAllowlistState,
@@ -15,6 +16,7 @@ import {
   getClaudeAnalyticsPreferencesPath,
   readClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { adviceForReason, unaffectedChannels } from './analytics-hints.js';
 import {
@@ -26,6 +28,65 @@ import {
   type CopilotAnalyticsGateReason,
 } from '@/agents/core/copilot-analytics-gate.js';
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+
+const LABEL_WIDTH = 'Collection: '.length;
+
+interface ConnectorSection {
+  connectorId: string;
+  /** Headline label ("Hooks", "Connected"), its value, and whether that value is the healthy one. */
+  headline: { label: string; value: string; good: boolean };
+  /** True when `connect` is the first thing to run (hooks missing / connector not connected). */
+  needsConnect: boolean;
+  scope: string;
+  trackedProjects: string[];
+  enabled: boolean;
+  excludedProjects: string[];
+  preferencesCorrupt: boolean;
+  preferencesPath: string;
+  current: { path: string; tracked: boolean; reason: string };
+  /** Gate reasons the Run line or the corrupt-preferences line already explains, so no advice is looked up. */
+  explainedReasons: readonly string[];
+}
+
+function detail(label: string, values: string[]): string[] {
+  return values.map((value, index) => `  ${(index === 0 ? label : '').padEnd(LABEL_WIDTH)}${value}`);
+}
+
+/**
+ * One layout for every connector: a headline with a coloured value, aligned 2-space-indented details,
+ * at most one `Run:` line, then the channels these settings do not control as a plain dim sentence.
+ */
+function renderConnectorSection(section: ConnectorSection): string {
+  const { current } = section;
+  const advice =
+    current.tracked || section.explainedReasons.includes(current.reason)
+      ? undefined
+      : adviceForReason(section.connectorId, current.reason, current.path);
+  const reason = advice?.action ? `${current.reason}: ${advice.action}` : current.reason;
+  const run = section.needsConnect ? `codemie proxy connect --${section.connectorId}` : advice?.command;
+
+  const { label, value, good } = section.headline;
+  const lines: string[] = [`${label}: ${good ? chalk.green(value) : chalk.yellow(value)}`];
+  lines.push(...detail('Scope:', [section.scope]));
+  if (section.scope === 'project') {
+    lines.push(...detail('Tracked:', section.trackedProjects.length > 0 ? section.trackedProjects : ['(none)']));
+  }
+  lines.push(...detail('Collection:', [section.enabled ? 'enabled' : 'disabled']));
+  lines.push(...detail('Excluded:', section.excludedProjects.length > 0 ? section.excludedProjects : ['(none)']));
+  lines.push(...detail('Current:', [`${current.path}: ${current.tracked ? 'tracked' : `not tracked (${reason})`}`]));
+  if (run) {
+    lines.push(`  Run: ${run}`);
+  }
+  if (section.preferencesCorrupt) {
+    lines.push(
+      chalk.yellow(
+        `  Preferences file is corrupt — collection is stopped. Fix or delete ${section.preferencesPath}.`
+      )
+    );
+  }
+  lines.push(chalk.dim(`These settings do not affect ${unaffectedChannels(section.connectorId)}.`));
+  return lines.join('\n');
+}
 
 export interface ClaudeAnalyticsStatus {
   hooksInstalled: boolean;
@@ -70,39 +131,19 @@ export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeA
 }
 
 export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): string {
-  const lines: string[] = [];
-  lines.push(`Hooks: ${status.hooksInstalled ? 'installed' : 'not installed'}`);
-  lines.push(`Scope: ${status.scope}`);
-  if (status.scope === 'project') {
-    lines.push('Tracked projects:');
-    for (const path of status.trackedProjects) {
-      lines.push(`  - ${path}`);
-    }
-  }
-  lines.push(`Collection: ${status.enabled ? 'enabled' : 'disabled'}`);
-  lines.push(
-    status.excludedProjects.length > 0
-      ? `Excluded projects:\n${status.excludedProjects.map((p) => `  - ${p}`).join('\n')}`
-      : 'Excluded projects: (none)'
-  );
-  lines.push(
-    `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
-  );
-  // 'preferences-corrupt' and 'hooks-not-installed' already have their own explicit lines.
-  const claudeAdvice = status.current.tracked || status.current.reason === 'preferences-corrupt' || status.current.reason === 'hooks-not-installed'
-    ? undefined
-    : adviceForReason('claude-code-otlp', status.current.reason, status.current.path);
-  if (claudeAdvice?.nextStep) {
-    lines.push(`Hint: ${claudeAdvice.nextStep}`);
-  }
-  if (!status.hooksInstalled) {
-    lines.push('Run: codemie proxy connect --claude-code-otlp');
-  }
-  lines.push(`Not affected by these settings: ${unaffectedChannels('claude-code-otlp')}.`);
-  if (status.preferencesCorrupt) {
-    lines.push(`Preferences file is corrupt — collection is stopped. Fix or delete ${status.preferencesPath}.`);
-  }
-  return lines.join('\n');
+  return renderConnectorSection({
+    connectorId: CLAUDE_CODE_OTLP_AGENT_NAME,
+    headline: { label: 'Hooks', value: status.hooksInstalled ? 'installed' : 'not installed', good: status.hooksInstalled },
+    needsConnect: !status.hooksInstalled,
+    scope: status.scope,
+    trackedProjects: status.trackedProjects,
+    enabled: status.enabled,
+    excludedProjects: status.excludedProjects,
+    preferencesCorrupt: status.preferencesCorrupt,
+    preferencesPath: status.preferencesPath,
+    current: status.current,
+    explainedReasons: ['preferences-corrupt', 'hooks-not-installed'],
+  });
 }
 
 export interface CopilotAnalyticsStatus {
@@ -147,38 +188,17 @@ export async function collectCopilotAnalyticsStatus(connectorId: string, cwd: st
 }
 
 export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): string {
-  const lines: string[] = [];
-  lines.push(`Connector: ${status.connector}`);
-  lines.push(`Connected: ${status.connected ? 'yes' : 'no'}`);
-  lines.push(`Scope: ${status.scope}`);
-  if (status.scope === 'project') {
-    lines.push('Tracked projects:');
-    for (const path of status.trackedProjects) {
-      lines.push(`  - ${path}`);
-    }
-  }
-  lines.push(`Collection: ${status.enabled ? 'enabled' : 'disabled'}`);
-  lines.push(
-    status.excludedProjects.length > 0
-      ? `Excluded projects:\n${status.excludedProjects.map((p) => `  - ${p}`).join('\n')}`
-      : 'Excluded projects: (none)'
-  );
-  lines.push(
-    `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
-  );
-  // 'scope-disabled' (the "Run: ... connect" line below) and 'preferences-corrupt' (explicit line below) are already explained.
-  const copilotAdvice = status.current.tracked || status.current.reason === 'scope-disabled' || status.current.reason === 'preferences-corrupt'
-    ? undefined
-    : adviceForReason(status.connector, status.current.reason, status.current.path);
-  if (copilotAdvice?.nextStep) {
-    lines.push(`Hint: ${copilotAdvice.nextStep}`);
-  }
-  if (status.scope === 'not-connected') {
-    lines.push(`Run: codemie proxy connect --${status.connector}`);
-  }
-  lines.push(`Not affected by these settings: ${unaffectedChannels(status.connector)}.`);
-  if (status.preferencesCorrupt) {
-    lines.push(`Preferences file is corrupt — collection is stopped. Fix or delete ${status.preferencesPath}.`);
-  }
-  return lines.join('\n');
+  return renderConnectorSection({
+    connectorId: status.connector,
+    headline: { label: 'Connected', value: status.connected ? 'yes' : 'no', good: status.connected },
+    needsConnect: status.scope === 'not-connected',
+    scope: status.scope,
+    trackedProjects: status.trackedProjects,
+    enabled: status.enabled,
+    excludedProjects: status.excludedProjects,
+    preferencesCorrupt: status.preferencesCorrupt,
+    preferencesPath: status.preferencesPath,
+    current: status.current,
+    explainedReasons: ['scope-disabled', 'preferences-corrupt'],
+  });
 }

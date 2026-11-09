@@ -16,6 +16,7 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
+import { collectVisibleDeliveryHealth, formatAnalyticsLines } from './analytics-delivery-lines.js';
 import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -234,7 +235,9 @@ export function createProxyCommand(): Command {
         port: state.port,
         gatewayKey: state.gatewayKey,
         deep: Boolean(opts.deep),
+        expectedPid: state.pid,
       });
+      const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
 
       const otlp = await checkClaudeCodeOtlpEndpoint(state);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
@@ -263,6 +266,9 @@ export function createProxyCommand(): Command {
         }
         if (otlpMismatch) {
           payload.otlpEndpointMismatch = { configured: otlpMismatch.configured, expected: otlpMismatch.expected };
+        }
+        if (analytics) {
+          payload.analytics = analytics;
         }
         console.log(JSON.stringify(payload, null, 2));
         return;
@@ -301,6 +307,12 @@ export function createProxyCommand(): Command {
         console.log(`  Project: ${state.project}`);
       }
       console.log(`  Uptime:  ${uptime}`);
+
+      if (analytics) {
+        for (const line of formatAnalyticsLines(analytics)) {
+          console.log(line);
+        }
+      }
 
       if (otlpMismatch) {
         const keyOnly = otlpMismatch.configured === otlpMismatch.expected;

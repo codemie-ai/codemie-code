@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 let tempDir: string;
 
@@ -28,6 +29,7 @@ describe('analytics advice', () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-advice-'));
+    vi.stubEnv('CODEMIE_HOME', tempDir);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     process.exitCode = undefined;
@@ -35,6 +37,7 @@ describe('analytics advice', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     vi.resetModules();
     await rm(tempDir, { recursive: true, force: true });
     process.exitCode = undefined;
@@ -44,7 +47,7 @@ describe('analytics advice', () => {
     const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
     await createProxyAnalyticsCommand().parseAsync(args, { from: 'user' });
   }
-  const out = (): string => logSpy.mock.calls.flat().join('\n');
+  const out = (): string => stripVTControlCharacters(logSpy.mock.calls.flat().join('\n'));
 
   const claudeHooks = {
     UserPromptSubmit: [{ matcher: '', hooks: [{ type: 'command', command: 'codemie hook --agent claude-code-otlp' }] }],
@@ -173,16 +176,26 @@ describe('analytics advice', () => {
     expect(out()).not.toContain('usage');
   });
 
-  it('status text lists the channels these settings do not control; --json is unchanged', async () => {
+  it('status text ends with a plain sentence naming the channels these settings do not control; --json carries no such text', async () => {
+    const lastLine = (): string => out().split('\n').at(-1) as string;
     await run(['status']);
-    expect(out()).toContain('Not affected by these settings:');
+    expect(out().split('\n')).not.toContain('');
+    expect(lastLine()).toBe(
+      'These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
+    );
+    logSpy.mockClear();
+    await run(['status', '--copilot-cli-otlp']);
+    expect(lastLine()).toBe(
+      'These settings do not affect managed `codemie copilot-cli` launches and the daily analytics collector.'
+    );
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
-    expect(out()).toContain('Not affected by these settings: the daily analytics collector.');
+    expect(lastLine()).toBe('These settings do not affect the daily analytics collector.');
+    expect(out()).not.toContain('Not affected');
     logSpy.mockClear();
     await run(['status', '--json']);
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-    expect(JSON.stringify(parsed)).not.toContain('Not affected');
+    expect(JSON.stringify(parsed)).not.toContain('do not affect');
   });
 
   it('status --json reports tracked=false with reason hooks-not-installed when no hooks are installed (CR-006)', async () => {
@@ -193,7 +206,8 @@ describe('analytics advice', () => {
     logSpy.mockClear();
     await run(['status']);
     expect(out()).toContain('not tracked (hooks-not-installed)');
-    expect(out()).toContain('Run: codemie proxy connect --claude-code-otlp');
+    expect(out()).toContain('  Run: codemie proxy connect --claude-code-otlp');
+    expect(out().match(/Run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });
 
@@ -243,12 +257,13 @@ describe('analytics advice', () => {
     vi.doUnmock('@/agents/core/copilot-analytics-gate.js');
   });
 
-  it('status text carries a Hint line for an actionable reason; status --json keeps its shape', async () => {
+  it('status text puts prose advice into the not-tracked reason (no Hint, no Run line); status --json keeps its shape', async () => {
     await writeClaudeAllowlist(['/work/other']);
     logSpy.mockClear();
     await run(['status']);
-    expect(out()).toContain('Hint:');
-    expect(out()).toContain('codemie proxy connect --claude-code-otlp --scope project');
+    expect(out()).not.toContain('Hint:');
+    expect(out()).not.toContain('Run:');
+    expect(out()).toMatch(/Current: .*not tracked \(not-in-allowlist: .*codemie proxy connect --claude-code-otlp --scope project\)/);
     logSpy.mockClear();
     await run(['status', '--json']);
     expect(logSpy).toHaveBeenCalledTimes(1);
@@ -257,21 +272,37 @@ describe('analytics advice', () => {
     expect(Object.keys(parsed)).not.toContain('advice');
   });
 
-  it('status text has no Hint line when the current directory is tracked', async () => {
+  it('status text has neither a Hint nor a Run line when the connector is connected and the current directory is tracked', async () => {
+    await installClaudeHooks();
     logSpy.mockClear();
     await run(['status']);
+    expect(out()).toContain('tracked');
+    expect(out()).not.toContain('not tracked');
+    expect(out()).not.toContain('Hint:');
+    expect(out()).not.toContain('Run:');
+  });
+
+  it('status text puts a single runnable advice command on the Run line', async () => {
+    await installClaudeHooks();
+    await run(['exclude', process.cwd()]);
+    logSpy.mockClear();
+    await run(['status']);
+    expect(out().match(/Run:/g)).toHaveLength(1);
+    expect(out()).toMatch(/ {2}Run: codemie proxy analytics include /);
     expect(out()).not.toContain('Hint:');
   });
 
-  it('Copilot status text carries the Hint for a Project-scope miss and none when the connector is simply not connected (it already says so)', async () => {
+  it('Copilot status text keeps a Project-scope miss as prose and offers connect only when the connector is not connected', async () => {
     await writeCopilotScope('copilot-chat-otlp', { enabled: true, scope: 'project', paths: ['/work/other'] });
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
-    expect(out()).toContain('Hint:');
+    expect(out()).not.toContain('Hint:');
+    expect(out()).not.toContain('Run:');
     expect(out()).toContain('--scope project');
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
-    expect(out()).toContain('codemie proxy connect --copilot-cli-otlp');
+    expect(out()).toContain('  Run: codemie proxy connect --copilot-cli-otlp');
+    expect(out().match(/Run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });
 });

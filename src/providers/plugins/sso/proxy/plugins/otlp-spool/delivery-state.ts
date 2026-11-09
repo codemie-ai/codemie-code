@@ -15,7 +15,7 @@ import type { SendOutcome } from './response.js';
  */
 
 /** The stream's failure record while it still describes the pending range (same start, still inside the file). */
-async function liveDelivery(sessionId: string, status: SessionStatus, stream: SpoolStream): Promise<DeliveryFailure | undefined> {
+export async function liveDelivery(sessionId: string, status: SessionStatus, stream: SpoolStream): Promise<DeliveryFailure | undefined> {
   const rec = status.delivery?.[stream];
   if (!rec || rec.cursor !== status.cursors[stream]) return undefined;
   try {

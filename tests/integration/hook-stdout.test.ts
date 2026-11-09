@@ -330,7 +330,12 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       expect(state.health).toBe('unhealthy');
       const health = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(5000) });
       expect(health.status).toBe(200);
-      expect(await health.json()).toEqual({ status: 'ok', port: state.port, pid: state.pid });
+      expect(await health.json()).toEqual({
+        status: 'ok',
+        port: state.port,
+        pid: state.pid,
+        analytics: { credentials: 'stale' },
+      });
       const response = await fetch(`http://127.0.0.1:${state.port}/v1/messages`, {
         method: 'POST',
         body: '{}',
