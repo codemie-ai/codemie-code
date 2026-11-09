@@ -101,6 +101,14 @@ export async function sendSessionEndMetrics(
       return;
     }
 
+    const { legacyMetricsVerdict } = await import('../../../agents/core/session/legacy-metrics-gate.js');
+    const verdict = await legacyMetricsVerdict(session);
+    if (!verdict.publish) {
+      logger.debug(`[hook:SessionEnd] End metric withheld: ${verdict.reason}`);
+      await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason });
+      return;
+    }
+
     // One end for the record, the metric's duration and its end_time
     const endTime = session.endTime ?? Date.now();
     const wallClockDurationMs = endTime - session.startTime;
