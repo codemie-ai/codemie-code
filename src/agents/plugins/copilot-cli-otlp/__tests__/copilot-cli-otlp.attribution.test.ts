@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ const root = mkdtempSync(join(tmpdir(), 'cop-otlp-attr-'));
 process.env.CODEMIE_HOME = join(root, 'codemie');
 process.env.COPILOT_HOME = join(root, 'copilot');
 
+import { detectGitBranch } from '@/utils/processes.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
 import { buildToolEvent } from '../copilot-cli-otlp.tool-payload.js';
 import { recordOpenStarts } from '../copilot-cli-otlp.tool-correlation.js';
@@ -68,6 +69,51 @@ describe('resolveAgentFields', () => {
   });
 });
 
+describe('git fallback from session.start', () => {
+  const start = `${JSON.stringify({ type: 'session.start', data: { copilotVersion: '1.0.92', context: { repository: 'org/repo', branch: 'start-branch' } } })}\n`;
+
+  beforeEach(() => {
+    rmSync(join(root, 'codemie'), { recursive: true, force: true });
+    rmSync(join(root, 'copilot'), { recursive: true, force: true });
+    const dir = join(root, 'copilot', 'session-state', SID);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'events.jsonl'), start);
+  });
+  afterEach(() => {
+    vi.mocked(detectGitBranch).mockResolvedValue(undefined);
+  });
+
+  it('applies the start branch only on hooks whose cwd has no live branch', async () => {
+    const detect = vi.mocked(detectGitBranch);
+
+    detect.mockResolvedValue(undefined);
+    expect(await plugin.resolveAgentFields({ sessionId: SID, cwd: '/not-a-repo' })).toMatchObject({
+      git_branch: 'start-branch', repo_remote: 'org/repo',
+    });
+
+    // The cwd moves into a repo: the live branch from the common fields must win from then on.
+    detect.mockResolvedValue('feature/live');
+    const live = await plugin.resolveAgentFields({ sessionId: SID, cwd: '/repo' });
+    expect(live).not.toHaveProperty('git_branch');
+    expect(live).not.toHaveProperty('repo_remote');
+    expect(live.client_version).toBe('1.0.92');
+
+    detect.mockResolvedValue(undefined);
+    expect(await plugin.resolveAgentFields({ sessionId: SID, cwd: '/not-a-repo' })).toMatchObject({ git_branch: 'start-branch' });
+  });
+
+  it('caches the start context even when the first hook is inside a repo', async () => {
+    const detect = vi.mocked(detectGitBranch);
+    detect.mockResolvedValue('feature/live');
+    expect(await plugin.resolveAgentFields({ sessionId: SID, cwd: '/repo' })).not.toHaveProperty('git_branch');
+
+    detect.mockResolvedValue(undefined);
+    expect(await plugin.resolveAgentFields({ sessionId: SID, cwd: '/not-a-repo' })).toMatchObject({
+      git_branch: 'start-branch', repo_remote: 'org/repo',
+    });
+  });
+});
+
 describe('batched tool events', () => {
   it('keep distinct event ids when they share a timestamp', () => {
     const ts = '2026-01-01T00:00:00.000Z';
@@ -103,5 +149,40 @@ describe('agentStop pass above the transcript cap', () => {
     const pass = buildStopPass(SID);
     expect(pass?.events.some((e) => e.request_id === 'tail')).toBe(true);
     expect(pass?.events.at(-1)).toMatchObject({ usage_partial: true });
+  });
+});
+
+describe('agentStop pass usage_partial across slices', () => {
+  const message = (text: string, ts: string): string => `${JSON.stringify({ type: 'user.message', data: { text }, timestamp: ts })}\n`;
+
+  function fresh(): string {
+    const dir = join(root, 'copilot', 'session-state', SID);
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(root, 'codemie'), { recursive: true, force: true });
+    return join(dir, 'events.jsonl');
+  }
+
+  it('keeps the flag once an earlier slice was partial', async () => {
+    const file = fresh();
+    writeFileSync(file, message('x'.repeat(1000), '2026-01-01T00:00:00.000Z').repeat(9_000));
+
+    const first = buildStopPass(SID);
+    expect(first?.events.at(-1)).toMatchObject({ usage_partial: true });
+    await first?.commit();
+
+    appendFileSync(file, message('next', '2026-01-01T00:00:05.000Z'));
+    const second = buildStopPass(SID);
+    expect(second?.events.at(-1)).toMatchObject({ type: 'agent.session.summary', usage_partial: true });
+  });
+
+  it('stays complete when no slice was partial', async () => {
+    const file = fresh();
+    writeFileSync(file, message('a', '2026-01-01T00:00:00.000Z'));
+
+    const first = buildStopPass(SID);
+    await first?.commit();
+    appendFileSync(file, message('b', '2026-01-01T00:00:05.000Z'));
+    const second = buildStopPass(SID);
+    expect(second?.events.at(-1)?.usage_partial).toBeFalsy();
   });
 });

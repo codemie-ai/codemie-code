@@ -176,12 +176,14 @@ export interface UsageCursor {
   pendingMessages?: PendingMessage[];
   /** True once this session has shown a `session.usage_record`, so a future hold-back is worth it. */
   sawUsageRecords?: boolean;
+  /** True once any slice of this session was partial; carried into every later incremental summary. */
+  usagePartial?: boolean;
 }
 
 export interface SessionState {
   usageCursor?: UsageCursor;
   clientVersion?: string;
-  /** Used only when the hook's cwd is not a git repo. */
+  /** `session.start` branch/repository; applied per hook, only while that hook's cwd has no live git branch. */
   gitFallback?: { git_branch?: string; repo_remote?: string };
   /** Session-state root when COPILOT_HOME overrides the default. */
   sessionStateRoot?: string;

@@ -228,7 +228,8 @@ Scope decision: the `copilot-chat-otlp` connector fix and the desktop-app prompt
 - [x] Hook file `~/.codemie/hooks/copilot-chat-hooks.json` uses the flat schema `{ hooks: { <event>: [{ type: 'command', command, timeout }] } }` (no `matcher`, no inner `hooks` wrapper).
 - [x] Desktop-app prompts have their internal preamble stripped (`stripDesktopPreamble`) in both the Copilot CLI and Copilot Chat pipelines.
 - **Reconnect requirement:** existing users get the new settings key and hook-file format only after re-running `codemie proxy connect --copilot-chat-otlp`.
-- **Assumptions (not verified in this plan):** (1) VS Code accepts the absolute path from `getCodemiePath('hooks', 'copilot-chat-hooks.json')` as the setting key (the ticket suggests `~/.codemie/hooks/...`); (2) it loads the flat hook entries.
+- **Setting key:** superseded by EPMCDME-16496. VS Code skips absolute paths (`renderer.log`, VS Code 1.144), so the key is the home-relative `~/.codemie/hooks/copilot-chat-hooks.json`; the earlier absolute keys are removed on connect and disconnect.
+- **Still to confirm in a real VS Code:** it loads the flat hook entries (no `matcher`, no inner `hooks` wrapper).
 
 ### Task 8 — Docs
 

@@ -125,11 +125,14 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     };
     const session = await this.resolveSessionHeader(input);
     fields.client_version = session.clientVersion;
-    Object.assign(fields, session.gitFallback);
+    // Decided per hook: the recorded start context only stands in while this hook's cwd has no live branch.
+    if (Object.keys(session.gitFallback).length > 0 && !(await detectGitBranch(input.cwd))) {
+      Object.assign(fields, session.gitFallback);
+    }
     return fields;
   }
 
-  /** Version and git fallback from the head of `events.jsonl`, cached per session. */
+  /** Version and the `session.start` branch/repository from the head of `events.jsonl`, cached per session. */
   private async resolveSessionHeader(
     input: CopilotCliHookInput
   ): Promise<{ clientVersion: string; gitFallback: Record<string, string> }> {
@@ -142,10 +145,8 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
       return { clientVersion: '', gitFallback: {} };
     }
     const gitFallback: Record<string, string> = {};
-    if (!(await detectGitBranch(input.cwd))) {
-      if (start.context?.branch) gitFallback.git_branch = start.context.branch;
-      if (start.context?.repository) gitFallback.repo_remote = start.context.repository;
-    }
+    if (start.context?.branch) gitFallback.git_branch = start.context.branch;
+    if (start.context?.repository) gitFallback.repo_remote = start.context.repository;
     await updateSessionState(input.sessionId, { clientVersion: start.copilotVersion, gitFallback });
     return { clientVersion: start.copilotVersion, gitFallback };
   }

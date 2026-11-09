@@ -117,7 +117,7 @@ function toRow(
   requestId: string,
   rawModel: string,
   tokens: ReturnType<typeof toBackendTokens>,
-  extra: { timestamp: string; stopReason: string; scope: 'main' | 'agent'; attached: boolean }
+  extra: { timestamp: string; stopReason: string; scope: 'main' | 'agent'; attached: boolean; partial?: boolean }
 ): Record<string, unknown> {
   return {
     type: USAGE_REQUEST_EVENT_TYPE,
@@ -136,6 +136,7 @@ function toRow(
     scope_kind: extra.scope,
     timestamp: extra.timestamp,
     event_id: stableEventId(USAGE_REQUEST_EVENT_TYPE, sessionId, requestId + (extra.attached ? ':final' : '')),
+    ...(extra.partial ? { usage_partial: true } : {}),
   };
 }
 
@@ -163,6 +164,10 @@ function hasTokens(b: CopilotUsageBuckets): boolean {
  * Tier B (segments without usage records): one row per `assistant.message`; on a `full` read
  * each shutdown segment's totals are attached to that segment's last message of the model.
  * An `incremental` read sends per-message rows only, without totals.
+ *
+ * A Tier B row that carries no totals of its own (input and cache are 0) is flagged `usage_partial`
+ * when its segment has no shutdown yet, no reconcilable totals, or the read is incremental; the
+ * backend keeps the maximum per request id, so the later row with totals replaces it.
  */
 export function buildUsageRows(
   sessionId: string,
@@ -272,6 +277,7 @@ export function buildUsageRows(
   const heldSet = new Set(held);
   const resolvedTierBMessages = heldSet.size > 0 ? tierBMessages.filter((m) => !heldSet.has(m)) : tierBMessages;
 
+  const unreconciled = new Set<string>();
   const lastByKey = new Map<string, number>();
   const tierBRows = resolvedTierBMessages.map((m, index) => {
     lastByKey.set(`${m.segment}|${m.model}`, index);
@@ -292,6 +298,7 @@ export function buildUsageRows(
       segmentHasRecords,
       shutdownTimestamps,
       rows,
+      unreconciled,
     }) || partial;
   }
 
@@ -301,6 +308,11 @@ export function buildUsageRows(
       stopReason: 'end_turn',
       scope: 'main',
       attached: r.attached,
+      partial: !r.attached && (
+        mode === 'incremental' ||
+        !shutdownByModelBySegment[r.message.segment]?.modelMetrics?.[r.message.model]?.usage ||
+        unreconciled.has(`${r.message.segment}|${r.message.model}`)
+      ),
     }));
   }
 
@@ -322,6 +334,8 @@ interface AttachInput {
   segmentHasRecords: boolean[];
   shutdownTimestamps: string[];
   rows: Record<string, unknown>[];
+  /** Filled with `<segment>|<model>` of every model whose shutdown totals could not be attributed to messages. */
+  unreconciled: Set<string>;
 }
 
 /** Classifies each shutdown segment (cumulative vs reset) and attaches its totals. Returns the partial flag. */
@@ -348,6 +362,7 @@ function attachSegmentTotals(input: AttachInput): boolean {
         totals = metric.usage;
       } else {
         partial = true;
+        input.unreconciled.add(`${k}|${model}`);
         continue;
       }
 

@@ -1,4 +1,5 @@
 import { realpathSync, statSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
 import { isSafeSessionId } from '../../../../../../agents/core/session-id.js';
@@ -7,7 +8,7 @@ import { sanitizeLogArgs } from '../../../../../../utils/security.js';
 import { getDefaultCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotEvent } from '../../../../../../agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { buildDeferredUsageEvents, type DeferredUsageOptions } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
-import { readTranscriptFrom } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
+import { readTranscriptFromAsync } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
 import { deleteSessionStateFiles, readSessionState } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
 import { listHookRecords } from './copilot-usage-spool.js';
@@ -73,9 +74,26 @@ function resolveStateRoot(sessionId: string): string {
   }
 }
 
-function readEvents(sessionId: string): { events: CopilotEvent[]; truncated: boolean } {
-  const read = readTranscriptFrom(join(resolveStateRoot(sessionId), sessionId, 'events.jsonl'));
-  return { events: read?.events ?? [], truncated: read?.truncated ?? false };
+interface TranscriptSnapshot {
+  events: CopilotEvent[];
+  truncated: boolean;
+  /** Size and mtime of the file when read; an unchanged signature means the parse can be reused. */
+  signature: string;
+}
+
+/** Re-parses the transcript only when its size or mtime changed since `previous`; the read itself is async. */
+async function readEvents(sessionId: string, previous?: TranscriptSnapshot): Promise<TranscriptSnapshot> {
+  const path = join(resolveStateRoot(sessionId), sessionId, 'events.jsonl');
+  let signature = '';
+  try {
+    const info = await stat(path);
+    signature = `${info.size}:${info.mtimeMs}`;
+  } catch {
+    // Not written yet: the read below reports it as empty.
+  }
+  if (previous && signature !== '' && previous.signature === signature) return previous;
+  const read = await readTranscriptFromAsync(path);
+  return { events: read?.events ?? [], truncated: read?.truncated ?? false, signature };
 }
 
 /** True if the hooks spool already holds the final summary for this shutdown (survives a daemon restart). */
@@ -118,8 +136,10 @@ export async function enrichSessionUsage(
   }
 
   try {
+    let snapshot: TranscriptSnapshot | undefined;
     for (;;) {
-      const { events, truncated } = readEvents(sessionId);
+      snapshot = await readEvents(sessionId, snapshot);
+      const { events, truncated } = snapshot;
       const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
       const shutdownMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
       // A resumed session can hold an older shutdown: only one after this sessionEnd counts.

@@ -86,6 +86,8 @@ export function buildToolEvent(
     tool_use_id: opts.toolUseId,
     tool_input: sensitive ? { path: targetPath } : toolArgs,
   };
+  // `postToolUse` also fires for denied/rejected results, which are errors, not completions.
+  if (opts.end && !opts.end.success) event.type = 'agent.tool.error';
   const filePath = extractFilePath(toolName, toolArgs);
   if (filePath !== undefined) event.file_path = filePath;
   // A failed edit/create changed nothing, so its diff must not count (matches
@@ -112,7 +114,11 @@ export function buildToolEvent(
   const skillName = extractSkillName(toolName, toolArgs);
   if (skillName !== undefined) event.skill_name = skillName;
   if (!sensitive && opts.end?.success && opts.end.resultText !== undefined) event.tool_response = opts.end.resultText;
-  if (!sensitive && opts.end?.errorMessage !== undefined && event.error_message === undefined) {
+  if (sensitive) {
+    // `base` already carries the hook's own `error` text, which may quote the credential file's content.
+    delete event.error_message;
+    delete event.error_context;
+  } else if (opts.end?.errorMessage !== undefined && event.error_message === undefined) {
     event.error_message = opts.end.errorMessage.slice(0, 300);
   }
   return event;

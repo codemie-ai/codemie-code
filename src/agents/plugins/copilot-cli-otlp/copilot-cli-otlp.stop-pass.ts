@@ -62,6 +62,8 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
   const startedAt = cursor?.startedAt || startData?.startTime || read.events[0]?.timestamp || '';
   const lastEventTs = read.events[read.events.length - 1]?.timestamp ?? cursor?.lastEventTs ?? '';
 
+  // Sticky: once any slice was partial the totals stay understated, so a later complete slice must not clear it.
+  const usagePartial = (cursor?.usagePartial ?? false) || slice.partial || read.truncated;
   const summary = buildSessionSummaryEvent({
     sessionId,
     phase: 'incremental',
@@ -69,7 +71,7 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
     details,
     startedAt,
     endedAt: lastEventTs,
-    usagePartial: slice.partial || read.truncated,
+    usagePartial,
   });
   if (read.truncated) logger.debug('[copilot-cli-otlp] transcript above 8 MB, reading tail only');
 
@@ -83,6 +85,7 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
     openToolCalls: slice.openCalls,
     pendingMessages: slice.pendingMessages,
     sawUsageRecords: slice.sawUsageRecords,
+    usagePartial,
   };
   return {
     events: [...slice.rows, summary],
