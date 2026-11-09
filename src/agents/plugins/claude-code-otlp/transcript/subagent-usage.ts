@@ -13,14 +13,18 @@
  * scope_kind/scope_name) and passes the caller-built tool-call/tool-error/skill maps through as
  * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
- * `workflow_run` has no known source and is always an empty string, never fabricated. `worktree`
- * is the hook's own `cwd` (the contract's "its worktree path") — the caller fills it in from the
- * triggering hook payload, since no sidecar or transcript signal carries it.
+ * `worktree` is the hook's own `cwd` (the contract's "its worktree path") reduced to the
+ * repository identifier (`extractRepository`, the same value `cwd` carries): the caller fills
+ * `cwd` in from the triggering hook payload, since no sidecar or transcript signal carries it,
+ * and no absolute path leaves the hook process.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
-import { isPathWithinDirectory } from '@/utils/paths.js';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
+import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { evidenceCacheFor } from './evidence-index.js';
+import { probePromptHead, resolveForkSkills } from './fork-skill.js';
+import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
 
@@ -31,7 +35,10 @@ export interface SubagentFile {
   agentType?: string;
   spawnDepth?: number;
   description?: string;
-  /** The triggering hook's `cwd` — the contract's `worktree` path. `''` when the caller has none. */
+  /**
+   * The triggering hook's absolute `cwd` — reduced to a repository identifier by the `worktree`
+   * field. `''` when the caller has none.
+   */
   cwd?: string;
   /** The forked skill's name, when this subagent is actually a slash-command-invoked skill run
    *  in the background (EPMCDME-15968) — absent for a regular agent dispatch. Sourced from the
@@ -39,6 +46,20 @@ export interface SubagentFile {
    *  {@link readForkedSkillMarker}: that field is the Agent tool's optional addressing name,
    *  which any named agent can carry, forked skill or not). */
   skillName?: string;
+  /** Set when the subagent cannot yet be told from a skill fork; its usage must not be sent yet
+   *  (see `fork-skill.ts`). */
+  pending?: boolean;
+  /** Settled by an earlier pass (from the parse-state registry): usage scope is known and is not
+   *  resolved again; see `ForkCandidate.settled`. */
+  settled?: boolean;
+  /** The `promptId` recorded when the subagent settled ('' / absent: not in its file yet). */
+  promptId?: string;
+  /** The file head was fully read (see `PromptHead.done`): it is not probed again. */
+  headDone?: boolean;
+  /** Size of the file when its (incomplete) head was last read; the head is probed again once it changed. */
+  headSize?: number;
+  /** Only at `final`: left an agent for lack of any proof, so its scope is not a known one. */
+  unproven?: boolean;
 }
 
 interface SubagentMeta {
@@ -132,9 +153,13 @@ export function subagentFilePath(mainTranscriptPath: string, agentId: string): s
  * {@link readSubagentMeta} and its `.forked-skill.marker.json` via {@link readForkedSkillMarker}.
  *
  * Never throws: a missing subagents directory, an unreadable directory, or any other failure all
- * resolve to `[]`.
+ * resolve to `[]`. Names a skill only from the marker; see {@link findSubagentFiles}.
  */
-export async function findSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
+export async function discoverSubagentFiles(
+  mainTranscriptPath: string,
+  /** Agents whose sidecars need not be read (the caller supplies them as settled candidates). */
+  skipSidecars: ReadonlySet<string> = new Set()
+): Promise<SubagentFile[]> {
   try {
     const subagentsDir = subagentsDirFor(mainTranscriptPath);
 
@@ -145,6 +170,7 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
         .map(async (f): Promise<SubagentFile> => {
           const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '');
           const filePath = join(subagentsDir, f);
+          if (skipSidecars.has(agentId)) return { agentId, filePath };
           const [meta, marker] = await Promise.all([readSubagentMeta(filePath), readForkedSkillMarker(filePath)]);
           return { agentId, filePath, ...meta, ...marker };
         })
@@ -154,6 +180,121 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
   } catch {
     return [];
   }
+}
+
+/**
+ * {@link discoverSubagentFiles} plus the skill of each marker-less fork, resolved from the
+ * transcripts by exact ids (see `fork-skill.ts`). A subagent that cannot yet be told from a skill
+ * fork is flagged `pending` (never with `final`, which is the end of the session). Never throws.
+ *
+ * `extra` are candidates the caller already knows by path (the `SubagentStop` hook's own
+ * `agent_transcript_path`, or a path kept in the parse state for a deferred subagent): directory
+ * discovery cannot see a file outside the standard directory or one not created yet. An extra
+ * replaces the discovered entry with the same `agentId` (its path is the actual one) and is merged
+ * with the sidecars read at that path.
+ */
+export async function findSubagentFiles(
+  mainTranscriptPath: string,
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
+): Promise<SubagentFile[]> {
+  return (await resolveSubagentSnapshot(mainTranscriptPath, options)).files;
+}
+
+/**
+ * A settled subagent keeps its known scope, but its correlation metadata (the `promptId` the slash
+ * confirmation needs) may not have been in its file yet. Probe the head again only while it was
+ * incomplete and the file has changed since; a head that is complete is never read again.
+ */
+export async function refreshHead(file: SubagentFile): Promise<void> {
+  if (file.promptId || file.headDone) return;
+  try {
+    if ((await stat(file.filePath)).size === file.headSize) return;
+  } catch {
+    return; // missing file: nothing new
+  }
+  const head = await probePromptHead(file.filePath);
+  file.promptId = head.promptId;
+  file.headDone = head.done;
+  file.headSize = head.size;
+}
+
+/** One resolution of the subagent set: the files and the prompts whose plain `/name` started a fork. */
+export interface SubagentSnapshot {
+  files: SubagentFile[];
+  slashPromptIds: Set<string>;
+}
+
+/**
+ * {@link findSubagentFiles} that also returns the confirmed slash-fork prompts, so the session
+ * summary (`commands`) and the usage events are derived from one and the same resolution of the same
+ * candidate set. `raw`, when given, is the main transcript text already read by the caller.
+ */
+export async function resolveSubagentSnapshot(
+  mainTranscriptPath: string,
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
+): Promise<SubagentSnapshot> {
+  const files = await discoverSubagentFiles(
+    mainTranscriptPath,
+    new Set((options.extra ?? []).filter((e) => e.settled).map((e) => e.agentId))
+  );
+  for (const extra of options.extra ?? []) {
+    // A settled candidate carries everything needed: no sidecar reads.
+    const [meta, marker] = extra.settled
+      ? [{}, {}]
+      : await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
+    const known = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined));
+    const merged = { ...meta, ...marker, ...known } as SubagentFile;
+    const at = files.findIndex((f) => f.agentId === extra.agentId);
+    if (at >= 0) files[at] = merged;
+    else files.push(merged);
+    if (merged.settled) await refreshHead(merged);
+  }
+  const evidence = evidenceCacheFor(mainTranscriptPath);
+  const { skillByAgentId, pendingAgentIds, unprovenAgentIds, slashPromptIds } = await resolveForkSkills(
+    mainTranscriptPath,
+    files,
+    options.raw,
+    { ...options, evidence }
+  );
+  await evidence.save();
+  for (const file of files) {
+    const skillName = skillByAgentId.get(file.agentId);
+    if (skillName) {
+      file.skillName = skillName;
+      file.description ||= `/${skillName}`;
+    } else if (pendingAgentIds.has(file.agentId)) {
+      file.pending = true;
+    } else if (unprovenAgentIds.has(file.agentId)) {
+      file.unproven = true;
+    }
+  }
+  return { files, slashPromptIds };
+}
+
+/** Whether directory discovery ({@link discoverSubagentFiles}) finds this subagent file by itself. */
+export function isDiscoverableSubagentFile(mainTranscriptPath: string, file: SubagentFile): boolean {
+  // A path that merely spells the same file differently reads as "not discoverable": it is then
+  // kept registered, the safe direction.
+  return resolve(file.filePath) === resolve(subagentFilePath(mainTranscriptPath, file.agentId));
+}
+
+/**
+ * What one subagent is, from its marker or the transcripts ({@link findSubagentFiles}):
+ * `skillName` of a skill fork (`''` for an ordinary agent) and whether that is still `pending`.
+ * A subagent found neither by discovery nor as `candidate` is `pending`.
+ */
+export async function resolveSubagentSkill(
+  mainTranscriptPath: string,
+  agentId: string,
+  candidate?: SubagentFile
+): Promise<{ skillName: string; pending: boolean }> {
+  const file = (await findSubagentFiles(mainTranscriptPath, { extra: candidate ? [candidate] : [] })).find(
+    (f) => f.agentId === agentId
+  );
+  // A subagent that cannot be found is unproven, not a settled ordinary agent: its scope would be
+  // permanent. (A caller that knows the file passes it as `candidate`.)
+  if (!file) return { skillName: '', pending: true };
+  return { skillName: file.skillName ?? '', pending: file.pending === true };
 }
 
 /** One row of the contract's `usage[]`: `agent.usage.request`'s own fields, plus `api_calls`. */
@@ -172,7 +313,7 @@ export interface SubagentUsageTotal {
   output_tokens: number;
   /** True when any request in this group has no final `stop_reason`, so `output_tokens` may undercount. */
   output_tokens_partial: boolean;
-  thinking_tokens: number;
+  thinking_tokens: number | null;
   web_search_requests: number;
   web_fetch_requests: number;
   api_calls: number;
@@ -196,7 +337,10 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
       existing.output_tokens_partial = existing.output_tokens_partial || isOutputTokensPartial(r);
-      existing.thinking_tokens += r.thinkingTokens ?? 0;
+      existing.thinking_tokens =
+        existing.thinking_tokens === null && r.thinkingTokens === null
+          ? null
+          : (existing.thinking_tokens ?? 0) + (r.thinkingTokens ?? 0);
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
       existing.api_calls += 1;
@@ -215,7 +359,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
         output_tokens_partial: isOutputTokensPartial(r),
-        thinking_tokens: r.thinkingTokens ?? 0,
+        thinking_tokens: r.thinkingTokens,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
         api_calls: 1,
@@ -226,10 +370,15 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
   return [...groups.values()];
 }
 
-/** The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`. */
+/**
+ * The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`.
+ * `<synthetic>` API-error placeholder rows are skipped (they are not real models), so a subagent
+ * whose only rows are placeholders reports `''` rather than a fake model.
+ */
 function primaryModel(totals: SubagentUsageTotal[]): string {
   let best: SubagentUsageTotal | undefined;
   for (const total of totals) {
+    if (isSyntheticModel(total.model)) continue;
     if (!best || total.api_calls > best.api_calls) {
       best = total;
     }
@@ -272,9 +421,10 @@ function buildToolsBreakdown(
  * `startedAt`/`endedAt`/`durationMs`/`toolResults` are forwarded verbatim from the caller, which
  * derives them from the subagent transcript's own lines — not this function's job.
  *
- * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
- * sidecar omits the field — not treated as an error). `description` defaults to `''` when the
- * sidecar has none.
+ * `spawn_depth` is emitted only when `file.spawnDepth` is present: a sidecar that omits it (which
+ * is how top-level subagents look) leaves the depth unknown, and an unknown value is omitted
+ * rather than reported as `0` (contract rule 4). `description` defaults to `''` when the sidecar
+ * has none.
  *
  * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, by the adapter base class at hook time.
  */
@@ -299,9 +449,8 @@ export function buildSubagentUsageEvent(
     tool_use_id: file.toolUseId ?? '',
     agent_type: file.agentType ?? '',
     description: file.description ?? '',
-    workflow_run: '',
-    spawn_depth: file.spawnDepth ?? 0,
-    worktree: file.cwd ?? '',
+    ...(typeof file.spawnDepth === 'number' ? { spawn_depth: file.spawnDepth } : {}),
+    worktree: file.cwd ? extractRepository(file.cwd) : '',
     started_at: startedAt,
     ended_at: endedAt,
     duration_ms: durationMs,

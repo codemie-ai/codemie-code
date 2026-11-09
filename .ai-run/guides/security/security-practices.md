@@ -43,6 +43,8 @@ Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plug
 | `X-CodeMie-Integration` | Integration/tenant identity |
 | `X-CodeMie-Repository` / `X-CodeMie-Branch` / `X-CodeMie-Project` | Repository/branch/project attribution |
 
+Exception: on `/v1/metrics` the plugin does not inject `X-CodeMie-Client`, `X-CodeMie-Repository`, `X-CodeMie-Branch` or `X-CodeMie-Project`. `MetricsApiClient` sets them, the client from its sender's client type, the other three from the metric's attributes.
+
 Also in scope even though they are body fields, not headers: the Responses API `user` field, JWT `sub` / `email` overrides, and any other identifier the server treats as authoritative for attribution.
 
 ### Rules for changes that touch any of the above

@@ -453,6 +453,11 @@ export interface SSOCredentials {
   cookies: Record<string, string>;
   apiUrl: string;
   expiresAt?: number;
+  /**
+   * Signed-in email, attached at runtime by `withVerifiedOwner` (credential-owner.ts) for these exact
+   * cookies. Not part of the stored login; absent until established.
+   */
+  email?: string;
 }
 
 /**

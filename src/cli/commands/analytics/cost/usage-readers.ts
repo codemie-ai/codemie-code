@@ -15,8 +15,8 @@ import { isCodexFamilyAgent } from './codex-agent.js';
 import { logger } from '@/utils/logger.js';
 // Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
-import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
-import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
+import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '../../../../utils/routing-headers.mjs';
+import { parseBackendModelName } from '../../../../utils/bedrock-pricing.mjs';
 import { resolveKimiModelId } from '@/agents/plugins/kimi/kimi.env-model.js';
 
 /** model -> usage */

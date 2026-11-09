@@ -33,7 +33,7 @@ export function decodeJwtClaims(token: string): Record<string, unknown> {
 /**
  * Pull `email` straight off a JWT credential's claims, or off the SSO
  * session's `codemie_access_token` cookie claims (`email`, falling back to
- * `preferred_username`). Shared by the tier-1 `jwt` identity tier below and
+ * `preferred_username`), or the backend-verified `email` attached to the SSO credentials. Shared by the tier-1 `jwt` identity tier below and
  * by the adapter's plain `user_email` field — both resolve the same claim.
  */
 export function resolveEmailFromCredentials(
@@ -57,6 +57,30 @@ export function resolveEmailFromCredentials(
         return email;
       }
     }
+    // oauth2-proxy logins carry no claim: the email the backend reported for these cookies.
+    if (credentials.email) {
+      return credentials.email;
+    }
+  }
+  return '';
+}
+
+/**
+ * Raw git source: `git config user.email` only, with no `user.name` fallback. Resolves to
+ * `''` for a non-git directory or any exec failure — never throws.
+ */
+export async function resolveGitEmail(cwd: string): Promise<string> {
+  if (!cwd) {
+    return '';
+  }
+  try {
+    const { exec } = await import('@/utils/exec.js');
+    const result = await exec('git', ['config', 'user.email'], { cwd });
+    if (result.code === 0 && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+  } catch {
+    /* best-effort */
   }
   return '';
 }
@@ -71,12 +95,12 @@ async function resolveGitIdentity(cwd: string): Promise<string> {
   if (!cwd) {
     return '';
   }
+  const email = await resolveGitEmail(cwd);
+  if (email) {
+    return email;
+  }
   try {
     const { exec } = await import('@/utils/exec.js');
-    const emailResult = await exec('git', ['config', 'user.email'], { cwd });
-    if (emailResult.code === 0 && emailResult.stdout.trim()) {
-      return emailResult.stdout.trim();
-    }
     const nameResult = await exec('git', ['config', 'user.name'], { cwd });
     if (nameResult.code === 0 && nameResult.stdout.trim()) {
       return nameResult.stdout.trim();
@@ -96,7 +120,7 @@ async function resolveGitIdentity(cwd: string): Promise<string> {
  * dependency. Any load failure (missing/unreadable/malformed config)
  * resolves to `''`.
  */
-async function resolveCodemieCliIdentity(): Promise<string> {
+export async function resolveCodemieCliEmail(): Promise<string> {
   try {
     const { ConfigLoader } = await import('@/utils/config.js');
     const config = await ConfigLoader.loadMultiProviderConfig();
@@ -114,7 +138,7 @@ async function resolveCodemieCliIdentity(): Promise<string> {
  * never empty, but guarded anyway since some sandboxed environments can make
  * `os.userInfo()` throw.
  */
-function resolveOsIdentity(): string {
+export function resolveOsUser(): string {
   try {
     return userInfo().username || '';
   } catch {
@@ -145,12 +169,12 @@ export async function resolveIdentity(
       return { developerName: gitIdentity, identitySource: 'git' };
     }
 
-    const cliIdentity = await resolveCodemieCliIdentity();
+    const cliIdentity = await resolveCodemieCliEmail();
     if (cliIdentity) {
       return { developerName: cliIdentity, identitySource: 'codemie_cli' };
     }
 
-    const osIdentity = resolveOsIdentity();
+    const osIdentity = resolveOsUser();
     if (osIdentity) {
       return { developerName: osIdentity, identitySource: 'os' };
     }

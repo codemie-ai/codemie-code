@@ -152,6 +152,7 @@ async function queryDb<T>(dbPath: string, sql: string, params: SqlParam[] = []):
 interface SessionRow {
   id: string;
   project_id: string;
+  parent_id: string | null;
   slug: string;
   directory: string;
   title: string;
@@ -188,19 +189,27 @@ interface PartRow {
  * project they have ever opened.
  *
  * @param dbPath - Path to opencode.db
- * @param options - Optional filtering (maxAgeDays, cwd, limit)
+ * @param options - Optional filtering: `id` (that session alone), else `updatedSince` (sessions
+ *   updated at or after it, any age), else `maxAgeDays` by creation; then `cwd`, `limit`
  * @returns Array of OpenCodeSession objects, newest first
  */
 export async function readSessionsFromDb(
   dbPath: string,
-  options?: { maxAgeDays?: number; cwd?: string; limit?: number }
+  options?: { maxAgeDays?: number; cwd?: string; limit?: number; id?: string; updatedSince?: number }
 ): Promise<OpenCodeSession[]> {
-  const maxAgeMs = (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - maxAgeMs;
   const normalizedCwd = options?.cwd?.replace(/\/+$/, '');
-
-  const conditions: string[] = ['(time_created IS NULL OR time_created >= ?)'];
-  const params: SqlParam[] = [cutoff];
+  const conditions: string[] = [];
+  const params: SqlParam[] = [];
+  if (options?.id !== undefined) {
+    conditions.push('id = ?');
+    params.push(options.id);
+  } else if (options?.updatedSince !== undefined) {
+    conditions.push('time_updated >= ?');
+    params.push(options.updatedSince);
+  } else {
+    conditions.push('(time_created IS NULL OR time_created >= ?)');
+    params.push(Date.now() - (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000);
+  }
 
   if (normalizedCwd) {
     // OpenCode stores `directory` without a trailing separator; accept both forms.
@@ -209,7 +218,7 @@ export async function readSessionsFromDb(
   }
 
   let sql =
-    `SELECT id, project_id, slug, directory, title, version, time_created, time_updated ` +
+    `SELECT id, project_id, parent_id, slug, directory, title, version, time_created, time_updated ` +
     `FROM session WHERE ${conditions.join(' AND ')} ORDER BY time_created DESC`;
 
   if (options?.limit && options.limit > 0) {
@@ -228,9 +237,26 @@ export async function readSessionsFromDb(
       updated: row.time_updated ?? 0,
     },
     projectID: row.project_id,
+    ...(row.parent_id && { parentID: row.parent_id }),
     slug: row.slug,
     version: row.version,
   }));
+}
+
+/** Of `sessionIds`, those with a message created in `[since, until)` (no upper bound when `until` is undefined). */
+export async function readSessionIdsWithMessages(
+  dbPath: string,
+  sessionIds: string[],
+  window: { since: number; until?: number }
+): Promise<Set<string>> {
+  if (sessionIds.length === 0) return new Set();
+  const until = window.until === undefined ? '' : ' AND time_created < ?';
+  const rows = await queryDb<{ session_id: string }>(
+    dbPath,
+    `SELECT DISTINCT session_id FROM message WHERE session_id IN (${sessionIds.map(() => '?').join(', ')}) AND time_created >= ?${until}`,
+    [...sessionIds, window.since, ...(window.until === undefined ? [] : [window.until])]
+  );
+  return new Set(rows.map((row) => row.session_id));
 }
 
 /**
@@ -306,6 +332,21 @@ export async function readMessagesFromDb(
 
   // Sort by creation time
   return messages.sort((a, b) => (a.time?.created || 0) - (b.time?.created || 0));
+}
+
+/**
+ * The `time_created` / `time_updated` of every message and part row of a session: a part
+ * (a running tool) is written later than its message's own times.
+ */
+export async function readRowTimesFromDb(dbPath: string, sessionId: string): Promise<number[]> {
+  const rows = await queryDb<{ time_created: number | null; time_updated: number | null }>(
+    dbPath,
+    `SELECT time_created, time_updated FROM message WHERE session_id = ? ` +
+    `UNION ALL SELECT time_created, time_updated FROM part WHERE session_id = ?`,
+    [sessionId, sessionId]
+  );
+  return rows.flatMap((row) => [row.time_created, row.time_updated])
+    .filter((time): time is number => typeof time === 'number');
 }
 
 /**

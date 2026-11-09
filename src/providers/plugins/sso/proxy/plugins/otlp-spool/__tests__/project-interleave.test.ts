@@ -24,6 +24,9 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
         logs: '.otel_logs.bin',
         metrics: '.otel_metrics.bin',
         traces: '.otel_traces.bin',
+        logsJson: '.otel_logs.ndjson',
+        metricsJson: '.otel_metrics.ndjson',
+        tracesJson: '.otel_traces.ndjson',
       };
       return pathJoin(state.root, sessionId + ext[stream]);
     },
@@ -70,7 +73,7 @@ describe('project gate — ingest vs forwarding', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
     readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
   });
 
   afterEach(async () => {
@@ -79,13 +82,23 @@ describe('project gate — ingest vs forwarding', () => {
     await rm(state.root, { recursive: true, force: true });
   });
 
-  /** Session bound to A with hooks and all three OTLP streams pending. */
+  // Distinct sizes per stream, so a cursor parked at the wrong stream's EOF cannot pass.
+  const JSON_SEED = {
+    logsJson: '{"x":1}\n',
+    metricsJson: '{"x":1}\n{"x":2}\n',
+    tracesJson: '{"x":1}\n{"x":2}\n{"x":3}\n',
+  } as const;
+
+  /** Session bound to A with hooks and all six OTLP streams (binary and masked JSON) pending. */
   async function seedBoundA(): Promise<void> {
     const { appendSpool } = await import('../spool-io.js');
     await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
     await appendSpool(SESSION, 'logs', Buffer.from('L'));
     await appendSpool(SESSION, 'metrics', Buffer.from('MM'));
     await appendSpool(SESSION, 'traces', Buffer.from('TTT'));
+    await appendSpool(SESSION, 'logsJson', JSON_SEED.logsJson);
+    await appendSpool(SESSION, 'metricsJson', JSON_SEED.metricsJson);
+    await appendSpool(SESSION, 'tracesJson', JSON_SEED.tracesJson);
   }
 
   async function cursorsAtEof(hooksSize: number): Promise<void> {
@@ -95,6 +108,9 @@ describe('project gate — ingest vs forwarding', () => {
       logs: 1,
       metrics: 2,
       traces: 3,
+      logsJson: Buffer.byteLength(JSON_SEED.logsJson),
+      metricsJson: Buffer.byteLength(JSON_SEED.metricsJson),
+      tracesJson: Buffer.byteLength(JSON_SEED.tracesJson),
     });
   }
 
@@ -138,7 +154,7 @@ describe('project gate — ingest vs forwarding', () => {
     await seedBoundA();
     const events: string[] = [];
     const started = deferred();
-    const response = deferred<{ ok: boolean; status: number }>();
+    const response = deferred<Response>();
     fetchMock.mockImplementation(async (_url: string, init: { headers: Record<string, string> }) => {
       events.push(`fetch:${init.headers['X-CodeMie-Project']}`);
       started.resolve();
@@ -149,7 +165,7 @@ describe('project gate — ingest vs forwarding', () => {
     await started.promise;
     await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
     events.push('conflict-persisted');
-    response.resolve({ ok: true, status: 200 });
+    response.resolve(new Response('{}', { status: 200 }));
     await pass;
     await forwardSession(SESSION, false, credentials as never); // next pass drains B's hook
 
@@ -200,12 +216,18 @@ describe('project gate — ingest vs forwarding', () => {
       const { readStatus } = await import('../session-status.js');
       await seedBoundA();
       await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
 
-      await forwardSession(SESSION, true, credentials as never);
-      expect((await readStatus(SESSION))?.cursors.hooks).toBe(0);
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        await forwardSession(SESSION, true, credentials as never);
+        expect((await readStatus(SESSION))?.cursors.hooks).toBe(0);
 
-      await forwardSession(SESSION, true, credentials as never);
+        vi.setSystemTime(Date.now() + 3 * 60_000); // past the bounded backoff of the failed range
+        await forwardSession(SESSION, true, credentials as never);
+      } finally {
+        vi.useRealTimers();
+      }
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
       expect((await readStatus(SESSION))?.cursors.hooks).toBe(Buffer.byteLength(hookLine('A'))); // the sealed prefix only
@@ -264,7 +286,7 @@ describe('project gate — ingest vs forwarding', () => {
           await appendSpool(SESSION, 'hooks', bLine, ['B']); // conflict lands while the first attempt is on the wire
           return { ok: false, status: 401 };
         });
-        fetchMock.mockResolvedValue({ ok: true, status: 200 });
+        fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
 
         await forwardSession(SESSION, true, credentials as never);
 

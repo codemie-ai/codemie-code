@@ -64,7 +64,7 @@ export interface NativeLoaderDeps {
   /** Real paths of native logs already tracked by CodeMie (skip these to avoid double counting). */
   trackedLogPaths(): Set<string>;
   /** Discover native sessions for discovery-capable agents within the age window. */
-  discover(maxAgeDays: number): Promise<DiscoveredNative[]>;
+  discover(maxAgeDays?: number): Promise<DiscoveredNative[]>;
   /** Parse a native log into a unified session. */
   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
   /** Resolve a path to its real (symlink-free) form for dedup comparison. */
@@ -79,6 +79,16 @@ function safeRealPath(p: string): string {
   } catch {
     return p;
   }
+}
+
+/** The transcript paths a record names: `agentSessionFile` and the checkpoint's `transcriptPath` (equal once the daemon re-tracks a switched transcript; a record of an earlier build keeps the old path in the first; callers collect them in a set). */
+function recordTranscriptPaths(meta: {
+  correlation?: { agentSessionFile?: string };
+  runtimeCheckpoint?: { transcriptPath?: string };
+}): string[] {
+  return [meta.correlation?.agentSessionFile, meta.runtimeCheckpoint?.transcriptPath].filter(
+    (path): path is string => typeof path === 'string' && path !== ''
+  );
 }
 
 /** Build the set of native log paths already tracked by CodeMie (from session correlations). */
@@ -100,10 +110,10 @@ function readTrackedLogPaths(): Set<string> {
     try {
       const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
         correlation?: { agentSessionFile?: string };
+        runtimeCheckpoint?: { transcriptPath?: string };
       };
-      const asf = meta.correlation?.agentSessionFile;
-      if (asf) {
-        out.add(safeRealPath(asf));
+      for (const path of recordTranscriptPaths(meta)) {
+        out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed metadata
@@ -114,8 +124,10 @@ function readTrackedLogPaths(): Set<string> {
 
 /**
  * Lazy-built ownership index: union of
- *   (a) agentSessionFile real-paths from correlation records (*.json, non-metrics, non-marker)
+ *   (a) the transcript paths a correlation record names (`agentSessionFile`, `runtimeCheckpoint.transcriptPath`)
  *   (b) transcriptPath values from sidecar marker files (*-codemie-marker.json)
+ * Sidecars of either naming scheme are read — `<path hash>-<codemieSessionId>-codemie-marker.json`
+ * and the earlier `<transcript basename>-codemie-marker.json` — since each names its transcript inside.
  * Cached for the lifetime of the process — analytics runs are short-lived.
  */
 let ownershipIndexCache: Set<string> | null = null;
@@ -144,14 +156,14 @@ function buildOwnershipIndex(): Set<string> {
       } else if (!f.endsWith('_metrics.json')) {
         const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
           correlation?: { agentSessionFile?: string };
+          runtimeCheckpoint?: { transcriptPath?: string };
           origin?: string;
         };
         // A confirmed external-resume session must never re-adopt its transcript into the
         // ownership index — that would silently exclude it from `native-external` filtering
         // again, undoing the whole point of flagging it. See EPMCDME-12992.
         if (meta.origin === SESSION_ORIGIN.EXTERNAL_RESUME) continue;
-        const asf = meta.correlation?.agentSessionFile;
-        if (asf) out.add(safeRealPath(asf));
+        for (const path of recordTranscriptPaths(meta)) out.add(safeRealPath(path));
       }
     } catch {
       // skip unreadable / malformed files
@@ -198,7 +210,9 @@ export const realNativeDeps: NativeLoaderDeps = {
     if (!ownershipIndexCache) ownershipIndexCache = buildOwnershipIndex();
     if (ownershipIndexCache.has(safeRealPath(filePath))) return true;
 
-    // CR-002: bounded transcript scan (4 KB) for legacy sessions without sidecar
+    // Bounded transcript scan: transcripts written by earlier versions carry an in-band
+    // `codemie_session_start` line instead of a sidecar, recognised only within the scanned head
+    // (the first 4 KB, at most 10 lines). Nothing written today adds one.
     try {
       const fd = openSync(filePath, 'r');
       const buf = Buffer.alloc(4096);
@@ -601,7 +615,17 @@ export function synthesizeRawSession(
   });
 }
 
-/** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
+/**
+ * Number of days from a filter's fromDate to now (for the discovery window).
+ *
+ * When fromDate is absent (no lower bound requested — whether or not sessionId is set), this
+ * stays at 3650 ("effectively all time") rather than deferring to each adapter's own ~30-day
+ * default (CR-003): a sessionId-scoped request still needs discover() to find the target file
+ * regardless of its age — the memory-safety fix is the parse-time `scoped` short-circuit in
+ * loadNativeSessions, not a narrower discovery window — and an unscoped/broad report must keep
+ * its pre-existing "all native history" default rather than silently losing anything older
+ * than ~30 days.
+ */
 function windowDays(filter?: AnalyticsFilter): number {
   if (filter?.fromDate) {
     const days = Math.ceil((Date.now() - filter.fromDate.getTime()) / 86_400_000);
@@ -720,6 +744,12 @@ export async function loadNativeSessions(
 ): Promise<RawSessionData[]> {
   const tracked = deps.trackedLogPaths();
   const discovered = await deps.discover(windowDays(filter));
+  // A session-scoped request needs exactly one file's content, never the rest of the window —
+  // narrow here, before any parse (including the per-family passes below), so report generation
+  // for one session never pays the memory cost of the full discovery window.
+  const scoped = filter?.sessionId
+    ? discovered.filter(({ descriptor }) => descriptor.sessionId === filter.sessionId)
+    : discovered;
 
   // Parse each Codex session ONCE (cached for reuse below) and collect the child thread IDs each
   // parent references via spawn/wait collaboration events, so those sub-agent rollouts are not
@@ -727,7 +757,7 @@ export async function loadNativeSessions(
   // readCodexSubagentUsage in the cost enricher).
   const codexParsed = new Map<string, ParsedSession | null>();
   const codexChildThreads = new Set<string>();
-  for (const { agentName, descriptor } of discovered) {
+  for (const { agentName, descriptor } of scoped) {
     if (!isCodexFamilyAgent(agentName)) {
       continue;
     }
@@ -742,17 +772,29 @@ export async function loadNativeSessions(
 
   // Same shape for Pi, one level up: parse each transcript ONCE, then drop the `/fork`
   // continuations the adapter already folded into the transcript they grew out of.
-  const piTranscripts = await readPiTranscripts(discovered, deps);
+  // Fold over the FULL discovery window — never just `scoped` — so a fork's data still reaches
+  // its root when the request targets the root's sessionId. But only pay that cost when the
+  // request actually concerns a Pi session (or lists broadly, filter unset): parsing every
+  // discovered Pi transcript to serve a Claude/Codex-scoped report would reintroduce the same
+  // unbounded-parse OOM risk this ticket exists to fix, just shifted onto Pi volume.
+  const needsPiFamily = !filter?.sessionId || scoped.some(({ agentName }) => isPiAgent(agentName));
+  const piTranscripts = needsPiFamily ? await readPiTranscripts(discovered, deps) : [];
   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
   const piForkedChildren = foldPiForkFamilies(piTranscripts);
 
   const out: RawSessionData[] = [];
-  for (const { agentName, descriptor } of discovered) {
+  for (const { agentName, descriptor } of scoped) {
     if (isCodexFamilyAgent(agentName) && codexChildThreads.has(descriptor.sessionId)) {
       continue; // linked sub-agent rollout — already counted inside its parent
     }
-    if (isPiAgent(agentName) && piForkedChildren.has(deps.realPath(descriptor.filePath))) {
+    if (
+      !filter?.sessionId &&
+      isPiAgent(agentName) &&
+      piForkedChildren.has(deps.realPath(descriptor.filePath))
+    ) {
       continue; // forked continuation — already counted inside the transcript it grew out of
+      // (only when listing broadly; a request scoped to this exact sessionId wants ITS data,
+      // not to be silently absorbed into the root it would otherwise fold into)
     }
     if (tracked.has(deps.realPath(descriptor.filePath))) {
       continue; // already tracked by CodeMie — avoid double counting

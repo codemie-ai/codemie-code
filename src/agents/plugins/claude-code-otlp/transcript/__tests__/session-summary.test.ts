@@ -63,6 +63,11 @@ describe('primaryModel', () => {
   it('breaks a tie in favour of the first model', () => {
     expect(primaryModel({ 'claude-sonnet-4-5': 3, 'claude-opus-4-1': 3 })).toBe('claude-sonnet-4-5');
   });
+
+  it('never ranks the <synthetic> API-error placeholder, even when it has the highest count', () => {
+    expect(primaryModel({ '<synthetic>': 9, 'claude-sonnet-4-5': 2 })).toBe('claude-sonnet-4-5');
+    expect(primaryModel({ '<synthetic>': 1 })).toBe('');
+  });
 });
 
 describe('updateBranchCounts', () => {

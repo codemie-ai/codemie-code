@@ -7,6 +7,7 @@
  */
 
 import type { ParsedSession } from './BaseSessionAdapter.js';
+import type { CredentialsSupersededCheck } from './cookie-auth.js';
 
 /**
  * Processing context passed to all processors.
@@ -19,6 +20,8 @@ export interface ProcessingContext {
   cookies: string;
   /** API key for localhost development (user-id header) */
   apiKey?: string;
+  /** Reports whether a newer sign-in replaced the cookies that were sent, so a rejection is not recorded */
+  credentialsSuperseded?: CredentialsSupersededCheck;
   /** Client type identifier */
   clientType: string;
   /** Client version */

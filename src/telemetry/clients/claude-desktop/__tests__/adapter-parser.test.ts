@@ -343,6 +343,37 @@ describe('parseClaudeDesktopSession', () => {
       const backfilled = (parsed.messages as ClaudeMessage[]).find((m) => m.uuid === 'a2');
       expect(backfilled?.timestamp).toBe('2024-02-01T00:00:09Z');
     });
+
+    it('backfills _audit_timestamp on the first copy of a re-written line kept in conversationMessages', async () => {
+      const transcriptPath = join(dir, 'audit.jsonl');
+      const rows = [
+        { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '', _audit_timestamp: '2024-02-01T00:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'system', uuid: 's-cb', sessionId: 's1', subtype: 'compact_boundary', timestamp: '', _audit_timestamp: '2024-02-01T00:00:02Z' },
+        { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '', _audit_timestamp: '2024-02-01T00:00:03Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'assistant', uuid: 'a1', sessionId: 's1', timestamp: '', _audit_timestamp: '2024-02-01T00:00:04Z', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+      ];
+      writeFileSync(transcriptPath, rows.map((r) => JSON.stringify(r)).join('\n'));
+
+      const parsed = await parseClaudeDesktopSession(discovered({ transcriptPath }), 'codemie-4');
+      const first = (parsed.conversationMessages as ClaudeMessage[]).find((m) => m.uuid === 'u1');
+      expect(first?.timestamp).toBe('2024-02-01T00:00:01Z');
+      expect((parsed.messages as ClaudeMessage[]).find((m) => m.uuid === 'u1')?.timestamp).toBe('2024-02-01T00:00:03Z');
+    });
+
+    it('keeps the later copy of a Cowork replay with no compaction between the copies in conversationMessages', async () => {
+      const transcriptPath = join(dir, 'audit.jsonl');
+      const rows = [
+        { type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '', _audit_timestamp: '2024-02-01T00:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'assistant', uuid: 'a1', sessionId: 's1', timestamp: '', _audit_timestamp: '2024-02-01T00:00:02Z', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+        { type: 'user', uuid: 'u1', sessionId: 's1', isReplay: true, timestamp: '', _audit_timestamp: '2024-02-01T00:05:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+      ];
+      writeFileSync(transcriptPath, rows.map((r) => JSON.stringify(r)).join('\n'));
+
+      const parsed = await parseClaudeDesktopSession(discovered({ transcriptPath }), 'codemie-5');
+      const view = parsed.conversationMessages as ClaudeMessage[];
+      expect(view.map((m) => m.uuid)).toEqual(['a1', 'u1']);
+      expect(view.find((m) => m.uuid === 'u1')?.timestamp).toBe('2024-02-01T00:05:00Z');
+    });
   });
 });
 

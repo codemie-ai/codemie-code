@@ -7,6 +7,8 @@
  */
 
 import type { SessionDiscoveryOptions, SessionDescriptor } from './discovery-types.js';
+import type { Session } from './types.js';
+import type { RunWindow } from '../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
 
 // Re-export for convenience
 export type { SessionDiscoveryOptions, SessionDescriptor };
@@ -34,6 +36,15 @@ export interface ParsedSession {
   // Raw messages (agent-specific format preserved for conversations processor)
   messages: unknown[];
 
+  /** Times (epoch ms, ISO string or unset) of the transcript's top-level records, as parsed */
+  recordTimes?: Array<number | string | undefined>;
+
+  /** The run window the transcript was parsed for, so a processor does not resolve it again */
+  runWindow?: RunWindow;
+
+  /** The main transcript for the conversation sync — the counted lines with each duplicated `uuid` kept once: its first copy when a compaction lies between the copies, else its last copy (as `messages`). */
+  conversationMessages?: unknown[];
+
   // Sub-agent sessions (for Task tool invocations)
   // CRITICAL: These must be discovered and parsed during parseSessionFile()
   subagents?: Array<{
@@ -48,6 +59,9 @@ export interface ParsedSession {
     requestShape?: string;
     requestNonInteractive?: boolean;
   }>;
+
+  /** A sub-agent transcript could not be read, so `subagents` lacks it; absent = every one was read. */
+  subagentsIncomplete?: boolean;
 
   /**
    * Provenance of this session's token usage, for agents whose transcripts cannot always
@@ -108,6 +122,35 @@ export interface AggregatedResult {
   totalRecords: number;
   /** Names of failed processors */
   failedProcessors: string[];
+  /**
+   * Time (epoch ms) of the last timed transcript record the parse read, before the context's
+   * `recordsBeforeMs` when set; undefined when no record carries a time.
+   */
+  lastRecordAt?: number;
+}
+
+/**
+ * The latest of `times` (epoch ms or ISO strings) earlier than `beforeMs`; undefined when none.
+ * An unset or unparsable time does not count.
+ */
+export function latestRecordTime(
+  times: Iterable<number | string | undefined> | undefined,
+  beforeMs?: number
+): number | undefined {
+  let latest: number | undefined;
+  for (const time of times ?? []) {
+    const ms = typeof time === 'number' ? time : typeof time === 'string' ? Date.parse(time) : Number.NaN;
+    if (!Number.isFinite(ms) || ms <= 0) continue;
+    if (beforeMs !== undefined && ms >= beforeMs) continue;
+    if (latest === undefined || ms > latest) latest = ms;
+  }
+  return latest;
+}
+
+/** A run's slice of a shared transcript: [`startTime`, `upperBound`), no upper bound when absent. */
+export interface RunBounds {
+  startTime: number;
+  upperBound?: number;
 }
 
 /**
@@ -150,12 +193,16 @@ export interface SessionAdapter {
    *   by adapters whose storage holds many sessions in one file (e.g. OpenCode's
    *   SQLite database) and which therefore must disambiguate. Adapters reading a
    *   one-session-per-file transcript ignore it.
+   * @param run - The run's own slice of the transcript. Only an adapter whose one transcript
+   *   is shared by every run that resumed it (Copilot) scopes its usage and session-level
+   *   counters to it; the others ignore it.
    * @returns Parsed session in agent-agnostic format
    */
   parseSessionFile(
     filePath: string,
     sessionId: string,
-    agentSessionId?: string
+    agentSessionId?: string,
+    run?: RunBounds
   ): Promise<ParsedSession>;
 
   /**
@@ -179,4 +226,10 @@ export interface SessionAdapter {
     sessionId: string,
     context: import('./BaseProcessor.js').ProcessingContext
   ): Promise<AggregatedResult>;
+
+  /**
+   * Find the transcript(s) of a CodeMie session record that names none (`correlation.agentSessionFile`
+   * empty), read-only. Empty when none was found; an implementation may throw when it could not conclude.
+   */
+  locateTranscript?(record: Session): Promise<string[]>;
 }

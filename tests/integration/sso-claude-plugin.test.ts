@@ -29,8 +29,14 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
   const testTempDir = join(tmpdir(), 'codemie-test-claude-plugin');
   const pluginTargetDir = join(testTempDir, 'claude-plugin');
   let installer: ClaudePluginInstaller;
+  const inheritedEnv = ['CODEMIE_MODEL', 'CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS'] as const;
+  let savedEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
+    // Both inject extra claude args (--model / --settings) when set by an enclosing CodeMie session.
+    savedEnv = Object.fromEntries(inheritedEnv.map(key => [key, process.env[key]]));
+    for (const key of inheritedEnv) delete process.env[key];
+
     // Clean up temp directory before each test
     if (existsSync(testTempDir)) {
       rmSync(testTempDir, { recursive: true, force: true });
@@ -55,6 +61,10 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
     }
 
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+    for (const key of inheritedEnv) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
 
     // Restore spies
     vi.restoreAllMocks();

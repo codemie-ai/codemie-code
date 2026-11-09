@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "branch": "feat/support-claude-5-5-models",
+  "head": "4a885e526ad7f8b5a46e98ac1c93ac0a5c3e3cdf",
+  "runner": "npm",
+  "started_at": "2026-10-23T11:04:50Z",
+  "completed_at": "2026-10-23T11:05:35Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2500,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2500,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit-affected",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npx vitest run src/cli/commands/proxy/connectors/__tests__/desktop.test.ts src/cli/commands/proxy/connectors/__tests__/vscode-models.test.ts src/cli/commands/proxy/connectors/__tests__/vscode.test.ts src/providers/plugins/sso/proxy/plugins/__tests__/claude-request-normalizer.plugin.test.ts src/agents/plugins/pi/__tests__/pi.models.test.ts tests/integration/proxy-normalizer-body-contract.test.ts",
+      "exit_code": 0
+    }
+  ]
+}

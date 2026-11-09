@@ -13,13 +13,13 @@ import {
   type PiRunLedger,
 } from './pi.extension.js';
 import { resolve } from 'path';
-import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
-import { appendTranscriptMarker } from '../../core/session/session-origin-audit.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
+import { detectGitBranch, detectGitRemoteRepo, wrapperOwnerFromEnv } from '@/utils/processes.js';
+import { writeOwnershipMarker } from '../../core/session/session-origin-audit.js';
 import { startPiIncrementalSync, stopPiIncrementalSync } from './pi.incremental-sync.js';
 import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { sendPathApiUrl } from '../../core/session/send-path.js';
 
 /**
  * Pi flags that select an existing session. Pi rejects `--session-id` when any of
@@ -99,6 +99,7 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: 'codemie-pi',
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -111,8 +112,9 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
  * - `correlation.agentSessionFile` — the analytics cost path resolves the native
  *   transcript through this field. Pi left it empty, so token and cost figures were
  *   never readable for a Pi session, and the report blamed a missing token reader.
- * - `correlation.agentSessionId` — the metrics aggregator prefers it when labelling
- *   the wire `session_id`, which should be Pi's id rather than CodeMie's.
+ * - `correlation.agentSessionId` — Pi's id: the conversation is filed under it. The
+ *   start metric goes under the CodeMie id; the deltas and the end metric carry the
+ *   id the start metric was accepted under, this id only when none was accepted.
  * - `workingDirectory` / `gitBranch` / `repository` — `--session <path>` runs the
  *   whole session under the transcript's cwd, which may be a different repository
  *   than the one CodeMie was launched from.
@@ -153,7 +155,7 @@ async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Pr
     // Ownership sidecars, so analytics can tell a CodeMie-managed transcript from a
     // bare `pi` one.
     for (const transcript of ledger.transcripts) {
-      appendTranscriptMarker(transcript, sessionId, 'pi');
+      writeOwnershipMarker(transcript, sessionId, 'pi');
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -387,14 +389,6 @@ export const PiPluginMetadata: AgentMetadata = {
         logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
       }
 
-      // A run killed with SIGKILL, or whose terminal was closed, never reaches onSessionEnd and
-      // leaves its record `active` forever with no terminal metric. Recover those on the next
-      // start. Fire-and-forget: a stranded earlier session must not delay this one.
-      void reconcileStaleSessions('pi', env, buildPiHookConfig).catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[pi] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
-
       // Flush metrics during the run, so a hard kill loses at most one interval instead of the
       // whole session. Ledger-driven: it processes exactly the transcripts the extension
       // recorded, never a directory scan.
@@ -403,7 +397,7 @@ export const PiPluginMetadata: AgentMetadata = {
         metadata: PiPluginMetadata,
         buildContext: () => ({
           sessionId,
-          apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
+          apiBaseUrl: sendPathApiUrl(env) || '',
           cookies: '',
           clientType: 'codemie-pi',
           version: env.CODEMIE_CLI_VERSION ?? '',
@@ -411,7 +405,7 @@ export const PiPluginMetadata: AgentMetadata = {
         }),
         ssoUrl: env.CODEMIE_URL,
         env,
-        syncApiUrl: env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL,
+        syncApiUrl: sendPathApiUrl(env),
         cliVersion: env.CODEMIE_CLI_VERSION,
       });
     },
@@ -471,7 +465,7 @@ export const PiPluginMetadata: AgentMetadata = {
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
-            // Pi's own session id, so the backend joins on the agent's identity.
+            // Pi's own session id: the conversation's; the end metric carries the start metric's id.
             session_id: ledger.piSessionId ?? sessionId,
             transcript_path: ledger.transcripts[0] ?? '',
             transcript_paths: ledger.transcripts.length > 0 ? ledger.transcripts : undefined,

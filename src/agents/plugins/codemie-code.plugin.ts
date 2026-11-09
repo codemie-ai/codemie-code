@@ -1,18 +1,19 @@
 import type { AgentMetadata, AgentConfig } from '../core/types.js';
-import { join } from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode/opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode/opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { flagValue, hasFlagBeforeSeparator } from '../core/flag-transform.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
-import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
+import { installGlobal, uninstallGlobal, wrapperOwnerFromEnv } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
+import type { LocatedRun } from './opencode/opencode.run-session.js';
+import { getOpenCodeStorageBase } from './opencode/opencode.paths.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
-import { getCodemieHome } from '../../utils/paths.js';
 import { resolveCodemieBinary, resolveHookCommand } from '../../utils/hook-command.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
@@ -47,14 +48,6 @@ function determineActiveProvider(provider: string | undefined): string {
 }
 
 /**
- * Get the base storage path for OpenCode sessions.
- * Used by both beforeRun (XDG_DATA_HOME) and onSessionEnd (OPENCODE_STORAGE_PATH).
- */
-function getOpenCodeStorageBase(): string {
-  return join(getCodemieHome(), 'opencode-storage');
-}
-
-/**
  * Build a hook config object from environment variables.
  * Used by both onSessionStart and onSessionEnd lifecycle hooks.
  */
@@ -65,12 +58,14 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
     env,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: 'codemie-code',
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -419,22 +414,13 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       }
 
       try {
-        // 1. Discover OpenCode session for transcript_path (best effort)
-        //    Set OPENCODE_STORAGE_PATH so getOpenCodeStoragePath() resolves to the
-        //    same location that beforeRun configured via XDG_DATA_HOME on the child process.
-        const expectedStoragePath = join(getOpenCodeStorageBase(), 'opencode', 'storage');
-        process.env.OPENCODE_STORAGE_PATH = expectedStoragePath;
-
-        let transcriptPath = '';
+        // 1. The transcript of this record's run (the shared selection, best effort), in the
+        //    storage beforeRun pointed the child's XDG_DATA_HOME at
+        let located: LocatedRun | undefined;
         try {
           const adapter = new OpenCodeSessionAdapter(CodeMieCodePluginMetadata);
-          const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
-          if (sessions.length > 0) {
-            transcriptPath = sessions[0].filePath;
-            logger.debug(`[codemie-code] Discovered OpenCode session: ${sessions[0].sessionId}`);
-          } else {
-            logger.debug('[codemie-code] No recent OpenCode sessions found');
-          }
+          located = await adapter.locateSessionTranscript(sessionId);
+          logger.debug(`[codemie-code] Run transcript: ${located?.transcript ?? 'none'}`);
         } catch (discoverError) {
           const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
           logger.debug(`[codemie-code] Session discovery failed (non-blocking): ${msg}`);
@@ -446,8 +432,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         const { processEvent } = await import('../../cli/commands/hook.js');
         const event = {
           hook_event_name: 'SessionEnd',
+          // The CodeMie id: processing takes every OpenCode session of the record's run, each in turn
           session_id: sessionId,
-          transcript_path: transcriptPath,
+          transcript_path: located?.transcript ?? '',
           permission_mode: 'default',
           cwd: process.cwd(),
           reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
@@ -458,7 +445,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[codemie-code] SessionEnd hook failed (non-blocking): ${errorMessage}`);
       } finally {
-        delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
         cleanupReasoningSanitizerPlugin();
       }
@@ -529,6 +515,17 @@ export class CodeMieCodePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /** The session the launch names: `--session <ses_>` / `--session=<ses_>`. */
+  extractNativeResumeId(args: string[]): string | undefined {
+    // Only `--session` is a native resume form here: `-s` is the wrapper's own `--silent` and never reaches opencode; `--resume <ses_>` is the wrapper's form and travels separately
+    return flagValue(args, ['--session']);
+  }
+
+  /** A `--continue` / `-c` launch continues the last session without naming it. */
+  continuesNativeSession(args: string[]): boolean {
+    return hasFlagBeforeSeparator(args, ['--continue', '-c']);
   }
 
   /**

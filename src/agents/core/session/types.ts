@@ -57,6 +57,20 @@ export type SessionOrigin = (typeof SESSION_ORIGIN)[keyof typeof SESSION_ORIGIN]
 export const SESSION_ORIGIN_ENV_KEY = 'CODEMIE_SESSION_ORIGIN';
 
 /**
+ * Env var carrying the agent session id this launch names (e.g. `--resume <id>`) from AgentCLI to
+ * the plugin's `onSessionStart`; empty when the launch names none, so a launch inside an agent never
+ * inherits its parent's value.
+ */
+export const RESUME_SESSION_ENV_KEY = 'CODEMIE_RESUME_SESSION_ID';
+
+/**
+ * Env var marking (`1`) a launch that continues the agent's earlier session (e.g. `--continue`) from
+ * AgentCLI to the plugin's `onSessionStart`; empty otherwise, so a launch inside an agent never
+ * inherits its parent's value.
+ */
+export const CONTINUE_SESSION_ENV_KEY = 'CODEMIE_CONTINUE_SESSION';
+
+/**
  * Sync status (used by all processors)
  */
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
@@ -71,6 +85,8 @@ export interface ConversationsSyncState {
   // Incremental tracking
   lastSyncedMessageUuid?: string;
   lastSyncedHistoryIndex?: number;
+  /** The highest synced `history_index` of each conversation id: a record can feed several conversations. */
+  historyIndexByConversation?: Record<string, number>;
 
   // Remote sync state
   lastSyncAt?: number;
@@ -93,6 +109,8 @@ export interface MetricsSyncState {
   lastProcessedTimestamp: number;
   processedRecordIds: string[];
   attachedUserPromptTexts?: string[];
+  /** Start-of-record cutoff the claude baseline applied; lines stamped before it give a run no prompt. */
+  baselineCutoffMs?: number;
 
   // Remote sync state
   lastSyncedRecordId?: string;
@@ -140,13 +158,18 @@ export interface Session {
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
+  /** Unix ms: the start of the stretch a reopen began */
+  stretchStartTime?: number;
   workingDirectory: string; // CWD where agent was launched
+  /** The agent's data home for this run, absolute: for a process that does not share the run's environment. */
+  agentHome?: string;
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
   repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback
+  model?: string; // Model the session was launched with; the last-resort model for metrics when neither a branch's deltas nor the session's history name one
 
   correlation: CorrelationResult;
   status: SessionStatus;
-  reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other')
+  reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other'); on an active copilot-cli record, the exit reason its run stored on exit
   origin?: SessionOrigin; // undefined = 'codemie' (back-compat)
 
   // Active duration tracking (excludes idle time)
@@ -158,4 +181,30 @@ export interface Session {
 
   // Runtime state for local telemetry clients that are discovered via polling
   runtimeCheckpoint?: RuntimeCheckpoint;
+
+  // Owner and delivery state
+  /** Pid of the process that lives as long as the session (the CLI wrapper); absent on legacy records */
+  ownerPid?: number;
+  /** Start time (Unix ms) of the `ownerPid` process; a live pid with another start time is another process */
+  ownerStartedAt?: number;
+  /** CodeMie URL of the launch (`CODEMIE_URL`); only a launch against the same host delivers this record */
+  codemieUrl?: string;
+  /** Unix ms when the server accepted this session's end metric; set → the end metric is never sent again */
+  endMetricSentAt?: number;
+  /** Why no end metric applies to this session (e.g. no analytics auth configured) */
+  endMetricSkipped?: string;
+  /** Delivery attempts of a completed but undelivered record */
+  deliveryAttempts?: number;
+  /** Finalization attempts of a stranded or legacy record */
+  finalizeAttempts?: number;
+  /** Unix ms when this record left the delivery queue with data it was to send still unsent */
+  droppedAt?: number;
+  /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */
+  clientType?: string;
+  /** The agent session id the launch named (e.g. `--session <ses_>`), selected exactly by the agent's transcript lookup */
+  resumeSessionId?: string;
+  /** The run was launched to continue an earlier session of the agent, so a session only updated in its window may be its own */
+  continuesPriorSession?: true;
+  /** The `session_id` the server accepted this run's start metric under; the run's metric deltas and its end metric carry it, the conversation keeps the native session's id */
+  startMetricSessionId?: string;
 }

@@ -26,6 +26,7 @@ import type { ProxyConfig } from '../../src/providers/plugins/sso/proxy/proxy-ty
 import { ProviderRegistry } from '../../src/providers/core/registry.js';
 import type { ProviderTemplate } from '../../src/providers/core/types.js';
 import '../../src/providers/plugins/sso/proxy/plugins/index.js'; // register core plugins
+import { encodeAttributionHeader } from '../../src/utils/header-value.js';
 
 const GATEWAY_KEY = 'gw-secret-key';
 const UPSTREAM_TOKEN = 'dummy-upstream-jwt';
@@ -132,6 +133,52 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
     const h = harness.captured();
     expect(h['x-codemie-repository']).toBe('org/repo');
     expect(h['x-codemie-branch']).toBe('feature/x');
+  });
+
+  it('percent-encodes non-Latin-1 repository and branch, omits a non-Latin-1 project', async () => {
+    const repository = 'clients/репо-тест';
+    const branch = 'фича/икс';
+    harness = await startHarness({ repository, branch, project: 'проект' });
+    const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
+    expect(res.status).toBe(200);
+
+    const h = harness.captured();
+    expect(h['x-codemie-repository']).toBe(encodeAttributionHeader(repository));
+    expect(h['x-codemie-branch']).toBe(encodeAttributionHeader(branch));
+    expect(h['x-codemie-project']).toBeUndefined();
+    expect(decodeURIComponent(h['x-codemie-repository'] as string)).toBe(repository);
+    expect(decodeURIComponent(h['x-codemie-branch'] as string)).toBe(branch);
+  });
+
+  it('sends the project header raw', async () => {
+    harness = await startHarness({ project: 'a@b.com' });
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-project']).toBe('a@b.com');
+  });
+
+  it('passes printable ASCII values with spaces and percent signs through unchanged', async () => {
+    harness = await startHarness({ repository: 'my repo', branch: 'fix/100%' });
+    const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
+    expect(res.status).toBe(200);
+
+    const h = harness.captured();
+    expect(h['x-codemie-repository']).toBe('my repo');
+    expect(h['x-codemie-branch']).toBe('fix/100%');
+  });
+
+  it('percent-encodes Desktop-resolver attribution and the Cowork default', async () => {
+    const resolve = { value: { repository: 'клиент/репо', branch: 'фича/икс' } as { repository?: string; branch?: string } };
+    const desktopRepositoryResolver = {
+      resolveForRequest: async () => resolve.value,
+    } as unknown as ProxyConfig['desktopRepositoryResolver'];
+    harness = await startHarness({ desktopRepositoryResolver });
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-repository']).toBe(encodeAttributionHeader('клиент/репо'));
+    expect(harness.captured()['x-codemie-branch']).toBe(encodeAttributionHeader('фича/икс'));
+
+    resolve.value = {};
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-repository']).toBe('Cowork');
   });
 
   it('OMITS X-CodeMie-Repository and X-CodeMie-Branch when not configured', async () => {
