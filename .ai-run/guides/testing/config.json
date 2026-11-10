@@ -52,19 +52,19 @@
     "status": "partial",
     "branch": {
       "status": "user_provided",
-      "pattern": "EPMCDME-<ticket>_<slug>",
-      "example": "EPMCDME-16849_subscription-analytics-tests"
+      "pattern": "<type>/<slug>",
+      "example": "test/subscription-analytics-tests"
     },
     "commit": {
       "status": "user_provided",
-      "pattern": "<type>(<scope>): <subject> (EPMCDME-<ticket>)",
+      "pattern": "<type>(<scope>): <subject>",
       "types_observed": ["feat", "fix", "chore", "test", "docs", "ci"],
-      "example": "test(analytics): add subscription-isolation regression coverage (EPMCDME-16849)"
+      "example": "test(analytics): add subscription-isolation regression coverage"
     },
     "mr_title": {
       "status": "user_provided",
-      "pattern": "<type>(<scope>): <subject> (EPMCDME-<ticket>)",
-      "example": "test(analytics): add subscription-isolation regression coverage (EPMCDME-16849)"
+      "pattern": "<type>(<scope>): <subject>",
+      "example": "test(analytics): add subscription-isolation regression coverage"
     }
   },
   "code_repos": [
