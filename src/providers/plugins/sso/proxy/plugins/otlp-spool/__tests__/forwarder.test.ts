@@ -63,6 +63,8 @@ vi.mock('../otlp-reader.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   proveRange: proveRangeMock,
 }));
+const holdForIdleReopenMock = vi.fn(async () => false);
+vi.mock('../reopen-hold.js', () => ({ holdForIdleReopen: holdForIdleReopenMock }));
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -513,6 +515,36 @@ describe('forwardSession (OTEL JSON streams)', () => {
     const byteLength = records.reduce((sum, r) => sum + Buffer.byteLength(r, 'utf8') + 1, 0);
     return { project: 'Proj A', cursor, records, byteLength };
   }
+
+  it('sends none of the otel streams while the session is held as an idle reopen, and forwards them once it is not', async () => {
+    const record = JSON.stringify({ n: 1 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([record], 0) : null
+    );
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    holdForIdleReopenMock.mockResolvedValueOnce(true);
+    await forwardSession('s1', false, credentials);
+
+    expect(snapshotPendingBytesMock).not.toHaveBeenCalled();
+    expect(snapshotPendingNdjsonRecordsMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs'))).toHaveLength(1);
+  });
+
+  it('keeps forwarding the hook stream of a session held as an idle reopen', async () => {
+    holdForIdleReopenMock.mockResolvedValueOnce(true);
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(snapshotPendingHookRecordsMock).toHaveBeenCalled();
+  });
 
   it('POSTs each masked-JSON record as its own application/json request, routed to the matching signal endpoint', async () => {
     const record = JSON.stringify({ n: 1 });

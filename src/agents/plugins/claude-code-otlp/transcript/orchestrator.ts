@@ -36,6 +36,7 @@ import { resolveInheritedUuids } from './continuation.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   acquireParseStateLock,
+  isReopenedIdle,
   loadParseState,
   saveParseState,
   type TranscriptParseState,
@@ -545,11 +546,6 @@ async function ensureInherited(
     }
   }
   return new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
-}
-
-/** A `resume` reopened the session and no pass has read activity of its own since (EPMCDME-16993). */
-function isReopenedIdle(state: TranscriptParseState): boolean {
-  return state.reopened === true && state.reopenActive !== true;
 }
 
 function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {

@@ -126,6 +126,11 @@ export function createParseState(): TranscriptParseState {
   };
 }
 
+/** A `resume` reopened the session and no pass has read activity of its own since (EPMCDME-16993). */
+export function isReopenedIdle(state: Pick<TranscriptParseState, 'reopened' | 'reopenActive'>): boolean {
+  return state.reopened === true && state.reopenActive !== true;
+}
+
 function getParseStatePath(sessionId: string): string {
   return getCodemiePath('analytics', 'state', `${sessionId}.json`);
 }
