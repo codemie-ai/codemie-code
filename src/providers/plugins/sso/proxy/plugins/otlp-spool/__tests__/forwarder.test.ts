@@ -38,11 +38,13 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('../session-status.js', () => ({
+vi.mock('../session-status.js', async (importOriginal) => ({
+  endsSessionDiscard: (await importOriginal<typeof import('../session-status.js')>()).endsSessionDiscard,
   advanceCursor: advanceCursorMock,
   markSessionEnded: markSessionEndedMock,
   readStatus: readStatusMock,
 }));
+vi.mock('../destination-intent.js', () => ({ recordDestinationMarker: vi.fn(async () => 'marker') }));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
 vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),

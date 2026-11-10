@@ -5,8 +5,10 @@ import type { Session } from './types.js';
 
 /*
  * EPMCDME-17054: the legacy `POST /v1/metrics` path of an `anthropic-subscription` session publishes only while
- * the work consent frozen at SessionStart still holds for the folder and the new pipeline has not held or
- * discarded the session. Every legacy sender asks `legacyMetricsVerdict` at send time. Fail closed throughout:
+ * the work consent frozen at SessionStart still holds for the folder, the backend has accepted the session's
+ * publication to that project through the new pipeline, and the new pipeline has not held or discarded it since.
+ * Consent alone is not enough: the backend still accepts `POST /v1/metrics` for a project the user is not a member
+ * of, so only its positive answer to the new pipeline (the destination-accepted marker) authorizes the legacy path. Every legacy sender asks `legacyMetricsVerdict` at send time. Fail closed throughout:
  * nothing is published unless every check passes.
  *
  * A final skip (LEGACY_GATE_SKIPS) is persisted as `legacyMetricsWithheld` by whichever sender meets it first (the
@@ -14,8 +16,15 @@ import type { Session } from './types.js';
  * nothing and persists nothing, so delivery retries once it clears:
  * - `destination-pending`: a live hold of the new pipeline (a spool `holds` entry, or a stream whose delivery the
  *   backend holds, e.g. `project_unavailable`; acknowledgement clears it);
+ * - `destination-unconfirmed`: the backend has not accepted the session's publication to this project yet (e.g. a short
+ *   session that ended before the forwarder's first send, or one resumed under another project); the destination-accepted
+ *   marker for the project (or its intent in the spool status, while
+ *   the forwarder still owes the marker) clears it. A final discard of the new pipeline is kept as its own marker and
+ *   checked first, so an earlier acceptance never outlives it;
  * - `verdict-unavailable`: the verdict could not be established for now (an unreadable consent store, marker or
  *   spool status, or any other error).
+ * Reconciliation does not count an attempt withheld while the backend's answer is awaited (`destination-unconfirmed`,
+ * `destination-pending`, see `awaitsDestination`) within the evidence record's retention.
  * A condition that can never clear is final: a missing or unsafe native session id (`session-unverifiable`; an
  * unsafe one is never used to build a spool or marker path).
  */
@@ -23,12 +32,17 @@ import type { Session } from './types.js';
 export type LegacyMetricsSkip = 'no-work-consent' | 'consent-revoked' | 'destination-held' | 'session-unverifiable';
 export const LEGACY_GATE_SKIPS: readonly LegacyMetricsSkip[] = ['no-work-consent', 'consent-revoked', 'destination-held', 'session-unverifiable'];
 
-export type LegacyMetricsPending = 'destination-pending' | 'verdict-unavailable';
+export type LegacyMetricsPending = 'destination-pending' | 'destination-unconfirmed' | 'verdict-unavailable';
 
 export type LegacyMetricsVerdict =
   | { publish: true }
   | { publish: false; reason: LegacyMetricsSkip }
   | { publish: false; reason: LegacyMetricsPending; transient: true };
+
+/** Transient verdicts that wait for the backend's answer on the destination, not for local state to recover. */
+export function awaitsDestination(verdict: LegacyMetricsVerdict): boolean {
+  return !verdict.publish && (verdict.reason === 'destination-unconfirmed' || verdict.reason === 'destination-pending');
+}
 
 /** Whether an `endMetricSkipped` value is a gate skip (the session counts as delivered). */
 export function isLegacyGateSkip(reason: string | undefined): boolean {
@@ -83,26 +97,50 @@ type GateInput = Pick<Session, 'provider' | 'project' | 'workingDirectory' | 'le
 
 type DestinationState = 'clear' | 'held' | 'unverifiable' | LegacyMetricsPending;
 
-/** Whether the new pipeline stopped or discarded the session for good (`held`) or holds it for now (pending). */
-async function destinationState(consent: NonNullable<Session['legacyMetricsConsent']>, nativeId: string | undefined): Promise<DestinationState> {
+/**
+ * Whether the backend accepted the session's publication (`clear`), the new pipeline stopped or discarded it for good
+ * (`held`), or holds it or has no answer yet (pending). A stop, an end or a live hold wins over an earlier acceptance.
+ */
+async function destinationState(
+  consent: NonNullable<Session['legacyMetricsConsent']>,
+  nativeId: string | undefined,
+  project: string
+): Promise<DestinationState> {
   if (!nativeId || nativeId === 'unknown' || !isSafeSessionId(nativeId)) return 'unverifiable';
-  const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+  const { projectTag, recordKey } = await import('@/agents/core/evidence/record-store.js');
+  const key = recordKey(consent.apiIdentity, consent.ownerHash, nativeId);
   const { markerState } = await import('@/agents/core/evidence/stop-marker.js');
   // A notice marker is create-once and outlives the hold it announced: the live hold is read from the spool status
-  const marker = await markerState(recordKey(consent.apiIdentity, consent.ownerHash, nativeId));
+  const marker = await markerState(key);
   if (marker === 'stop') return 'held';
   if (marker === 'unknown') return 'verdict-unavailable';
+  // The end outlives the swept status as its own marker: checked before anything that could read as an acceptance
+  const { acceptedState, endedState } = await import('@/agents/core/evidence/accepted-marker.js');
+  const ended = await endedState(key);
+  if (ended === 'present') return 'held';
+  if (ended === 'unknown') return 'verdict-unavailable';
   const { endsSessionDiscard, readStatusState } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
   const read = await readStatusState(nativeId);
   if (read.kind === 'unreadable') return 'verdict-unavailable';
-  if (read.kind === 'absent') return 'clear';
-  const { status } = read;
-  // `lastDiscard` too: a status written before `endingDiscard` existed
-  const ended = status.endingDiscard ?? (status.lastDiscard && endsSessionDiscard(status.lastDiscard) ? status.lastDiscard : undefined);
-  if (status.stopIntent !== undefined || ended) return 'held';
-  const backendHold = Object.values(status.delivery ?? {}).some((failure) => failure?.reason === 'destination_hold');
-  if (backendHold || Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
-  return 'clear';
+  // An absent status is no answer by itself: never sent yet, or swept after delivery (the marker below tells which)
+  let acceptedIntent = false;
+  if (read.kind === 'ok') {
+    const { status } = read;
+    // A marker the forwarder still owes (destination-intent.ts) is that marker; another key's intent is not this session's answer
+    const intent = status.destinationIntent?.key === key ? status.destinationIntent : undefined;
+    // `lastDiscard` too: a status written before `endingDiscard` existed
+    const discarded = status.endingDiscard ?? (status.lastDiscard && endsSessionDiscard(status.lastDiscard) ? status.lastDiscard : undefined);
+    if (status.stopIntent !== undefined || discarded || intent?.ended) return 'held';
+    const backendHold = Object.values(status.delivery ?? {}).some((failure) => failure?.reason === 'destination_hold');
+    if (backendHold || Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
+    // Only an acceptance of the project this send names: one for another project of the same session is no answer
+    acceptedIntent = intent?.accepted?.includes(projectTag(project)) === true;
+  }
+  if (acceptedIntent) return 'clear';
+  const accepted = await acceptedState(key, project);
+  if (accepted === 'accepted') return 'clear';
+  if (accepted === 'unknown') return 'verdict-unavailable';
+  return 'destination-unconfirmed';
 }
 
 /**
@@ -141,7 +179,7 @@ export async function legacyMetricsVerdict(session: GateInput): Promise<LegacyMe
     const held = await consentStatus(consent.ref, scope, session.workingDirectory);
     if (held === 'revoked') return { publish: false, reason: 'consent-revoked' };
     if (held === 'unknown') return { publish: false, reason: 'verdict-unavailable', transient: true };
-    const state = await destinationState(consent, session.correlation?.agentSessionId);
+    const state = await destinationState(consent, session.correlation?.agentSessionId, scope.project);
     if (state === 'clear') return { publish: true };
     if (state === 'held') return { publish: false, reason: 'destination-held' };
     if (state === 'unverifiable') return { publish: false, reason: 'session-unverifiable' };

@@ -14,12 +14,13 @@ import {
 } from './spool-paths.js';
 import {
   advanceCursor,
+  endsSessionDiscard,
   markSessionEnded,
   readStatus,
   type Discard,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
-import { deliveryGate, recordUnacknowledged } from './delivery-state.js';
+import { deliveryGate, ENDED_MARKER_UNWRITTEN, recordUnacknowledged, type HoldExpiry } from './delivery-state.js';
 import {
   isSendAllowed,
   noteStreamHold,
@@ -36,8 +37,10 @@ import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { recordDestinationMarker } from './destination-intent.js';
+import { writeDestinationMarker } from '@/agents/core/evidence/accepted-marker.js';
 import { beginSend, endSend, stopOrRecordIntent, tryStop } from './stop-intent.js';
-import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
+import { projectTag, readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
@@ -129,8 +132,20 @@ const HOLD_NOTICE: Record<string, Parameters<typeof writeNotice>[1]> = {
 };
 
 /** A backend hold that reached its original retention bound suspends the session (nothing more is published) with a notice. */
-function holdExpiredStop(ctx: EvidenceContext | undefined): (() => Promise<boolean>) | undefined {
-  return ctx?.newContract ? () => tryStop(ctx.key, 'hold_expired', ctx.record.session_id) : undefined;
+/**
+ * What makes an expiring hold durable. A refusal whose ended marker was lost (`ENDED_MARKER_UNWRITTEN`) expires only once
+ * that marker is written, whatever the wire protocol: until then the hold keeps the legacy gate pending. A new-contract
+ * hold stops the session; any other hold just expires.
+ */
+function holdExpiredStop(ctx: EvidenceContext | undefined, guard?: RecordGuard): HoldExpiry {
+  return async (hold) => {
+    if (hold.detail === ENDED_MARKER_UNWRITTEN) {
+      const recorded = ctx ?? guard;
+      if (!recorded) return true; // unrecorded legacy session: no gate reads a marker for it
+      return writeDestinationMarker({ marker: 'ended' }, recorded.key, recorded.record.session_id).then(() => true, () => false);
+    }
+    return ctx?.newContract ? tryStop(ctx.key, 'hold_expired', ctx.record.session_id) : true;
+  };
 }
 
 const isAuthFailure = (response: WireResponse): boolean =>
@@ -213,6 +228,11 @@ async function send(req: SendRequest): Promise<SendOutcome> {
         // Never acknowledged, and never retried into more unverified publication: the session stops with a notice.
         outcome = { kind: 'failed', reason: 'response_unverified' };
         await stopped(ctx, 'response_unverified');
+      } else if (outcome.kind === 'ok' && !outcome.reason && ctx.consent) {
+        // The backend accepted the consented project as the destination: the legacy /v1/metrics gate waits for this.
+        // Before the cursor advances: a marker that cannot be written is kept as an intent and repaired from there.
+        // Tagged with the accepted project: it never confirms a later resume of the session under another project
+        await recordDestinationMarker({ marker: 'accepted', projectTag: projectTag(ctx.record.project ?? '') }, ctx.key, sessionId);
       } else if (outcome.final) {
         await stopped(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
@@ -251,7 +271,17 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     );
     outcome = { kind: 'retry', reason: 'request_error' };
   }
-  await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
+  // A discard that ends the session's publication outlives the swept status as a marker the legacy gate checks first,
+  // written before the cursor advances (acknowledge records the same discard in the status). Neither the marker nor its
+  // intent durable: the batch stays unacknowledged, so its resend meets the same final answer and tries again.
+  const recorded = req.evidence ?? req.guard;
+  if (recorded && acknowledged(outcome) && outcome.reason && endsSessionDiscard({ reason: outcome.reason, stream })) {
+    if ((await recordDestinationMarker({ marker: 'ended' }, recorded.key, sessionId)) === 'lost') {
+      // Held, not failed: the legacy gate reads a held delivery as pending, so no older acceptance is used meanwhile
+      outcome = { kind: 'retry', reason: ENDED_MARKER_UNWRITTEN, detail: ENDED_MARKER_UNWRITTEN, hold: true };
+    }
+  }
+  await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence, req.guard));
   // Outcome processed (acknowledged, held or retried): the checkpoint is released unless a required stop is recorded nowhere durable.
   if (req.evidence?.newContract) await endSend(req.evidence.key, sessionId, stopUnrecorded);
   return outcome;
@@ -358,7 +388,7 @@ async function forwardHooks(
   evidence?: EvidenceContext,
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
-  if ((await deliveryGate(sessionId, 'hooks', Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
+  if ((await deliveryGate(sessionId, 'hooks', Date.now(), holdExpiredStop(evidence, guard))) === 'wait') return 'idle';
   const batch = await snapshotPendingHookRecords(sessionId);
   if (!batch) {
     return 'idle';
@@ -430,7 +460,7 @@ async function forwardOtelStream(
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
   let last: SendOutcome | 'idle' = 'idle';
-  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return last;
+  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence, guard))) === 'wait') return last;
   for (let window = 0; window < (evidence ? MAX_OTEL_WINDOWS : 1); window++) {
     const pending = await snapshotPendingBytes(sessionId, stream, evidence ? MAX_SNAPSHOT_BYTES : undefined);
     if (!pending) return last;
@@ -469,7 +499,7 @@ async function forwardOtelJsonStream(
   evidence?: EvidenceContext,
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
-  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence))) === 'wait') return 'idle';
+  if ((await deliveryGate(sessionId, stream, Date.now(), holdExpiredStop(evidence, guard))) === 'wait') return 'idle';
   const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
   if (!batch) {
     return 'idle';
