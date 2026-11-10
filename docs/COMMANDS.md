@@ -28,6 +28,25 @@ codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
 ```
 
+## Shell Completions
+
+For user-owned global installations on macOS, Linux and WSL, CodeMie installs packaged completion files for `codemie` and supported interactive launchers and refreshes them on upgrades. Open a new shell. Profile and plugin candidates are read when requested, including the current project's plugins.
+
+- **Bash:** install and enable your distribution's `bash-completion` package. Files are installed in `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions`, named for each command. The bootstrap can offer a source block in `~/.bashrc` that loads a managed, upgradeable file in `~/.codemie/completions/bash`. Login shells must also load `~/.bashrc`. If an earlier CodeMie block lists files individually, rerun the interactive installer to authorize the new block, then remove the old block yourself.
+
+- **Fish:** files are installed in `${XDG_CONFIG_HOME:-~/.config}/fish/completions` and autoloaded by Fish.
+- **Zsh:** the installer uses a safe user-owned directory in the exported `FPATH`, or `~/.codemie/completions/zsh`. Zsh must add that directory to `fpath` before `compinit`; the bootstrap can offer a block for this in `${ZDOTDIR:-$HOME}/.zshrc`. Zsh security checks remain enabled.
+
+The bootstrap asks through the terminal before changing a startup file for completions. Declining or lacking a terminal leaves it unchanged. npm lifecycle hooks do not reliably have a terminal or display output; direct npm installations can run the packaged installer interactively instead (replace the prefix if appropriate):
+
+```bash
+node "$(npm config get prefix)/lib/node_modules/@codemieai/code/scripts/install-completions.mjs" --interactive --prefix "$(npm config get prefix)"
+```
+
+Setup skips CI, local/dependency and temporary installs, elevated or ambiguous user contexts, unsafe/unwritable locations, and installs with lifecycle scripts disabled. Completion destinations outside the home, including external XDG directories, are skipped because their safety cannot be established by this installer. It does not overwrite unrelated files. If installation was skipped, correct the conditions and rerun the installer. Each installed file is tied to its npm prefix: another live prefix cannot replace it, so completion data may not match the executable selected by `PATH`. If the previous prefix's helper is absent, a later install can adopt an intact managed file. Uninstalling npm packages does not reliably run cleanup hooks. To remove completions, inspect and delete only files marked `# CodeMie completion managed` in the directories above and `~/.codemie/completions`, and remove any block between `# >>> CodeMie completions ... >>>` and `# <<< CodeMie completions ... <<<` in your startup file. Stale completions are guarded when their package disappears.
+
+When upgrading from an older release, remove any startup-file invocation of `codemie completion bash`, `codemie completion zsh`, or `codemie completion fish`; the command no longer exists. Follow the instructions above to configure the new completions.
+
 ## Codebase Memory Commands
 
 ```bash
