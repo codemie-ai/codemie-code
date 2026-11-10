@@ -23,6 +23,8 @@ const INFERENCE_KEYS = [
 
 interface InferenceModelEntry {
   name: string;
+  /** Display name Claude Desktop shows in the model picker instead of the raw ID. */
+  labelOverride?: string;
 }
 
 export interface ManagedMcpServerEntry {
@@ -212,6 +214,26 @@ export function selectPreferredClaudeModels(
   return resolved;
 }
 
+const ROUTER_MODEL_PATTERN = /^claude-(.+-)?router(-.+)?$/i;
+
+function isRouterModel(id: string): boolean {
+  return ROUTER_MODEL_PATTERN.test(id);
+}
+
+/**
+ * Desktop has no built-in display name for router aliases and would show the
+ * raw ID, so derive one: `claude-router-premium` → `Router Premium`.
+ */
+export function toInferenceModelEntry(id: string): InferenceModelEntry {
+  if (!isRouterModel(id)) return { name: id };
+  const labelOverride = id
+    .replace(/^claude-/i, '')
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+  return { name: id, labelOverride };
+}
+
 /**
  * Build the exact model set Claude Desktop should be offered.
  *
@@ -228,6 +250,9 @@ export function selectDesktopClaudeModels(
   preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
 ): string[] {
   const resolved = selectPreferredClaudeModels(available, preferred);
+  // Router aliases (e.g. `claude-router-standard`, `claude-smart-router`) are not tied to a family, so
+  // they bypass the curated list and are always offered when the gateway serves them.
+  const routers = available.filter((id) => isRouterModel(id) && !resolved.includes(id));
   let opusKept = false;
   let sonnetKept = false;
   let haikuKept = false;
@@ -248,7 +273,7 @@ export function selectDesktopClaudeModels(
       return true;
     }
     return true;
-  });
+  }).concat(routers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -600,6 +625,21 @@ export interface ReconcileResult {
 }
 
 /**
+ * Keys Claude Desktop stamps on entries it stores itself (e.g. `source: "user"`
+ * on servers added through its UI) but rejects inside `managedMcpServers`.
+ * Preserved entries are re-written as managed ones, so drop them.
+ */
+const DESKTOP_LOCAL_MCP_KEYS = ['source'] as const;
+
+function stripDesktopLocalKeys(server: unknown): unknown {
+  if (!isRecord(server)) return server;
+  if (!DESKTOP_LOCAL_MCP_KEYS.some((key) => key in server)) return server;
+  const copy: Record<string, unknown> = { ...server };
+  for (const key of DESKTOP_LOCAL_MCP_KEYS) delete copy[key];
+  return copy;
+}
+
+/**
  * Reconcile the managed MCP set into an existing managedMcpServers array.
  *
  * - `managed`: the entries CodeMie owns this run (public defaults + fetched
@@ -644,7 +684,7 @@ export function reconcileManagedMcpServers(
     if (ownedLower.has(name.toLowerCase())) return false;
     if (url && managedUrls.has(url)) return false;
     return true;
-  });
+  }).map(stripDesktopLocalKeys);
 
   return {
     servers: [...managed.map(cloneManagedEntry), ...filtered],
@@ -817,7 +857,7 @@ export async function writeDesktopConfig(
       'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
     );
   }
-  const inferenceModels: InferenceModelEntry[] = resolvedModels.map((name) => ({ name }));
+  const inferenceModels: InferenceModelEntry[] = resolvedModels.map(toInferenceModelEntry);
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
   // failure we must NOT revoke previously-managed org entries (a transient backend
