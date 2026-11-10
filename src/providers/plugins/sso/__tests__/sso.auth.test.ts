@@ -2,8 +2,24 @@
  * Tests for deriveExpiresAt — JWT exp extraction from cookie dict.
  * @group unit
  */
-import { describe, it, expect } from 'vitest';
-import { deriveExpiresAt } from '../sso.auth.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const { retrieveSSOCredentials, clearSSOCredentials, storeSSOCredentials } = vi.hoisted(() => ({
+  retrieveSSOCredentials: vi.fn(),
+  clearSSOCredentials: vi.fn(),
+  storeSSOCredentials: vi.fn(),
+}));
+
+vi.mock('@/utils/security.js', () => ({
+  CredentialStore: {
+    getInstance: () => ({ retrieveSSOCredentials, clearSSOCredentials, storeSSOCredentials }),
+  },
+}));
+vi.mock('open', () => ({ default: vi.fn() }));
+vi.mock('@/utils/analytics-auth-status.js', () => ({ clearAnalyticsAuthStatus: vi.fn() }));
+vi.mock('@/providers/core/credential-owner.js', () => ({ withVerifiedOwner: vi.fn() }));
+
+import { deriveExpiresAt, effectiveExpiresAt, CodeMieSSO } from '../sso.auth.js';
 
 function makeJwt(exp: number): string {
   const payload = { sub: 'uid', email: 'u@test.com', exp, iss: 'codemie-local' };
@@ -21,25 +37,77 @@ describe('deriveExpiresAt', () => {
     expect(result).toBe(exp * 1000);
   });
 
-  it('falls back to ~24h when codemie_access_token is malformed', () => {
-    const before = Date.now();
-
-    const result = deriveExpiresAt({ codemie_access_token: 'not.a.valid.jwt.at.all' });
-
-    const after = Date.now();
-    const expected24h = before + 24 * 60 * 60 * 1000;
-    expect(result).toBeGreaterThanOrEqual(expected24h - 1000);
-    expect(result).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
+  it('returns undefined when codemie_access_token is malformed', () => {
+    expect(deriveExpiresAt({ codemie_access_token: 'not.a.valid.jwt.at.all' })).toBeUndefined();
   });
 
-  it('falls back to ~24h when codemie_access_token cookie is absent', () => {
-    const before = Date.now();
+  it('returns undefined when codemie_access_token cookie is absent', () => {
+    expect(deriveExpiresAt({})).toBeUndefined();
+    expect(deriveExpiresAt({ _oauth2_proxy: 'abc' })).toBeUndefined();
+  });
+});
 
-    const result = deriveExpiresAt({});
+describe('effectiveExpiresAt', () => {
+  it('is undefined for cookie-only credentials, even with a legacy synthetic expiresAt', () => {
+    expect(effectiveExpiresAt({ cookies: { _oauth2_proxy: 'x' } })).toBeUndefined();
+    expect(effectiveExpiresAt({ cookies: { _oauth2_proxy: 'x' }, expiresAt: Date.now() - 1000 })).toBeUndefined();
+  });
 
-    const after = Date.now();
-    const expected24h = before + 24 * 60 * 60 * 1000;
-    expect(result).toBeGreaterThanOrEqual(expected24h - 1000);
-    expect(result).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
+  it('returns the stored expiresAt when codemie_access_token is present', () => {
+    const exp = Date.now() + 1000;
+    expect(effectiveExpiresAt({ cookies: { codemie_access_token: makeJwt(1) }, expiresAt: exp })).toBe(exp);
+  });
+});
+
+describe('CodeMieSSO.getStoredCredentials', () => {
+  const url = 'https://codemie.example.com';
+  beforeEach(() => {
+    retrieveSSOCredentials.mockReset();
+    clearSSOCredentials.mockReset();
+  });
+
+  it('returns cookie-only credentials stored over 24h ago without clearing them', async () => {
+    const stale = Date.now() - (24 * 60 * 60 * 1000 + 60 * 1000);
+    const creds = { cookies: { _oauth2_proxy: 'x' }, apiUrl: url, expiresAt: stale };
+    retrieveSSOCredentials.mockResolvedValue(creds);
+
+    const result = await new CodeMieSSO().getStoredCredentials(url);
+
+    expect(result).toBe(creds);
+    expect(clearSSOCredentials).not.toHaveBeenCalled();
+  });
+
+  it('clears and returns null for JWT-bearing credentials past their exp', async () => {
+    const creds = {
+      cookies: { codemie_access_token: makeJwt(Math.floor(Date.now() / 1000) - 60) },
+      apiUrl: url,
+      expiresAt: Date.now() - 60 * 1000,
+    };
+    retrieveSSOCredentials.mockResolvedValue(creds);
+
+    const result = await new CodeMieSSO().getStoredCredentials(url);
+
+    expect(result).toBeNull();
+    expect(clearSSOCredentials).toHaveBeenCalledWith(url);
+  });
+});
+
+describe('CodeMieSSO.authenticate storage', () => {
+  it('stores no expiresAt when the callback carries only _oauth2_proxy', async () => {
+    storeSSOCredentials.mockReset();
+    const sso = new CodeMieSSO();
+    vi.spyOn(sso as never, 'startLocalServer').mockResolvedValue(1234 as never);
+    vi.spyOn(sso as never, 'waitForCallback').mockResolvedValue({
+      success: true,
+      apiUrl: 'https://codemie.example.com/code-assistant-api',
+      cookies: { _oauth2_proxy: 'x' },
+    } as never);
+
+    const result = await sso.authenticate({ codeMieUrl: 'https://codemie.example.com', quiet: true });
+
+    expect(result.success).toBe(true);
+    expect(storeSSOCredentials).toHaveBeenCalledTimes(1);
+    const stored = storeSSOCredentials.mock.calls[0][0];
+    expect(stored).not.toHaveProperty('expiresAt');
   });
 });

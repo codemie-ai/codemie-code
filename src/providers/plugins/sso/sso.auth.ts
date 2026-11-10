@@ -41,10 +41,10 @@ function normalizeToBase(url: string): string {
 
 /**
  * Derive credential expiresAt from codemie_access_token JWT exp claim.
- * Falls back to 24h when the cookie is absent or the JWT cannot be decoded.
+ * Returns undefined when the cookie is absent or the JWT has no decodable exp:
+ * cookie-only sessions (e.g. _oauth2_proxy) have no locally known expiry.
  */
-export function deriveExpiresAt(cookies: Record<string, string>): number {
-  const DEFAULT_TTL = 24 * 60 * 60 * 1000;
+export function deriveExpiresAt(cookies: Record<string, string>): number | undefined {
   if (cookies.codemie_access_token) {
     try {
       const parts = cookies.codemie_access_token.split('.');
@@ -57,10 +57,22 @@ export function deriveExpiresAt(cookies: Record<string, string>): number {
         }
       }
     } catch {
-      // malformed JWT — fall through to default
+      // malformed JWT — no known expiry
     }
   }
-  return Date.now() + DEFAULT_TTL;
+  return undefined;
+}
+
+/**
+ * Expiry that may be enforced locally: the stored expiresAt counts only when a
+ * codemie_access_token is present. Cookie-only credentials (including legacy
+ * ones with a synthetic 24h expiresAt) never expire locally.
+ */
+export function effectiveExpiresAt(credentials: {
+  cookies: Record<string, string>;
+  expiresAt?: number;
+}): number | undefined {
+  return credentials.cookies?.codemie_access_token ? credentials.expiresAt : undefined;
 }
 
 /**
@@ -136,10 +148,11 @@ export class CodeMieSSO {
 
       // 5. Store credentials if successful
       if (result.success && result.apiUrl && result.cookies) {
+        const expiresAt = deriveExpiresAt(result.cookies);
         const credentials: SSOCredentials = {
           cookies: result.cookies,
           apiUrl: result.apiUrl,
-          expiresAt: deriveExpiresAt(result.cookies),
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
         };
 
         const store = CredentialStore.getInstance();
@@ -212,7 +225,8 @@ export class CodeMieSSO {
     }
 
     // Check if credentials are expired
-    if (credentials && credentials.expiresAt && Date.now() > credentials.expiresAt) {
+    const expiresAt = credentials ? effectiveExpiresAt(credentials) : undefined;
+    if (credentials && expiresAt && Date.now() > expiresAt) {
       await store.clearSSOCredentials(url);
       return null;
     }
