@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -221,6 +224,7 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
         parseSessionFile = vi.fn().mockResolvedValue({ metadata: { projectPath: process.cwd() } });
         processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 1, failedProcessors: [] });
       },
+      resolveParentRollout: async (p: string) => p,
     }));
     const processEvent = vi.fn().mockImplementation(async () => {
       calls.push('processEvent');
@@ -240,5 +244,114 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
       agentSessionFile: rolloutPath,
     });
     expect(calls).toEqual([`save:${rolloutPath}`, 'processEvent']);
+  });
+
+  describe('active duration', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'codex-lifecycle-'));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const turnLine = (ms: number, type: 'task_started' | 'task_complete'): string =>
+      JSON.stringify({
+        timestamp: new Date(ms).toISOString(),
+        type: 'event_msg',
+        payload: type === 'task_started' ? { type, turn_attribution: { turn_id: 't1' } } : { type, turn_id: 't1' },
+      });
+
+    async function runSessionEnd(lines: string[], calls: string[]): Promise<{ saves: Array<Record<string, unknown>> }> {
+      const rolloutPath = join(dir, 'rollout-2026-11-10T10-00-00-11111111-2222-3333-4444-555555555555.jsonl');
+      writeFileSync(rolloutPath, lines.join('\n') + '\n');
+      const saves: Array<Record<string, unknown>> = [];
+      const stored = { sessionId: 'sid-dur', agentName: 'codex', status: 'active', correlation: { status: 'matched', agentSessionId: 'sid-dur', agentSessionFile: '', retryCount: 0 } };
+      vi.doMock('../../../core/session/SessionStore.js', () => ({
+        SessionStore: class {
+          loadSession = vi.fn().mockResolvedValue(structuredClone(stored));
+          saveSession = vi.fn().mockImplementation(async (session: Record<string, unknown>) => {
+            saves.push(structuredClone(session));
+            if (session.activeDurationMs !== undefined) calls.push('save-duration');
+          });
+        },
+      }));
+      vi.doMock('../codex.session.js', () => ({
+        CodexSessionAdapter: class {
+          discoverSessions = vi.fn().mockResolvedValue([
+            { sessionId: '11111111-2222-3333-4444-555555555555', filePath: rolloutPath, createdAt: Date.now(), agentName: 'codex' },
+          ]);
+          parseSessionFile = vi.fn().mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+          processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 1, failedProcessors: [] });
+        },
+        resolveParentRollout: async (p: string) => p,
+      }));
+      vi.doMock('../../../../cli/commands/hook.js', () => ({
+        processEvent: vi.fn().mockImplementation(async () => {
+          calls.push('processEvent');
+        }),
+      }));
+      const { CodexPluginMetadata } = await import('../codex.plugin.js');
+      await CodexPluginMetadata.lifecycle!.onSessionEnd!(0, {
+        CODEMIE_SESSION_ID: 'sid-dur',
+        CODEMIE_CODEX_STARTED_AT: String(Date.now() - 600_000),
+      });
+      return { saves };
+    }
+
+    it('stores the parent rollout turn time before SessionEnd runs', async () => {
+      const calls: string[] = [];
+      const t0 = Date.now() - 120_000;
+      const { saves } = await runSessionEnd([turnLine(t0, 'task_started'), turnLine(t0 + 45_000, 'task_complete')], calls);
+
+      expect(saves.find((s) => s.activeDurationMs !== undefined)).toMatchObject({ activeDurationMs: 45_000 });
+      expect(calls).toEqual(['save-duration', 'processEvent']);
+    });
+
+    it('writes nothing when the rollout has no turns', async () => {
+      const calls: string[] = [];
+      const { saves } = await runSessionEnd([JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: {} })], calls);
+
+      expect(saves.some((s) => s.activeDurationMs !== undefined)).toBe(false);
+      expect(calls).toEqual(['processEvent']);
+    });
+
+    it('waits for the stopped tick before it writes, so a late tick save cannot revert the value', async () => {
+      const calls: string[] = [];
+      let releaseStop: () => void = () => undefined;
+      stopSync.mockImplementation(() => new Promise<void>((resolve) => {
+        releaseStop = () => {
+          calls.push('stop-done');
+          resolve();
+        };
+      }));
+      const t0 = Date.now() - 120_000;
+      const ending = runSessionEnd([turnLine(t0, 'task_started'), turnLine(t0 + 45_000, 'task_complete')], calls);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(calls).toEqual([]);
+
+      releaseStop();
+      await ending;
+      expect(calls).toEqual(['stop-done', 'save-duration', 'processEvent']);
+    });
+
+    it('SessionStore.accumulateActiveDuration leaves a stored value unchanged when no activity period is open', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'codex-store-'));
+      const previous = process.env.CODEMIE_HOME;
+      process.env.CODEMIE_HOME = home;
+      try {
+        vi.resetModules();
+        vi.doUnmock('../../../core/session/SessionStore.js');
+        const { SessionStore } = await import('../../../core/session/SessionStore.js');
+        const store = new SessionStore();
+        await store.saveSession({ sessionId: 'sid-acc', agentName: 'codex', activeDurationMs: 45_000 } as never);
+        expect(await store.accumulateActiveDuration('sid-acc')).toBe(0);
+        expect((await store.loadSession('sid-acc'))?.activeDurationMs).toBe(45_000);
+      } finally {
+        if (previous === undefined) delete process.env.CODEMIE_HOME;
+        else process.env.CODEMIE_HOME = previous;
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
   });
 });
