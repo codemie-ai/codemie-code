@@ -1420,7 +1420,8 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     expect(openSessionStartPassMock).toHaveBeenCalledWith(
       's',
       'abc123def456',
-      expect.objectContaining({ configured_model: '', permission_mode: '' })
+      expect.objectContaining({ configured_model: '', permission_mode: '' }),
+      undefined
     );
     expect(forwardedEvents()[0].git_head_start).toBe('persisted-start-sha');
     expect(pass.finalize).toHaveBeenCalledWith(true);
@@ -1839,5 +1840,89 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(output).toContain('"decision":"block"');
     expect(output).toContain('re-send your prompt');
     log.mockRestore();
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin reopened session without activity (EPMCDME-16993)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+  const hook = (name: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name, ...extra });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
+    openMainTranscriptPassMock.mockReset();
+    openSessionEndPassMock.mockReset();
+  });
+
+  it('forwards nothing for a resume SessionStart of an already started session', async () => {
+    const pass = { ...emptyPass(), sessionEnvFields: SESSION_ENV_FIELDS_STUB, gitHeadStart: 'sha', reopened: true };
+    openSessionStartPassMock.mockResolvedValue(pass);
+
+    await plugin.processOtlpEvent(hook('SessionStart', { source: 'resume' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openSessionStartPassMock).toHaveBeenCalledWith('s', expect.any(String), expect.anything(), 'resume');
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expect(pass.finalize).toHaveBeenCalledWith(true);
+  });
+
+  it('still forwards start and env for a startup SessionStart', async () => {
+    openSessionStartPassMock.mockResolvedValue({
+      ...emptyPass(),
+      sessionEnvFields: SESSION_ENV_FIELDS_STUB,
+      gitHeadStart: 'sha',
+      reopened: false,
+    });
+
+    await plugin.processOtlpEvent(hook('SessionStart', { source: 'startup' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents().map((e) => e.type)).toEqual(['agent.session.start', 'agent.session.env']);
+  });
+
+  it('forwards nothing for a Stop while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards nothing for a SessionEnd while the reopened session is idle', async () => {
+    openSessionEndPassMock.mockResolvedValue({ ...emptySessionEndPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('SessionEnd', { reason: 'other' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards a Stop once the session has activity', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: false });
+
+    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents().map((e) => e.type)).toContain('agent.session.stop');
+  });
+  it('forwards nothing for a PreCompact while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('PreCompact', { trigger: 'manual' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards nothing for a StopFailure while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('StopFailure', { error: 'rate_limit' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });

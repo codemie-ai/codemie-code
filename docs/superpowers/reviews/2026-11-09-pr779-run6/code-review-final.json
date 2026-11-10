@@ -1,0 +1,25 @@
+{
+  "decision": "approve",
+  "rationale": "All three lenses ran with a spec present and no new blocking defect survived triage. The acceptance lens marked four rows partial; each rests only on owner-accepted limits (D-1, D-2, D-5) or on backend behaviour that is out of CLI scope, so they are recorded as accepted rather than as findings. Deferred (not blocking): synthetic assistant line without a usage block would lift the idle-reopen suppression (verified live, but 0 of 45 real synthetic lines lack usage), start-pass fallback on lock failure re-announces a resume, uuid-less copied records (titles) are not excluded from the summary, doc wording on idle PostCompact state, stale task artifacts and review-process comments in source. Dismissed (about 20): D-1..D-5 restatements, SessionEnd silent by design, empty transcript_path, file growing between stat and read (retried), state size, plan/actual-complexity drift, and test-gap or cosmetic items.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "16992: continued session reports only its own requests, tokens and cost", "status": "pass", "notes": "resolveInheritedUuids seeds seenUuids; test reports only own requests"},
+    {"kind": "story-ac", "item": "16992: tool calls, agents and turns in the summary are only the session's own", "status": "pass", "notes": "buildFullAccumulator excludes inherited uuids; turns test"},
+    {"kind": "story-ac", "item": "16992: continued session with no own work shows 0 tokens, tool calls, agents, turns", "status": "pass", "notes": "no summary and no usage without own lines; test"},
+    {"kind": "story-ac", "item": "16992: C's start is its own start", "status": "pass", "notes": "summary started_at from the first own line; with no own work no summary is emitted, so the parent's start cannot leak (lens noted partial: the session start itself comes from the unchanged SessionStart hook)"},
+    {"kind": "story-ac", "item": "16992: each model request counted once", "status": "pass", "notes": "CLI side complete once the parent is found; residual cases are owner-accepted D-1 and D-2; backend re-binding and already-ingested data out of scope"},
+    {"kind": "story-ac", "item": "16993: reopening without prompt/request/tool call does not change analytics", "status": "pass", "notes": "SessionStart(resume), Stop, StopFailure, PreCompact, SessionEnd, PostCompact and env-check are silent and do not consume subagent or env state; raw passthrough hooks still forwarded (owner-accepted D-5)"},
+    {"kind": "story-ac", "item": "16993: duration ends at last real activity; session reported only for its day", "status": "pass", "notes": "no event stamped at open time is sent; final window admission is backend-side (lens noted partial)"},
+    {"kind": "story-ac", "item": "16993: classification and project attribution not re-bound by the open", "status": "na", "notes": "backend behaviour; documented known limit"},
+    {"kind": "story-ac", "item": "16993: a reopen with real activity still reports normally", "status": "pass", "notes": "reopenActive logic; env change and subagent usage preserved for the first active pass"},
+    {"kind": "spec", "item": "Brand-new startup session, or first start with source resume and no saved state, is not suppressed", "status": "pass", "notes": "tests; missing-state edge is D-3"},
+    {"kind": "spec", "item": "Optional backward-compatible parse-state fields; never-throw resolver; transition gate and evidence unchanged; docs updated", "status": "pass", "notes": "verified in the diff"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Conventional Commits with ticket on every commit, enforced by commitlint hook"},
+    {"kind": "code-quality", "status": "pass", "notes": "ES modules, .js imports, no any in changed code; lint and typecheck clean"},
+    {"kind": "security", "status": "pass", "notes": "no secrets, no new process execution; bounded local file reads"}
+  ],
+  "findings": []
+}

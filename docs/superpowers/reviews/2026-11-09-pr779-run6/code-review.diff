@@ -1,0 +1,1736 @@
+diff --git a/docs/ARCHITECTURE-OTLP-PLUGIN.md b/docs/ARCHITECTURE-OTLP-PLUGIN.md
+index 5bb3683d..77ff6695 100644
+--- a/docs/ARCHITECTURE-OTLP-PLUGIN.md
++++ b/docs/ARCHITECTURE-OTLP-PLUGIN.md
+@@ -201,6 +201,7 @@ The base flow calls `isTracked()` (abstract) before `deps.ensureOtlpProxy()`, so
+ | `claude-code-otlp.constants.ts` | `CLAUDE_CODE_OTLP_AGENT_NAME` — the registered adapter name |
+ | `claude-code-otlp.allowlist.ts` | Per-project allowlist gating (`isProjectTracked`/`readAllowlistState`) — see the INVARIANT comment in the base `processOtlpEvent`: an untracked project must never reach the daemon spool, since the daemon has no allowlist of its own |
+ | `src/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.ts` | Pure project binding/conflict resolution (`decideProject`, `projectGate`, `hookEventProjectNames`) behind the project gate, persisted in the session status file |
++| `transcript/continuation.ts` | `resolveInheritedUuids(transcriptPath, sessionId)` — for a session Claude Code continued from a parent session, returns the uuids of the lines copied from that parent. The parent is the sibling `*.jsonl` (same project directory, newest first, at most 200 files; file times never rule a sibling out) holding a `{ type: 'continued-in', continuedInSessionId: <this session> }` record (looked for in the last 256 KB of each sibling first; a larger sibling whose tail lacks it is streamed whole, because a parent worked on again after it was continued has the record further back); the found parent is then streamed and its counted lines are the inherited set. `[]` when there is no parent, `null` when the lookup could not be completed (unreadable directory or sibling, more than 200 candidates, empty path); never throws. `transcript/orchestrator.ts` keeps a found parent in `TranscriptParseState.inheritedUuids`; `[]` is retried on the next transcript passes (at most 3 complete lookups, `inheritedLookups`) before the session is taken to have no parent, because the parent's `continued-in` record may not be flushed yet on the first pass; `null` (incomplete) is never final and is retried on every pass until it completes. It excludes those uuids from `agent.usage.request` derivation and from the `agent.session.summary` figures (models, tools, turns, `started_at`). A continued session with no work of its own emits no summary |
+ | `transcript/orchestrator.ts` | `openMainTranscriptPass`/`openSessionStartPass`/`openSubagentPass`/`openSessionEndPass`/`openPostCompactPass` — each opens a commit-after-send pass (acquire lock, derive in memory, return `{ events, finalize }`) for its hook. `openSessionStartPass` derives no events of its own — it only records `git_head_start`/wall-clock `sessionStartedAt`, plus the first `agent.session.env` snapshot, into `TranscriptParseState` (`gitHeadStart`/`sessionStartedAt`/`lastSessionEnvFields`); `git_head_start`/`sessionStartedAt` are read back by `openSessionEndPass` (`SessionEndPass.gitHeadStart`/`sessionStartedAt`) so `agent.git.snapshot` can report the session's starting point from a later, separate CLI process. First-write-wins: Claude Code fires `SessionStart` more than once for the same `session_id` (`source: 'compact'` after `/compact`, `source: 'resume'` on `claude -c`), so `gitHeadStart`/`sessionStartedAt` are only set when state does not already have them — a later fire's resolved HEAD/timestamp is discarded rather than overwriting the real session start, keeping `agent.git.snapshot`'s commit window spanning the whole session (first start through `SessionEnd`), including across a resume. If no baseline exists (for example, the plugin was enabled mid-session), the next transcript lifecycle check with a `cwd` performs a full env resolution and emits the initial `agent.session.env` snapshot. `lastSessionEnvFields` has no first-write-wins guard — but on a later fire it is merged onto the
+ prior snapshot rather than replaced outright: `effort` carries forward across repeated
+ `SessionStart` fires (`SessionStart`'s own payload never has it), `permission_mode`/
+@@ -237,6 +238,8 @@ its note below |
+ 
+ Claude Code fires 16 hook events (`HOOK_EVENTS` in that connector). `evaluate()` branches on `SessionStart` (adds the opt-in `os`, `timezone`, `git_email`, `codemie_cli_email`, `os_user`, `git_head_start` and `model` fields to `agent.session.start`, opens `openSessionStartPass`, and emits a second record, `agent.session.env`, built by `buildSessionEnvEvent()` from the pass's merged snapshot; repeated `SessionStart` fires use the first persisted `git_head_start`, matching the start SHA retained for `agent.git.snapshot`), `UserPromptSubmit` (auth gate), `UserPromptExpansion` (emits `agent.skill.dispatch` only for `slash_command` expansions, from an explicit allowlist: `session_id`, `prompt_id`, `hook_event_name`, `expansion_type`, `command_name`, `command_source`, and derived `skill_name`; `mcp_prompt` expansions are ignored; `command_args` and `prompt` are never forwarded), `PreToolUse`/`PostToolUse` (tool-specific enrichment via `tool-fields.ts`: `file_path` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, `subagent_type`/`description` for `Agent`/`Task` (`description` is capped at 300 characters), `skill_name` for `Skill`; `PostToolUse` additionally stamps `lines_added`/`lines_removed` from the tool result's own diff (`Edit`/`MultiEdit`/`Write` only — other tools omit them) and `fork_agent_id` for `Skill` from the result's `agentId`, not resolvable pre-execution), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse, each also passing `envCheckInput(hookInput)` into its own `openMainTranscriptPass`/`openSessionEndPass` call so the sibling `agent.session.env` re-check folds into that same pass's lock and appends a new snapshot record when it changed; `SessionEnd` additionally emits a second record, `agent.git.snapshot`, built by `buildGitSnapshotEvent()` from `openSessionEndPass`'s `gitHeadStart`/`sessionStartedAt`, `resolveGitHeadFields(ctx, 'end')`, `resolveIdentityCandidateFields().git_email`, and `resolveGitCommitFields()` — commits whose author email exactly matches that git email since `sessionStartedAt`, metadata only), `PostCompact` (its own `openPostCompactPass`, detailed below — never forwards the native hook event itself, only the derived `agent.session.compact.done` record when one is found), `SubagentStop` (subagent-scoped transcript parse via `openSubagentPass`, plus stamping `resolveSubagentStopFields`'s resolvable fields onto the forwarded `agent.subagent.stop` event itself — unknown values are omitted, never defaulted — and the same folded-in `agent.session.env` re-check — skipped for Claude Code's own internal "is it done yet?" check-ins, which carry no `agent_type`), and `PostModelSwitch`/`ConfigChange` (never forwarded themselves — each does a full `agent.session.env` re-resolve via the standalone `openSessionEnvCheckPass`'s `full` path and emits only the derived snapshot, if anything changed; `ConfigChange` additionally skips entirely for `source: 'skills'`, a skill-*content* edit that's never env-relevant); everything else falls through to the raw passthrough.
+ 
++**Continued and reopened sessions.** Two cases would otherwise rewrite analytics for work that already happened. (1) A *continued* session (Claude Code copies the parent's lines into the new transcript under a rewritten `sessionId`) reports only its own lines: see `transcript/continuation.ts` above. (2) A *reopened* session — `SessionStart` with `source: 'resume'` for a session whose start was already recorded — forwards nothing: `openSessionStartPass` flags `TranscriptParseState.reopened`, and `Stop`/`SessionEnd`/`PreCompact`/`StopFailure` return an empty payload (`TranscriptPass.suppressLifecycle`), and the standalone env-check (`ConfigChange`/`PostModelSwitch`), `PostCompact` passes emit nothing and leave their state uncommitted so the change is reported once the session is active, until a pass reads a line of the session's own activity (a real assistant answer or a genuine user prompt; records Claude Code appends on a reopen — hook attachments, mode/permission-mode lines — and synthetic placeholder answers do not count), which sets `reopenActive`. From then on the lifecycle events flow as usual; a later `resume` re-arms the suppression. A new `startup` session is never suppressed. The transition gate (`resume_unknown`) and the evidence frozen at the first hook are unchanged. Known limits: copied subagent transcripts of a continued session are not filtered, and the backend's session binding for later activity from a different launch is not controllable from the CLI.
++
+ **`UserPromptExpansion` / `agent.skill.dispatch`.** Only `slash_command` expansions are forwarded as skill dispatches. `mcp_prompt` expansions are ignored because they are not user slash-command skill invocations.
+ 
+ **`agent.git.snapshot` commit times.** Each `git_commits[].time` is normalized to an ISO-8601 UTC timestamp ending in `Z`; `git_commits[].files` is the number of changed files, not a list of paths.
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/.state.json b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/.state.json
+new file mode 100644
+index 00000000..81bf4287
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/.state.json
+@@ -0,0 +1 @@
++{"schema":1,"flow":"sdlc-light","slug":"otlp-continued-and-reopened-sessions","branch":"EPMCDME-16992_16993_otlp-continued-and-reopened-sessions","phase":"maintenance","started_at":"2026-11-09T00:00:00Z","completed_at":"2026-11-09T18:00:29Z","last_sync_commit":"1235986d85788a731b571e4091c62d37f81bdc13"}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md
+new file mode 100644
+index 00000000..f052effa
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md
+@@ -0,0 +1,83 @@
++# Accepted decisions: EPMCDME-16992 / EPMCDME-16993 (PR #779)
++
++Owner decisions on code-review findings (review run 3, 2026-11-09). A review MUST NOT raise these
++again as blocking findings unless the stated reopen condition has changed. Pass this file to the
++review as an acceptance artifact (spec) together with the ticket text.
++
++Not fixed, by decision. Each was weighed against the risk of the fix; none is a defect in the
++ticket acceptance criteria (verified live, isolated, against baseline `main`).
++
++## D-1 (review CR-001): parent lookup in project folders with more than 200 transcripts
++
++- **Behaviour:** more than 200 sibling `.jsonl` files make `resolveInheritedUuids` return `null`
++  ("incomplete"). `ensureInherited` retries an incomplete lookup on every pass. Each pass reads the
++  tail of up to the 200 most recently modified siblings and streams larger ones whole (about
++  250-270 ms per pass for 252 files / 75 MB; 717-798 ms for 68 files / 189 MB with no parent).
++  A parent outside the 200 newest siblings is not found.
++- **Decision:** not changed. We do not skip or give up on data: ending the retries (or capping the
++  work) would make a missed parent permanent, which is the EPMCDME-16992 double count.
++- **Why the suggested fix is rejected:** "locate the parent from the child's copied records" does
++  not work on real data: in all 4 real parent/child pairs every copied line already carries the
++  child's `sessionId`.
++- **Reopen only if:** hook latency from this scan is observed in production, or a skip signal for
++  sessions without copied history is available (idea: counted lines dated before the session's own
++  `SessionStart`; unproven, `sessionStartedAt` was empty in real saved states).
++
++## D-2 (review CR-002, decision_needed): copies reported before the parent is found
++
++- **Behaviour:** if the parent's `continued-in` record is not on disk when a continued session's
++  first pass runs, that pass reports the copied lines. They are not retracted; later passes and the
++  summary exclude them (verified: first Stop sends the copies, second Stop only the own request).
++- **Decision:** not changed. Could not be reproduced in practice: in the 4 real pairs the record is
++  written 3-13 s (once 7.5 min) before the child's first own line. Holding events back until the
++  lookup is final would delay or drop data for every ordinary session.
++- **Reopen only if:** a real session is seen reporting copies on its first pass.
++
++## D-3 (review CR-003): reopen suppression without saved parse state or with offset 0
++
++- **No saved parse state:** a `resume` is treated as a first start by the handlers. In production the
++  transition gate stops a `resume` of a session without an evidence record (`resume_unknown`; checked
++  live: `resume`/`Stop`/`SessionEnd` -> `stop`, `startup`/`clear` -> `continue`). The remaining case
++  (evidence record present, parse state deleted by hand) is rare; nothing in the plugin deletes
++  parse state.
++- **Offset 0 (state exists, no Stop ever ran):** not a defect. Nothing was reported before, so
++  sending the old transcript is correct, not a duplicate (verified live).
++- **Decision:** not changed. The suggested fix (move `mainOffset` to the file size on resume) would
++  permanently drop work of a session that crashed before its first Stop.
++- **Reopen only if:** parse state is shown to be lost in normal operation.
++
++## D-4 (review run 4, CR-004): copied subagent transcripts
++
++- **Behaviour:** if Claude Code copied a parent's subagent transcripts into the continued session's
++  folder, their usage could be counted twice.
++- **Decision:** not changed, and not valid as a finding. Checked on the 4 real parent/child pairs: no
++  subagent file name appears in both folders (parents have 1/8/7/11 subagent files, children
++  1/0/1/0). It was never observed, and a dedup rule would be built without a real example, which
++  adds overhead and risks breaking correct counting.
++- **Reopen only if:** a real continued session is seen with subagent transcripts copied from its parent.
++
++## D-5 (review run 5): raw passthrough hooks on an idle reopened session
++
++- **Behaviour:** hooks that are not lifecycle events (`Notification`, `InstructionsLoaded`, ...) are
++  still forwarded at hook time while a reopened session has no activity of its own. This was the
++  behaviour before this change.
++- **Decision:** not changed. It is not shown that the backend uses these events to admit a session
++  into a day's window, or that Claude Code fires them on a reopen. Gating them without that evidence
++  risks dropping legitimate events (a `SubagentStop` already counts as activity by design).
++- **Reopen only if:** real data shows a `Notification` (or another passthrough event) on an idle
++  reopen putting the session back into the reopen day's analytics.
++
++## Fixed after review run 4 (for reference, not accepted limits)
++
++- CR-001: a reopen no longer moves the env baseline, so a model/permission-mode change made at
++  resume is reported by the first active pass.
++- CR-002: an idle reopened `SessionEnd` no longer runs the subagent backstop or the env check, so
++  subagent usage is still sent once the session is active again.
++- CR-003: tests added for the parent lookup when the `continued-in` record lies before the tail window.
++- Review run 5 CR-001: an idle reopened `Stop`/`StopFailure`/`PreCompact` no longer settles deferred
++  subagents or moves the env baseline.
++
++## Evidence
++
++Isolated harness and results: `C:\Users\OlehPrusak\codemie-eval\` (outside the repo). Related review
++verdicts: `docs/superpowers/reviews/2026-11-09-pr779-*/code-review-final.json`.
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/actual-complexity.json b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/actual-complexity.json
+new file mode 100644
+index 00000000..3c019f95
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/actual-complexity.json
+@@ -0,0 +1,74 @@
++{
++  "task": "Fix continued (EPMCDME-16992) and reopened (EPMCDME-16993) Claude Code session handling in the claude-code-otlp plugin transcript pipeline",
++  "generated": "2026-11-09T00:00:00Z",
++  "dimensions": {
++    "component_scope": {
++      "score": 3,
++      "label": "M",
++      "affected": "claude-code-otlp plugin, transcript orchestrator, parse-state, continuation resolver",
++      "layers": "Agent-Tool, DB-Persistence"
++    },
++    "requirements_clarity": {
++      "score": 3,
++      "label": "M",
++      "status": "Partially Clear",
++      "gaps": "Reopen activity signal and parent lookup semantics were refined across follow-up commits"
++    },
++    "technical_risk": {
++      "score": 3,
++      "label": "M",
++      "risk_factors": "persisted parse-state changes, sibling transcript directory scans, lifecycle event suppression, double-counting of inherited usage",
++      "mitigation": "Capped sibling scan, incomplete-scan not recorded as resolved, never-throw design, unit tests"
++    },
++    "file_change_estimate": {
++      "score": 4,
++      "label": "L",
++      "modified_files": 7,
++      "modified_file_list": [
++        "docs/ARCHITECTURE-OTLP-PLUGIN.md",
++        "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts",
++        "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
++        "src/agents/plugins/claude-code-otlp/transcript/parse-state.ts",
++        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts",
++        "src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts",
++        "src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts"
++      ],
++      "new_files": 2,
++      "new_file_list": [
++        "src/agents/plugins/claude-code-otlp/transcript/continuation.ts",
++        "src/agents/plugins/claude-code-otlp/transcript/__tests__/continuation.test.ts"
++      ],
++      "affected_dirs": ["docs", "src"]
++    },
++    "dependencies": {
++      "score": 1,
++      "label": "XS",
++      "new_packages": [],
++      "version_changes": []
++    },
++    "affected_layers": {
++      "score": 2,
++      "label": "S",
++      "layers_changed": ["Agent-Tool", "DB-Persistence"],
++      "schema_migration": false,
++      "cross_system": false
++    }
++  },
++  "total": 16,
++  "size": "M",
++  "band_range": "15-20",
++  "files_changed": 9,
++  "routing": "brainstorming",
++  "key_reasoning": [
++    {
++      "dimension": "file_change_estimate",
++      "reason": "9 files changed (597 insertions), roughly 60 percent of it tests, spanning the plugin, orchestrator, parse-state and a new continuation module"
++    },
++    {
++      "dimension": "component_scope",
++      "reason": "Contained within one plugin's transcript subsystem; new continuation resolver wired into the orchestrator and plugin lifecycle handling"
++    }
++  ],
++  "red_flags_applied": [],
++  "split_recommendation": null
++}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-check.json b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-check.json
+new file mode 100644
+index 00000000..b7bc9900
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-check.json
+@@ -0,0 +1,18 @@
++{
++  "decision": "approve",
++  "rationale": "All four blocking findings are resolved by fix-up commit 1235986d, each with a test that failed before the fix (6 red) and passes now; 41 files / 1050 tests pass, lint and tsc are clean. CR-001: activity now needs a real assistant answer or a genuine user prompt (isGenuineUserTurn), and a new test appends attachment / permission-mode / last-prompt records to a reopened session and keeps it suppressed. CR-002: PreCompact and StopFailure return an empty payload while suppressed. CR-003: an incomplete parent scan (more than 200 siblings, unreadable sibling) returns null instead of []. CR-004: an empty transcript path returns null and inheritedUuids is checked with Array.isArray. No new high-risk issue was found in the fix-up diff, so the blind/edge-case confirmation pass was not needed. Confidence is medium, not high: the original round had no spec to audit against (no-spec), and the check does not re-derive that.",
++  "confidence": "medium",
++  "risk_flags": [],
++  "business_review": [],
++  "standards_review": [
++    {"standard": "code-quality (ES modules, .js imports, no any, logger.debug)", "status": "pass", "notes": "npm run lint (zero warnings), tsc --noEmit and npm run build are clean"},
++    {"standard": "git-workflow (Conventional Commits, header <= 100)", "status": "pass", "notes": "commit c5310672 passed commitlint"}
++  ],
++  "findings": [],
++  "finding_status": [
++    {"id": "CR-001", "status": "resolved", "notes": "orchestrator.ts deriveMainEvents: ownActivity only for a non-synthetic assistant line or isGenuineUserTurn; test 'keeps a reopened session silent when the reopen only appends non-message records'"},
++    {"id": "CR-002", "status": "resolved", "notes": "plugin onPreCompactEvent and onStopFailureEvent honour pass.suppressLifecycle; two plugin tests"},
++    {"id": "CR-003", "status": "resolved", "notes": "continuation.ts returns null when the scan was capped or a sibling was unreadable; two continuation tests"},
++    {"id": "CR-004", "status": "resolved", "notes": "empty transcriptPath returns null (test); ensureInherited uses Array.isArray (corrupt-state test)"}
++  ]
++}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-final.json b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-final.json
+new file mode 100644
+index 00000000..eac8f39e
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/code-review-final.json
+@@ -0,0 +1,53 @@
++{
++  "decision": "request-changes",
++  "rationale": "Blind and edge-case lenses ran; acceptance was skipped (no-spec: sdlc-light has no story/spec artifact), so confidence is low. Four blocking findings: the reopen activity signal counts non-message transcript records (attachment/mode/permission-mode lines that Claude Code writes on resume), which would lift the 16993 suppression at once; PreCompact/StopFailure still forward their hook event for an idle reopened session; the parent lookup marks an incomplete scan (cap reached, parent unreadable) as definitively resolved; and two input guards are missing (empty transcript_path scans cwd, non-array inheritedUuids from a hand-edited state throws). Deferred (not emitted): sibling-file memory/latency under the parse-state lock, duplicate storage of inherited uuids in seenMessageUuids, copied lines without a uuid, a failed lock on resume SessionStart re-announcing the start, and a first-pass lookup that cannot be retried later. Dismissed: 6 duplicate or speculative blind-lens notes.",
++  "confidence": "low",
++  "risk_flags": [],
++  "business_review": [],
++  "standards_review": [
++    {"standard": "code-quality (ES modules, .js imports, no any, logger.debug)", "status": "pass", "notes": "npm run lint (zero warnings), tsc --noEmit and npm run build are clean"},
++    {"standard": "git-workflow (Conventional Commits, header <= 100)", "status": "pass", "notes": "commit c5310672 passed commitlint"}
++  ],
++  "findings": [
++    {
++      "id": "CR-001",
++      "severity": "critical",
++      "triage": "patch",
++      "problem": "deriveMainEvents sets ownActivity for every line that passes the counted-line filter, including non-message records (attachment hook output, mode, permission-mode, last-prompt, file-history-snapshot) that Claude Code appends when a session is reopened.",
++      "impact": "A real prompt-less reopen sets reopenActive on its first pass, so Stop/SessionEnd lifecycle events and the summary are forwarded again and EPMCDME-16993 is not fixed in practice; the unit tests only used message lines.",
++      "recommendation": "Count activity only for a non-synthetic assistant line or a genuine user turn (isGenuineUserTurn); add a test where the reopen appends attachment/mode lines only and suppression holds.",
++      "location": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts:deriveMainEvents",
++      "sources": ["edge-case", "blind"]
++    },
++    {
++      "id": "CR-002",
++      "severity": "major",
++      "triage": "patch",
++      "problem": "onPreCompactEvent and onStopFailureEvent use openMainTranscriptPass but ignore pass.suppressLifecycle, so the raw hook event is still forwarded for an idle reopened session.",
++      "impact": "A lifecycle-class hook stamped at the reopen time still reaches the backend.",
++      "recommendation": "Return an empty payload with finalize when pass.suppressLifecycle is true in both handlers; add a plugin test for each.",
++      "location": "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts:onPreCompactEvent,onStopFailureEvent",
++      "sources": ["edge-case"]
++    },
++    {
++      "id": "CR-003",
++      "severity": "major",
++      "triage": "patch",
++      "problem": "resolveInheritedUuids returns [] (resolved for good) even when the scan was incomplete: more than 200 siblings, or a candidate file that could not be read.",
++      "impact": "A parent that was missed or momentarily unreadable leaves its copied lines counted as the child's own work, permanently (the 16992 symptom) with no log.",
++      "recommendation": "Return null (not resolved) when the sibling cap truncated the scan or a candidate read failed, and log it with logger.debug.",
++      "location": "src/agents/plugins/claude-code-otlp/transcript/continuation.ts:resolveInheritedUuids",
++      "sources": ["edge-case", "blind"]
++    },
++    {
++      "id": "CR-004",
++      "severity": "major",
++      "triage": "patch",
++      "problem": "Two input guards are missing: an empty transcriptPath makes dirname return '.', so the process cwd is scanned for *.jsonl; and ensureInherited calls new Set(state.inheritedUuids) without checking it is an array.",
++      "impact": "An unrelated file can be taken as the parent; a corrupt or hand-edited state value throws inside the pass and drops the batch.",
++      "recommendation": "Return null for an empty transcriptPath; use Array.isArray(state.inheritedUuids) in ensureInherited.",
++      "location": "src/agents/plugins/claude-code-otlp/transcript/continuation.ts:resolveInheritedUuids, transcript/orchestrator.ts:ensureInherited",
++      "sources": ["edge-case", "blind"]
++    }
++  ]
++}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/events.jsonl b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/events.jsonl
+new file mode 100644
+index 00000000..240ccfb2
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/events.jsonl
+@@ -0,0 +1,4 @@
++{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","ticket":"EPMCDME-16992","status":"succeeded"}
++{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","ticket":"EPMCDME-16993","status":"succeeded"}
++{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","ticket":"EPMCDME-16992","status":"succeeded"}
++{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","ticket":"EPMCDME-16993","status":"succeeded"}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/gate-plan.json b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/gate-plan.json
+new file mode 100644
+index 00000000..cb4acf6a
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/gate-plan.json
+@@ -0,0 +1 @@
++{"schema":1,"runner":"npm","gates":[{"id":"license","command":"npm run license-check","available":true},{"id":"lint","command":"npm run lint","available":true},{"id":"typecheck","command":"npm run typecheck","available":true},{"id":"build","command":"npm run build","available":true},{"id":"unit","command":"npx vitest run --project unit","available":true},{"id":"integration","command":"npx vitest run --project cli","available":true},{"id":"commitlint","command":"npm run commitlint:last","available":true},{"id":"ui","command":"","available":false}],"ui_globs":["\.(tsx|jsx|css|html|vue|svelte)$"],"detected_at":"2026-11-09T00:00:00Z"}
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/plan.md b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/plan.md
+new file mode 100644
+index 00000000..1c8f0bab
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/plan.md
+@@ -0,0 +1,121 @@
++# EPMCDME-16992 + EPMCDME-16993 Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (sdlc-light runs inline TDD). Steps use checkbox (`- [ ]`) syntax.
++
++**Goal:** A continued Claude Code session reports only its own history (16992), and reopening a session without activity no longer emits lifecycle/summary events stamped at open time (16993).
++
++**Architecture:** In the `claude-code-otlp` plugin, resolve the parent session's message uuids once per continued session (by finding the sibling transcript that holds a `continued-in` record naming it) and exclude them from both the incremental usage path (`deriveMainEvents`) and the full-file summary (`buildFullAccumulator`). The same "own lines" notion gives an activity signal: a session marked reopened by a `resume` SessionStart suppresses its start/env, Stop and SessionEnd lifecycle events until a pass reads real own lines.
++
++**Tech Stack:** TypeScript ESM (`.js` import suffix, `@/` alias), Vitest, Node >= 20.
++
++**Spec:** none (sdlc-light). Requirements: Jira EPMCDME-16992, EPMCDME-16993; research: `technical-analysis.md` in this directory.
++
++## Global Constraints
++
++- Plugin dir `P/` = `src/agents/plugins/claude-code-otlp/`. CLI-side only; no spool/daemon/backend changes.
++- Resolvers return `''`/empty on failure and never throw; one `if` per event in `evaluate()`; handlers return `ForwardDecision` and never send; commit-after-send via `finalize`.
++- Never acquire `acquireParseStateLock` twice in one pass.
++- New `TranscriptParseState` fields are optional; a state without them behaves exactly as today. State load keeps its never-throw fallback.
++- Do not change `transitionGate` / `resume_unknown` / evidence-frozen-at-first-hook behavior.
++- Use `logger.debug()`, `path.join`, `getCodemiePath()`; no `console.log`, no `any`.
++- Repo policy (AGENTS.md): tests only on explicit user request. The `Test-first` lines below are the sdlc-light TDD contract; execute them only with the user's go-ahead (see handoff).
++
++## Review Focus
++
++- C has zero own counted lines (only copied + synthetic): no usage events, no summary with P's timestamps, SessionEnd still forwarded.
++- C's file also contains lines whose uuid is in P but P's file is missing/unreadable: behave as today (no exclusion), no throw.
++- Parent file has `continued-in` for several children: only lines of the file naming this session are used, and a different child's id never matches.
++- Parse-state file deleted/corrupt for C after own work: P's lines still excluded on re-read; own lines recounted with identical event ids.
++- Reopen where the user later sends a prompt: lifecycle events resume forwarding in that same reopen; a second `resume` re-arms suppression.
++- Brand-new `startup` session closed with no prompt: Stop/SessionEnd still forwarded (suppression applies only to reopened sessions).
++
++---
++
++### Task 1: Parse-state fields
++
++**Files:**
++- Modify: `P/transcript/parse-state.ts` (`TranscriptParseState` ~52-98, `createParseState` ~103-115)
++- Test: `P/transcript/__tests__/parse-state.test.ts`
++
++**Interfaces:**
++- Produces on `TranscriptParseState` (all optional): `inheritedUuids?: string[]` (uuids copied from the parent), `inheritedResolved?: boolean` (parent lookup done), `reopened?: boolean` (a `resume` SessionStart was suppressed), `reopenActive?: boolean` (a pass since that resume read own lines).
++
++Test-first: yes — a state JSON saved without the new fields loads with them `undefined`, and a state saved with them round-trips unchanged.
++
++- [ ] **Step 1:** Write the two parse-state tests above; run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts`, expect FAIL (fields unknown to type/round-trip).
++- [ ] **Step 2:** Add the four optional fields with doc comments; make sure load/save pass unknown-to-old-version fields through. Do not set them in `createParseState`.
++- [ ] **Step 3:** Re-run the file, expect PASS.
++- [ ] **Step 4:** Commit `feat(analytics): add continuation/reopen fields to otlp parse state (EPMCDME-16992, EPMCDME-16993)`.
++
++### Task 2: Resolve inherited uuids of a continued session
++
++**Files:**
++- Create: `P/transcript/continuation.ts`
++- Test: `P/transcript/__tests__/continuation.test.ts`
++
++**Interfaces:**
++- Produces: `resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null>` — scans sibling `*.jsonl` in `dirname(transcriptPath)` (excluding the file itself and `subagents/`), most recently modified first, capped at 200 files. A cheap substring pre-filter (`continued-in` and `sessionId` both present) precedes JSON parsing; a file qualifies only if it has a parsed record `{type:'continued-in', continuedInSessionId: sessionId}`. Returns the uuids of its counted lines (`isCountedTranscriptLine`), `[]` when the directory was scanned and no parent exists, `null` when the directory is unreadable.
++- Consumes: `isCountedTranscriptLine` from `@/agents/plugins/claude/session/transcript-lines.js`.
++
++Test-first: yes — temp dir with `P.jsonl` (two assistant lines with uuids `u1`,`u2` and a `continued-in` record naming `C`) and `C.jsonl`: `resolveInheritedUuids(C path, 'C')` returns `['u1','u2']`; a third file naming a different child `D` is ignored; with no parent returns `[]`; with a missing directory returns `null`.
++
++- [ ] **Step 1:** Write the four tests; run, expect FAIL (module missing).
++- [ ] **Step 2:** Implement `resolveInheritedUuids` per the interface; read files as streams or whole-file with the substring check first; never throw.
++- [ ] **Step 3:** Run, expect PASS.
++- [ ] **Step 4:** Commit `feat(analytics): resolve parent uuids of continued claude sessions (EPMCDME-16992)`.
++
++### Task 3: Exclude inherited lines from usage events and summary
++
++**Files:**
++- Modify: `P/transcript/orchestrator.ts` — `deriveMainEvents` (~545-639), `buildFullAccumulator` (~362-468)
++- Test: `P/transcript/__tests__/orchestrator.test.ts`
++
++**Interfaces:**
++- Consumes: `resolveInheritedUuids` (Task 2); state fields (Task 1).
++- Produces: `async function ensureInherited(state: TranscriptParseState, sessionId: string, transcriptPath: string): Promise<ReadonlySet<string>>` (orchestrator-internal): when `!state.inheritedResolved && state.mainOffset === 0`, calls the resolver; on a non-null result sets `state.inheritedUuids` (empty array allowed) and `state.inheritedResolved = true`; returns the set from `state.inheritedUuids ?? []`.
++- `buildFullAccumulator(transcriptPath, final, extra, pass, excluded: ReadonlySet<string>)` drops, before every pass of its computation (tool results, models, tool calls, turns, compactions, title, branch, timestamps), each line whose `uuid` is in `excluded`; the raw-line model pass is filtered the same way.
++
++Behavior:
++- `deriveMainEvents` calls `ensureInherited`, seeds `seenUuids` with the inherited set so copied lines produce no usage request and no `branchCounts`, and passes the set on.
++- When `excluded.size > 0` and the filtered full-file parse has no counted lines, the `agent.session.summary` event is not pushed (usage events and lifecycle hooks are unaffected).
++- `startedAt` of the summary is the first timestamp among remaining (own) lines.
++
++Test-first: yes — fixture dir with P (3 usage-bearing assistant lines + `continued-in` naming C) and C (those 3 lines copied with `sessionId` rewritten, plus 1 own prompt and 1 own assistant line with distinct uuids): `SessionEnd` pass for C yields exactly 1 `agent.usage.request` (the own one), a final summary with 1 turn, the own model count and `started_at` equal to the first own line timestamp; a second C fixture with no own lines yields no usage events and no summary; a C whose parent file is absent behaves as before (all lines counted).
++
++- [ ] **Step 1:** Add the fixture builder and the three tests; run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts -t "continued"`, expect FAIL.
++- [ ] **Step 2:** Implement `ensureInherited`; seed `seenUuids`; thread `excluded` into `buildFullAccumulator`; skip the summary per the rule above.
++- [ ] **Step 3:** Run the new tests then the whole orchestrator file, expect PASS (existing tests unchanged).
++- [ ] **Step 4:** Commit `fix(analytics): do not re-report parent history in continued claude sessions (EPMCDME-16992)`.
++
++### Task 4: Suppress lifecycle events for a no-activity reopen
++
++**Files:**
++- Modify: `P/transcript/orchestrator.ts` (`openSessionStartPass` ~696-733, `openMainTranscriptPass` ~1016-1046, `openSessionEndPass` ~1403-1457, `deriveMainEvents`), `P/claude-code-otlp.plugin.ts` (`onSessionStart` 391-420, `onStopEvent` 422-432, `onSessionEndEvent` 479-504)
++- Test: `P/transcript/__tests__/orchestrator.test.ts`, `P/__tests__/claude-code-otlp.plugin.test.ts`
++
++**Interfaces:**
++- Consumes: Task 3 own-lines logic.
++- Produces:
++  - `openSessionStartPass(sessionId, gitHeadStart, sessionEnvFields, source?: string)` result gains `reopened: boolean` — true when `source === 'resume'` and the loaded state already has `sessionStartedAt`; in that case the pass sets `state.reopened = true`, `state.reopenActive = false` and keeps first-write-wins values (no overwrite of `gitHeadStart`/`sessionStartedAt`).
++  - `deriveMainEvents` records whether this pass read own activity: at least one newly read counted line (after exclusion) that is not an assistant line with a synthetic model (`isSyntheticModel`). If so and `state.reopened`, set `state.reopenActive = true`.
++  - `openMainTranscriptPass` and `openSessionEndPass` results gain `suppressLifecycle: boolean` = `state.reopened === true && state.reopenActive !== true` after the pass. When true, `events` is `[]` (no usage, no summary).
++- Plugin: `onSessionStart` passes `hookInput.source` and returns `{ decision: 'forward', payload: [], finalize: pass.finalize }` when `pass.reopened`. `onStopEvent` and `onSessionEndEvent` return `payload: []` (with `finalize`; no `retryOnce` needed) when `pass.suppressLifecycle`, so the Stop/SessionEnd hook event, `agent.git.snapshot` and git-head fields are not sent.
++
++Test-first: yes — (a) orchestrator: state with `sessionStartedAt` set, `openSessionStartPass(..., 'resume')` reports `reopened: true` and leaves `sessionStartedAt`/`gitHeadStart` unchanged; a following Stop pass over an unchanged transcript reports `suppressLifecycle: true` with no events; after appending one user+assistant line the next Stop reports `suppressLifecycle: false` with a usage event and summary, and a later SessionEnd still forwards. (b) plugin: `SessionStart` with `source: 'resume'` and prior state yields an empty payload; with `source: 'startup'` yields `[start, env]`; a new `startup` session whose first Stop/SessionEnd sees no lines still forwards the lifecycle event; a second `resume` re-arms suppression.
++
++- [ ] **Step 1:** Write the orchestrator and plugin tests above; run both files with `-t "reopen"`, expect FAIL.
++- [ ] **Step 2:** Implement the orchestrator changes (activity flag, `reopened`, `suppressLifecycle`), reusing the single parse-state lock per pass.
++- [ ] **Step 3:** Implement the plugin handler changes.
++- [ ] **Step 4:** Run both files plus `claude-code-otlp.transitions.test.ts` and `src/cli/commands/__tests__/hook.session-delivery.test.ts`, expect PASS (the resume gate must be unchanged).
++- [ ] **Step 5:** Commit `fix(analytics): do not forward lifecycle events for a reopened session without activity (EPMCDME-16993)`.
++
++### Task 5: Docs
++
++**Files:**
++- Modify: `docs/ARCHITECTURE-OTLP-PLUGIN.md` (s6 file table row for `transcript/` and the SessionStart/Stop/SessionEnd paragraph)
++
++Test-first: no — documentation only.
++
++- [ ] **Step 1:** Add the `continuation.ts` row; document that continued sessions exclude parent-copied uuids (parent found via `continued-in`), and that a `resume` SessionStart is not forwarded and Stop/SessionEnd are suppressed until a pass reads own lines. State the known limits: copied subagent files and backend session binding are not handled client-side.
++- [ ] **Step 2:** Run the full gate `npm run lint && npm run typecheck && npm run build`, expect zero warnings/errors.
++- [ ] **Step 3:** Commit `docs(analytics): document continued and reopened session handling (EPMCDME-16992, EPMCDME-16993)`.
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/qa-report.md b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/qa-report.md
+new file mode 100644
+index 00000000..8ba67e54
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/qa-report.md
+@@ -0,0 +1,34 @@
++# QA Gate Report — otlp-continued-and-reopened-sessions
++
++**Branch**: EPMCDME-16992_16993_otlp-continued-and-reopened-sessions
++**Runner**: npm (gates from `.ai-run/guides/quality-gates.md`)
++**Status**: BLOCKED on 12 test failures that also fail on unmodified `main` (c77969d8); every gate on the changed code is green
++
++## Gates
++
++| Gate | Status | Command | Notes |
++|------|--------|---------|-------|
++| license | PASS | `npm run license-check` | |
++| lint | PASS | `npm run lint` | zero warnings |
++| typecheck | PASS | `npm run typecheck` | |
++| build | PASS | `npm run build` | |
++| commitlint | PASS | `npm run commitlint:last` | |
++| unit | FAIL | `npx vitest run --project unit` | 9290 passed, 8 failed (5 files); same 8 fail on main |
++| integration | FAIL | `npx vitest run --project cli` | 326 passed, 4 failed (1 file); same failures on main |
++| ui | SKIPPED | n/a | no UI surface changed |
++
++## Failure detail
++
++All 12 failures were reproduced on a clean worktree of `main` (c77969d8) with the same command, so none comes from this change. They are Windows/machine issues:
++
++- `src/agents/core/session/__tests__/stale-session-reconciliation.test.ts` (2): `EPERM` creating a symlink
++- `tests/integration/analytics/claude-analytics-disable.test.ts` (5 asserts): `EBUSY` removing a temp dir
++- `src/agents/core/__tests__/launch-identity.test.ts` (2), `src/utils/__tests__/config-per-profile-identity.test.ts` (1): read this machine's own profile config
++- `src/agents/plugins/opencode/__tests__/opencode.run-session.test.ts` (1)
++- `src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts` (2): fixed-date fixture
++
++All 41 files / 1050 tests under `src/agents/plugins/claude-code-otlp` and `src/cli/commands` pass.
++
++## Drift signal
++
++no
+diff --git a/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/technical-analysis.md b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/technical-analysis.md
+new file mode 100644
+index 00000000..e023dd6c
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/technical-analysis.md
+@@ -0,0 +1,140 @@
++# Technical Research
++
++**Task**: claude-code-otlp transcript orchestrator session-summary usage-request hook spool
++**Generated**: 2026-11-09
++**Research path**: filesystem (codegraph tool-not-found)
++
++---
++
++## 1. Original Context
++
++Two related Jira bugs in the CodeMie CLI claude-code-otlp plugin (src/agents/plugins/claude-code-otlp/). Fix only the CLI-side (this repo); backend is out of scope.
++
++EPMCDME-16992: A continued Claude Code session re-reports its parent's copied history. Parent P's transcript gets a `continued-in` record naming new session C; C's transcript starts with P's lines copied (same uuid, message.id, requestId, timestamps, sessionId rewritten to C). Root cause per ticket: transcript/orchestrator.ts reads lines after persisted mainOffset; new session id starts at offset 0 so C's first Stop/SessionEnd pass reads P's copied lines. transcript/usage-request.ts derives agent.usage.request for each copied request; transcript/session-summary.ts / session-signals.ts (countTurns, tool and agent counts) build agent.session.summary from all lines. Nothing handles `continued-in` or skips lines whose uuid/message.id belong to another session. claude-code-otlp.event-id.ts: usage event ids are content keys with C's session id so copies are stored as C's rows. Expected: C reports only its own requests/tokens/cost/tool calls/agents/turns; start = own start, not parent's.
++
++EPMCDME-16993: Opening/resuming an old Claude Code session without a prompt rewrites analytics. The CLI sends the reopened session's lifecycle hooks (SessionStart/Stop/SessionEnd -> agent.session.start/stop/end) stamped at open time; backend uses these to extend duration by days, move session into the open day, and the first evidence request binds subscription class/origin from the open's launch headers (native, not routed via CodeMie). Expected: opening/resuming with no prompt/model request/tool call must not change analytics (no lifecycle/dimension hooks forwarded for a no-activity reopen, no session re-binding to the new launch context).
++
++Goal of research: determine (a) exact code paths in the CLI for both, (b) whether both fixes touch the same files/functions (conflict risk if done separately) or can be done independently, (c) what is feasibly fixable client-side, (d) existing tests/fixtures for these paths, (e) Risk Indicators. See docs/ARCHITECTURE-OTLP-PLUGIN.md and .ai-run/guides/architecture/architecture.md.
++
++---
++
++## 2. Codebase Findings
++
++Paths relative to repo root; plugin dir `P/` = `src/agents/plugins/claude-code-otlp/`.
++
++### Existing Implementations
++- `src/cli/commands/hook.ts:1671-1674` - entry for `codemie hook --agent claude-code-otlp`; resolves adapter via `AgentRegistry.getAnalyticsAgent`, calls `processOtlpEvent(input, {ensureOtlpProxy, forwardOtlpEventsToSpool})`.
++- `src/agents/core/OtlpAgentAdapter.ts` - base class. `processOtlpEvent` (91-171): parseHookInput -> isTracked -> transitionGate -> ensureOtlpProxy -> evaluate() -> prepareForward. Empty payload => accepted=true, nothing sent (137-140). Send 155-156 (optional retryOnce); `finalize(accepted)` always runs. `buildEvent` 302-318; `timestamp` falls back to hook time when payload has none (381-389) - this is the "stamped at open time" source for bug 16993.
++- `src/agents/plugins/utils.ts:17-61` - `forwardOtlpEventsToSpool`: single POST to `${daemon}/v1/analytics/hooks`, 3s timeout.
++- `P/claude-code-otlp.plugin.ts` - adapter. `HOOK_EVENT_TYPE_MAP` 79-93 (SessionStart->agent.session.start, Stop->agent.session.stop, SessionEnd->agent.session.end); `transitionGate` 197-234; `evaluate()` 314-362; `onSessionStart` 391-420 (always forwards [start, env]); `onStopEvent` 422-432; `onSessionEndEvent` 479-504 (always forwards SessionEnd + agent.git.snapshot + transcript events, retryOnce); `buildGitSnapshotEvent` 727-739.
++- `P/transcript/orchestrator.ts` - `buildFullAccumulator` 362-468 (full re-read from byte 0 on every Stop/SessionEnd; `startedAt = firstTimestamp(parsedLines)` at 464); `seedSeenUuids` 477-498; `deriveMainEvents` 545-639 (reads `readNewLines(path, state.mainOffset)`, filters with `isCountedTranscriptLine` + `keepFirstByUuid` against `seenMessageUuids`; builds usage requests, branchCounts; `api_calls` 632-634); `finalizeOf` 647-664; `openSessionStartPass` 696-733 (first-write-wins for gitHeadStart/sessionStartedAt, docblock 671-695); `openMainTranscriptPass` 1016-1046; `openSessionEndPass` 1403-1457.
++- `P/transcript/parse-state.ts` - `TranscriptParseState` 52-98 (mainOffset, subagentOffsets, openRequests, activeSkill, branchCounts, gitHeadStart, sessionStartedAt, lastSessionEnvFields, lastCompactionEnd, optional seenMessageUuids/deferredAgentIds/deferredSubagentFiles); file `~/.codemie/analytics/state/<sessionId>.json` (line 118); `createParseState` 103-115; load never throws (falls back to fresh/offset 0), save throws.
++- `P/transcript/transcript-reader.ts:21-61` - `readNewLines(file, fromOffset)`; cuts at last newline; file smaller than offset => re-read from 0.
++- `P/transcript/usage-request.ts` - `parseUsageLine` 73-150, `usageRequestKey` 158-166 (`requestId||messageId::model`), `mergeUsageRequest` 181-214, `buildUsageRequestEvent` 233-262.
++- `P/transcript/session-summary.ts:108-163` - `buildSessionSummaryEvent`, pure builder; phase incremental on Stop, final on SessionEnd; id `summary:<phase>:<ended_at>`.
++- `P/transcript/session-signals.ts` - `countTurns` 117-132, `collectEditLineStats`, `collectCompactions`, `latestTitle`.
++- `P/claude-code-otlp.event-id.ts:48-77` - usage events content-keyed + session_id; summary natural key phase+ended_at.
++- `src/agents/plugins/claude/session/transcript-lines.ts` - `isCountedTranscriptLine`, `keepFirstByUuid` (uuid-only; sibling plugin, not core).
++- `P/claude-agent-sdk-hooks.d.ts` - SessionStart.source `'startup'|'resume'|'clear'|'compact'|'fork'` (l.531); SessionEnd.reason includes `'resume'` (l.70).
++- Repo-wide grep: no code handles `continued-in` / `continuedIn` / `continued_in`; no "reopen"/"no-activity" logic in the plugin. Nothing in `transcript/` reads a line's own `sessionId`.
++
++### Architecture and Layers Affected
++- CLI (`hook.ts`, no business logic) -> Registry -> Plugin (claude-code-otlp) -> Core (OtlpAgentAdapter, types, event-fields, evidence) -> Utils; downstream agent-agnostic proxy daemon spool/forwarder (`src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts`, `otlp.plugin.ts` handleHooks), which only transports (only inspects `agent.session.end` to mark ended). Spool/forwarder/daemon changes are out of CLI-side scope.
++- Core must not import from plugins; spool function injected via `OtlpAdapterDeps` (`src/agents/core/types.ts:735-744`).
++
++### Integration Points
++- plugin -> `@/agents/core/{OtlpAgentAdapter,types,event-fields/*,evidence/*}` (record-store, stop-marker, session-scope, owner-pending, stamp); orchestrator -> `@/agents/plugins/claude/session/transcript-lines.js`.
++- Hook registration: `src/cli/commands/proxy/connectors/claude-code-otlp.ts` (16 HOOK_EVENTS in ~/.claude/settings.json).
++- Bug 16992 flow: new session C has no parse-state => offset 0 and empty seen-uuid set => `deriveMainEvents` emits agent.usage.request for P's copied lines; `buildFullAccumulator` has no sessionId/uuid-ownership filter so summary (models, tools, turns, startedAt, endedAt) includes P's history; usage event ids differ from P's (C's session_id) so backend cannot dedupe.
++- Bug 16993 flow: reopen fires SessionStart(source resume/fork) -> Stop/SessionEnd; handlers have no activity check; events carry hook-time timestamps; evidence/dimension binding comes from the launch env (`launch_mode` via CODEMIE_SESSION_ID presence; headers in `header-injection.plugin.ts`). Evidence record is frozen at first hook per doc 7, but a new session_id/launch can bind new evidence.
++
++### Patterns and Conventions
++- Template method; one `if` per event name in `evaluate()`; handlers return `ForwardDecision`, never send; commit-after-send via `finalize(accepted)`.
++- Empty payload short-circuits send; one PID lock per session per pass - never acquire `acquireParseStateLock` twice (stalls PID_LOCK_WAIT_BUDGET_MS); use envCheck fold-in.
++- Resolvers return '' on failure, never throw; import event-fields directly (no barrel); everything resolved at hook time (daemon env frozen).
++- Deterministic event ids; growing records content-hashed, immutable ones natural-key, first write wins backend-side.
++- Existing seed mechanism: `seenMessageUuids` / `seedSeenUuids` skip already-counted uuids - reusable for P's uuids.
++
++---
++
++## 3. Documentation Findings
++
++### Guides and Architecture Docs
++- `docs/ARCHITECTURE-OTLP-PLUGIN.md` (primary): s2 pipeline/project pin 24h TTL/event_id; s3 ForwardDecision; s4 adding events (update doc); s6 file table + SessionStart/Stop/SessionEnd paragraph; s7 evidence frozen at first hook ("resumed session ... still sends the original evidence").
++- `.ai-run/guides/architecture/architecture.md` - 5-layer rules. `.ai-run/guides/integration/exposed-api.md` (~137-142), `docs/HOOKS.md` (~242, SessionStart payload), openwiki pages `workflows/agent-launch-and-session-telemetry.md`, `workflows/hooks-skills-frameworks-and-automation.md`.
++- `.ai-run/guides/integration/cli-analytics-events.md` is cited by the doc but does not exist (stale reference).
++- Task dir contains only `.state.json` (flow sdlc-light, phase main); no prior spec/plan.
++
++### Architectural Decisions
++- First-write-wins on SessionStart (compact/resume refires keep original gitHeadStart/sessionStartedAt) - tests orchestrator.test.ts ~1652-1726.
++- `transitionGate`: only SessionStart startup/clear is "fresh"; non-startup hook without evidence record => stop `resume_unknown` (plugin 197-234; notice text in `claude-code-otlp.notice.ts:14`). Resume deliberately not fresh.
++- SessionEnd is not a cleanup boundary (subagent registry survives for resume); git snapshot spans first start through SessionEnd.
++- Summary event_id natural key means first record wins for a given phase+ended_at.
++- Spool sweep: 15 min after SessionEnd / 60 min abandoned; session waking after sweep is a new session.
++
++### Derived Conventions
++- No TODO/HACK/DECISION markers in the plugin; limitations documented in the architecture doc only. Tests for new events/handlers follow existing orchestrator.test.ts structure; update doc s6.
++
++---
++
++## 4. Testing Landscape
++
++### Existing Coverage
++Under `P/transcript/__tests__/`: `orchestrator.test.ts` (3539 lines; offsets 1451-1517, seedSeenUuids 2715-2802, resume/SessionStart 1652-1735, 2414, 3508), `parse-state.test.ts`, `session-summary.test.ts`, `session-signals.test.ts`, `usage-request.test.ts`, `transcript-reader.test.ts`, `subagent-usage.test.ts`, `evidence-index.test.ts`, `fork-skill*.test.ts`. `P/__tests__/`: `claude-code-otlp.event-id.test.ts`, `.plugin.test.ts`, `.transitions.test.ts` (resume gate ~100-112,166,241), gate/allowlist/preferences/disable-matrix, etc. `event-fields/__tests__/session-env-fields.test.ts`. CLI: `src/cli/commands/__tests__/hook.session-delivery.test.ts` (heavy resume coverage), `hook.analytics-wiring.test.ts`, `hook-routing-contract.test.ts`, `src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts`. Spool: `otlp-spool/__tests__/` (forwarder, evidence-lifecycle, spool-io, ...). `src/agents/core/evidence/__tests__/record-store.test.ts`.
++
++### Testing Framework and Patterns
++- Vitest ^4.1.5, TS ESM, `.js` import suffix and `@/` alias; unit tests `src/**/__tests__`, integration `tests/integration`. Real temp dirs (`mkdtempSync`), `CODEMIE_HOME` redirect, `vi.mock` of session-env-fields, fake timers, logger spy, dynamic import after spies. Fixtures dir has only 3 jsonl files (transcript-usage, -usage-direct, subagent-direct); most transcripts inline. Guide: `.ai-run/guides/testing/testing-patterns.md` (tests only on explicit request per AGENTS.md).
++
++### Coverage Gaps
++- No test/fixture for `continued-in` or copied-history transcripts; no multi-session fixture.
++- No test for no-activity reopen of an OTLP session (existing "reopen" tests are Desktop runtime only: `src/telemetry/runtime/DesktopTelemetryRuntime.ts`).
++- Offset gaps: same-size rewrite, mid-line offset, offset across handoff, parse-state schema migration for new fields.
++- No dedicated unit tests of evaluate()/handlers outside plugin.test / hook.session-delivery.
++- Tests needing update if fixed: orchestrator, parse-state, session-summary, plugin, event-id tests.
++
++---
++
++## 5. Configuration and Environment
++
++### Environment Variables
++- `CODEMIE_SESSION_ID` (presence => launch_mode managed vs native), `CODEMIE_PROFILE_NAME`, `CODEMIE_PROFILE_CONFIG`, `CODEMIE_BASE_URL`, `CODEMIE_TARGET_API_URL`, `CODEMIE_PROJECT`, `CODEMIE_PROJECT_BINDING`, `CODEMIE_HOME`, `CODEMIE_DEBUG`.
++- Spool: `OTLP_SEND_INTERVAL_MINUTES`(2), `OTLP_SWEEP_INTERVAL_MINUTES`(15), `OTLP_SEND_MAX_ATTEMPTS`(3), `OTLP_ALLOW_HOOKS_ONLY_FORWARD`(true), `OTLP_ENDED_SESSION_GRACE_MINUTES`(15), `OTLP_ABANDONED_SESSION_GRACE_MINUTES`(60), `OTLP_HELD_RETENTION_MINUTES`(1440), `CODEMIE_EVIDENCE_RECORD_IDLE_DAYS`(90), `CODEMIE_EVIDENCE_RECORD_MAX_FILES`(20000).
++- Claude-side: `CLAUDE_PROJECT_DIR`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_ENTRYPOINT`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK/VERTEX`.
++
++### Configuration Files
++- `~/.claude/settings.json` (hooks + OTel env, `CODEMIE_ANALYTICS_PROJECT_FILTER`), `~/.codemie/claude-analytics.json` (prefs, collectionGeneration), `~/.codemie/codemie-cli.config.json`, `~/.codemie/proxy-daemon.json`, `~/.codemie/work-consent.json`.
++- State: parse-state `~/.codemie/analytics/state/<sid>.json` (+.lock); evidence cache `<sid>.evidence.json`; evidence records `analytics/state/evidence/<hash>.json` (+verdict/stop/stop-ack/publication siblings); owner-pending dir; project pin `~/.codemie/otlp-session-project/<sid>`; spool `~/.codemie/proxy/otlp-spool/<sid>.{hooks.ndjson,otel_*,status}`.
++- Launch headers (analytics POST, `header-injection.plugin.ts` analyticsAttributionHeaders): X-CodeMie-Session-Id, -Routed-Via-CodeMie, -Subscription-Type, plus conditional org/project/funding-route headers. No field literally named "origin"; nearest are `launch_mode`, `project_source`, `funding_route`.
++
++### Feature Flags and Deployment Concerns
++- Gate order: prefs.enabled, excludedProjects, allowlist; `collectionGeneration` mismatch => `generation_changed` stop marker. Stop reasons incl. `resume_unknown`.
++- Restart proxy daemon after upgrade; hook command migrations 006/009/010/011; commit-after-send implies possible re-send, hence deterministic ids. No sweeper found for parse-state files (unverified).
++
++---
++
++## 6. Risk Indicators
++
++- Shared files/functions: plugin.ts (`onSessionStart`, `onStopEvent`, `onSessionEndEvent`), orchestrator.ts (`openSessionStartPass`, `openMainTranscriptPass`, `openSessionEndPass`, `deriveMainEvents`), and `parse-state.ts` (both fixes likely add fields) => merge-conflict and design coupling if done separately.
++- Design dependency: 16993 "has activity" signal should reuse 16992 "own lines" logic; otherwise a continued session's copied lines would look like activity (or a no-activity reopen would look like a pass that produced events).
++- Ownership signal for 16992 is unclear: copied lines carry C's rewritten sessionId, so line sessionId cannot discriminate; must use P's uuid set (reading P's transcript) or boundary. Open question: how C learns P's transcript path (hook payload fields / `continued-in` record in P / scanning the project transcript dir). Unverified - needs real transcript samples.
++- Summary built from full-file reparse (`buildFullAccumulator`) with no persisted exclusion: the exclusion set must be applied there too (models, tools, turns, startedAt, endedAt), not just in `deriveMainEvents`.
++- Summary event_id (`phase+ended_at`) first-wins and `timestamp=endedAt` could be P's last timestamp if C has no own lines.
++- Deferring SessionStart (16993) requires persisted pending-start flag and emitting the deferred start with the session's own original start time, else the "extends duration" symptom persists; touches UserPromptSubmit/other activity handlers. Dropping start events risks backend lacking a start for sessions with later real activity.
++- Backend behavior assumed (dedup on event_id, binding of dimensions on first evidence request) is not verifiable client-side; the "no re-binding to new launch context" half may only be partially fixable (client can only avoid sending; evidence record/launch headers on later activity still come from the new launch).
++- Interaction with `transitionGate` `resume_unknown` and evidence frozen-at-first-hook: a reopened session with prior record proceeds; changes to gating could alter privacy fail-closed behavior (security-sensitive).
++- Parse-state load falls back to fresh offset 0 on corruption, which would reproduce re-reporting; schema additions must be backward compatible (no migration tests exist).
++- Subagent files for C: unverified whether copied; subagent offsets/registry may also re-report.
++- No tests/fixtures for either scenario; orchestrator.test.ts is 3.5k lines (high regression surface).
++- Doc must be updated (s6 row + SessionStart/Stop/SessionEnd paragraph); stale reference to missing cli-analytics-events.md.
++- Windows path/test portability risk (use path.join).
++- Spool/forwarder/daemon was only skimmed by research threads; claims about them come from docs.
++
++---
++
++## 7. Summary for Complexity Assessment
++
++Both bugs live in the Plugin layer of the claude-code-otlp adapter, with a light dependency on Core (OtlpAgentAdapter short-circuit on empty payloads, evidence/stop-marker). Bug 16992 is concentrated in transcript/orchestrator.ts (`deriveMainEvents`, `buildFullAccumulator`, `seedSeenUuids`), `parse-state.ts`, and possibly `transcript-lines.ts` in the sibling claude plugin. Bug 16993 is concentrated in the three lifecycle handlers in claude-code-otlp.plugin.ts plus `openSessionStartPass`. Estimated surface: roughly 5-8 source files plus 5-6 test files and the architecture doc; no spool/daemon/backend changes needed (and those are out of scope).
++
++The work follows existing patterns (ForwardDecision handlers, commit-after-send, seenMessageUuids seeding, empty-payload short-circuit) but introduces new concepts: cross-transcript ownership of lines and deferred/suppressed lifecycle events with persisted state. Both fixes touch the same files and parse-state, and 16993's activity detection should build on 16992's ownership logic, so they should be done in one change or strictly sequenced (16992 first). Principal unknowns: how C locates P's transcript and the real `continued-in` record shape, and how much of the backend binding problem is solvable by suppressing sends.
++
++Test posture is mixed: the orchestrator, parse-state, summary, signals and usage-request modules are well covered with real-temp-dir tests, but there are no fixtures or tests for continued-in transcripts or no-activity reopens, and offset-handoff edge cases are uncovered. Complexity should be scored medium-high: moderate file count, but state-machine and analytics-correctness sensitivity, backend-contract assumptions, and a privacy fail-closed gate adjacent to the change.
+diff --git a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
+index 40774d34..06a470a8 100644
+--- a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
++++ b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
+@@ -1420,7 +1420,8 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
+     expect(openSessionStartPassMock).toHaveBeenCalledWith(
+       's',
+       'abc123def456',
+-      expect.objectContaining({ configured_model: '', permission_mode: '' })
++      expect.objectContaining({ configured_model: '', permission_mode: '' }),
++      undefined
+     );
+     expect(forwardedEvents()[0].git_head_start).toBe('persisted-start-sha');
+     expect(pass.finalize).toHaveBeenCalledWith(true);
+@@ -1841,3 +1842,87 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
+     log.mockRestore();
+   });
+ });
++
++describe('ClaudeCodeOtlpPlugin reopened session without activity (EPMCDME-16993)', () => {
++  const plugin = new ClaudeCodeOtlpPlugin();
++  const ensureOtlpProxy = vi.fn(async () => {});
++  const hook = (name: string, extra: Record<string, unknown> = {}) =>
++    JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name, ...extra });
++
++  beforeEach(() => {
++    vi.clearAllMocks();
++    vi.mocked(isProjectTracked).mockResolvedValue(true);
++    resolveClientVersionMock.mockResolvedValue('2.1.23');
++    forwardOtlpEventsToSpool.mockResolvedValue(true);
++    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
++      ...SESSION_ENV_FIELDS_STUB,
++      configured_model: model,
++      permission_mode: permissionMode,
++    }));
++    openMainTranscriptPassMock.mockReset();
++    openSessionEndPassMock.mockReset();
++  });
++
++  it('forwards nothing for a resume SessionStart of an already started session', async () => {
++    const pass = { ...emptyPass(), sessionEnvFields: SESSION_ENV_FIELDS_STUB, gitHeadStart: 'sha', reopened: true };
++    openSessionStartPassMock.mockResolvedValue(pass);
++
++    await plugin.processOtlpEvent(hook('SessionStart', { source: 'resume' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(openSessionStartPassMock).toHaveBeenCalledWith('s', expect.any(String), expect.anything(), 'resume');
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++    expect(pass.finalize).toHaveBeenCalledWith(true);
++  });
++
++  it('still forwards start and env for a startup SessionStart', async () => {
++    openSessionStartPassMock.mockResolvedValue({
++      ...emptyPass(),
++      sessionEnvFields: SESSION_ENV_FIELDS_STUB,
++      gitHeadStart: 'sha',
++      reopened: false,
++    });
++
++    await plugin.processOtlpEvent(hook('SessionStart', { source: 'startup' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardedEvents().map((e) => e.type)).toEqual(['agent.session.start', 'agent.session.env']);
++  });
++
++  it('forwards nothing for a Stop while the reopened session is idle', async () => {
++    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
++
++    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++  });
++
++  it('forwards nothing for a SessionEnd while the reopened session is idle', async () => {
++    openSessionEndPassMock.mockResolvedValue({ ...emptySessionEndPass(), suppressLifecycle: true });
++
++    await plugin.processOtlpEvent(hook('SessionEnd', { reason: 'other' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++  });
++
++  it('forwards a Stop once the session has activity', async () => {
++    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: false });
++
++    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardedEvents().map((e) => e.type)).toContain('agent.session.stop');
++  });
++  it('forwards nothing for a PreCompact while the reopened session is idle', async () => {
++    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
++
++    await plugin.processOtlpEvent(hook('PreCompact', { trigger: 'manual' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++  });
++
++  it('forwards nothing for a StopFailure while the reopened session is idle', async () => {
++    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
++
++    await plugin.processOtlpEvent(hook('StopFailure', { error: 'rate_limit' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts b/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
+index ac0ce338..62b58b7e 100644
+--- a/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
++++ b/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
+@@ -398,7 +398,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+       resolveGitHeadFields(context, 'start'),
+       resolveSessionEnvFields(hookInput.cwd, model, permissionMode),
+     ]);
+-    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
++    const pass = await openSessionStartPass(
++      hookInput.session_id,
++      gitHeadStart.git_head_start,
++      sessionEnvFields,
++      hookInput.source
++    );
++    // Reopening an already reported session announces nothing: a start stamped now would move its
++    // activity window and re-bind it to this launch (EPMCDME-16993).
++    if (pass.reopened) {
++      return { decision: 'forward', payload: [], finalize: pass.finalize };
++    }
+ 
+     const sessionStartEvent: Record<string, unknown> = {
+       ...hookInput,
+@@ -424,6 +434,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+       openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop', envCheckInput(hookInput)),
+       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+     ]);
++    if (pass.suppressLifecycle) {
++      return { decision: 'forward', payload: [], finalize: pass.finalize };
++    }
+     return {
+       decision: 'forward',
+       payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events],
+@@ -438,6 +451,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+       'PreCompact',
+       envCheckInput(hookInput)
+     );
++    if (pass.suppressLifecycle) {
++      return { decision: 'forward', payload: [], finalize: pass.finalize };
++    }
+     return {
+       decision: 'forward',
+       payload: [hookInput, ...pass.events],
+@@ -469,6 +485,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+       'StopFailure',
+       envCheckInput(hookInput)
+     );
++    if (pass.suppressLifecycle) {
++      return { decision: 'forward', payload: [], finalize: pass.finalize };
++    }
+     return {
+       decision: 'forward',
+       payload: [hookInput, ...pass.events],
+@@ -482,6 +501,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+       resolveIdentityCandidateFields({ cwd: hookInput.cwd }),
+     ]);
++    if (pass.suppressLifecycle) {
++      return { decision: 'forward', payload: [], finalize: pass.finalize };
++    }
+     const gitCommitFields = await resolveGitCommitFields(
+       hookInput.cwd,
+       pass.sessionStartedAt,
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/continuation.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/continuation.test.ts
+new file mode 100644
+index 00000000..50b9a5ea
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/continuation.test.ts
+@@ -0,0 +1,84 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { resolveInheritedUuids } from '../continuation.js';
++
++let dir: string;
++
++const msg = (uuid: string, sessionId: string): string =>
++  JSON.stringify({ type: 'assistant', uuid, sessionId, message: { role: 'assistant', content: [] } });
++const continuedIn = (parent: string, child: string): string =>
++  JSON.stringify({ type: 'continued-in', timestamp: '2026-11-01T19:43:28.390Z', sessionId: parent, continuedInSessionId: child });
++
++beforeEach(() => {
++  dir = mkdtempSync(join(tmpdir(), 'continuation-'));
++});
++
++afterEach(() => {
++  rmSync(dir, { recursive: true, force: true });
++});
++
++describe('resolveInheritedUuids', () => {
++  it('returns the counted uuids of the sibling transcript that continued into the session', async () => {
++    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), msg('u2', 'P'), continuedIn('P', 'C')].join('\n') + '\n');
++    writeFileSync(join(dir, 'C.jsonl'), [msg('u1', 'C'), msg('u2', 'C'), msg('u3', 'C')].join('\n') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1', 'u2']);
++  });
++
++  it('ignores a transcript that continued into a different session', async () => {
++    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), continuedIn('P', 'D')].join('\n') + '\n');
++    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual([]);
++  });
++
++  it('returns an empty list when no parent exists', async () => {
++    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual([]);
++  });
++
++  it('returns null when the transcript directory is unreadable', async () => {
++    expect(await resolveInheritedUuids(join(dir, 'missing', 'C.jsonl'), 'C')).toBeNull();
++  });
++  it('returns null when an empty transcript path would make it scan the working directory', async () => {
++    expect(await resolveInheritedUuids('', 'C')).toBeNull();
++  });
++
++  it('returns null, not "no parent", when more siblings exist than the scan covers', async () => {
++    for (let i = 0; i < 205; i += 1) writeFileSync(join(dir, `other-${i}.jsonl`), msg(`o${i}`, `other-${i}`) + '\n');
++    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
++  });
++
++  it('finds a parent whose continued-in record is followed by more than the tail window', async () => {
++    // ~600 KB appended after the record: the 256 KB tail misses it, the whole-file fallback must not.
++    const filler = JSON.stringify({ type: 'attachment', sessionId: 'P', attachment: { content: 'y'.repeat(1000) } });
++    const trailing = Array.from({ length: 600 }, () => filler);
++    writeFileSync(
++      join(dir, 'P.jsonl'),
++      [msg('u1', 'P'), msg('u2', 'P'), continuedIn('P', 'C'), ...trailing].join('\n') + '\n'
++    );
++    writeFileSync(join(dir, 'C.jsonl'), [msg('u1', 'C'), msg('u2', 'C'), msg('u3', 'C')].join('\n') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1', 'u2']);
++  });
++
++  it('returns no parent for a large sibling whose whole file never names the session', async () => {
++    const filler = JSON.stringify({ type: 'attachment', sessionId: 'X', attachment: { content: 'y'.repeat(1000) } });
++    writeFileSync(join(dir, 'X.jsonl'), Array.from({ length: 600 }, () => filler).join('\n') + '\n');
++    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual([]);
++  });
++
++  it('returns null, not "no parent", when a sibling transcript cannot be read', async () => {
++    mkdirSync(join(dir, 'unreadable.jsonl'));
++    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
++
++    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+index 9f1c040e..7b75eb3c 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+@@ -3537,3 +3537,278 @@ describe('settled scope vs late correlation metadata (EPMCDME-16391 cache invari
+     expect(scopedTokens(stop.events).filter((x) => x.startsWith('kid='))).toEqual(['kid=skill:inner:9']);
+   });
+ });
++
++describe('continued session (EPMCDME-16992)', () => {
++  /** A `type`d line, so the uuid-based exclusion applies to it as it does to real transcripts. */
++  function typedAssistant(uuid: string, messageId: string, sessionId: string, timestamp: string): string {
++    return JSON.stringify({
++      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
++      type: 'assistant',
++      sessionId,
++    });
++  }
++  function typedUser(uuid: string, sessionId: string, timestamp: string): string {
++    return JSON.stringify({
++      type: 'user',
++      uuid,
++      sessionId,
++      timestamp,
++      gitBranch: 'main',
++      cwd: '/repo',
++      message: { role: 'user', content: 'hi' },
++    });
++  }
++  const continuedIn = (parent: string, child: string): string =>
++    JSON.stringify({ type: 'continued-in', timestamp: '2026-11-01T19:43:28.390Z', sessionId: parent, continuedInSessionId: child });
++
++  const parentLines = (): string[] => [
++    typedUser('p-u1', 'P', '2026-11-01T17:44:35.647Z'),
++    typedAssistant('p-a1', 'msg-p1', 'P', '2026-11-01T17:45:33.000Z'),
++    typedAssistant('p-a2', 'msg-p2', 'P', '2026-11-01T17:46:33.000Z'),
++  ];
++  const copiedLines = (): string[] => [
++    typedUser('p-u1', 'C', '2026-11-01T17:44:35.647Z'),
++    typedAssistant('p-a1', 'msg-p1', 'C', '2026-11-01T17:45:33.000Z'),
++    typedAssistant('p-a2', 'msg-p2', 'C', '2026-11-01T17:46:33.000Z'),
++  ];
++
++  it('reports only the continued session\'s own requests and turns', async () => {
++    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
++    const path = writeTranscript('C.jsonl', [
++      ...copiedLines(),
++      typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'),
++      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z'),
++    ]);
++
++    const pass = await openSessionEndPass('C', path, '/repo');
++    await pass.finalize(true);
++
++    const usage = pass.events.filter((e) => e.type === 'agent.usage.request');
++    expect(usage).toHaveLength(1);
++    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
++    expect(summary?.turns).toBe(1);
++    expect(summary?.started_at).toBe('2026-11-01T19:50:00.000Z');
++  });
++
++  it('emits no usage and no summary when the session has no own lines', async () => {
++    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
++    const path = writeTranscript('C.jsonl', copiedLines());
++
++    const pass = await openSessionEndPass('C', path, '/repo');
++    await pass.finalize(true);
++
++    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
++    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
++  });
++
++  it('counts every line when the parent transcript is absent', async () => {
++    const path = writeTranscript('C.jsonl', copiedLines());
++
++    const pass = await openSessionEndPass('C', path, '/repo');
++    await pass.finalize(true);
++
++    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
++    expect(pass.events.find((e) => e.type === 'agent.session.summary')?.turns).toBe(1);
++  });
++});
++
++describe('reopened session without activity (EPMCDME-16993)', () => {
++  const user = (uuid: string, timestamp: string): string =>
++    JSON.stringify({ type: 'user', uuid, timestamp, gitBranch: 'main', cwd: '/repo', message: { role: 'user', content: 'hi' } });
++  const assistant = (uuid: string, messageId: string, timestamp: string): string =>
++    JSON.stringify({
++      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
++      type: 'assistant',
++    });
++
++  async function startSession(sessionId: string, source?: string): Promise<{ reopened?: boolean }> {
++    const pass = await openSessionStartPass(sessionId, 'sha-start', sessionEnvFixture, source);
++    await pass.finalize(true);
++    return pass;
++  }
++
++  it('flags a resume of an already started session and keeps its original start', async () => {
++    const sessionId = 'session-reopen-flag';
++    await startSession(sessionId, 'startup');
++    const first = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
++
++    const reopen = await startSession(sessionId, 'resume');
++    const second = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
++
++    expect(reopen.reopened).toBe(true);
++    expect(second.sessionStartedAt).toBe(first.sessionStartedAt);
++  });
++
++  it('does not flag a first start, even with source resume', async () => {
++    const pass = await startSession('session-reopen-first', 'resume');
++
++    expect(pass.reopened).toBeFalsy();
++  });
++
++  it('suppresses Stop and SessionEnd until the reopened session has own activity', async () => {
++    const sessionId = 'session-reopen-suppress';
++    const path = writeTranscript(`${sessionId}.jsonl`, [
++      user('u1', '2026-11-01T10:00:00.000Z'),
++      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
++    ]);
++    await startSession(sessionId, 'startup');
++    await mainEvents(sessionId, path, 'Stop');
++
++    await startSession(sessionId, 'resume');
++    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
++    await idle.finalize(true);
++    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
++    await idleEnd.finalize(true);
++
++    expect(idle.suppressLifecycle).toBe(true);
++    expect(idle.events).toEqual([]);
++    expect(idleEnd.suppressLifecycle).toBe(true);
++    expect(idleEnd.events).toEqual([]);
++
++    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
++    const active = await openMainTranscriptPass(sessionId, path, 'Stop');
++    await active.finalize(true);
++
++    expect(active.suppressLifecycle).toBe(false);
++    expect(active.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
++    expect(active.events.some((e) => e.type === 'agent.session.summary')).toBe(true);
++
++    const end = await openSessionEndPass(sessionId, path, '/repo');
++    await end.finalize(true);
++    expect(end.suppressLifecycle).toBe(false);
++  });
++
++  it('keeps forwarding Stop for a new session that has no lines yet', async () => {
++    const sessionId = 'session-reopen-fresh';
++    const path = writeTranscript(`${sessionId}.jsonl`, []);
++    await startSession(sessionId, 'startup');
++
++    const pass = await openMainTranscriptPass(sessionId, path, 'Stop');
++    await pass.finalize(true);
++
++    expect(pass.suppressLifecycle).toBeFalsy();
++  });
++
++  it('re-arms suppression on a second resume', async () => {
++    const sessionId = 'session-reopen-rearm';
++    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z')]);
++    await startSession(sessionId, 'startup');
++    await startSession(sessionId, 'resume');
++    appendFileSync(path, assistant('a1', 'msg-1', '2026-11-02T10:00:05.000Z') + '\n');
++    await mainEvents(sessionId, path, 'Stop');
++
++    await startSession(sessionId, 'resume');
++    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
++    await idle.finalize(true);
++
++    expect(idle.suppressLifecycle).toBe(true);
++  });
++  it('keeps a reopened session silent when the reopen only appends non-message records', async () => {
++    const sessionId = 'session-reopen-records-only';
++    const path = writeTranscript(`${sessionId}.jsonl`, [
++      user('u1', '2026-11-01T10:00:00.000Z'),
++      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
++    ]);
++    await startSession(sessionId, 'startup');
++    await mainEvents(sessionId, path, 'Stop');
++    await startSession(sessionId, 'resume');
++
++    appendFileSync(
++      path,
++      [
++        JSON.stringify({ type: 'attachment', uuid: 'att-1', timestamp: '2026-11-07T18:17:46.000Z', attachment: { type: 'hook_success', hookEvent: 'SessionStart' } }),
++        JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId }),
++        JSON.stringify({ type: 'last-prompt', leafUuid: 'a1', sessionId }),
++      ].join('\n') + '\n'
++    );
++    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
++    await idle.finalize(true);
++
++    expect(idle.suppressLifecycle).toBe(true);
++    expect(idle.events).toEqual([]);
++  });
++
++  it('reports an env change made at resume once the reopened session is active', async () => {
++    const sessionId = 'session-reopen-env';
++    const path = writeTranscript(`${sessionId}.jsonl`, [
++      user('u1', '2026-11-01T10:00:00.000Z'),
++      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
++    ]);
++    await startSession(sessionId, 'startup');
++    await mainEvents(sessionId, path, 'Stop');
++
++    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
++    await resume.finalize(true);
++    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
++    const active = await openMainTranscriptPass(sessionId, path, 'Stop', {
++      effort: sessionEnvFixture.effort,
++      permissionMode: 'plan',
++    });
++    await active.finalize(true);
++
++    const env = active.events.filter((e) => e.type === 'agent.session.env');
++    expect(env).toHaveLength(1);
++    expect(env[0]).toMatchObject({ permission_mode: 'plan' });
++  });
++
++  it('keeps the env change for the first active Stop when an idle reopened Stop runs first', async () => {
++    const sessionId = 'session-reopen-idle-stop-env';
++    const path = writeTranscript(`${sessionId}.jsonl`, [
++      user('u1', '2026-11-01T10:00:00.000Z'),
++      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
++    ]);
++    await startSession(sessionId, 'startup');
++    await mainEvents(sessionId, path, 'Stop');
++
++    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
++    await resume.finalize(true);
++    const envCheck = { effort: sessionEnvFixture.effort, permissionMode: 'plan' };
++
++    const idle = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
++    await idle.finalize(true);
++    expect(idle.suppressLifecycle).toBe(true);
++    expect(idle.events).toEqual([]);
++
++    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
++    const active = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
++    await active.finalize(true);
++
++    expect(active.suppressLifecycle).toBe(false);
++    expect(active.events.filter((e) => e.type === 'agent.session.env')).toHaveLength(1);
++  });
++
++  it('keeps subagent usage for the first active pass when an idle reopen ends first', async () => {
++    const sessionId = 'session-reopen-subagent';
++    const path = writeTranscript(`${sessionId}.jsonl`, [
++      user('u1', '2026-11-01T10:00:00.000Z'),
++      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
++    ]);
++    writeSubagentFixture(sessionId, 'a1', [usageLine({ uuid: 'uuid-sa-1', messageId: 'msg-sa-1', outputTokens: 777 })]);
++    await startSession(sessionId, 'startup');
++    await mainEvents(sessionId, path, 'Stop');
++
++    await startSession(sessionId, 'resume');
++    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
++    await idleEnd.finalize(true);
++    expect(idleEnd.events).toEqual([]);
++
++    await startSession(sessionId, 'resume');
++    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
++    const end = await openSessionEndPass(sessionId, path, '/repo');
++    await end.finalize(true);
++
++    expect(end.events.filter((e) => e.type === 'agent.subagent.usage').map((e) => e.agent_id)).toEqual(['a1']);
++  });
++
++  it('survives a corrupt inheritedUuids value in the saved state', async () => {
++    const sessionId = 'session-corrupt-inherited';
++    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z'), assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z')]);
++    const stateDir = join(codemieHome, 'analytics', 'state');
++    mkdirSync(stateDir, { recursive: true });
++    writeFileSync(join(stateDir, `${sessionId}.json`), JSON.stringify({ inheritedUuids: 'oops', inheritedResolved: true }));
++
++    const events = await mainEvents(sessionId, path, 'Stop');
++
++    expect(events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts
+index f11277dd..c156feb0 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts
+@@ -261,3 +261,37 @@ describe('acquireParseStateLock', () => {
+     await reacquireRelease();
+   });
+ });
++
++describe('continuation and reopen fields', () => {
++  it('loads a state saved without the fields with them undefined', async () => {
++    const dir = join(codemieHome, 'analytics', 'state');
++    mkdirSync(dir, { recursive: true });
++    writeFileSync(join(dir, 'old-session.json'), JSON.stringify({ mainOffset: 12 }), 'utf-8');
++
++    const state = await loadParseState('old-session');
++
++    expect(state.mainOffset).toBe(12);
++    expect(state.inheritedUuids).toBeUndefined();
++    expect(state.inheritedResolved).toBeUndefined();
++    expect(state.reopened).toBeUndefined();
++    expect(state.reopenActive).toBeUndefined();
++  });
++
++  it('round-trips the fields through save and load', async () => {
++    const state: TranscriptParseState = {
++      ...createParseState(),
++      inheritedUuids: ['u1', 'u2'],
++      inheritedResolved: true,
++      reopened: true,
++      reopenActive: false,
++    };
++
++    await saveParseState('new-session', state);
++    const loaded = await loadParseState('new-session');
++
++    expect(loaded.inheritedUuids).toEqual(['u1', 'u2']);
++    expect(loaded.inheritedResolved).toBe(true);
++    expect(loaded.reopened).toBe(true);
++    expect(loaded.reopenActive).toBe(false);
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/continuation.ts b/src/agents/plugins/claude-code-otlp/transcript/continuation.ts
+new file mode 100644
+index 00000000..b4282e8e
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/transcript/continuation.ts
+@@ -0,0 +1,193 @@
++/**
++ * Continued Claude Code sessions (EPMCDME-16992).
++ *
++ * When Claude Code continues session P into a new session C, P's transcript gets a
++ * `{ type: 'continued-in', continuedInSessionId: C }` record and C's transcript starts with P's
++ * lines copied (same `uuid`, `sessionId` rewritten to C). The copies are not C's own work, so the
++ * uuids of P's counted lines are resolved here and excluded from C's usage events and summary.
++ */
++
++import { createReadStream } from 'node:fs';
++import { open, readdir, stat } from 'node:fs/promises';
++import { basename, dirname, join } from 'node:path';
++import { createInterface } from 'node:readline';
++import { isCountedTranscriptLine } from '@/agents/plugins/claude/session/transcript-lines.js';
++import { logger } from '@/utils/logger.js';
++
++/** Most recently modified sibling transcripts inspected for a parent. */
++const MAX_SIBLING_FILES = 200;
++
++/**
++ * Bytes read from the end of each sibling in the first, cheap look for the `continued-in` record.
++ * Claude Code appends that record when it continues a session, so it usually sits at the end of the
++ * parent. A parent worked on again afterwards can have it further back: a sibling whose tail does
++ * not hold it is then streamed whole (see {@link fileNamesSession}).
++ */
++const TAIL_BYTES = 256 * 1024;
++
++/** Most `stat` calls in flight at once, so a large project directory cannot exhaust file handles. */
++const STAT_BATCH = 32;
++
++interface TranscriptRecord {
++  type?: unknown;
++  uuid?: unknown;
++  continuedInSessionId?: unknown;
++}
++
++interface SiblingFile {
++  name: string;
++  mtime: number;
++  size: number;
++  /** `stat` failed: the file may be the parent, so a scan that skips it is not complete. */
++  unknown: boolean;
++}
++
++async function statSiblings(directory: string, names: string[]): Promise<SiblingFile[]> {
++  const files: SiblingFile[] = [];
++  for (let i = 0; i < names.length; i += STAT_BATCH) {
++    const batch = await Promise.all(
++      names.slice(i, i + STAT_BATCH).map(async (name): Promise<SiblingFile> => {
++        try {
++          const info = await stat(join(directory, name));
++          // Not a regular file (e.g. a directory named like a transcript): it cannot be read as one.
++          return { name, mtime: info.mtimeMs, size: info.size, unknown: !info.isFile() };
++        } catch {
++          return { name, mtime: 0, size: 0, unknown: true };
++        }
++      })
++    );
++    files.push(...batch);
++  }
++  return files;
++}
++
++/** The last {@link TAIL_BYTES} of `path` (the whole file when smaller). May start mid-line. */
++async function readTail(path: string, size: number): Promise<string> {
++  const handle = await open(path, 'r');
++  try {
++    const length = Math.min(size, TAIL_BYTES);
++    const buffer = Buffer.alloc(length);
++    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
++    return buffer.toString('utf-8', 0, bytesRead);
++  } finally {
++    await handle.close();
++  }
++}
++
++/** Whether `tail` holds a `continued-in` record naming `sessionId`. */
++function tailNamesSession(tail: string, sessionId: string): boolean {
++  // Cheap pre-filter: skip JSON parsing for the (many) unrelated transcripts.
++  if (!tail.includes('continued-in') || !tail.includes(sessionId)) return false;
++  for (const line of tail.split('\n')) {
++    if (!line.includes('continued-in')) continue;
++    try {
++      const record = JSON.parse(line) as TranscriptRecord;
++      if (record.type === 'continued-in' && record.continuedInSessionId === sessionId) return true;
++    } catch {
++      // A partial first line of the tail or a malformed line: not the record.
++    }
++  }
++  return false;
++}
++
++/** Whether the file at `path` holds a `continued-in` record naming `sessionId`; streamed, so size does not matter. */
++async function fileNamesSession(path: string, sessionId: string): Promise<boolean> {
++  const lines = createInterface({ input: createReadStream(path, { encoding: 'utf-8' }), crlfDelay: Infinity });
++  try {
++    for await (const line of lines) {
++      if (!line.includes('continued-in') || !line.includes(sessionId)) continue;
++      try {
++        const record = JSON.parse(line) as TranscriptRecord;
++        if (record.type === 'continued-in' && record.continuedInSessionId === sessionId) return true;
++      } catch {
++        // Malformed line: not the record.
++      }
++    }
++    return false;
++  } finally {
++    lines.close();
++  }
++}
++
++/** The counted uuids of the parent transcript at `path`, streamed so its size does not matter. */
++async function readCountedUuids(path: string): Promise<string[]> {
++  const uuids: string[] = [];
++  const lines = createInterface({ input: createReadStream(path, { encoding: 'utf-8' }), crlfDelay: Infinity });
++  for await (const line of lines) {
++    if (!line.trim()) continue;
++    let record: TranscriptRecord;
++    try {
++      record = JSON.parse(line) as TranscriptRecord;
++    } catch {
++      continue;
++    }
++    if (record.type !== 'continued-in' && typeof record.uuid === 'string' && isCountedTranscriptLine(record)) {
++      uuids.push(record.uuid);
++    }
++  }
++  return uuids;
++}
++
++/**
++ * The uuids of the lines `sessionId` inherited from the session it was continued from.
++ *
++ * Looks at the tail of the sibling `*.jsonl` transcripts of `transcriptPath` (newest first, capped)
++ * for a `continued-in` record naming `sessionId`; when no tail holds it, streams the siblings whole
++ * (a parent worked on again after it was continued has the record further back). The parent found
++ * is then streamed for its counted uuids. File times are never used to rule a sibling out (copies
++ * and restores reset them). Resolves `[]` when the scan was complete and there is no parent,
++ * `null` when it could not be completed (unreadable directory or sibling, more candidates than
++ * the scan covers). Never throws.
++ *
++ * Accepted by the owner (D-1 in docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): more than {@link MAX_SIBLING_FILES} siblings
++ * stay "incomplete" and are retried on every pass; a parent outside the newest ones is not found.
++ */
++export async function resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null> {
++  // dirname('') is '.', which would scan the process working directory.
++  if (!transcriptPath || !sessionId) return null;
++  const directory = dirname(transcriptPath);
++  const own = basename(transcriptPath);
++  try {
++    const names = (await readdir(directory)).filter((name) => name.endsWith('.jsonl') && name !== own);
++    const siblings = await statSiblings(directory, names);
++
++    // "No parent" is only a definitive answer for a complete scan: a truncated or partly unreadable
++    // one must not be taken as final, or the parent's copies are counted for good.
++    let complete = !siblings.some((file) => file.unknown) && siblings.length <= MAX_SIBLING_FILES;
++    const candidates = [...siblings].sort((a, b) => b.mtime - a.mtime);
++
++    const scanned = candidates.slice(0, MAX_SIBLING_FILES).filter((file) => !file.unknown);
++
++    // Pass 1: the tail of every sibling, which finds the usual parent at a fraction of the cost.
++    const tailMissed: SiblingFile[] = [];
++    for (const file of scanned) {
++      const path = join(directory, file.name);
++      try {
++        if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readCountedUuids(path);
++        // A file that fits in the tail window was read whole: nothing more to find in it.
++        if (file.size > TAIL_BYTES) tailMissed.push(file);
++      } catch {
++        complete = false;
++      }
++    }
++    // Pass 2: the larger siblings whose tail did not hold the record, read whole.
++    for (const file of tailMissed) {
++      const path = join(directory, file.name);
++      try {
++        if (await fileNamesSession(path, sessionId)) return await readCountedUuids(path);
++      } catch {
++        complete = false;
++      }
++    }
++    if (!complete) {
++      logger.debug('[claude-code-otlp] parent lookup of a continued session was incomplete', { sessionId });
++      return null;
++    }
++    return [];
++  } catch (error) {
++    logger.debug('[claude-code-otlp] could not look up the parent of a continued session', {
++      error: error instanceof Error ? error.message : String(error),
++    });
++    return null;
++  }
++}
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts b/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
+index 17f23e8f..67084c58 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
+@@ -32,6 +32,7 @@
+ 
+ import { readFile, stat } from 'node:fs/promises';
+ import { logger } from '@/utils/logger.js';
++import { resolveInheritedUuids } from './continuation.js';
+ import { sanitizeLogArgs } from '@/utils/security.js';
+ import {
+   acquireParseStateLock,
+@@ -98,6 +99,9 @@ type MainTranscriptDerivationTrigger = MainTranscriptTrigger | 'PostCompact';
+ export interface TranscriptPass {
+   events: Record<string, unknown>[];
+   finalize: (accepted: boolean) => Promise<void>;
++  /** The session was reopened by a `resume` and has shown no activity of its own yet: the caller
++   *  must not forward its lifecycle event (and `events` is empty). Absent = forward as usual. */
++  suppressLifecycle?: boolean;
+ }
+ 
+ const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
+@@ -236,6 +240,7 @@ interface ContentBlock {
+ 
+ interface TranscriptLine extends SignalLine {
+   gitBranch?: string;
++  uuid?: string;
+ }
+ 
+ /**
+@@ -363,12 +368,14 @@ async function buildFullAccumulator(
+   transcriptPath: string,
+   final: boolean,
+   extra: readonly SubagentFile[],
+-  pass: PassSnapshot
++  pass: PassSnapshot,
++  excluded: ReadonlySet<string> = new Set()
+ ): Promise<{
+   acc: SessionSummaryAccumulator;
+   named: NamedInvocationCounts;
+   startedAt: string;
+   endedAt: string;
++  hasOwnLines: boolean;
+ }> {
+   const acc = emptyAccumulator();
+ 
+@@ -376,18 +383,24 @@ async function buildFullAccumulator(
+   try {
+     raw = await readFile(transcriptPath, 'utf-8');
+   } catch {
+-    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '' };
++    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '', hasOwnLines: false };
+   }
+ 
+-  const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
++  // Lines a continued session copied from its parent are not its own work: dropped here so no
++  // summary figure (models, tools, turns, timestamps) includes them.
++  const rawLines: string[] = [];
+   const allLines: TranscriptLine[] = [];
+ 
+-  for (const line of rawLines) {
++  for (const line of raw.split('\n')) {
++    if (line.trim().length === 0) continue;
+     try {
+-      allLines.push(JSON.parse(line) as TranscriptLine);
++      const parsed = JSON.parse(line) as TranscriptLine;
++      if (typeof parsed?.uuid === 'string' && excluded.has(parsed.uuid)) continue;
++      allLines.push(parsed);
+     } catch {
+       // Skip malformed lines rather than aborting the whole scan.
+     }
++    rawLines.push(line);
+   }
+   const parsedLines = keepFirstByUuid(allLines.filter(isCountedTranscriptLine));
+ 
+@@ -464,7 +477,7 @@ async function buildFullAccumulator(
+   const startedAt = firstTimestamp(parsedLines);
+   const endedAt = firstTimestamp([...parsedLines].reverse());
+ 
+-  return { acc, named, startedAt, endedAt };
++  return { acc, named, startedAt, endedAt, hasOwnLines: parsedLines.length > 0 };
+ }
+ 
+ /**
+@@ -497,6 +510,47 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
+   return seen;
+ }
+ 
++/** Complete lookups that found no parent before a session is taken to have none (EPMCDME-16992). */
++const MAX_PARENT_LOOKUPS = 3;
++
++/**
++ * The uuids a continued session copied from its parent transcript (EPMCDME-16992), kept in `state`.
++ * A found parent is final. A complete lookup that found nothing is repeated on the next passes (at
++ * most {@link MAX_PARENT_LOOKUPS} of them), because the parent's `continued-in` record may not be
++ * flushed yet on the first pass. An incomplete lookup (unreadable directory or sibling, more
++ * candidates than the scan covers) is never final: it is repeated on every pass until it completes,
++ * so a session is not taken to have no parent just because the scan could not finish.
++ * Lines already reported before a late find stay reported, but every later event and the summary
++ * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
++ *
++ * Accepted by the owner, not to be re-raised as findings (see docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): D-1 the repeated
++ * scan for a directory with more than 200 transcripts, and D-2 the copies a first pass reports when
++ * the parent's record is not on disk yet.
++ */
++async function ensureInherited(
++  state: TranscriptParseState,
++  sessionId: string,
++  transcriptPath: string
++): Promise<ReadonlySet<string>> {
++  if (!state.inheritedResolved) {
++    const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
++    if (uuids && uuids.length > 0) {
++      state.inheritedUuids = uuids;
++      state.inheritedResolved = true;
++    } else if (uuids) {
++      const previous = Number.isFinite(state.inheritedLookups) ? (state.inheritedLookups as number) : 0;
++      state.inheritedLookups = previous + 1;
++      if (state.inheritedLookups >= MAX_PARENT_LOOKUPS) state.inheritedResolved = true;
++    }
++  }
++  return new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
++}
++
++/** A `resume` reopened the session and no pass has read activity of its own since (EPMCDME-16993). */
++function isReopenedIdle(state: TranscriptParseState): boolean {
++  return state.reopened === true && state.reopenActive !== true;
++}
++
+ function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
+   const key = usageRequestKey(parsed);
+   const existing = state.openRequests[key];
+@@ -557,6 +611,9 @@ async function deriveMainEvents(
+     ? new Set<string>(state.seenMessageUuids)
+     : await seedSeenUuids(transcriptPath, state.mainOffset);
+   const seenUuids = seeded ?? new Set<string>();
++  const inherited = await ensureInherited(state, sessionId, transcriptPath);
++  for (const uuid of inherited) seenUuids.add(uuid);
++  let ownActivity = false;
+   for (const line of lines) {
+     let rawGitBranch = '';
+     let isUserLine = false;
+@@ -582,6 +639,12 @@ async function deriveMainEvents(
+     }
+ 
+     const parsed = parseUsageLine(line, 'main', '', '', '');
++    // Only work the user did counts: a real assistant answer or a genuine prompt. Records Claude Code
++    // appends on a reopen (hook attachments, mode / permission-mode / last-prompt lines) and its
++    // synthetic placeholder answers are not activity.
++    if (head && ((head.type === 'assistant' && !(parsed && isSyntheticModel(parsed.model))) || isGenuineUserTurn(head))) {
++      ownActivity = true;
++    }
+     if (parsed) {
+       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
+       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
+@@ -600,6 +663,11 @@ async function deriveMainEvents(
+   state.mainOffset = nextOffset;
+   if (seeded) state.seenMessageUuids = [...seenUuids];
+ 
++  // A reopened session stays silent until it has done something: opening it must not change its
++  // analytics (EPMCDME-16993).
++  if (state.reopened && ownActivity) state.reopenActive = true;
++  if (isReopenedIdle(state)) return [];
++
+   for (const key of touchedKeys) {
+     const request = state.openRequests[key];
+     // usageRequestKey isolates API-error rows even when request id and resolved model match a
+@@ -610,12 +678,16 @@ async function deriveMainEvents(
+   }
+ 
+   if (trigger === 'Stop' || trigger === 'SessionEnd') {
+-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(
++    const { acc, named, startedAt, endedAt, hasOwnLines } = await buildFullAccumulator(
+       transcriptPath,
+       trigger === 'SessionEnd',
+       deferredCandidates(state),
+-      pass
++      pass,
++      inherited
+     );
++    // A continued session with no work of its own has nothing to summarise: the figures would
++    // otherwise be the parent's, stamped with the parent's timestamps.
++    if (inherited.size > 0 && !hasOwnLines) return events;
+     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
+     const summaryEvent = buildSessionSummaryEvent(
+       sessionId,
+@@ -666,6 +738,8 @@ function finalizeOf(
+ export interface SessionStartPass extends TranscriptPass {
+   sessionEnvFields: SessionEnvFields;
+   gitHeadStart: string;
++  /** A `resume` of a session whose start was already recorded: nothing new to announce. */
++  reopened?: boolean;
+ }
+ 
+ /**
+@@ -696,12 +770,23 @@ export interface SessionStartPass extends TranscriptPass {
+ export async function openSessionStartPass(
+   sessionId: string,
+   gitHeadStart: string,
+-  sessionEnvFields: SessionEnvFields
++  sessionEnvFields: SessionEnvFields,
++  source?: string
+ ): Promise<SessionStartPass> {
+   let release: (() => Promise<void>) | undefined;
+   try {
+     release = await acquireParseStateLock(sessionId);
+     const state = await loadParseState(sessionId);
++    // A resume of a session already started announces nothing: its start was reported once, and a
++    // start stamped at the reopen would move the session's activity window (EPMCDME-16993).
++    // Accepted limit (D-3 in docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): without a saved sessionStartedAt a resume is a
++    // first start here (the transition gate already stops a resume without an evidence record), and
++    // a state with offset 0 is not moved to the file size, which would drop never-reported work.
++    const reopened = source === 'resume' && Boolean(state.sessionStartedAt);
++    if (reopened) {
++      state.reopened = true;
++      state.reopenActive = false;
++    }
+     if (!state.gitHeadStart) {
+       state.gitHeadStart = gitHeadStart;
+     }
+@@ -717,12 +802,17 @@ export async function openSessionStartPass(
+           configured_model: sessionEnvFields.configured_model || last.configured_model,
+         }
+       : sessionEnvFields;
+-    state.lastSessionEnvFields = merged;
++    // A reopen announces nothing, so it must not move the env baseline either: the first pass after
++    // the session is active again diffs the resumed model/permission mode against it and reports it.
++    if (!reopened || !last) {
++      state.lastSessionEnvFields = merged;
++    }
+     return {
+       events: [],
+       finalize: finalizeOf(sessionId, state, release),
+       sessionEnvFields: merged,
+       gitHeadStart: state.gitHeadStart,
++      reopened,
+     };
+   } catch (err) {
+     const msg = err instanceof Error ? err.message : String(err);
+@@ -859,7 +949,9 @@ export async function openSessionEnvCheckPass(
+   try {
+     release = await acquireParseStateLock(sessionId);
+     const state = await loadParseState(sessionId);
+-    const candidate = await computeSessionEnvUpdate(state, input);
++    // A reopened session with no activity of its own announces nothing, not even an env change; the
++    // change stays uncommitted and is reported by the first check once the session is active again.
++    const candidate = isReopenedIdle(state) ? null : await computeSessionEnvUpdate(state, input);
+ 
+     if (!candidate) {
+       await release();
+@@ -1027,16 +1119,24 @@ export async function openMainTranscriptPass(
+     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger, pass);
+     // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
+     // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
+-    if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
++    // A reopened session with no activity of its own sends nothing (the plugin drops this pass's
++    // payload), so it must not consume deferred subagents or the env baseline either: both stay for
++    // the first pass after the session is active again.
++    const idle = isReopenedIdle(state);
++    if (!idle && (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact')) {
+       events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, pass, envCheck?.cwd)));
+     }
+ 
+-    if (envCheck) {
++    if (envCheck && !idle) {
+       const updated = await computeSessionEnvUpdate(state, envCheck);
+       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
+     }
+ 
+-    return { events, finalize: finalizeOf(sessionId, state, release) };
++    return {
++      events,
++      finalize: finalizeOf(sessionId, state, release),
++      suppressLifecycle: idle,
++    };
+   } catch (err) {
+     const msg = err instanceof Error ? err.message : String(err);
+     logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+@@ -1083,6 +1183,11 @@ export async function openPostCompactPass(
+     release = await acquireParseStateLock(sessionId);
+     const state = await loadParseState(sessionId);
+     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
++    // A reopened session with no activity of its own announces nothing; `lastCompactionEnd` stays
++    // put, so a compaction is reported by the first pass after the session is active again.
++    if (isReopenedIdle(state)) {
++      return { events: [], finalize: finalizeOf(sessionId, state, release) };
++    }
+ 
+     // Catch up with anything appended while the lock was being acquired; only the appended bytes
+     // are read, so this stays cheap even on a large transcript (and no-ops while it is unchanged).
+@@ -1415,11 +1520,15 @@ export async function openSessionEndPass(
+ 
+     // End of the session: nothing more will arrive, so a subagent still unproven is an agent. The
+     // summary above resolved the same candidates with the same `final`: reuse it.
++    // A reopened session with no activity of its own sends nothing at all (the plugin drops this
++    // pass's payload), so the backstop must not consume subagent state or the env baseline either:
++    // they stay for the first pass after the session is active again.
++    const idle = isReopenedIdle(state);
+     pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, {
+       final: true,
+       extra: deferredCandidates(state),
+     });
+-    for (const rawFile of pass.snapshot.files) {
++    for (const rawFile of idle ? [] : pass.snapshot.files) {
+       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
+       // available stand-in (subagents share their parent session's cwd).
+       const file: SubagentFile = { ...rawFile, cwd };
+@@ -1437,7 +1546,7 @@ export async function openSessionEndPass(
+       }
+     }
+ 
+-    if (envCheck) {
++    if (envCheck && !idle) {
+       const updated = await computeSessionEnvUpdate(state, envCheck);
+       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
+     }
+@@ -1447,6 +1556,7 @@ export async function openSessionEndPass(
+       finalize: finalizeOf(sessionId, state, release),
+       gitHeadStart: state.gitHeadStart,
+       sessionStartedAt: state.sessionStartedAt,
++      suppressLifecycle: idle,
+     };
+   } catch (err) {
+     const msg = err instanceof Error ? err.message : String(err);
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/parse-state.ts b/src/agents/plugins/claude-code-otlp/transcript/parse-state.ts
+index 159709f5..193aefcb 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/parse-state.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/parse-state.ts
+@@ -67,6 +67,18 @@ export interface TranscriptParseState {
+    *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
+    *  a state saved before it existed. */
+   seenMessageUuids?: string[];
++  /** `uuid`s of the lines a continued session copied from its parent transcript (found through the
++   *  parent's `continued-in` record); never counted or summarised. Absent = none known. */
++  inheritedUuids?: string[];
++  /** The parent lookup is final (a parent was found, or the retries were used up), so it is not repeated. */
++  inheritedResolved?: boolean;
++  /** Parent lookups that found nothing (or did not complete) so far; bounds the retries. */
++  inheritedLookups?: number;
++  /** A `resume` SessionStart was suppressed: lifecycle events stay suppressed until a pass reads
++   *  own activity ({@link reopenActive}). */
++  reopened?: boolean;
++  /** Since the last `resume`, a pass read at least one line of the session's own activity. */
++  reopenActive?: boolean;
+   /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
+    *  absent in a state saved before it existed. */
+   deferredAgentIds?: string[];
