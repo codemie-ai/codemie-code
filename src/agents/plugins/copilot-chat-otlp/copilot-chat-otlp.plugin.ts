@@ -40,8 +40,6 @@ const ANALYTICS_OPT_OUT_REASONS: ReadonlySet<CopilotAnalyticsGateReason> = new S
 
 export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput, ChatBlockOutput> {
   public readonly name = COPILOT_CHAT_OTLP_AGENT_NAME;
-  protected override readonly configuredProjectWins = true;
-  protected override readonly walkProjectFromCwd = true;
 
   protected parseHookInput(raw: string): CopilotChatHookInput | null {
     const parsed: unknown = JSON.parse(raw);

@@ -14,10 +14,9 @@ import { AgentCLI } from '../AgentCLI.js';
 import type { AgentAdapter } from '../types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
-import { resolveProjectAtCwd, resolveSessionProject } from '../event-fields/identity-fields.js';
+import { findNearestConfigDir, resolveProjectAtCwd, resolveSessionProject } from '../event-fields/identity-fields.js';
 import { ClaudeCodeOtlpPlugin } from '../../plugins/claude-code-otlp/claude-code-otlp.plugin.js';
 import { CopilotCliOtlpPlugin } from '../../plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.js';
-import { CopilotChatOtlpPlugin } from '../../plugins/copilot-chat-otlp/copilot-chat-otlp.plugin.js';
 
 // The real pin dir is resolved at import time under ~/.codemie; keep its first-write-wins semantics in memory.
 const pins = vi.hoisted(() => new Map<string, string>());
@@ -25,6 +24,8 @@ vi.mock('../session-project-pin.js', () => ({
   readPinnedProjectName: async (id: string) => pins.get(id),
   pinProjectName: async (id: string, project: string) => (project ? (pins.get(id) ?? pins.set(id, project).get(id)!) : project),
 }));
+
+vi.mock('../copilot-analytics-gate.js', () => ({ evaluateCopilotAnalyticsGate: async () => ({ tracked: true }) }));
 
 let tmp: string;
 let repo: string;
@@ -206,13 +207,58 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       const flag = (o: object) => (o as { configuredProjectWins: boolean }).configuredProjectWins;
       expect(flag(new ClaudeCodeOtlpPlugin())).toBe(true);
       expect(flag(new CopilotCliOtlpPlugin())).toBe(true);
-      expect(flag(new CopilotChatOtlpPlugin())).toBe(true);
     });
 
     it('a managed Claude session keeps its exported project even with the Claude policy', async () => {
       vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
       vi.stubEnv('CODEMIE_PROJECT', 'exported-project');
       expect(await nativeProject(sub)).toBe('exported-project');
+    });
+  });
+
+  describe('native Copilot CLI hook event (real plugin, real config)', () => {
+    async function forwardedProject(cwd: string): Promise<unknown> {
+      const sent: Record<string, unknown>[] = [];
+      const deps = { ensureOtlpProxy: async () => {}, forwardOtlpEventsToSpool: async (events: Record<string, unknown>[]) => { sent.push(...events); return true; } };
+      const raw = JSON.stringify({ sessionId: 'cp-sid', cwd, timestamp: 1700000000000, codemieEventName: 'sessionStart' });
+      await new CopilotCliOtlpPlugin().processOtlpEvent(raw, deps as never);
+      return sent[0]?.codemie_project_name;
+    }
+
+    it('from a subfolder stamps the repo config project, not a shell value, and not the global profile', async () => {
+      await writeGlobal({ g: sso('g-project'), x: sso('x-project') }, 'x');
+      await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
+      vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
+      expect(await forwardedProject(sub)).toBe('g-project');
+    });
+
+    it('reads .env from the hook cwd, not from the config dir it walked to', async () => {
+      await writeGlobal({ l: { provider: 'litellm', model: 'm', baseUrl: 'https://l.example.com', apiKey: 'k' } }, 'l');
+      await writeLocal({ version: 2, activeProfile: 'l', profiles: {} });
+      await fs.writeFile(path.join(sub, '.env'), 'CODEMIE_PROJECT=cwd-env-project'+String.fromCharCode(10));
+      await fs.writeFile(path.join(repo, '.env'), 'CODEMIE_PROJECT=parent-env-project'+String.fromCharCode(10));
+      expect(await forwardedProject(sub)).toBe('cwd-env-project');
+    });
+  });
+
+  describe('global config file is not a local override', () => {
+    it('a workspace below the dir that holds the global .codemie is skipped on the way up', async () => {
+      const ws = path.join(tmp, 'ws');
+      const proj = path.join(ws, 'proj', 'sub');
+      await fs.mkdir(proj, { recursive: true });
+      await fs.mkdir(path.join(ws, '.codemie'), { recursive: true });
+      vi.stubEnv('CODEMIE_HOME', path.join(ws, '.codemie'));
+      await fs.writeFile(
+        path.join(ws, '.codemie', 'codemie-cli.config.json'),
+        JSON.stringify({ version: 2, activeProfile: 'x', profiles: { x: sso('x-project') } })
+      );
+      // A genuine local config further up (the real ancestors of the temp dir may hold one too) is found past the global file.
+      await fs.mkdir(path.join(tmp, '.codemie'), { recursive: true });
+      await fs.writeFile(path.join(tmp, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'x', profiles: {} }));
+      expect(await findNearestConfigDir(proj)).toBe(tmp);
+      expect(await managedProject(proj)).toBe('x-project');
+      // The workspace root itself is the start dir: ordinary behavior, unchanged.
+      expect(await findNearestConfigDir(ws)).toBe(ws);
     });
   });
 

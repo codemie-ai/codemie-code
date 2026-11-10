@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { getCodemiePath } from '@/utils/paths.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveHookCredentials } from '../hook-credentials.js';
@@ -156,6 +157,11 @@ async function projectFromHookConfig(
   return shell;
 }
 
+function isGlobalConfigFile(dir: string): boolean {
+  const norm = (p: string): string => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  return norm(path.join(dir, '.codemie', 'codemie-cli.config.json')) === norm(getCodemiePath('codemie-cli.config.json'));
+}
+
 /** The profile config the hook resolves for `cwd` (same walk as the project lookup); undefined on failure. */
 export async function loadHookConfig(
   cwd: string,
@@ -165,11 +171,16 @@ export async function loadHookConfig(
   const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim() || (opts.walk ? cwd : undefined);
   try {
     const configDir = start ? await findNearestConfigDir(start) : cwd;
+    // `.env` stays where it always was: the hook's cwd when `walk` alone found the config dir, else the config dir.
+    const envDir = opts.walk && !opts.fromCwd && !process.env['CLAUDE_PROJECT_DIR']?.trim() ? cwd : configDir;
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the
     // globally active profile, selects hook config, routing proof and project. Native has no such export.
     const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
     const profileName = opts.profile || launched || (await ConfigLoader.getActiveProfileName(configDir));
-    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
+    const selection = profileName ? { name: profileName } : undefined;
+    const config = envDir === configDir
+      ? await ConfigLoader.load(configDir, selection)
+      : await ConfigLoader.load(configDir, selection, envDir);
     return { config, configDir };
   } catch {
     return undefined;
@@ -183,11 +194,14 @@ export async function resolveProjectAtCwd(cwd: string, profile?: string, policy:
   return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile }), policy);
 }
 
-/** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */
+/**
+ * Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one.
+ * An ancestor whose `.codemie` config is the global config file (a workspace below the user home) is not a local override.
+ */
 export async function findNearestConfigDir(startDir: string): Promise<string> {
   let dir = startDir;
   for (;;) {
-    if (await ConfigLoader.hasLocalConfig(dir)) {
+    if (await ConfigLoader.hasLocalConfig(dir) && (dir === startDir || !isGlobalConfigFile(dir))) {
       return dir;
     }
     const parent = path.dirname(dir);
