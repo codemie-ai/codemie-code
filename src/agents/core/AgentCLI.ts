@@ -218,11 +218,10 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
-      // Claude only: config comes from the nearest `.codemie` up from the cwd, like the native Claude
-      // hooks; `.env` and the agent itself stay in process.cwd(). Other agents keep cwd-only lookup.
-      const configDir = ['claude', 'claude-acp'].includes(this.adapter.name)
-        ? await (await import('./event-fields/identity-fields.js')).findNearestConfigDir(process.cwd())
-        : process.cwd();
+      // Every managed agent reads config from the nearest `.codemie` up from the cwd (the project it
+      // exports is what its session records carry); `.env` and the agent itself stay in process.cwd().
+      const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
+      const configDir = await findNearestConfigDir(process.cwd());
       const config = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,

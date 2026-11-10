@@ -13,6 +13,7 @@ import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 import { resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
 import { ConfigLoader } from '../dist/utils/config.js';
+import { findNearestConfigDir } from '../dist/agents/core/event-fields/identity-fields.js';
 import { getCodemiePath } from '../dist/utils/paths.js';
 
 const SAVED_MODEL_PATH = getCodemiePath('agents', 'copilot-cli', 'model.json');
@@ -114,7 +115,8 @@ function buildConfigOverrides(options) {
 }
 
 async function getCopilotModels(options) {
-  const config = await ConfigLoader.load(process.cwd(), buildConfigOverrides(options));
+  // Same lookup as AgentCLI: nearest `.codemie` up from the cwd, `.env` from the cwd itself.
+  const config = await ConfigLoader.load(await findNearestConfigDir(process.cwd()), buildConfigOverrides(options), process.cwd());
   if (typeof options.jwtToken === 'string') {
     process.env.CODEMIE_JWT_TOKEN = options.jwtToken;
     config.authMethod = 'jwt';

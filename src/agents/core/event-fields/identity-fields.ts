@@ -73,10 +73,10 @@ async function resolveIdentityTier(
 }
 
 /**
- * In a managed launch (and for adapters without `configuredWins`) `CODEMIE_PROJECT` (exported by the launcher into the agent's own process
+ * In a managed launch (and for callers without `configuredWins`) `CODEMIE_PROJECT` (exported by the launcher into the agent's own process
  * env, the same source `Session.project` uses) wins when present, since it is set once for the
  * whole session and cannot drift as the hook's `cwd` moves, and is never pinned against. A native
- * Claude session has no launcher, so there the configured project wins and a shell
+ * Claude/Copilot session has no launcher, so there the configured project wins and a shell
  * `CODEMIE_PROJECT` is only the fallback (see ProjectPolicy).
  *
  * Otherwise, with a `sessionId`, the first hook's resolution — the nearest `.codemie` found
@@ -118,16 +118,19 @@ export async function resolveSessionProject(
     return pinned;
   }
 
-  const resolved = await projectFromHookConfig(await loadHookConfig(cwd), policy);
+  const resolved = await projectFromHookConfig(await loadHookConfig(cwd, { walk: policy.walkFromCwd }), policy);
   return sessionId ? pinProjectName(sessionId, resolved) : resolved;
 }
 
 /**
- * Set by the Claude Code hook adapter only: a native Claude session follows the managed launcher's
- * policy (the configured project wins). Other adapters and callers keep "a shell `CODEMIE_PROJECT` wins".
+ * Opted into by the Claude Code and Copilot hook adapters only, so a native session resolves its
+ * project like the managed launcher of the same tool: the configured project wins over a shell
+ * `CODEMIE_PROJECT`, and config is found from the nearest `.codemie` up from the hook's cwd (Claude
+ * has `CLAUDE_PROJECT_DIR` for that already). Other adapters and callers keep the plain behavior.
  */
 export interface ProjectPolicy {
   configuredWins?: boolean;
+  walkFromCwd?: boolean;
 }
 
 function configuredWins(policy: ProjectPolicy): boolean {
@@ -156,10 +159,10 @@ async function projectFromHookConfig(
 /** The profile config the hook resolves for `cwd` (same walk as the project lookup); undefined on failure. */
 export async function loadHookConfig(
   cwd: string,
-  opts: { fromCwd?: boolean; profile?: string } = {}
+  opts: { fromCwd?: boolean; profile?: string; walk?: boolean } = {}
 ): Promise<{ config: CodeMieConfigOptions; configDir: string } | undefined> {
   // `fromCwd`: walk up from the hook's own cwd instead of the session's fixed project dir (used to notice a folder change).
-  const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim();
+  const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim() || (opts.walk ? cwd : undefined);
   try {
     const configDir = start ? await findNearestConfigDir(start) : cwd;
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the

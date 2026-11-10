@@ -208,7 +208,7 @@ export CODEMIE_MODEL=claude-3-5-sonnet
 
 Environment variables override both global and local config for the fields `ConfigLoader.loadFromEnv` reads (`CODEMIE_PROVIDER`, `CODEMIE_BASE_URL`, `CODEMIE_API_KEY`, `CODEMIE_MODEL`, `CODEMIE_TIMEOUT`, `CODEMIE_DEBUG`, `CODEMIE_ALLOWED_DIRS`, `CODEMIE_IGNORE_PATTERNS`, `CODEMIE_URL`, `CODEMIE_AUTH_METHOD`, integration id/alias). No local config file is needed in CI.
 
-`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the profile resolves no `codeMieProject` and is not `own`/`none`; an `own` or `none` profile never inherits it. Native Claude Code hooks follow the same rule, and both the launcher and the hooks read config from the nearest `.codemie` up from the working directory (the agent still runs in the cwd).
+`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the profile resolves no `codeMieProject` and is not `own`/`none`; an `own` or `none` profile never inherits it. Native Claude Code and Copilot hooks follow the same rule, and every managed launcher plus those hooks read config from the nearest `.codemie` up from the working directory (`.env` and the agent itself stay in the cwd).
 
 ---
 

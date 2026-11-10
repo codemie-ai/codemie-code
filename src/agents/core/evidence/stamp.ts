@@ -39,7 +39,7 @@ async function hookTimeFields(
   api: string,
   policy: ProjectPolicy
 ): Promise<PendingFields> {
-  const hookConfig = await loadHookConfig(context.cwd);
+  const hookConfig = await loadHookConfig(context.cwd, { walk: policy.walkFromCwd });
   const configDir = hookConfig?.configDir ?? context.cwd;
   const project = (await resolveSessionProject(context.cwd, sessionId, policy)) || undefined;
   const project_source = await projectSource(project, hookConfig, configDir);

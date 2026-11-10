@@ -16,6 +16,8 @@ import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
 import { resolveProjectAtCwd, resolveSessionProject } from '../event-fields/identity-fields.js';
 import { ClaudeCodeOtlpPlugin } from '../../plugins/claude-code-otlp/claude-code-otlp.plugin.js';
+import { CopilotCliOtlpPlugin } from '../../plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.js';
+import { CopilotChatOtlpPlugin } from '../../plugins/copilot-chat-otlp/copilot-chat-otlp.plugin.js';
 
 // The real pin dir is resolved at import time under ~/.codemie; keep its first-write-wins semantics in memory.
 const pins = vi.hoisted(() => new Map<string, string>());
@@ -173,9 +175,12 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
     });
 
-    it('a non-Claude launcher still reads config from its own cwd only', async () => {
-      expect(await managedProject(sub, {}, 'codex')).toBe('x-project');
-      expect(await managedProject(repo, {}, 'codex')).toBe('g-project');
+    it.each([
+      ['claude', 'claude-sonnet-4'], ['claude-acp', 'claude-sonnet-4'], ['codex', 'gpt-5'], ['gemini', 'gemini-2.5-pro'], ['copilot-cli', 'gpt-5'],
+    ])('the %s managed launcher also reads the repo .codemie from a subfolder', async (agent, model) => {
+      await writeGlobal({ g: { ...sso('g-project'), model }, x: { ...sso('x-project'), model } }, 'x');
+      expect(await managedProject(sub, {}, agent)).toBe('g-project');
+      expect(await managedProject(repo, {}, agent)).toBe('g-project');
     });
 
     it('a hook without the Claude policy keeps "shell CODEMIE_PROJECT wins" (other OTLP adapters, proxy analytics)', async () => {
@@ -185,9 +190,23 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       expect(await resolveProjectAtCwd(sub)).toBe('shell-project');
     });
 
+    it('a native Copilot hook (no CLAUDE_PROJECT_DIR) finds the repo config from a subfolder, like managed Copilot', async () => {
+      const copilot = { configuredWins: true, walkFromCwd: true };
+      expect(await resolveSessionProject(sub, 'cp-1', copilot)).toBe('g-project');
+      expect(await resolveProjectAtCwd(sub, undefined, copilot)).toBe('g-project');
+      vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
+      expect(await resolveSessionProject(sub, 'cp-2', copilot)).toBe('g-project');
+    });
+
+    it('without the policy the hook resolution is the plain one (other OTLP adapters, proxy analytics)', async () => {
+      expect(await resolveSessionProject(sub, 'plain-1')).toBe('x-project');
+    });
+
     it('only the Claude hook adapter opts into configured-wins', () => {
       const flag = (o: object) => (o as { configuredProjectWins: boolean }).configuredProjectWins;
       expect(flag(new ClaudeCodeOtlpPlugin())).toBe(true);
+      expect(flag(new CopilotCliOtlpPlugin())).toBe(true);
+      expect(flag(new CopilotChatOtlpPlugin())).toBe(true);
     });
 
     it('a managed Claude session keeps its exported project even with the Claude policy', async () => {
