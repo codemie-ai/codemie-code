@@ -3739,6 +3739,48 @@ describe('continued session (EPMCDME-16992)', () => {
     expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
   });
 
+  it('does not take a local command with leading whitespace for work of its own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const command = JSON.stringify({
+      type: 'user',
+      uuid: 'c-x1',
+      sessionId: 'C',
+      timestamp: '2026-11-10T16:23:53.000Z',
+      message: { role: 'user', content: '\n  <command-name>/exit</command-name>' },
+    });
+    const path = writeTranscript('C.jsonl', [...copiedLines(), command]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
+  it('does not report the parent\'s copied compactions as its own', async () => {
+    const boundary = (uuid: string, timestamp: string): string =>
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid,
+        timestamp,
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      });
+    writeTranscript('P.jsonl', [...parentLines(), boundary('p-b1', '2026-11-01T17:50:00.000Z'), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      boundary('p-b1', '2026-11-01T17:50:00.000Z'),
+      typedUser('c-u1', 'C', '2026-11-10T16:23:52.000Z'),
+      boundary('c-b1', '2026-11-10T16:30:00.000Z'),
+    ]);
+
+    const pass = await openPostCompactPass('C', path, 2_000);
+    await pass.finalize(true);
+
+    const done = pass.events.filter((e) => e.type === 'agent.session.compact.done');
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ timestamp: '2026-11-10T16:30:00.000Z' });
+  });
+
   it('counts every line when the parent transcript is absent', async () => {
     const path = writeTranscript('C.jsonl', copiedLines());
 

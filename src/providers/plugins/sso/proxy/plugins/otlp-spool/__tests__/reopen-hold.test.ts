@@ -68,13 +68,12 @@ describe('holdForIdleReopen', () => {
     const { holdForIdleReopen } = await import('../reopen-hold.js');
     writeState('s4', { reopened: true });
     const grace = 61 * 60 * 1000;
-    const logs = writeSpool('s4', '.otel_logs.ndjson', '{"a":1}\n', grace);
+    writeSpool('s4', '.otel_logs.ndjson', '{"a":1}\n', grace);
     writeSpool('s4', '.otel_metrics.ndjson', '{"b":22}\n', grace);
 
     expect(await holdForIdleReopen('s4')).toBe(true);
     expect(advanceCursorMock).toHaveBeenCalledWith('s4', 'logsJson', 8, expect.objectContaining({ reason: 'idle_reopen_expired', stream: 'logsJson' }));
     expect(advanceCursorMock).toHaveBeenCalledWith('s4', 'metricsJson', 9, expect.objectContaining({ stream: 'metricsJson' }));
-    expect(logs).toContain('s4');
   });
 
   it('keeps holding while the session still writes records', async () => {

@@ -125,6 +125,8 @@ const COMPACTION_SETTLE_INTERVAL_MS = 10_000;
 interface CompactionScan {
   compactions: Compaction[];
   offset: number;
+  /** Uuids of lines a continued session copied from its parent: their boundaries are not its own. */
+  excluded?: ReadonlySet<string>;
 }
 
 /**
@@ -158,7 +160,9 @@ async function scanCompactions(transcriptPath: string, scan: CompactionScan): Pr
   for (const line of lines) {
     if (!line.includes('compact_boundary')) continue;
     try {
-      boundaryLines.push(JSON.parse(line) as SignalLine);
+      const parsed = JSON.parse(line) as SignalLine & { uuid?: unknown };
+      if (typeof parsed.uuid === 'string' && scan.excluded?.has(parsed.uuid)) continue;
+      boundaryLines.push(parsed);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
@@ -197,9 +201,10 @@ function isCompactionNewer(candidate: Compaction, lastEnd: string): boolean {
 async function waitForCompactionsToSettle(
   transcriptPath: string,
   afterEnd: string,
-  waitBudgetMs: number
+  waitBudgetMs: number,
+  excluded: ReadonlySet<string> = new Set()
 ): Promise<CompactionScan> {
-  const scan: CompactionScan = { compactions: [], offset: 0 };
+  const scan: CompactionScan = { compactions: [], offset: 0, excluded };
   const deadline = Date.now() + waitBudgetMs;
   let previousSignature: string | undefined;
   let stableSince: number | undefined;
@@ -340,7 +345,7 @@ function isLocalCommandTurn(parsed: TranscriptLine): boolean {
       : Array.isArray(content)
         ? String((content.find((block) => (block as { type?: unknown } | null)?.type === 'text') as { text?: unknown } | undefined)?.text ?? '')
         : '';
-  return /^s*<(command-name|command-message|local-command-)/.test(text);
+  return /^\s*<(command-name|command-message|local-command-)/.test(text);
 }
 
 /**
@@ -1199,7 +1204,12 @@ export async function openPostCompactPass(
   waitBudgetMs: number = POST_COMPACT_WAIT_BUDGET_MS
 ): Promise<TranscriptPass> {
   const peekState = await loadParseState(sessionId);
-  const scan = await waitForCompactionsToSettle(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
+  const scan = await waitForCompactionsToSettle(
+    transcriptPath,
+    peekState.lastCompactionEnd,
+    waitBudgetMs,
+    new Set(Array.isArray(peekState.inheritedUuids) ? peekState.inheritedUuids : [])
+  );
 
   let release: (() => Promise<void>) | undefined;
   try {
@@ -1211,6 +1221,15 @@ export async function openPostCompactPass(
     if (isReopenedIdle(state)) {
       return { events: [], finalize: finalizeOf(sessionId, state, release) };
     }
+
+    // The parent lookup may only have resolved in the pass above: boundaries collected before that
+    // may be copies, so start the scan over with the resolved set.
+    const inherited = new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
+    if (inherited.size > (scan.excluded?.size ?? 0)) {
+      scan.compactions = [];
+      scan.offset = 0;
+    }
+    scan.excluded = inherited;
 
     // Catch up with anything appended while the lock was being acquired; only the appended bytes
     // are read, so this stays cheap even on a large transcript (and no-ops while it is unchanged).
