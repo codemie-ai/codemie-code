@@ -241,6 +241,7 @@ interface ContentBlock {
 interface TranscriptLine extends SignalLine {
   gitBranch?: string;
   uuid?: string;
+  message?: { content?: unknown; model?: unknown };
 }
 
 /**
@@ -523,9 +524,8 @@ const MAX_PARENT_LOOKUPS = 3;
  * Lines already reported before a late find stay reported, but every later event and the summary
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  *
- * Accepted by the owner, not to be re-raised as findings (see docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): D-1 the repeated
- * scan for a directory with more than 200 transcripts, and D-2 the copies a first pass reports when
- * the parent's record is not on disk yet.
+ * Known limits: a project directory with more than 200 transcripts is scanned again on every pass,
+ * and a first pass that runs before the parent's record is on disk reports the copied lines.
  */
 async function ensureInherited(
   state: TranscriptParseState,
@@ -642,7 +642,9 @@ async function deriveMainEvents(
     // Only work the user did counts: a real assistant answer or a genuine prompt. Records Claude Code
     // appends on a reopen (hook attachments, mode / permission-mode / last-prompt lines) and its
     // synthetic placeholder answers are not activity.
-    if (head && ((head.type === 'assistant' && !(parsed && isSyntheticModel(parsed.model))) || isGenuineUserTurn(head))) {
+    // Synthetic-ness is read from the line itself: `parsed` is null for a line without usage or ids.
+    const syntheticAnswer = head?.type === 'assistant' && isSyntheticModel(String(head.message?.model ?? ''));
+    if (head && ((head.type === 'assistant' && !syntheticAnswer) || isGenuineUserTurn(head))) {
       ownActivity = true;
     }
     if (parsed) {
@@ -779,9 +781,9 @@ export async function openSessionStartPass(
     const state = await loadParseState(sessionId);
     // A resume of a session already started announces nothing: its start was reported once, and a
     // start stamped at the reopen would move the session's activity window (EPMCDME-16993).
-    // Accepted limit (D-3 in docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): without a saved sessionStartedAt a resume is a
-    // first start here (the transition gate already stops a resume without an evidence record), and
-    // a state with offset 0 is not moved to the file size, which would drop never-reported work.
+    // Without a saved sessionStartedAt a resume is a first start here (the transition gate already
+    // stops a resume without an evidence record), and a state with offset 0 is not moved to the file
+    // size, which would drop never-reported work.
     const reopened = source === 'resume' && Boolean(state.sessionStartedAt);
     if (reopened) {
       state.reopened = true;

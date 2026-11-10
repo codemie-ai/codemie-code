@@ -139,8 +139,8 @@ async function readCountedUuids(path: string): Promise<string[]> {
  * `null` when it could not be completed (unreadable directory or sibling, more candidates than
  * the scan covers). Never throws.
  *
- * Accepted by the owner (D-1 in docs/superpowers/tasks/2026-11-09-otlp-continued-and-reopened-sessions/accepted-decisions.md): more than {@link MAX_SIBLING_FILES} siblings
- * stay "incomplete" and are retried on every pass; a parent outside the newest ones is not found.
+ * Known limit: more than {@link MAX_SIBLING_FILES} siblings stay "incomplete" and are retried on
+ * every pass; a parent outside the newest ones is not found.
  */
 export async function resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null> {
   // dirname('') is '.', which would scan the process working directory.

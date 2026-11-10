@@ -3601,6 +3601,28 @@ describe('continued session (EPMCDME-16992)', () => {
     expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
   });
 
+  it('honours a parent whose continued-in record lands after the first pass', async () => {
+    const path = writeTranscript('C.jsonl', copiedLines());
+    const first = await openMainTranscriptPass('C', path, 'Stop');
+    await first.finalize(true);
+    // The parent's record was not on disk yet: the copies are reported by this first pass.
+    expect(first.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
+
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    appendFileSync(
+      path,
+      [typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'), typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z')].join('\n') + '\n'
+    );
+    const second = await openMainTranscriptPass('C', path, 'Stop');
+    await second.finalize(true);
+
+    const usage = second.events.filter((e) => e.type === 'agent.usage.request');
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ message_id: 'msg-c1' });
+    const summary = second.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary?.turns).toBe(1);
+  });
+
   it('counts every line when the parent transcript is absent', async () => {
     const path = writeTranscript('C.jsonl', copiedLines());
 
@@ -3798,6 +3820,96 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
     await end.finalize(true);
 
     expect(end.events.filter((e) => e.type === 'agent.subagent.usage').map((e) => e.agent_id)).toEqual(['a1']);
+  });
+
+  it('keeps a reopened session silent when the reopen appends a synthetic answer without usage or ids', async () => {
+    const sessionId = 'session-reopen-synthetic-idless';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'syn-1',
+        timestamp: '2026-11-07T18:17:46.000Z',
+        message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] },
+      }) + '\n'
+    );
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+  });
+
+  it('keeps a compaction made while reopened and idle for the first PostCompact after activity', async () => {
+    const sessionId = 'session-reopen-postcompact';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-11-07T10:00:00.000Z',
+        compactMetadata: { trigger: 'manual', preTokens: 1000, postTokens: 300, durationMs: 5_000 },
+      }) + '\n'
+    );
+    const idle = await openPostCompactPass(sessionId, path, 100);
+    await idle.finalize(true);
+    expect(idle.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:05:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:05:05.000Z')].join('\n') + '\n');
+    const active = await openPostCompactPass(sessionId, path, 100);
+    await active.finalize(true);
+
+    expect(active.events.filter((e) => e.type === 'agent.session.compact.done')).toHaveLength(1);
+  });
+
+  it('keeps an env change seen while reopened and idle for the first env check after activity', async () => {
+    const sessionId = 'session-reopen-envcheck';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+    const input = { effort: 'high', permissionMode: sessionEnvFixture.permission_mode };
+
+    const idle = await openSessionEnvCheckPass(sessionId, input);
+    await idle.finalize(true);
+    expect(idle.sessionEnvFields).toBeNull();
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await active.finalize(true);
+
+    const check = await openSessionEnvCheckPass(sessionId, input);
+    await check.finalize(true);
+    expect(check.sessionEnvFields).toMatchObject({ effort: 'high' });
   });
 
   it('survives a corrupt inheritedUuids value in the saved state', async () => {

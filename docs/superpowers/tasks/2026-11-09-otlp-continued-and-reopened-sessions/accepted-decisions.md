@@ -67,6 +67,20 @@ ticket acceptance criteria (verified live, isolated, against baseline `main`).
 - **Reopen only if:** real data shows a `Notification` (or another passthrough event) on an idle
   reopen putting the session back into the reopen day's analytics.
 
+## D-6 (PR review CR-004): failed pass on an idle reopened session
+
+- **Behaviour:** if a pass fails (parse-state lock not acquired within 10 s, or an I/O error), the
+  catch returns an empty pass without `suppressLifecycle` / `reopened`. For an idle reopened
+  session the plugin then forwards the raw `Stop` / `SessionEnd` hook (and a `SessionStart` resume
+  as a start). This was the behaviour on a failed pass before this change.
+- **Decision:** not changed. The fix would read the state without the lock, which can be stale: on
+  the first active Stop with a failed lock it still says "idle" and would drop a legitimate raw
+  Stop (usage is not lost, the next pass sends it). For `SessionStart` it cannot be fixed fully,
+  because the `reopened` flag is only persisted under the lock, so a later Stop would not know
+  about the reopen anyway.
+- **Reopen only if:** a stray `Stop` / `SessionEnd` / `session.start` after a lock timeout on a
+  reopen is seen to move a session back into a day's analytics.
+
 ## Fixed after review run 4 (for reference, not accepted limits)
 
 - CR-001: a reopen no longer moves the env baseline, so a model/permission-mode change made at
@@ -76,6 +90,11 @@ ticket acceptance criteria (verified live, isolated, against baseline `main`).
 - CR-003: tests added for the parent lookup when the `continued-in` record lies before the tail window.
 - Review run 5 CR-001: an idle reopened `Stop`/`StopFailure`/`PreCompact` no longer settles deferred
   subagents or moves the env baseline.
+
+Fixed after the PR review: an id-less `<synthetic>` assistant line no longer counts as reopen
+activity (synthetic-ness is read from the line, not from the parsed usage); tests added for idle
+PostCompact, idle env check, id-less synthetic and a parent record that lands after the first pass;
+source comments describe the known limits neutrally.
 
 ## Evidence
 
