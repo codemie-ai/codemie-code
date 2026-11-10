@@ -21,13 +21,22 @@
  * the replay throws the client gets a 401 asking it to re-send. No marker is written and no sign-in
  * is started for a superseded request.
  *
- * KNOWN GAP: detection relies ONLY on this exact 302/303-to-/oauth2/start signature. Two other
- * gateway rejection shapes bypass it silently (no marker written, no re-login triggered, no
- * failing test): a plain 401, and an HTML 200 (the latter is already handled on the metrics
- * path — see metrics-api-client.ts). There are now three independent classifiers of "SSO
- * session rejected" in this codebase (metrics-api-client.ts: 401/403/HTML; the OTLP forwarder:
- * 401/403; this plugin: 302 to /oauth2/start) with no shared `isSessionRejection()`. A follow-up
- * could unify them; for this PR, this comment states the assumption instead.
+ * A session-shaped 401, as decided by `isSessionRejection401` (session-rejection.ts), takes the same
+ * path as the redirect: superseded cookies are replayed once, otherwise the marker is written, one
+ * detached sign-in is started and the synthetic 401 is returned. That predicate is status-only by
+ * assumption (see its header), so a 401 with another cause would also match. The loop guard bounds
+ * that: when this interceptor acts on a 401 it records a hash of the rejected cookies (never the
+ * values). A later 401 is passed through untouched, its body unread, only when a sign-in has
+ * completed since then (`getLastSignInAt`) AND the stored cookies still hash the same: that sign-in
+ * returned the very credentials the server rejected, so they were not the cause. Without a
+ * completed sign-in the 401 is acted on again, so a user who ignored the browser tab still
+ * recovers. The guard clears when the stored cookies change or a redirect rejection is seen. It
+ * lives in memory only; a proxy daemon restart resets it (at worst one extra sign-in, bounded by
+ * the lock and cooldown). A 403 is never acted on.
+ *
+ * KNOWN GAP: an HTML 200 rejection still bypasses this plugin (it is handled on the metrics path —
+ * see metrics-api-client.ts). The metrics (401/403/HTML) and OTLP forwarder (401/403) classifiers
+ * do not call `isSessionRejection401` yet; it is placed so they can.
  *
  * KNOWN GAP: the synthetic 401 body below is always Anthropic-shaped (`{type, error: {type,
  * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see
@@ -42,12 +51,19 @@
  */
 
 import type { IncomingMessage } from 'http';
+import { createHash } from 'crypto';
 import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 import { logger } from '../../../../../utils/logger.js';
-import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
-import { supersedingCookieHeader } from '../../session/cookie-auth.js';
+import {
+  startDetachedSsoLogin,
+  describeLogin,
+  getLastSignInAt,
+  DetachedLoginOutcome,
+} from '../../sso.detached-login.js';
+import { buildCookieHeader, supersedingCookieHeader } from '../../session/cookie-auth.js';
+import { isSessionRejection401 } from './session-rejection.js';
 import type { CredentialRefresher } from './credential-refresh.js';
 import type { SSOCredentials } from '@/providers/core/types.js';
 
@@ -85,6 +101,21 @@ function isOauthRedirect(response: IncomingMessage): boolean {
   );
 }
 
+function isRejection(response: IncomingMessage): boolean {
+  return isOauthRedirect(response) || isSessionRejection401(response);
+}
+
+/** One-way hash of a Cookie header, so the loop guard never keeps credential values. */
+function fingerprintOf(cookieHeader: string): string {
+  return createHash('sha256').update(cookieHeader, 'utf-8').digest('hex');
+}
+
+/** The cookies a 401 this interceptor acted on was sent with, and when it acted. */
+interface RejectedCookies {
+  fingerprint: string;
+  recordedAt: number;
+}
+
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
   name = 'SSO Session Expiry Detector';
@@ -114,6 +145,9 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
 class SSOSessionExpiryInterceptor implements ProxyInterceptor {
   name = 'sso-session-expiry';
 
+  /** Loop guard state: in memory only, see the header comment. */
+  private rejected401: RejectedCookies | null = null;
+
   constructor(
     private readonly targetApiUrl: string,
     private readonly credentialRefresher?: CredentialRefresher<SSOCredentials>
@@ -124,40 +158,53 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     response: IncomingMessage,
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage> {
-    if (!isOauthRedirect(response)) return response;
+    if (!isRejection(response)) return response;
+    if (isOauthRedirect(response)) this.rejected401 = null;
 
     const freshCookies = await supersedingCookieHeader(context.headers['cookie'], this.credentialRefresher);
     if (freshCookies !== null) {
-      logger.debug(`[${this.name}] request carried superseded credentials; not treating the redirect as an expiry`);
+      logger.debug(`[${this.name}] request carried superseded credentials; not treating the rejection as an expiry`);
       try {
-        await tools.readBody(response); // keep-alive socket: the 302 body must be consumed
+        await tools.readBody(response); // keep-alive socket: the rejected body must be consumed
       } catch (error) {
-        logger.debug(`[${this.name}] draining the redirect body failed`, error);
+        logger.debug(`[${this.name}] draining the rejected response body failed`, error);
       }
       const replayed = await this.replayWithFreshCookies(context, tools, freshCookies);
       if (!replayed) {
         return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
       }
-      if (!isOauthRedirect(replayed)) return replayed;
+      if (!isRejection(replayed)) return replayed;
+      if (isOauthRedirect(replayed)) this.rejected401 = null;
       // The fresh credentials were rejected too, so the session really is gone: handle the replayed
-      // redirect as an expiry below. The replay is never repeated.
+      // rejection as an expiry below. The replay is never repeated.
       response = replayed;
+    }
+
+    const isRedirect = isOauthRedirect(response);
+    if (!isRedirect) {
+      if (await this.suppressedByLoopGuard()) {
+        logger.debug(`[${this.name}] 401 repeated after a sign-in returned the same credentials; passing it through`);
+        return response; // untouched, body unread
+      }
+      this.rejected401 = { fingerprint: fingerprintOf(context.headers['cookie'] ?? ''), recordedAt: Date.now() };
     }
 
     let outcome: DetachedLoginOutcome | undefined;
     let failedStep: string | undefined;
     try {
       failedStep = 'readBody';
-      await tools.readBody(response); // drain the original 302 body; its content is discarded
+      await tools.readBody(response); // drain the rejected body; its content is discarded
       failedStep = 'markAnalyticsAuthInvalid';
       await markAnalyticsAuthInvalid(
-        `oauth2-proxy redirected to ${OAUTH2_START_MARKER} (expired SSO session)`,
+        isRedirect
+          ? `oauth2-proxy redirected to ${OAUTH2_START_MARKER} (expired SSO session)`
+          : 'CodeMie API answered 401 (rejected SSO session)',
         this.targetApiUrl
       );
       failedStep = 'startDetachedSsoLogin';
       outcome = await startDetachedSsoLogin(this.targetApiUrl);
     } catch (error) {
-      // Any of the three steps above can reject; without this catch the raw 302
+      // Any of the three steps above can reject; without this catch the raw rejection
       // would silently pass through and the <synthetic>-turn bug would recur.
       // Still synthesize the 401 below using a generic fallback message.
       logger.error(
@@ -169,6 +216,37 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     const login = describeLogin(outcome ?? 'failed');
     // After a sign-in that just finished the text already says so; "session expired" would contradict it.
     return syntheticUnauthorized(response, tools, outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`);
+  }
+
+  /**
+   * Whether a 401 is passed through by the loop guard: a 401 was acted on before, a sign-in has
+   * completed since, and the store still holds the very cookies that were rejected. Clears the
+   * guard when the stored cookies differ. An unreadable store or sign-in time never suppresses.
+   */
+  private async suppressedByLoopGuard(): Promise<boolean> {
+    const guard = this.rejected401;
+    if (!guard) return false;
+    const stored = await this.storedCookieHeader();
+    if (stored === null) return false;
+    if (fingerprintOf(stored) !== guard.fingerprint) {
+      this.rejected401 = null;
+      return false;
+    }
+    const signedInAt = await getLastSignInAt({ codeMieUrl: this.targetApiUrl });
+    return signedInAt !== null && signedInAt > guard.recordedAt;
+  }
+
+  /** The Cookie header the store holds now, or null when it cannot be read or is empty. */
+  private async storedCookieHeader(): Promise<string | null> {
+    if (!this.credentialRefresher) return null;
+    try {
+      const stored = await this.credentialRefresher.refreshNow();
+      const header = stored ? buildCookieHeader(stored.cookies) : '';
+      return header === '' ? null : header;
+    } catch (error) {
+      logger.debug(`[${this.name}] reading the stored credentials for the loop guard failed`, error);
+      return null;
+    }
   }
 
   /**
