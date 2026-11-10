@@ -16,8 +16,9 @@ import type { Session } from './types.js';
  * nothing and persists nothing, so delivery retries once it clears:
  * - `destination-pending`: a live hold of the new pipeline (a spool `holds` entry, or a stream whose delivery the
  *   backend holds, e.g. `project_unavailable`; acknowledgement clears it);
- * - `destination-unconfirmed`: the backend has not accepted the session's publication yet (e.g. a short session that
- *   ended before the forwarder's first send); the destination-accepted marker (or its intent in the spool status, while
+ * - `destination-unconfirmed`: the backend has not accepted the session's publication to this project yet (e.g. a short
+ *   session that ended before the forwarder's first send, or one resumed under another project); the destination-accepted
+ *   marker for the project (or its intent in the spool status, while
  *   the forwarder still owes the marker) clears it. A final discard of the new pipeline is kept as its own marker and
  *   checked first, so an earlier acceptance never outlives it;
  * - `verdict-unavailable`: the verdict could not be established for now (an unreadable consent store, marker or
@@ -100,9 +101,13 @@ type DestinationState = 'clear' | 'held' | 'unverifiable' | LegacyMetricsPending
  * Whether the backend accepted the session's publication (`clear`), the new pipeline stopped or discarded it for good
  * (`held`), or holds it or has no answer yet (pending). A stop, an end or a live hold wins over an earlier acceptance.
  */
-async function destinationState(consent: NonNullable<Session['legacyMetricsConsent']>, nativeId: string | undefined): Promise<DestinationState> {
+async function destinationState(
+  consent: NonNullable<Session['legacyMetricsConsent']>,
+  nativeId: string | undefined,
+  project: string
+): Promise<DestinationState> {
   if (!nativeId || nativeId === 'unknown' || !isSafeSessionId(nativeId)) return 'unverifiable';
-  const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+  const { projectTag, recordKey } = await import('@/agents/core/evidence/record-store.js');
   const key = recordKey(consent.apiIdentity, consent.ownerHash, nativeId);
   const { markerState } = await import('@/agents/core/evidence/stop-marker.js');
   // A notice marker is create-once and outlives the hold it announced: the live hold is read from the spool status
@@ -128,10 +133,11 @@ async function destinationState(consent: NonNullable<Session['legacyMetricsConse
     if (status.stopIntent !== undefined || discarded || intent?.ended) return 'held';
     const backendHold = Object.values(status.delivery ?? {}).some((failure) => failure?.reason === 'destination_hold');
     if (backendHold || Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
-    acceptedIntent = intent?.accepted === true;
+    // Only an acceptance of the project this send names: one for another project of the same session is no answer
+    acceptedIntent = intent?.accepted?.includes(projectTag(project)) === true;
   }
   if (acceptedIntent) return 'clear';
-  const accepted = await acceptedState(key);
+  const accepted = await acceptedState(key, project);
   if (accepted === 'accepted') return 'clear';
   if (accepted === 'unknown') return 'verdict-unavailable';
   return 'destination-unconfirmed';
@@ -173,7 +179,7 @@ export async function legacyMetricsVerdict(session: GateInput): Promise<LegacyMe
     const held = await consentStatus(consent.ref, scope, session.workingDirectory);
     if (held === 'revoked') return { publish: false, reason: 'consent-revoked' };
     if (held === 'unknown') return { publish: false, reason: 'verdict-unavailable', transient: true };
-    const state = await destinationState(consent, session.correlation?.agentSessionId);
+    const state = await destinationState(consent, session.correlation?.agentSessionId, scope.project);
     if (state === 'clear') return { publish: true };
     if (state === 'held') return { publish: false, reason: 'destination-held' };
     if (state === 'unverifiable') return { publish: false, reason: 'session-unverifiable' };

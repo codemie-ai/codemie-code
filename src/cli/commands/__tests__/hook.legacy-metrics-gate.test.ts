@@ -158,7 +158,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     await recordUnacknowledged(NATIVE_ID, 'hooks', { kind: 'retry', reason: 'http_503', detail: 'project_unavailable', hold: true }, { cursor: 0, end: 100 });
   };
   /** The backend accepts the session's publication to the consented project, as the forwarder records it. */
-  const accept = (): Promise<void> => writeAccepted(markerKey(), NATIVE_ID);
+  const accept = (): Promise<void> => writeAccepted(markerKey(), NATIVE_ID, 'test321');
   /** The hold recovers: the backend acknowledges and accepts the range; the notice marker stays (it is never removed in production). */
   const recover = async (): Promise<void> => {
     await advanceCursor(NATIVE_ID, 'hooks', 100);

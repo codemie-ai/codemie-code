@@ -163,7 +163,7 @@ describe('MetricsSyncProcessor', () => {
       const ref = await resolveConsent(scope, folder);
       const { writeAccepted } = await import('@/agents/core/evidence/accepted-marker.js');
       const { recordKey } = await import('@/agents/core/evidence/record-store.js');
-      await writeAccepted(recordKey('api-x', 'owner-x', 'agent-1'), 'agent-1');
+      await writeAccepted(recordKey('api-x', 'owner-x', 'agent-1'), 'agent-1', 'test321');
 
       const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
         provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder,

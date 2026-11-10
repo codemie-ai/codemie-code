@@ -94,8 +94,15 @@ export function stopAckFileName(key: string): string {
 
 export const publicationModeFileName = (key: string): string => `${key}.publication.json`;
 
-/** Destination-accepted sidecar for a record key; shares the record's retention (never matches RECORD_RE). */
-export const acceptedFileName = (key: string): string => `${key}.accepted.json`;
+/**
+ * The project an acceptance is for, as a file-name tag: a hash of the project as the backend echoes it back (compared
+ * case-insensitively), so a marker holds no project text and one session's acceptance for one project never stands for another.
+ */
+export const projectTag = (project: string): string => createHash('sha256').update(project.toLowerCase()).digest('hex').slice(0, 16);
+
+/** Destination-accepted sidecar for a record key and the accepted project's tag; shares the record's retention (never matches RECORD_RE). */
+export const acceptedFileName = (key: string, tag: string): string => `${key}.${tag}.accepted.json`;
+const ACCEPTED_RE = /^([0-9a-f]{64})\.[0-9a-f]{16}\.accepted\.json$/;
 
 /** Destination-ended sidecar: a discard that ended the session's publication; swept with the record, after the accepted one. */
 export const endedFileName = (key: string): string => `${key}.ended.json`;
@@ -179,6 +186,18 @@ async function listRecordFiles(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/** Destination-accepted sidecars by record key (one per accepted project). */
+async function listAcceptedFiles(dir: string): Promise<Map<string, string[]>> {
+  const byKey = new Map<string, string[]>();
+  let names: string[];
+  try { names = await readdir(dir); } catch { return byKey; }
+  for (const name of names) {
+    const key = ACCEPTED_RE.exec(name)?.[1];
+    if (key) byKey.set(key, [...(byKey.get(key) ?? []), name]);
+  }
+  return byKey;
 }
 
 /** Whether any owner has a readable record for this session (an owner-less outage hook cannot compute the key). Never throws. */
@@ -290,6 +309,7 @@ export async function sweepRecords(
   const idleMs = evidenceRecordIdleDays() * DAY_MS;
   const entries: Array<{ key: string; lastUsed: number }> = [];
   const pendingKeys = new Set(opts.pendingKeys);
+  const acceptedByKey = await listAcceptedFiles(dir);
   for (const name of await listRecordFiles()) {
     const key = name.slice(0, -5);
     let lastUsed: number;
@@ -313,11 +333,12 @@ export async function sweepRecords(
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
       await unlink(join(dir, publicationModeFileName(key))).catch(() => undefined);
-      // The ended marker goes only once its acceptance is gone: a lone acceptance would authorize a legacy send again
-      const acceptedGone = await unlink(join(dir, acceptedFileName(key))).then(
-        () => true,
-        (err: NodeJS.ErrnoException) => err.code === 'ENOENT'
-      );
+      // The ended marker goes only once every acceptance is gone: a lone acceptance would authorize a legacy send again
+      let acceptedGone = true;
+      for (const name of acceptedByKey.get(key) ?? []) {
+        const gone = await unlink(join(dir, name)).then(() => true, (err: NodeJS.ErrnoException) => err.code === 'ENOENT');
+        acceptedGone &&= gone;
+      }
       if (acceptedGone) await unlink(join(dir, endedFileName(key))).catch(() => undefined);
       return true;
     } catch { return false; }

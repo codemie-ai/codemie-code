@@ -100,17 +100,24 @@ export interface SessionStatus {
 /** The record key (a hash, no identity text) and the destination markers still to write for it. */
 export interface DestinationIntent {
   key: string;
-  accepted?: true;
+  /** Tags of the accepted projects (`projectTag`) whose marker is owed. */
+  accepted?: string[];
   ended?: true;
 }
 
 const RECORD_KEY_RE = /^[0-9a-f]{64}$/;
+const PROJECT_TAG_RE = /^[0-9a-f]{16}$/;
+const MAX_INTENT_TAGS = 16;
 
 function parseDestinationIntent(raw: unknown): DestinationIntent | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const { key, accepted, ended } = raw as Record<string, unknown>;
-  if (typeof key !== 'string' || !RECORD_KEY_RE.test(key) || (accepted !== true && ended !== true)) return undefined;
-  return { key, ...(accepted === true && { accepted: true }), ...(ended === true && { ended: true }) };
+  if (typeof key !== 'string' || !RECORD_KEY_RE.test(key)) return undefined;
+  const tags = Array.isArray(accepted)
+    ? accepted.filter((t): t is string => typeof t === 'string' && PROJECT_TAG_RE.test(t)).slice(0, MAX_INTENT_TAGS)
+    : [];
+  if (tags.length === 0 && ended !== true) return undefined;
+  return { key, ...(tags.length > 0 && { accepted: tags }), ...(ended === true && { ended: true }) };
 }
 
 export interface AgeSegment {

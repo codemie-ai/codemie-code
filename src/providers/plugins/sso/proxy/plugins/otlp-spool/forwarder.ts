@@ -39,7 +39,7 @@ import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { recordDestinationMarker } from './destination-intent.js';
 import { beginSend, endSend, stopOrRecordIntent, tryStop } from './stop-intent.js';
-import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
+import { projectTag, readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
@@ -218,7 +218,8 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       } else if (outcome.kind === 'ok' && !outcome.reason && ctx.consent) {
         // The backend accepted the consented project as the destination: the legacy /v1/metrics gate waits for this.
         // Before the cursor advances: a marker that cannot be written is kept as an intent and repaired from there.
-        await recordDestinationMarker('accepted', ctx.key, sessionId);
+        // Tagged with the accepted project: it never confirms a later resume of the session under another project
+        await recordDestinationMarker({ marker: 'accepted', projectTag: projectTag(ctx.record.project ?? '') }, ctx.key, sessionId);
       } else if (outcome.final) {
         await stopped(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
@@ -261,7 +262,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
   // written before the cursor advances (acknowledge records the same discard in the status)
   const recorded = req.evidence ?? req.guard;
   if (recorded && acknowledged(outcome) && outcome.reason && endsSessionDiscard({ reason: outcome.reason, stream })) {
-    await recordDestinationMarker('ended', recorded.key, sessionId);
+    await recordDestinationMarker({ marker: 'ended' }, recorded.key, sessionId);
   }
   await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
   // Outcome processed (acknowledged, held or retried): the checkpoint is released unless a required stop is recorded nowhere durable.
