@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -452,9 +453,10 @@ describe('CodexMetricsProcessor — parent and direct children', () => {
     vi.resetModules();
   });
 
-  afterEach(() => {
-    // Windows can hold a handle on a fresh rollout file for a moment, so retry the removal.
-    rmSync(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  afterEach(async () => {
+    // A rollout stream closes asynchronously. On Windows the file stays held until the event loop
+    // runs, so the removal must be async (rmSync blocks the loop and retries cannot help).
+    await rm(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
     else delete process.env.CODEMIE_HOME;
   });
