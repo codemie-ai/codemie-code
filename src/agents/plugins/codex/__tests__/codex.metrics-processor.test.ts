@@ -453,7 +453,8 @@ describe('CodexMetricsProcessor — parent and direct children', () => {
   });
 
   afterEach(() => {
-    rmSync(tempHome, { recursive: true, force: true });
+    // Windows can hold a handle on a fresh rollout file for a moment, so retry the removal.
+    rmSync(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
     else delete process.env.CODEMIE_HOME;
   });
