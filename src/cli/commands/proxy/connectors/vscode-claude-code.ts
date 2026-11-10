@@ -246,3 +246,96 @@ export async function writeVsCodeClaudeCodeConfig(
     gatewayKey
   );
 }
+
+export interface RemoveVsCodeClaudeCodeConfigResult {
+  removed: boolean;
+  path: string;
+  /** Why nothing was removed; absent when `removed` is true. */
+  reason?: string;
+}
+
+function isLoopbackUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    const { hostname } = new URL(value);
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reverse {@link writeVsCodeClaudeCodeConfigAtPath}: drop the CodeMie-managed
+ * `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt`
+ * so the extension returns to its normal Claude.ai login.
+ *
+ * Only acts when `ANTHROPIC_BASE_URL` points at a loopback address — a base URL pointing
+ * anywhere else was set by the user, not by `connect`, and is left untouched. Every other
+ * `claudeCode.environmentVariables` entry is preserved. Edits are applied to the original text
+ * so comments and formatting survive, and an unparseable file is left unchanged.
+ */
+export async function removeVsCodeClaudeCodeConfigAtPath(
+  configPath: string
+): Promise<RemoveVsCodeClaudeCodeConfigResult> {
+  if (!existsSync(configPath)) {
+    return { removed: false, path: configPath, reason: 'settings.json not found' };
+  }
+
+  const { settings, raw } = await readSettings(configPath);
+  const envVars = settings['claudeCode.environmentVariables'];
+  if (!Array.isArray(envVars)) {
+    return { removed: false, path: configPath, reason: 'no CodeMie entries found' };
+  }
+
+  const baseUrlEntry = envVars.find(
+    (entry): entry is ClaudeCodeEnvVar => isEnvVarEntry(entry) && entry.name === ANTHROPIC_BASE_URL_KEY
+  );
+  if (!baseUrlEntry || !isLoopbackUrl(baseUrlEntry.value)) {
+    return { removed: false, path: configPath, reason: 'no CodeMie entries found' };
+  }
+
+  const remaining = envVars.filter(
+    entry => !(isEnvVarEntry(entry) && typeof entry.name === 'string' && MANAGED_ENV_VAR_NAMES.has(entry.name))
+  );
+
+  const formattingOptions = detectFormattingOptions(raw);
+  const afterEnv = applyEdits(
+    raw,
+    modify(
+      raw,
+      ['claudeCode.environmentVariables'],
+      remaining.length > 0 ? remaining : undefined,
+      { formattingOptions }
+    )
+  );
+  const nextText = applyEdits(
+    afterEnv,
+    modify(afterEnv, ['claudeCode.disableLoginPrompt'], undefined, { formattingOptions })
+  );
+
+  try {
+    await writeAtomically(configPath, nextText);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to update VS Code Claude Code settings at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  logger.info(
+    '[proxy] Removed CodeMie config from VS Code Claude Code extension',
+    ...sanitizeLogArgs({ configPath, managedEnvVarNames: [...MANAGED_ENV_VAR_NAMES] })
+  );
+
+  return { removed: true, path: configPath };
+}
+
+/**
+ * Remove CodeMie's managed `claudeCode.*` keys from the current user's VS Code (or VS Code
+ * Insiders) `settings.json`.
+ */
+export async function removeVsCodeClaudeCodeConfig(
+  insiders = false
+): Promise<RemoveVsCodeClaudeCodeConfigResult> {
+  return removeVsCodeClaudeCodeConfigAtPath(getVsCodeClaudeCodeSettingsPath(insiders));
+}
