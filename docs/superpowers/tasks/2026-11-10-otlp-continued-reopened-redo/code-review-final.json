@@ -1,0 +1,67 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran on the production diff (785 lines); tests/live harness code, evidence JSON and test files (about 4,000 lines) were not line-reviewed, so coverage is partial. One real defect was found and already fixed in the working tree (lost backslash in the local-command regex). One finding is a probable double count (compaction events of a continuation), and two need an owner decision (reopened session that works but never gets a Stop; missing started_at clamp from the plan). Deferred: 7 (hook-path sibling scan cost, lock-free state read fails open, unbounded hold while OTel heartbeats continue, per-tick parse-state read cost, 15 s delay of late flushes for ordinary ended sessions, Stop/SessionEnd/git snapshot still forwarded for an empty continuation, idle-pass lifecycle events not re-derivable); dismissed: 3 (unverified or already covered by accepted decisions D-2/D-7/D-9).",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "16992: continued session reports only its own requests, tokens, tool calls, turns", "status": "pass", "notes": "inherited uuids seeded into seen set; buildFullAccumulator drops excluded uuids; continuationActive gate"},
+    {"kind": "spec", "item": "16992: continuation Started is its own start, including copied uuid-less lines with timestamps", "status": "pass", "notes": "positional ownership (ownStarted) skips copies until the first own uuid line; the plan's extra clamp to sessionStartedAt is not implemented (see CR-004)"},
+    {"kind": "spec", "item": "16992: continuation with only /exit-style local lines or synthetic placeholders sends no summary", "status": "partial", "notes": "worked only for text starting exactly with '<' because of the lost backslash in the regex (CR-001, fixed in working tree, needs a regression test)"},
+    {"kind": "spec", "item": "16993: prompt-less reopen announces no hook lifecycle events", "status": "pass", "notes": "reopened/suppressLifecycle path in the plugin and orchestrator"},
+    {"kind": "spec", "item": "16993: native OTel records of an idle reopen are not forwarded", "status": "pass", "notes": "holdForIdleReopen before the OTel loops in forwardSession; cursors untouched"},
+    {"kind": "spec", "item": "16993: reopen followed by real work releases held records and loses no data", "status": "partial", "notes": "release happens at the first Stop/SessionEnd pass only; a reopened session that works and ends without any hook loses its OTel records after the 60 min grace (CR-003)"},
+    {"kind": "spec", "item": "16993: startup race where native records precede the resume hook", "status": "partial", "notes": "bounded by a 15 s settle window; accepted as D-7"},
+    {"kind": "spec", "item": "Ordinary sessions unchanged", "status": "pass", "notes": "live S1/S10 pass; only residual is a 15 s delay for OTel written after SessionEnd"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Conventional Commits, headers <= 100 chars, footer present"},
+    {"kind": "code-quality", "status": "pass", "notes": "ES modules, .js extensions, @/ alias, logger.debug with sanitizeLogArgs; tsc and eslint clean at HEAD (before the one-character regex fix)"},
+    {"kind": "security", "status": "pass", "notes": "no credentials or unsafe process handling in production code; live suite uses temp CODEMIE_HOME and fake credentials"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 355,
+      "title": "Local-command regex has a literal 's*' instead of '\\s*'",
+      "problem": "isLocalCommandTurn used /^s*<(command-name|...)/; the backslash was lost, so a local-command line whose text starts with whitespace or a newline is treated as a genuine prompt.",
+      "impact": "A continuation or reopen whose only activity is such a line is counted as own work: the continuation summary is sent and a reopen flips to active, releasing held OTel records, which reintroduces the 16992/16993 symptoms.",
+      "recommendation": "Fixed in the working tree (/^\\s*<...). Add a unit test with leading whitespace/newline text and re-run the affected tests."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 146,
+      "title": "Compaction scan is not continuation-aware",
+      "problem": "scanCompactions/isCompactionNewer read every compact_boundary in the child transcript, including copies from the parent, and report all of them as the child's compaction.done events when lastCompactionEnd is empty. Reported by the edge-case lens from reading the code; not reproduced.",
+      "impact": "A continued session re-reports the parent's compactions, the same double count 16992 is about, for compaction events.",
+      "recommendation": "Skip compact_boundary lines whose uuid is in the inherited set (or older than the first own line) in the scan; add a continuation test with a copied compact_boundary."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/reopen-hold.ts",
+      "line": 31,
+      "title": "Reopened session that works but never gets a Stop loses its OTel records",
+      "problem": "reopenActive is set only by a hook pass that reads transcript lines. If the user reopens, works, and the terminal is killed before any Stop/SessionEnd, the daemon still sees an idle reopen and drops the held records unsent after the 60 min abandoned grace (idle_reopen_expired). D-9 covers only a reopen that stayed idle.",
+      "impact": "Real usage telemetry of that session is lost. A long first turn after a reopen is also withheld until its first Stop.",
+      "recommendation": "Choose: (a) accept and document, (b) have the hold also check the transcript file for own activity lines before dropping or releasing, or (c) release on the first non-startup native record (api_request, tool_result, user_prompt with text) as the original plan's record-level split intended."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 416,
+      "title": "Plan step to clamp a continuation's started_at to sessionStartedAt is not implemented",
+      "problem": "Task 3 of the plan clamps started_at to state.sessionStartedAt as a safety net; the implementation relies only on positional ownership. A copied line that has a uuid but was not in the parent's counted set ends the skip phase early and later uuid-less copies can still set the start.",
+      "impact": "Started could still show the parent's time in that edge case. Live scenarios S3/S4 pass without the clamp.",
+      "recommendation": "Choose: add the clamp (small, matches the plan) or record in accepted-decisions that positional ownership replaces it and why."
+    }
+  ]
+}

@@ -1,1 +1,10 @@
-{"schema":1,"flow":"sdlc-light","slug":"otlp-continued-reopened-redo","branch":"EPMCDME-16992_16993_otlp-continued-reopened-redo","phase":"main","started_at":"2026-11-10T18:04:17Z"}
+{
+  "schema": 1,
+  "flow": "sdlc-light",
+  "slug": "otlp-continued-reopened-redo",
+  "branch": "EPMCDME-16992_16993_otlp-continued-reopened-redo",
+  "phase": "maintenance",
+  "started_at": "2026-11-10T18:04:17Z",
+  "completed_at": "2026-11-10T20:27:02Z",
+  "last_sync_commit": "27de99864a9afe28c26618b669075c61f403168f"
+}

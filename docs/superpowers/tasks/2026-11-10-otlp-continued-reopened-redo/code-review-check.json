@@ -1,0 +1,96 @@
+{
+  "decision": "approve",
+  "rationale": "All four prior findings are addressed by the fix-up diff (202 lines): CR-001 regex now /^\\s*<.../; CR-002 the PostCompact scan skips boundaries whose uuid was inherited and restarts when the parent lookup resolves late; CR-004 the clamp was tried and removed (D-11) because it can move Started later; CR-003 was accepted by the user and recorded as D-10. Three regression tests were verified to fail on the pre-fix code and pass now; the transcript test directory passes (385 tests) and tsc is clean. The diff introduces no new data-loss, security or contract risk, so no confirmation pass was needed.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "16992: continued session reports only its own requests, tokens, tool calls, turns",
+      "status": "pass",
+      "notes": "inherited uuids seeded into seen set; buildFullAccumulator drops excluded uuids; continuationActive gate; compaction events now filtered the same way"
+    },
+    {
+      "kind": "spec",
+      "item": "16992: continuation Started is its own start, including copied uuid-less lines with timestamps",
+      "status": "pass",
+      "notes": "positional ownership; the sessionStartedAt clamp was removed (D-11)"
+    },
+    {
+      "kind": "spec",
+      "item": "16992: continuation with only /exit-style local lines or synthetic placeholders sends no summary",
+      "status": "pass",
+      "notes": "regex fixed; test with leading whitespace added"
+    },
+    {
+      "kind": "spec",
+      "item": "16993: prompt-less reopen announces no hook lifecycle events",
+      "status": "pass",
+      "notes": "reopened/suppressLifecycle path in the plugin and orchestrator"
+    },
+    {
+      "kind": "spec",
+      "item": "16993: native OTel records of an idle reopen are not forwarded",
+      "status": "pass",
+      "notes": "holdForIdleReopen before the OTel loops in forwardSession; cursors untouched"
+    },
+    {
+      "kind": "spec",
+      "item": "16993: reopen followed by real work releases held records and loses no data",
+      "status": "partial",
+      "notes": "release happens at the first Stop/SessionEnd pass; a reopen that works and is killed before any such hook loses its OTel records after the 60 min grace. Accepted by the user as D-10"
+    },
+    {
+      "kind": "spec",
+      "item": "16993: startup race where native records precede the resume hook",
+      "status": "partial",
+      "notes": "bounded by a 15 s settle window; accepted as D-7"
+    },
+    {
+      "kind": "spec",
+      "item": "Ordinary sessions unchanged",
+      "status": "pass",
+      "notes": "live S1/S10 pass; only residual is a 15 s delay for OTel written after SessionEnd"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Conventional Commits, headers <= 100 chars, footer present (fix-up not yet committed)"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "ES modules, .js extensions, no any, helper has an explicit return type; tsc clean"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no credentials, process or path handling added"
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "orchestrator.ts isLocalCommandTurn uses \\s*; new test 'does not take a local command with leading whitespace for work of its own' fails on the old code"
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "scanCompactions skips inherited uuids; openPostCompactPass restarts the scan when the inherited set resolves in the locked pass; new test 'does not report the parent's copied compactions as its own' fails on the old code"
+    },
+    {
+      "id": "CR-003",
+      "status": "superseded",
+      "notes": "user decision (HITL): accept as a documented limit, recorded as D-10 in accepted-decisions.md with its reopen condition"
+    },
+    {
+      "id": "CR-004",
+      "status": "superseded",
+      "notes": "the clamp was implemented, then removed after the live re-run (S3) showed it moves Started later when the SessionStart hook runs after the first own line; recorded as D-11"
+    }
+  ]
+}

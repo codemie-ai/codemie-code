@@ -126,3 +126,23 @@ found, and what was decided:
 - **D-9 (new): a held reopen is dropped after the abandoned-session grace.** If a reopen stays idle for
   `OTLP_ABANDONED_SESSION_GRACE_MINUTES` (60) with no new OTel write, the held records are discarded unsent
   (recorded as `idle_reopen_expired`).
+- **D-10 (new, from code review CR-003): a reopen that works but never gets a Stop hook.** A reopened
+  session is released from the hold only when a hook pass (`Stop`/`SessionEnd`) has seen its own
+  activity in the transcript. If the terminal is killed after real work and before any such hook, the
+  daemon still sees an idle reopen and drops the held OTel records after the abandoned-session grace
+  (60 min), unsent. Accepted: the hook-side events of that session are not affected, and the case needs a
+  crash right after a reopen. *Reopen if* such lost records are seen in real data; the fix would be for
+  the hold to look at the transcript for own-activity lines before dropping.
+- **D-11 (new, code review CR-004): no clamp of a continuation's Started to its `SessionStart` time.**
+  The plan proposed `max(started_at, sessionStartedAt)` as a safety net. It was tried and removed: the
+  hook's wall-clock can be later than the continuation's first own line (slow SSO or cold start), and the
+  clamp then moves Started *later* than the session's real first request; the live suite caught this
+  (S3). Positional ownership already covers the known cases. *Reopen if* a real continuation shows a
+  Started earlier than its own first line; then clamp only when the gap is larger than a few minutes.
+- **D-12 (new, code review CR-007): parent lookup stays at 3 passes and in the child's own folder.**
+  A parent record that lands after the third hook pass, or a parent in another project folder, leaves the
+  copies counted. Retrying longer would add a sibling-folder scan (up to 200 transcripts) to every hook of
+  every ordinary session. *Reopen if* such a continuation is seen in real data.
+- **D-13 (new, code review CR-008): the startup-race guard needs the session status.** A reopen after the
+  status file was swept, with a resume hook slower than the first OTel export, can still let the startup
+  records through. Same family as D-7; a fix needs a new live scenario that sweeps and races.
