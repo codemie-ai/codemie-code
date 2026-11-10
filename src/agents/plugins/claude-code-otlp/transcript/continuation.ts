@@ -92,7 +92,8 @@ function tailNamesSession(tail: string, sessionId: string): boolean {
 
 /** Whether the file at `path` holds a `continued-in` record naming `sessionId`; streamed, so size does not matter. */
 async function fileNamesSession(path: string, sessionId: string): Promise<boolean> {
-  const lines = createInterface({ input: createReadStream(path, { encoding: 'utf-8' }), crlfDelay: Infinity });
+  const stream = createReadStream(path, { encoding: 'utf-8' });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
       if (!line.includes('continued-in') || !line.includes(sessionId)) continue;
@@ -106,24 +107,33 @@ async function fileNamesSession(path: string, sessionId: string): Promise<boolea
     return false;
   } finally {
     lines.close();
+    // Closing the interface does not close its input: after an early match the file stays open
+    // (and blocks deleting its directory on Windows) until the stream is garbage collected.
+    stream.destroy();
   }
 }
 
 /** The counted uuids of the parent transcript at `path`, streamed so its size does not matter. */
 async function readCountedUuids(path: string): Promise<string[]> {
   const uuids: string[] = [];
-  const lines = createInterface({ input: createReadStream(path, { encoding: 'utf-8' }), crlfDelay: Infinity });
-  for await (const line of lines) {
-    if (!line.trim()) continue;
-    let record: TranscriptRecord;
-    try {
-      record = JSON.parse(line) as TranscriptRecord;
-    } catch {
-      continue;
+  const stream = createReadStream(path, { encoding: 'utf-8' });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let record: TranscriptRecord;
+      try {
+        record = JSON.parse(line) as TranscriptRecord;
+      } catch {
+        continue;
+      }
+      if (record.type !== 'continued-in' && typeof record.uuid === 'string' && isCountedTranscriptLine(record)) {
+        uuids.push(record.uuid);
+      }
     }
-    if (record.type !== 'continued-in' && typeof record.uuid === 'string' && isCountedTranscriptLine(record)) {
-      uuids.push(record.uuid);
-    }
+  } finally {
+    lines.close();
+    stream.destroy();
   }
   return uuids;
 }

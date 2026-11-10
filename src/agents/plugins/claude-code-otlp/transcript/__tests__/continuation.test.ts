@@ -1,8 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveInheritedUuids } from '../continuation.js';
+
+// Records every read stream the module opens, so a test can check none is left open.
+const openedStreams = vi.hoisted(() => [] as { destroyed: boolean }[]);
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    createReadStream: ((...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args);
+      openedStreams.push(stream);
+      return stream;
+    }) as typeof actual.createReadStream,
+  };
+});
 
 let dir: string;
 
@@ -12,6 +26,7 @@ const continuedIn = (parent: string, child: string): string =>
   JSON.stringify({ type: 'continued-in', timestamp: '2026-11-01T19:43:28.390Z', sessionId: parent, continuedInSessionId: child });
 
 beforeEach(() => {
+  openedStreams.length = 0;
   dir = mkdtempSync(join(tmpdir(), 'continuation-'));
 });
 
@@ -65,6 +80,17 @@ describe('resolveInheritedUuids', () => {
     writeFileSync(join(dir, 'C.jsonl'), [msg('u1', 'C'), msg('u2', 'C'), msg('u3', 'C')].join('\n') + '\n');
 
     expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1', 'u2']);
+  });
+
+  it('closes every read stream after an early match, so no file stays open', async () => {
+    // The match is found with data still unread; an open handle would leave the directory behind on Windows (ENOTEMPTY).
+    const filler = JSON.stringify({ type: 'attachment', sessionId: 'P', attachment: { content: 'y'.repeat(1000) } });
+    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), continuedIn('P', 'C'), ...Array.from({ length: 600 }, () => filler)].join('\n') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1']);
+    expect(openedStreams.length).toBeGreaterThan(0);
+    expect(openedStreams.every((stream) => stream.destroyed)).toBe(true);
   });
 
   it('returns no parent for a large sibling whose whole file never names the session', async () => {
