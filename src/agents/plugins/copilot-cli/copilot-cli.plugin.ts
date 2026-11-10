@@ -20,10 +20,8 @@ import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
 import { isNativeIdSegment } from './copilot-cli.transcript-lookup.js';
 import {
   assertExplicitCopilotModelAllowed,
-  isCopilotCompatibleModelName,
   resolveCopilotModel,
 } from './copilot-cli.models.js';
-import { classifyWithPredicate } from '../../core/model-classify.js';
 
 export {
   COPILOT_CLI_AGENT_NAME,
@@ -218,8 +216,6 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
   },
   supportedProviders: [...COPILOT_COMPATIBLE_PROVIDERS],
   blockedModelPatterns: [/embedding/i, /rerank/i, /whisper/i, /tts/i, /image/i],
-  classifyModel: (id, ctx) => classifyWithPredicate(isCopilotCompatibleModelName, id, ctx),
-  activeModelOnly: true, // no in-session model switcher
   recommendedModels: [...COPILOT_RECOMMENDED_MODELS],
   ssoConfig: {
     enabled: true,

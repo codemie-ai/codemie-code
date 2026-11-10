@@ -188,10 +188,7 @@ export async function resolveKimiModel(env: NodeJS.ProcessEnv): Promise<KimiMode
     );
   }
 
-  const rankedIds = rankedModels.map(entry => entry.id);
-  const selectedModel = currentModel && rankedIds.includes(currentModel)
-    ? currentModel
-    : rankedModels[0].id;
+  const selectedModel = rankedModels[0].id;
 
   if (currentModel && currentModel !== selectedModel) {
     logger.info(
@@ -201,7 +198,7 @@ export async function resolveKimiModel(env: NodeJS.ProcessEnv): Promise<KimiMode
 
   return {
     selectedModel,
-    availableModels: rankedIds,
+    availableModels: rankedModels.map(entry => entry.id),
   };
 }
 
