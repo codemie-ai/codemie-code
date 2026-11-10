@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { classify, decide, type Evidence, type Policy } from '../classify.js';
+import { routedViaCodemie } from '../routing.js';
 
 const policy: Policy = { organizations: ['Acme Corp', 'beta'], version: 'v1abc' };
 const ev = (o: Partial<Evidence> = {}): Evidence => ({
@@ -14,6 +15,17 @@ describe('classify (D7)', () => {
     expect(classify(ev({ routed_via_codemie: true }), null)).toEqual({
       class: 'codemie', status: 'determinate', basis: 'routed',
     });
+  });
+
+  it('a native session through the live local proxy daemon classifies as codemie', () => {
+    const r = routedViaCodemie({
+      env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4001', ANTHROPIC_AUTH_TOKEN: 'gw' },
+      codemieProvider: true,
+      profileBaseUrl: 'https://llm.example.com',
+      profileName: 'p',
+      localProxy: { url: 'http://127.0.0.1:4001', targetUrl: 'https://llm.example.com', profile: 'p' },
+    });
+    expect(classify(ev({ routed_via_codemie: r.routed, routing_proof: r.routing_proof }), null)).toMatchObject({ class: 'codemie' });
   });
 
   it('matching org (trimmed, case-insensitive) is corporate and carries policy_version', () => {

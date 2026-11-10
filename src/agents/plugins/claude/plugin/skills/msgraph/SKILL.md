@@ -97,6 +97,11 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --read MESSA
 # Send an email
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --send recipient@example.com --subject "Hello" --body "Message text"
 
+# Create a draft (saved to Drafts, never sent) with optional attachments
+# --to/--cc/--bcc and --attach take comma-separated lists; use --html (or a .html --body-file) for an HTML body
+# Files under 3 MB are attached directly, larger ones (up to 150 MB) via an upload session
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --draft --to a@example.com,b@example.com --cc c@example.com --subject "Report" --body-file body.html --attach report.pdf,data.xlsx
+
 # Browse specific folder (inbox, sentitems, drafts, deleteditems, junkemail)
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --folder sentitems --limit 5
 
