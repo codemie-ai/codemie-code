@@ -69,6 +69,22 @@ export function authWasRejected(signal: AbortSignal): boolean {
   return signalsRejected.has(signal);
 }
 
+const signalsAwaitingDestination = new WeakSet<AbortSignal>();
+
+/**
+ * Records that a legacy metric under `signal` was withheld while the backend's answer on the session's destination is
+ * still to come (EPMCDME-17054 `destination-unconfirmed` / `destination-pending`): nothing was tried, so the caller
+ * that owns the signal does not count it as a delivery attempt.
+ */
+export function noteAwaitingDestination(signal: AbortSignal | undefined): void {
+  if (signal) signalsAwaitingDestination.add(signal);
+}
+
+/** Whether a legacy metric under `signal` waits for the destination's confirmation (see {@link noteAwaitingDestination}). */
+export function awaitingDestination(signal: AbortSignal): boolean {
+  return signalsAwaitingDestination.has(signal);
+}
+
 /** Node system error codes of a connection that never opened: the request was never sent. */
 const NEVER_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
 

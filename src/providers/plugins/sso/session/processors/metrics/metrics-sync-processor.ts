@@ -24,7 +24,8 @@ import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
-import { legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
+import { awaitsDestination, legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
+import { noteAwaitingDestination } from '@/providers/plugins/sso/session/bounded-request.js';
 import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
@@ -142,6 +143,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
       if (!verdict.publish) {
         logger.debug(`[${this.name}] Legacy metrics withheld: ${verdict.reason}`);
         if (!('transient' in verdict)) await persistLegacyMetricsWithheld(session.sessionId, verdict.reason);
+        // Reconciliation does not count this attempt: the deltas wait for the backend's answer, not for a retry
+        if (awaitsDestination(verdict)) noteAwaitingDestination(context.abortSignal);
         return { success: true, message: `legacy metrics withheld: ${verdict.reason}` };
       }
 
