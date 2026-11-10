@@ -5,7 +5,8 @@ import type {
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
-import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
+import { isClaudeCompatibleModelName, resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, stripOneMillionSuffix, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
@@ -22,6 +23,7 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { resolveHomeDir } from '../../../utils/paths.js';
+import { filterToProfileModels } from '../../core/profile-model-filter.js';
 import {
   detectInstallationMethod,
   type InstallationMethod,
@@ -172,6 +174,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'ollama'],
   blockedModelPatterns: [],
+  classifyModel: (id, ctx) => classifyWithPredicate(isClaudeCompatibleModelName, id, ctx),
   // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
   // matches it against the live catalog and picks the current latest Sonnet.
   // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
@@ -509,9 +512,20 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          if (options.length > 0) {
+          // Narrow the menu to this profile's own models (see filterToProfileModels). CR-002:
+          // the model this session is actually running stays in the menu even when it falls
+          // outside the stored list (e.g. the tier-resolution loop above just retirement-healed
+          // it). Ids are compared without the `[1m]` opt-in suffix, which both the picker
+          // options and env.CODEMIE_MODEL may carry (applyContextWindow).
+          const menuOptions = filterToProfileModels(options, env.CODEMIE_PROFILE_MODELS, {
+            getId: (option) => stripOneMillionSuffix(option.model),
+            activeModel: env.CODEMIE_MODEL ? stripOneMillionSuffix(env.CODEMIE_MODEL) : undefined,
+            noMatchMessage:
+              '[Claude] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog',
+          });
+          if (menuOptions.length > 0) {
             const settingsJson = JSON.stringify({
-              modelPicker: { options, replaceBuiltInOptions: true },
+              modelPicker: { options: menuOptions, replaceBuiltInOptions: true },
             });
             env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS = writeConfigToTempFile(settingsJson, 'claude-model-picker');
           }

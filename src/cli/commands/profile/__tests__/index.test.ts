@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { buildProfileSelectionChoiceName, renderProfileSelectionUI, createProfileCommand } from '../index.js';
 import { ProfileDisplay } from '../display.js';
+import { describeProjectBinding } from '../../../../utils/project-binding.js';
 
 vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
@@ -10,6 +11,8 @@ vi.mock('../../../../utils/config.js', () => ({
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
   },
+  resolveProfileModels: (profile: { model?: string; models?: string[] }): string[] =>
+    profile.models?.length ? profile.models : profile.model ? [profile.model] : [],
 }));
 
 vi.mock('chalk', () => ({
@@ -123,6 +126,49 @@ describe('ProfileDisplay — resolved identity', () => {
   });
 });
 
+describe('ProfileDisplay — per-agent models (EPMCDME-15641)', () => {
+  const profile = {
+    provider: 'ai-run-sso',
+    model: 'claude-sonnet-4-5',
+    agentModels: {
+      claude: { models: ['claude-sonnet-4-5', 'claude-haiku-4-5'], activeModel: 'claude-sonnet-4-5' },
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
+    },
+  };
+
+  it('format() shows one Agent models line per agent, its active model first', () => {
+    const output = ProfileDisplay.format({ name: 'team', active: true, profile });
+
+    expect(output).toContain('Agent models');
+    expect(output).toContain('Claude Code: claude-sonnet-4-5 (active), claude-haiku-4-5');
+    expect(output).toContain('OpenAI Codex CLI: gpt-5.4 (active)');
+  });
+
+  it('formatStatus() shows the same per-agent lines', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus({ name: 'team', active: true, profile });
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('Agent models');
+      expect(rendered).toContain('OpenAI Codex CLI: gpt-5.4 (active)');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('renders a legacy profile with only its Model row', () => {
+    const output = ProfileDisplay.format({
+      name: 'team',
+      active: true,
+      profile: { provider: 'ai-run-sso', model: 'a' },
+    });
+
+    expect(output).toContain('Model');
+    expect(output).not.toContain('Agent models');
+    expect(output).not.toContain('Other models');
+  });
+});
+
 describe('listProfiles — per-profile resolved identity display (AC8)', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -172,6 +218,40 @@ describe('listProfiles — per-profile resolved identity display (AC8)', () => {
     } finally {
       logSpy.mockRestore();
       formatSpy.mockRestore();
+    }
+  });
+});
+
+describe('profile display — Project line per profile', () => {
+  it('shows each profile its own project in the list and status views, and marks the unowned one', () => {
+    // @case global-profiles-share-workspace-identity_TC_006
+    const projectLine = (rendered: string): string | undefined =>
+      rendered.split('\n').find(line => line.includes('Project'));
+
+    const owned = ProfileDisplay.format(
+      { name: 'mtlx-csd', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { codeMieUrl: 'https://same', project: describeProjectBinding('own', 'proj-csd') }
+    );
+    const unowned = ProfileDisplay.format(
+      { name: 'legacy', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { codeMieUrl: 'https://same', project: describeProjectBinding('unowned', 'proj-amsd') }
+    );
+
+    expect(projectLine(owned)).toMatch(/Project.*\[white\]proj-csd\[\/white\]/);
+    expect(projectLine(owned)).not.toContain('shared fallback');
+    expect(projectLine(unowned)).toMatch(/Project.*\[yellow\]proj-amsd \(shared fallback\)\[\/yellow\]/);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus(
+        { name: 'legacy', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
+        undefined,
+        { codeMieUrl: 'https://same', project: describeProjectBinding('unowned', 'proj-amsd') }
+      );
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(projectLine(rendered)).toMatch(/Project.*proj-amsd \(shared fallback\)/);
+    } finally {
+      logSpy.mockRestore();
     }
   });
 });
