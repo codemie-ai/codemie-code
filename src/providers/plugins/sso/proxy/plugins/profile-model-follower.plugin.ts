@@ -54,6 +54,8 @@ class ProfileModelFollowerInterceptor implements ProxyInterceptor {
   private activeModel: string;
   private readAt = 0;
   private reading: Promise<void> | null = null;
+  private announcedModel: string | undefined;
+  private switched = false;
 
   constructor(
     private readonly clientType: string,
@@ -66,7 +68,9 @@ class ProfileModelFollowerInterceptor implements ProxyInterceptor {
 
   async onRequest(context: ProxyContext): Promise<void> {
     await this.refresh();
-    if (this.activeModel === this.launchModel) return;
+    // Once the profile has moved off the launch model, keep following it (also back to the launch model).
+    if (this.activeModel !== this.launchModel) this.switched = true;
+    if (!this.switched) return;
 
     // The wire protocol follows the model family at launch (see the Copilot CLI plugin); a switch
     // across families would send one family's requests in the other's format.
@@ -78,34 +82,43 @@ class ProfileModelFollowerInterceptor implements ProxyInterceptor {
       return;
     }
 
-    this.rewriteUrl(context);
-    this.rewriteBody(context);
+    const rewritten = this.rewriteUrl(context) || this.rewriteBody(context);
+    if (rewritten) this.announceSwitch();
   }
 
-  private rewriteUrl(context: ProxyContext): void {
-    // Gemini carries the model in the path: /v1beta/models/<model>:streamGenerateContent
-    const needle = `/models/${this.launchModel}`;
-    const index = context.url.indexOf(needle);
-    if (index < 0) return;
-    const end = index + needle.length;
-    if (context.url[end] !== undefined && !/[:/?]/.test(context.url[end])) return;
-    context.url = `${context.url.slice(0, index)}/models/${this.activeModel}${context.url.slice(end)}`;
+  /** Once per switch, at info level: the agent's own display keeps showing the launch model. */
+  private announceSwitch(): void {
+    if (this.announcedModel === this.activeModel) return;
+    this.announcedModel = this.activeModel;
+    logger.info(`[${this.name}] Sending ${this.launchModel} requests to ${this.activeModel} (profile switch)`);
+  }
+
+  private rewriteUrl(context: ProxyContext): boolean {
+    // Gemini carries the model in the path: /v1beta/models/<model>:streamGenerateContent. Gemini CLI
+    // turns the launch name into another concrete id before sending, so the main chat request is
+    // matched by its method, not by the launch model. Utility calls (generateContent) stay as they are.
+    const match = /\/models\/([^/:?]+):streamGenerateContent/.exec(context.url);
+    if (!match || match[1] === this.activeModel) return false;
+    context.url = context.url.replace(match[0], `/models/${this.activeModel}:streamGenerateContent`);
     logger.debug(`[${this.name}] Rewrote request path to ${this.activeModel}`);
+    return true;
   }
 
-  private rewriteBody(context: ProxyContext): void {
-    if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) return;
+  private rewriteBody(context: ProxyContext): boolean {
+    if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) return false;
 
     try {
       const body = JSON.parse(context.requestBody.toString('utf-8'));
-      if (body?.model !== this.launchModel) return;
+      if (body?.model !== this.launchModel || body.model === this.activeModel) return false;
 
       body.model = this.activeModel;
       context.requestBody = Buffer.from(JSON.stringify(body), 'utf-8');
       context.headers['content-length'] = String(context.requestBody.length);
       logger.debug(`[${this.name}] Rewrote request model ${this.launchModel} -> ${this.activeModel}`);
+      return true;
     } catch {
       // Not valid JSON or unexpected structure — pass through unchanged.
+      return false;
     }
   }
 
