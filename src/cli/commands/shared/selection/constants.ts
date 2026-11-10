@@ -50,6 +50,7 @@ export const SHARED_TEXT = {
   TAB_HINT: '(←/→, tab/shift+tab to cycle)',
   SEARCH_PLACEHOLDER: 'Search…',
   INSTRUCTIONS: '↑↓ to Navigate • Space to select item • Enter to Confirm',
+  INSTRUCTIONS_SINGLE_CHOICE: '↑↓ to Navigate • Space to select item • Enter to Confirm • Esc to Cancel',
   INSTRUCTIONS_WITH_PAGINATION: '↑↓ to Navigate • Ctrl+[/] to change page • Space to select item • Enter to Confirm',
   ERROR_PREFIX: 'Error: ',
   CONTINUE_BUTTON: 'Continue',
