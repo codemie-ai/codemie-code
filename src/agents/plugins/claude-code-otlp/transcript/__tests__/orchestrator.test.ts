@@ -3670,6 +3670,61 @@ describe('continued session (EPMCDME-16992)', () => {
     expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
   });
 
+  it('reports nothing for a continuation whose own lines are a synthetic placeholder and local /exit commands', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: 'No response requested.' }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+    const command = (uuid: string, content: string, timestamp: string): string =>
+      JSON.stringify({ type: 'user', uuid, sessionId: 'C', timestamp, message: { role: 'user', content } });
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      synthetic,
+      command('c-x1', '<command-name>/exit</command-name>\n<command-message>exit</command-message>', '2026-11-10T16:23:53.000Z'),
+      command('c-x2', '<local-command-stdout>Goodbye!</local-command-stdout>', '2026-11-10T16:23:53.100Z'),
+    ]);
+
+    const stop = await openMainTranscriptPass('C', path, 'Stop');
+    await stop.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    for (const pass of [stop, end]) {
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+      expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    }
+  });
+
+  it('reports a synthetic answer of a continuation that has already done work of its own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:23:52.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:23:57.000Z'),
+    ]);
+    const first = await openMainTranscriptPass('C', path, 'Stop');
+    await first.finalize(true);
+    expect(first.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        ...JSON.parse(typedAssistant('c-s2', 'msg-s2', 'C', '2026-11-10T16:30:00.000Z')),
+        message: { role: 'assistant', model: '<synthetic>', content: [], usage: { input_tokens: 0, output_tokens: 0 } },
+      }) + '\n'
+    );
+    const second = await openMainTranscriptPass('C', path, 'Stop');
+    await second.finalize(true);
+
+    expect(second.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+  });
+
   it('sends no summary for a continuation whose only own line is a synthetic answer', async () => {
     writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
     const synthetic = JSON.stringify({

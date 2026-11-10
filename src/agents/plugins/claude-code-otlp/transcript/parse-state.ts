@@ -79,6 +79,8 @@ export interface TranscriptParseState {
   reopened?: boolean;
   /** Since the last `resume`, a pass read at least one line of the session's own activity. */
   reopenActive?: boolean;
+  /** A continued session has done work of its own; until then it reports nothing (EPMCDME-16992). */
+  continuationActive?: boolean;
   /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
    *  absent in a state saved before it existed. */
   deferredAgentIds?: string[];

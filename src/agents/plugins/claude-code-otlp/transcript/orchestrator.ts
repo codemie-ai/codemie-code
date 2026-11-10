@@ -330,6 +330,28 @@ function findSkillInvocation(parsed: TranscriptLine): string {
   return '';
 }
 
+/** A user line that only records a local slash command or its output (`/exit`, `/model`, ...): no model work behind it. */
+function isLocalCommandTurn(parsed: TranscriptLine): boolean {
+  if (parsed.type !== 'user') return false;
+  const content = parsed.message?.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? String((content.find((block) => (block as { type?: unknown } | null)?.type === 'text') as { text?: unknown } | undefined)?.text ?? '')
+        : '';
+  return /^s*<(command-name|command-message|local-command-)/.test(text);
+}
+
+/**
+ * Work the user did: a real assistant answer or a genuine prompt. Synthetic placeholders, local
+ * commands and the bookkeeping records Claude Code appends when it opens a session are not.
+ */
+function isOwnActivityLine(line: TranscriptLine): boolean {
+  if (line.type === 'assistant') return !isSyntheticModel(String(line.message?.model ?? ''));
+  return isGenuineUserTurn(line) && !isLocalCommandTurn(line);
+}
+
 /**
  * Recompute the full-session summary accumulator, named-invocation counts, and session start
  * time from byte 0 of the main transcript.
@@ -476,9 +498,7 @@ async function buildFullAccumulator(
 
   // Own activity is the bar the usage pass uses: a real answer or a genuine prompt. The synthetic
   // placeholder and local-command lines written when a continuation is opened and closed are not.
-  const hasOwnLines = parsedLines.some(
-    (line) => (line.type === 'assistant' && !isSyntheticModel(String(line.message?.model ?? ''))) || isGenuineUserTurn(line)
-  );
+  const hasOwnLines = parsedLines.some(isOwnActivityLine);
 
   return { acc, named, startedAt, endedAt, hasOwnLines };
 }
@@ -639,9 +659,8 @@ async function deriveMainEvents(
     // Only work the user did counts: a real assistant answer or a genuine prompt. Records Claude Code
     // appends on a reopen (hook attachments, mode / permission-mode / last-prompt lines) and its
     // synthetic placeholder answers are not activity.
-    // Synthetic-ness is read from the line itself: `parsed` is null for a line without usage or ids.
-    const syntheticAnswer = head?.type === 'assistant' && isSyntheticModel(String(head.message?.model ?? ''));
-    if (head && ((head.type === 'assistant' && !syntheticAnswer) || isGenuineUserTurn(head))) {
+    // Read from the line itself: `parsed` is null for a line without usage or ids.
+    if (head && isOwnActivityLine(head)) {
       ownActivity = true;
     }
     if (parsed) {
@@ -666,6 +685,11 @@ async function deriveMainEvents(
   // analytics (EPMCDME-16993).
   if (state.reopened && ownActivity) state.reopenActive = true;
   if (isReopenedIdle(state)) return [];
+
+  // Same for a continuation: until it has work of its own, a synthetic placeholder or a local command
+  // is all it holds, and reporting that would show the session as active.
+  if (inherited.size > 0 && ownActivity) state.continuationActive = true;
+  if (inherited.size > 0 && !state.continuationActive) return [];
 
   for (const key of touchedKeys) {
     const request = state.openRequests[key];
