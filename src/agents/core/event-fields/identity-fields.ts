@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -150,11 +151,40 @@ async function projectFromHookConfig(
   if (configured || !configuredWins(policy)) return configured ?? '';
   const shell = process.env['CODEMIE_PROJECT']?.trim();
   if (!shell) return '';
-  if (hook) {
-    const { state } = await ConfigLoader.resolveProfileIdentity(hook.configDir, hook.config.name).catch(() => ({ state: undefined }));
-    if (state === 'own' || state === 'none') return '';
+  // The shell value is attributed only when the profile identity is confirmed; anything unknown fails closed.
+  if (!hook) return withheld('hook config unavailable');
+  let state: string | undefined;
+  try {
+    state = (await ConfigLoader.resolveProfileIdentity(hook.configDir, hook.config.name)).state;
+  } catch (error) {
+    return withheld(`identity lookup failed (${errorName(error)})`);
+  }
+  if (state === 'own' || state === 'none') return '';
+  // ConfigLoader reads a malformed config file as empty, so a lookup alone cannot confirm the identity.
+  const files = [path.join(hook.configDir, '.codemie', 'codemie-cli.config.json'), getCodemiePath('codemie-cli.config.json')];
+  for (const file of files) {
+    if (!(await configFileIsReadable(file))) return withheld('config file unreadable');
   }
   return shell;
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'error';
+}
+
+function withheld(reason: string): string {
+  logger.debug(`[event-fields] shell CODEMIE_PROJECT not attributed: ${reason}`);
+  return '';
+}
+
+/** A missing file is fine (no such scope); an existing one must be a JSON object. */
+async function configFileIsReadable(file: string): Promise<boolean> {
+  try {
+    const value: unknown = JSON.parse(await readFile(file, 'utf-8'));
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
 }
 
 function isGlobalConfigFile(dir: string): boolean {
@@ -168,11 +198,12 @@ export async function loadHookConfig(
   opts: { fromCwd?: boolean; profile?: string; walk?: boolean } = {}
 ): Promise<{ config: CodeMieConfigOptions; configDir: string } | undefined> {
   // `fromCwd`: walk up from the hook's own cwd instead of the session's fixed project dir (used to notice a folder change).
-  const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim() || (opts.walk ? cwd : undefined);
+  // `walk` (Copilot) always starts at the hook's own cwd, even when a parent Claude Code process left CLAUDE_PROJECT_DIR behind.
+  const start = opts.fromCwd || opts.walk ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim() || undefined;
   try {
     const configDir = start ? await findNearestConfigDir(start) : cwd;
-    // `.env` stays where it always was: the hook's cwd when `walk` alone found the config dir, else the config dir.
-    const envDir = opts.walk && !process.env['CLAUDE_PROJECT_DIR']?.trim() ? cwd : configDir;
+    // `.env` stays where it always was: the hook's cwd when `walk` found the config dir, else the config dir.
+    const envDir = opts.walk ? cwd : configDir;
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the
     // globally active profile, selects hook config, routing proof and project. Native has no such export.
     const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
@@ -182,7 +213,8 @@ export async function loadHookConfig(
       ? await ConfigLoader.load(configDir, selection)
       : await ConfigLoader.load(configDir, selection, envDir);
     return { config, configDir };
-  } catch {
+  } catch (error) {
+    logger.debug(`[event-fields] hook config unavailable (${errorName(error)})`);
     return undefined;
   }
 }

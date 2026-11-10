@@ -15,6 +15,7 @@ import type { AgentAdapter } from '../types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
 import { findNearestConfigDir, resolveProjectAtCwd, resolveSessionProject } from '../event-fields/identity-fields.js';
+import { ConfigLoader } from '../../../utils/config.js';
 import { ClaudeCodeOtlpPlugin } from '../../plugins/claude-code-otlp/claude-code-otlp.plugin.js';
 import { CopilotCliOtlpPlugin } from '../../plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.js';
 
@@ -152,6 +153,46 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
     });
   });
 
+  describe('unknown profile identity fails closed under configured-wins', () => {
+    beforeEach(async () => {
+      await writeGlobal({ l: { provider: 'litellm', model: 'm', baseUrl: 'https://l.example.com', apiKey: 'k' } }, 'l');
+      await writeLocal({ version: 2, activeProfile: 'l', profiles: {} });
+      vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
+    });
+
+    it('a confirmed profile without a project still falls back to the shell value', async () => {
+      expect(await nativeProject(sub)).toBe('shell-project');
+      expect(await resolveProjectAtCwd(sub, undefined, { configuredWins: true })).toBe('shell-project');
+    });
+
+    it('a malformed local config (read as empty by the loader) does not let the shell project through', async () => {
+      await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), '{ not json');
+      expect(await nativeProject(sub)).toBe('');
+      expect(await resolveProjectAtCwd(sub, undefined, { configuredWins: true })).toBe('');
+    });
+
+    it('a malformed global config does not let it through either', async () => {
+      await fs.writeFile(path.join(tmp, 'home', 'codemie-cli.config.json'), '[1');
+      expect(await nativeProject(sub)).toBe('');
+    });
+
+    it('a failed identity lookup does not let it through', async () => {
+      vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('boom'));
+      expect(await nativeProject(sub)).toBe('');
+    });
+
+    it('a failed hook config load does not let it through', async () => {
+      vi.spyOn(ConfigLoader, 'getActiveProfileName').mockRejectedValue(new Error('boom'));
+      expect(await nativeProject(sub)).toBe('');
+    });
+
+    it('without the policy the plain "shell wins" behavior is unchanged even for a malformed config', async () => {
+      await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), '{ not json');
+      vi.stubEnv('CLAUDE_PROJECT_DIR', sub);
+      expect(await resolveSessionProject(sub, 'plain-bad')).toBe('shell-project');
+    });
+  });
+
   describe('profile without a project', () => {
     it('a shell CODEMIE_PROJECT is the fallback in both modes', async () => {
       await writeGlobal({ l: { provider: 'litellm', model: 'm', baseUrl: 'https://l.example.com', apiKey: 'k' } }, 'l');
@@ -209,7 +250,7 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       expect(flag(new CopilotCliOtlpPlugin())).toBe(true);
     });
 
-    it('a managed Claude session keeps its exported project even with the Claude policy', async () => {
+    it('an inherited CODEMIE_SESSION_ID classifies a native hook as managed: the exported/shell project stays authoritative', async () => {
       vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
       vi.stubEnv('CODEMIE_PROJECT', 'exported-project');
       expect(await nativeProject(sub)).toBe('exported-project');
@@ -230,6 +271,28 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
       vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
       expect(await forwardedProject(sub)).toBe('g-project');
+    });
+
+    it('walks from the hook cwd (repo B) even when a parent Claude Code left CLAUDE_PROJECT_DIR in repo A', async () => {
+      await writeGlobal({ g: sso('g-project'), x: sso('x-project') }, 'x');
+      await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
+      const repoA = path.join(tmp, 'repoA');
+      await fs.mkdir(path.join(repoA, '.codemie'), { recursive: true });
+      await fs.writeFile(path.join(repoA, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'x', profiles: {} }));
+      vi.stubEnv('CLAUDE_PROJECT_DIR', repoA);
+      expect(await forwardedProject(sub)).toBe('g-project');
+    });
+
+    it('reads .env from the hook cwd even when CLAUDE_PROJECT_DIR points at another repo', async () => {
+      await writeGlobal({ l: { provider: 'litellm', model: 'm', baseUrl: 'https://l.example.com', apiKey: 'k' } }, 'l');
+      await writeLocal({ version: 2, activeProfile: 'l', profiles: {} });
+      const repoA = path.join(tmp, 'repoA');
+      await fs.mkdir(path.join(repoA, '.codemie'), { recursive: true });
+      await fs.writeFile(path.join(repoA, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'l', profiles: {} }));
+      await fs.writeFile(path.join(repoA, '.env'), 'CODEMIE_PROJECT=repo-a-env-project' + String.fromCharCode(10));
+      await fs.writeFile(path.join(sub, '.env'), 'CODEMIE_PROJECT=cwd-env-project' + String.fromCharCode(10));
+      vi.stubEnv('CLAUDE_PROJECT_DIR', repoA);
+      expect(await forwardedProject(sub)).toBe('cwd-env-project');
     });
 
     it('reads .env from the hook cwd, not from the config dir it walked to', async () => {
