@@ -91,8 +91,16 @@ const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
  * run SSO credential checks and a daemon health check/spawn with no timeout of its own, and
  * `beforeRun` runs synchronously before Claude Code's process starts. A slow check must degrade
  * to relying on the existing SessionStart hook-time rewrite rather than stall every launch.
+ *
+ * Must cover a cold respawn — the exact scenario this fix targets. daemon-manager.ts's
+ * `spawnDaemon` (DAEMON_READY_TIMEOUT_MS there) polls for readiness for up to 5s; this adds
+ * ~2s of overhead for the SSO credential check and health check that run around it. Kept as
+ * a literal rather than importing that constant: this module is pulled in by a wide and
+ * growing set of unrelated unit tests (via claude-code-otlp's event-field builders) that mock
+ * daemon-manager.js wholesale, and a cross-module import here breaks every one of them whenever
+ * daemon-manager.ts gains a new export. Bump this if DAEMON_READY_TIMEOUT_MS changes.
  */
-const PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS = 3000;
+const PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS = 7000;
 
 /**
  * Races `promise` against `timeoutMs`; rejects with `message` on expiry so the caller's own
@@ -612,17 +620,24 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
       // checks have no timeout of their own and must not stall this synchronous path.
       if (await isClaudeCodeOtlpConnected()) {
+        const timeoutMessage = `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`;
         try {
           await withTimeout(
             ensureOtlpProxy(this.metadata.name),
             PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS,
-            `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`
+            timeoutMessage
           );
         } catch (error) {
-          logger.warn(
-            '[claude] pre-spawn OTLP endpoint refresh failed (non-blocking)',
-            ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
-          );
+          const message = error instanceof Error ? error.message : String(error);
+          const logArgs = sanitizeLogArgs({ error: message });
+          if (message === timeoutMessage) {
+            // Visible on a normal terminal run (logger.warn is log-file-only and would
+            // fail silently here): Claude Code is about to launch with a possibly stale
+            // endpoint until the next SessionStart hook corrects it.
+            logger.notice('[claude] pre-spawn OTLP endpoint refresh timed out (non-blocking)', ...logArgs);
+          } else {
+            logger.warn('[claude] pre-spawn OTLP endpoint refresh failed (non-blocking)', ...logArgs);
+          }
         }
       }
 
