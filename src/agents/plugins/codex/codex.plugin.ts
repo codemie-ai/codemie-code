@@ -352,7 +352,7 @@ export const CodexPluginMetadata: AgentMetadata = {
 
       // Stop the in-process incremental sync timer first so it doesn't race
       // the final flush below.
-      stopCodexIncrementalSync(sessionId);
+      await stopCodexIncrementalSync(sessionId);
 
       // 1. Process rollout file → MetricDelta JSONL (must run before SessionEnd sync)
       try {

@@ -50,6 +50,8 @@ const STARTED_AT_GRACE_MS = 10_000;
 
 const activeTimers = new Map<string, NodeJS.Timeout>();
 const tickInFlight = new Map<string, boolean>();
+/** The running tick of a session, so stop can wait for it */
+const tickPromises = new Map<string, Promise<void>>();
 /** Sessions whose rollout a tick already linked to their record */
 const linkedSessions = new Set<string>();
 
@@ -144,7 +146,10 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
   };
 
   const timer = setInterval(() => {
-    void tick();
+    const running = tick().finally(() => {
+      if (tickPromises.get(options.sessionId) === running) tickPromises.delete(options.sessionId);
+    });
+    tickPromises.set(options.sessionId, running);
   }, intervalMs);
   // Don't pin the Node event loop alive solely on this timer; if the parent
   // process is otherwise idle we want it to exit cleanly when Codex finishes.
@@ -158,12 +163,19 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
   );
 }
 
-export function stopCodexIncrementalSync(sessionId: string): void {
+/**
+ * Stop the timer and wait for a tick already running, so its writes cannot land after the caller's
+ * final writes.
+ */
+export async function stopCodexIncrementalSync(sessionId: string): Promise<void> {
   const timer = activeTimers.get(sessionId);
   if (!timer) return;
 
   clearInterval(timer);
   activeTimers.delete(sessionId);
+  const running = tickPromises.get(sessionId);
+  await running;
+  tickPromises.delete(sessionId);
   tickInFlight.delete(sessionId);
   linkedSessions.delete(sessionId);
   logger.debug(`[codex-incremental-sync] Stopped (session=${sessionId})`);
