@@ -188,11 +188,15 @@ async function listRecordFiles(): Promise<string[]> {
   }
 }
 
-/** Destination-accepted sidecars by record key (one per accepted project). */
-async function listAcceptedFiles(dir: string): Promise<Map<string, string[]>> {
+/** Destination-accepted sidecars by record key (one per accepted project); null when the directory could not be listed. */
+async function listAcceptedFiles(dir: string): Promise<Map<string, string[]> | null> {
   const byKey = new Map<string, string[]>();
   let names: string[];
-  try { names = await readdir(dir); } catch { return byKey; }
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? byKey : null;
+  }
   for (const name of names) {
     const key = ACCEPTED_RE.exec(name)?.[1];
     if (key) byKey.set(key, [...(byKey.get(key) ?? []), name]);
@@ -310,6 +314,12 @@ export async function sweepRecords(
   const entries: Array<{ key: string; lastUsed: number }> = [];
   const pendingKeys = new Set(opts.pendingKeys);
   const acceptedByKey = await listAcceptedFiles(dir);
+  // Unknown acceptances: an eviction could remove an ended marker and leave an acceptance behind, re-enabling legacy
+  // delivery. Nothing is evicted this pass (fail closed: a new session at the cap is held, as when nothing can be evicted)
+  if (!acceptedByKey) {
+    logger.debug('[evidence] record sweep skipped: destination markers could not be listed');
+    return { evicted: 0, capacityBlocked: true };
+  }
   for (const name of await listRecordFiles()) {
     const key = name.slice(0, -5);
     let lastUsed: number;

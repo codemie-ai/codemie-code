@@ -239,6 +239,17 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
+  it('a refusal whose ended marker was lost (held, as the forwarder records it) keeps an older acceptance from publishing', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await accept();
+    await writeStatus(NATIVE_ID, createStatus());
+    writeFileSync(streamFile(NATIVE_ID, 'hooks'), 'x'.repeat(100));
+    await recordUnacknowledged(NATIVE_ID, 'hooks',
+      { kind: 'retry', reason: 'ended_marker_unwritten', detail: 'ended_marker_unwritten', hold: true }, { cursor: 0, end: 100 });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+  });
+
   it('a session-ending discard stays held after a later benign discard replaces lastDiscard', async () => {
     await connectFolder(SCOPE, folder);
     const s = await session();

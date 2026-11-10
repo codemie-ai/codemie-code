@@ -195,7 +195,8 @@ describe('new-contract forwarding', () => {
     fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
     await run();
     expect(advanceCursorMock).not.toHaveBeenCalled();
-    expect(noteFailureMock).toHaveBeenCalledWith({ reason: 'delivery_failed', detail: 'ended_marker_unwritten' });
+    // A hold, which the legacy gate reads as pending, not an ordinary failure
+    expect(noteFailureMock).toHaveBeenCalledWith({ reason: 'destination_hold', detail: 'ended_marker_unwritten' });
   });
 
   it('an ended marker kept as an intent lets the batch be acknowledged', async () => {
