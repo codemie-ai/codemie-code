@@ -198,6 +198,24 @@ describe('oh-my-pi subagent sessions', () => {
     expect(ledgerLines()).toHaveLength(before);
   });
 
+  it('records no slash command typed into a subagent session', async () => {
+    const pi = await activate();
+    const before = ledgerLines().length;
+
+    pi.handlers.get('input')!({ text: '/skill:brave-search go' }, subagentCtx());
+    pi.handlers.get('input')!({ text: '/review the diff' }, subagentCtx());
+
+    expect(ledgerLines()).toHaveLength(before);
+  });
+
+  it('still records a slash command from the main omp session', async () => {
+    const pi = await activate();
+
+    pi.handlers.get('input')!({ text: '/review the diff' }, { ...(fakeCtx() as object), agent: { kind: 'main' } });
+
+    expect(ledgerLines()[1]).toMatchObject({ t: 'cmd', kind: 'prompt', name: 'review' });
+  });
+
   it('still records the main omp session, whose agent kind is not sub', async () => {
     const pi = await activate();
 

@@ -4,6 +4,7 @@ import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { logger } from '@/utils/logger.js';
 import { exec } from '@/utils/exec.js';
+import { ConfigurationError } from '@/utils/errors.js';
 import { buildPiModelsConfig, classifyPiModel } from '../pi/pi.models.js';
 import { LEDGER_PATH_ENV, getPiRunLedgerPath } from '../pi/pi.extension.js';
 import { PiSessionAdapter } from '../pi/pi.session.js';
@@ -128,7 +129,7 @@ export const OmpPluginMetadata: AgentMetadata = {
       // Route omp's model traffic through CodeMie: a run-scoped extension registers the providers.
       const providers = await ensureOmpProvidersExtension();
       if (!providers.installed || !providers.path) {
-        throw new Error(
+        throw new ConfigurationError(
           `Could not install the CodeMie providers extension for codemie-omp (${providers.reason ?? 'unknown'}). `
           + 'Reinstall @codemieai/code, or run codemie doctor.'
         );
@@ -150,7 +151,7 @@ export const OmpPluginMetadata: AgentMetadata = {
     enrichArgs(args: string[], _config: AgentConfig): string[] {
       const model = process.env.CODEMIE_MODEL;
       if (!model) {
-        throw new Error('No model configured for codemie-omp. Run codemie setup to select a model.');
+        throw new ConfigurationError('No model configured for codemie-omp. Run codemie setup to select a model.');
       }
 
       // Ollama models are served by the `ollama` provider the providers extension registers;
@@ -210,6 +211,12 @@ export class OmpPlugin extends BaseAgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
-    return super.run(prepareOmpInvocation(args), envOverrides, runOptions);
+    try {
+      return await super.run(prepareOmpInvocation(args), envOverrides, runOptions);
+    } finally {
+      // The providers file carries the run's key. onSessionEnd removes it after a real run, but
+      // --dry-run and an abort between beforeRun and the spawn (e.g. no model) never reach it.
+      await removeOmpProvidersConfig(process.env[OMP_PROVIDERS_CONFIG_ENV]);
+    }
   }
 }

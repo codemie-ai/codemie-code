@@ -65,7 +65,7 @@ export async function writeOmpProvidersConfig(
   config: PiModelsConfig
 ): Promise<string> {
   const path = getOmpProvidersConfigPath(sessionId);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, JSON.stringify(config), { encoding: 'utf-8', mode: 0o600 });
   // `mode` only applies on creation; a file left by an earlier run of the same session keeps its own.
   await chmod(path, 0o600).catch(() => undefined);

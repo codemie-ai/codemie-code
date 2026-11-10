@@ -106,6 +106,8 @@ export default function codemieMetrics(pi) {
     /** True for an oh-my-pi subagent session; always false under Pi, which has no `ctx.agent`. */
     const isSubagent = (ctx) => safe(() => ctx.agent && ctx.agent.kind) === 'sub';
 
+    // No ctx exists at factory time, so a subagent's re-bound factory cannot be told apart here.
+    // The extra boot line is harmless: the ledger reader only reads it as `loaded = true` (the factory ran).
     append({ t: 'boot', pid: process.pid });
 
     pi.on('session_start', (event, ctx) => {
@@ -145,8 +147,9 @@ export default function codemieMetrics(pi) {
      *
      * Only the command name is recorded — never its arguments.
      */
-    pi.on('input', (event) => {
+    pi.on('input', (event, ctx) => {
       try {
+        if (isSubagent(ctx)) return undefined;
         const text = safe(() => event.text);
         if (typeof text !== 'string' || text.charCodeAt(0) !== 47 /* '/' */) {
           return undefined;

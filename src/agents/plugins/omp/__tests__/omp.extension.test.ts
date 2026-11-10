@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -80,5 +80,43 @@ describe('omp beforeRun', () => {
     expect(env.CODEMIE_OMP_LEDGER_EXTENSION).toBe(join(home, 'omp', 'extensions', 'codemie-metrics', 'index.js'));
     expect(env.CODEMIE_OMP_PROVIDERS_EXTENSION).toBe(join(home, 'omp', 'extensions', 'codemie-providers', 'index.js'));
     expect(JSON.parse(readFileSync(env.CODEMIE_OMP_PROVIDERS!, 'utf-8'))).toEqual({ providers: {} });
+  });
+});
+
+describe('omp providers file lifetime', () => {
+  it('creates the providers directory owner-only', async () => {
+    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
+
+    const path = await writeOmpProvidersConfig('sid-3', { providers: {} });
+
+    expect(statSync(dirname(path)).mode & 0o077).toBe(0);
+  });
+
+  it.each([
+    ['a dry run, which never reaches onSessionEnd', undefined, { dryRun: true }],
+    ['an abort before the spawn', new Error('No model configured'), undefined],
+  ])('removes the key-bearing file after %s', async (_label, failure, runOptions) => {
+    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
+    const { OmpPlugin } = await import('../omp.plugin.js');
+    const { BaseAgentAdapter } = await import('../../../core/BaseAgentAdapter.js');
+    const path = await writeOmpProvidersConfig('sid-4', { providers: {} });
+    process.env.CODEMIE_OMP_PROVIDERS = path;
+    const superRun = vi.spyOn(BaseAgentAdapter.prototype, 'run');
+    if (failure) superRun.mockRejectedValue(failure);
+    else superRun.mockResolvedValue(undefined);
+
+    await new OmpPlugin().run([], undefined, runOptions).catch(() => undefined);
+
+    expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe('omp enrichArgs', () => {
+  it('throws a ConfigurationError when no model is configured', async () => {
+    delete process.env.CODEMIE_MODEL;
+    const { OmpPluginMetadata } = await import('../omp.plugin.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    expect(() => OmpPluginMetadata.lifecycle!.enrichArgs!([], {} as never)).toThrow(ConfigurationError);
   });
 });
