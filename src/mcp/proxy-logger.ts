@@ -16,16 +16,11 @@ const enabled = process.env.CODEMIE_DEBUG === 'true'
 const logDir = join(homedir(), '.codemie', 'logs');
 const logFile = join(logDir, 'mcp-proxy.log');
 
-try {
-  mkdirSync(logDir, { recursive: true });
-} catch {
-  // ignore
-}
-
 export function proxyLog(message: string): void {
   if (!enabled) return;
   const line = `[${new Date().toISOString()}] ${message}\n`;
   try {
+    mkdirSync(logDir, { recursive: true });
     appendFileSync(logFile, line);
   } catch {
     // ignore — can't log if file write fails

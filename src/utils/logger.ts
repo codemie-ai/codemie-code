@@ -41,8 +41,15 @@ class Logger {
   private currentLogDate: string | null = null;
   private isRotating: boolean = false;
   private consoleSink: Console = console;
+  private outputDisabled = false;
 
   constructor() {}
+
+  /** Disable all log output for this process, including lazy file initialization. */
+  disableOutput(): void {
+    this.outputDisabled = true;
+    this.setConsoleStream(null);
+  }
 
   /**
    * Send every console-bound level (success, status, notice, debug, error in debug mode)
@@ -112,7 +119,7 @@ class Logger {
    * Also performs cleanup of old log files (older than 5 days)
    */
   private initializeLogFile(): void {
-    if (this.logFileInitialized) return;
+    if (this.logFileInitialized || this.outputDisabled) return;
 
     try {
       const logsDir = getCodemiePath('logs');

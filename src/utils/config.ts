@@ -25,6 +25,7 @@ import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
 import { logger } from './logger.js';
+import { asGlobalProfileConfig, profileEntries } from './config-profile-reader.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
@@ -691,33 +692,7 @@ export class ConfigLoader {
    * Load multi-provider config (migrates from legacy if needed)
    */
   static async loadMultiProviderConfig(): Promise<MultiProviderConfig> {
-    const rawConfig = await this.loadJsonConfig(this.GLOBAL_CONFIG);
-
-    // Already multi-provider format
-    if (isMultiProviderConfig(rawConfig)) {
-      return rawConfig;
-    }
-
-    // Legacy format - migrate in-memory only; caller decides whether to persist
-    if (isLegacyConfig(rawConfig)) {
-      const defaultProfile: ProviderProfile = {
-        name: 'default',
-        ...rawConfig
-      };
-
-      return {
-        version: 2,
-        activeProfile: 'default',
-        profiles: { default: defaultProfile }
-      };
-    }
-
-    // Empty config - return empty multi-provider structure
-    return {
-      version: 2,
-      activeProfile: 'default',
-      profiles: {}
-    };
+    return asGlobalProfileConfig(await this.loadJsonConfig(this.GLOBAL_CONFIG));
   }
 
   static async loadLocalMultiProviderConfig(workingDir: string): Promise<MultiProviderConfig> {
@@ -1017,69 +992,11 @@ export class ConfigLoader {
    * Returns profiles from both local (if exists) and global configs
    */
   static async listProfiles(workingDir: string = process.cwd()): Promise<{ name: string; active: boolean; profile: ProviderProfile; source: 'local' | 'global' }[]> {
-    const profiles: { name: string; active: boolean; profile: ProviderProfile; source: 'local' | 'global' }[] = [];
-
-    // Load global config first
     const globalConfig = await this.loadMultiProviderConfig();
-    const globalActiveProfile = globalConfig.activeProfile;
-
-    // Add global profiles
-    Object.entries(globalConfig.profiles).forEach(([name, profile]) => {
-      profiles.push({
-        name,
-        active: false, // Will set active state later
-        profile,
-        source: 'global'
-      });
-    });
-
-    // Check if local config exists
-    const hasLocal = await this.hasLocalConfig(workingDir);
-    let localActiveProfile: string | null = null;
-
-    if (hasLocal) {
-      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-      const localConfig = await this.loadJsonConfig(localConfigPath);
-
-      if (isMultiProviderConfig(localConfig)) {
-        localActiveProfile = localConfig.activeProfile;
-
-        // Add/override with local profiles
-        Object.entries(localConfig.profiles).forEach(([name, profile]) => {
-          // Check if profile already exists from global
-          const existingIndex = profiles.findIndex(p => p.name === name);
-
-          if (existingIndex >= 0) {
-            // Override global profile with local
-            profiles[existingIndex] = {
-              name,
-              active: false,
-              profile: profile as ProviderProfile,
-              source: 'local'
-            };
-          } else {
-            // Add new local-only profile
-            profiles.push({
-              name,
-              active: false,
-              profile: profile as ProviderProfile,
-              source: 'local'
-            });
-          }
-        });
-      }
-    }
-
-    // Determine active profile
-    // Priority: local activeProfile > global activeProfile
-    const activeProfileName = localActiveProfile || globalActiveProfile;
-
-    // Set active flag
-    profiles.forEach(p => {
-      p.active = p.name === activeProfileName;
-    });
-
-    return profiles;
+    const localConfig = await this.hasLocalConfig(workingDir)
+      ? await this.loadJsonConfig(path.join(workingDir, this.LOCAL_CONFIG))
+      : {};
+    return profileEntries(globalConfig, localConfig);
   }
 
   /**
