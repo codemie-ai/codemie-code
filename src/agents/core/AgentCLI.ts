@@ -218,7 +218,11 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
-      const config = await ConfigLoader.load(process.cwd(), {
+      // Config is read from the nearest `.codemie` up from the cwd, like the native Claude hooks do;
+      // the agent itself still runs in process.cwd().
+      const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
+      const configDir = await findNearestConfigDir(process.cwd());
+      const config = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,
         model: options.model as string | undefined,
@@ -235,7 +239,7 @@ export class AgentCLI {
 
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
-          && !(await ConfigLoader.hasLocalConfig(process.cwd()));
+          && !(await ConfigLoader.hasLocalConfig(configDir));
 
         if (hasNoConfig) {
           config.provider = ProviderName.BEARER_AUTH;
@@ -338,7 +342,7 @@ export class AgentCLI {
       const { canPromptForProject } = await import('../../utils/interactive.js');
       const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
       const launchIdentity = await resolveLaunchIdentity(config, {
-        workingDir: process.cwd(),
+        workingDir: configDir,
         canPrompt: canPromptForProject({ task: options.task }),
         surface: 'agent',
         jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
