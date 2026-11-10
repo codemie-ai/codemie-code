@@ -4,7 +4,7 @@ import { AnalyticsSourceError } from '@/utils/errors.js';
 import { maskSecretsDeep } from '@/utils/security.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
-import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields } from './event-fields/identity-fields.js';
+import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
@@ -86,6 +86,13 @@ const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
  */
 export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<string, unknown>> {
   abstract readonly name: string;
+  /** Claude Code and Copilot adapters only: a native session's configured project wins over a shell CODEMIE_PROJECT. */
+  protected readonly configuredProjectWins: boolean = false;
+  /** Copilot adapters only (no CLAUDE_PROJECT_DIR): find config from the nearest `.codemie` up from the hook cwd. */
+  protected readonly walkProjectFromCwd: boolean = false;
+  private get projectPolicy(): ProjectPolicy {
+    return { configuredWins: this.configuredProjectWins, walkFromCwd: this.walkProjectFromCwd };
+  }
   readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
@@ -177,7 +184,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     if (context.evidenceInputs) {
-      const stamp = await stampEvidence(context, context.evidenceInputs);
+      const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
         if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
           logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
@@ -236,7 +243,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         session_id: pending.fields.session_id,
         fields: pending.fields,
         cwd: context.cwd,
-        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields)),
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields), this.projectPolicy),
         events: payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       }, now);
     } catch (error) {
@@ -391,7 +398,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context, record),
+      resolveIdentityFields(context, record, this.projectPolicy),
     ]);
     return { ...repoFields, ...identityFields };
   }

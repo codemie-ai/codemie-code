@@ -184,7 +184,7 @@ describe('owner-pending replay scope', () => {
     it('a fresh session (no record) is captured with the current profile', async () => {
       const m = await mods();
       expect(await m.capture(join(tmpdir(), 'work'), 'B')).toBe(true);
-      expect(projectMock).toHaveBeenCalledWith(join(tmpdir(), 'work'), 'B');
+      expect(projectMock).toHaveBeenCalledWith(join(tmpdir(), 'work'), 'B', { configuredWins: true, walkFromCwd: false });
     });
   });
 });
