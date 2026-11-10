@@ -7,8 +7,7 @@
 import chalk from 'chalk';
 import type { ProviderProfile } from '../../../env/types.js';
 import type { AuthStatus } from '../../../providers/core/types.js';
-import { renderProfileInfo, type AgentModelsDisplay, type AuthStatusDisplay } from '../../../utils/profile.js';
-import { getAgentDisplayName } from '../../../agents/core/model-compat.js';
+import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
 
 /**
  * Profile information for display
@@ -30,15 +29,6 @@ export interface ProfileIdentityDisplay {
   project?: string;
 }
 
-/** Per-agent rows for a profile set up per agent; undefined for legacy profiles. */
-export function agentModelsDisplay(profile: ProviderProfile): AgentModelsDisplay[] | undefined {
-  if (!profile.agentModels) return undefined;
-  return Object.entries(profile.agentModels).map(([agent, set]) => ({
-    agent: getAgentDisplayName(agent),
-    model: set.activeModel,
-    otherModels: set.models.filter(id => id !== set.activeModel),
-  }));
-}
 
 /**
  * Profile display utility class
@@ -57,7 +47,6 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      agentModels: agentModelsDisplay(profile),
       codeMieUrl: identity.codeMieUrl,
       project: identity.project,
       isActive: active
@@ -139,7 +128,6 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      agentModels: agentModelsDisplay(profile),
       codeMieUrl: identity.codeMieUrl,
       project: identity.project,
       authStatus: authStatusDisplay,
