@@ -45,6 +45,7 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
 const {
   reconcileOtherSessions,
   finalizeOwnRecord,
+  markDroppedIfUndelivered,
   LEGACY_IDLE_MS,
   ABANDON_WAIT_MS,
 } = await import('../stale-session-reconciliation.js');
@@ -1571,5 +1572,49 @@ describe('nextRecordStart', () => {
     // The later run links the transcript: only its ledger grows, its record file is not rewritten.
     writeFileSync(join(sessionsDir, `${later.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: shared })}\n`);
     expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
+  });
+});
+
+describe('EPMCDME-17054 a legacy gate skip counts as delivered', () => {
+  function completedWithPendingDeltas(endMetricSkipped: string): Session {
+    const closed = record({ status: 'completed', endTime: Date.now(), provider: 'anthropic-subscription', endMetricSkipped });
+    save(closed);
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
+    return closed;
+  }
+
+  it('a record skipped for no work consent leaves the queue with its pending deltas but no droppedAt', async () => {
+    const closed = completedWithPendingDeltas('no-work-consent');
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('an end metric sent before a final gate verdict withheld the deltas: no droppedAt', async () => {
+    const closed = record({ status: 'completed', endTime: Date.now(), provider: 'anthropic-subscription', endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
+    save(closed);
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('a record skipped for another reason with pending deltas is still marked dropped', async () => {
+    const closed = completedWithPendingDeltas('no-analytics-config');
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
+  });
+
+  it('a gate-skipped record with a pending conversation payload is still marked dropped', async () => {
+    const closed = completedWithPendingDeltas('destination-held');
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_conversation.jsonl`), `${JSON.stringify({ status: 'pending', payload: { conversationId: 'c', history: [] }, timestamp: 1 })}\n`);
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
   });
 });

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,7 @@ import { MetricsSyncProcessor } from '../metrics-sync-processor.js';
 import * as metricsApiClient from '../metrics-api-client.js';
 import { logger } from '../../../../../../../utils/logger.js';
 import type { ParsedSession } from '../../../BaseSessionAdapter.js';
+import { connectFolder, disconnectFolder, resolveConsent } from '@/agents/core/evidence/consent-store.js';
 import type { ProcessingContext } from '../../../BaseProcessor.js';
 
 const SESSION_ID = 'sync-model-session';
@@ -62,7 +63,8 @@ describe('MetricsSyncProcessor', () => {
 
   async function syncDeltas(
     deltas: Array<ReturnType<typeof delta>>,
-    contextExtras: Partial<ProcessingContext> = {}
+    contextExtras: Partial<ProcessingContext> = {},
+    sessionExtras: Record<string, unknown> = {}
   ) {
     writeFileSync(join(home, 'sessions', `${SESSION_ID}.json`), JSON.stringify({
       sessionId: SESSION_ID,
@@ -73,7 +75,8 @@ describe('MetricsSyncProcessor', () => {
       gitBranch: 'main',
       status: 'active',
       activeDurationMs: 0,
-      correlation: { status: 'matched', agentSessionId: 'agent-1', retryCount: 0 }
+      correlation: { status: 'matched', agentSessionId: 'agent-1', retryCount: 0 },
+      ...sessionExtras
     }));
     writeFileSync(
       join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`),
@@ -94,6 +97,66 @@ describe('MetricsSyncProcessor', () => {
       context
     );
   }
+
+  describe('EPMCDME-17054 legacy work-consent gate', () => {
+    const scope = { api_identity: 'api-x', owner_hash: 'owner-x', project: 'test321' };
+    let folder: string;
+
+    beforeEach(() => { folder = mkdtempSync(join(tmpdir(), 'metrics-sync-repo-')); });
+    afterEach(() => { rmSync(folder, { recursive: true, force: true }); });
+
+    const readDeltas = (): Array<{ syncStatus: string; syncAttempts: number }> =>
+      readFileSync(join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+
+    const readRecord = (): Record<string, unknown> =>
+      JSON.parse(readFileSync(join(home, 'sessions', `${SESSION_ID}.json`), 'utf-8'));
+
+    it('an anthropic-subscription session without frozen consent sends no delta and persists the final verdict', async () => {
+      const send = vi.spyOn(metricsApiClient.MetricsSender.prototype, 'sendSessionMetric');
+      try {
+        const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
+          provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder
+        });
+
+        expect(result.success).toBe(true);
+        expect(send).not.toHaveBeenCalled();
+        expect(bodies).toEqual([]);
+        expect(readDeltas().map(d => [d.syncStatus, d.syncAttempts])).toEqual([['pending', 0], ['pending', 0]]);
+        expect(readRecord().legacyMetricsWithheld).toBe('no-work-consent');
+      } finally {
+        send.mockRestore();
+      }
+    });
+
+    it('consent revoked after the end metric was sent: the deltas withheld for good are persisted as such', async () => {
+      await connectFolder(scope, folder);
+      const ref = await resolveConsent(scope, folder);
+      await disconnectFolder(scope, folder);
+
+      const result = await syncDeltas([delta('p-1', 'pending')], {}, {
+        provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder, endMetricSentAt: 1,
+        legacyMetricsConsent: { ref, apiIdentity: 'api-x', ownerHash: 'owner-x' }
+      });
+
+      expect(result.success).toBe(true);
+      expect(bodies).toEqual([]);
+      expect(readRecord()).toMatchObject({ endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
+    });
+
+    it('an anthropic-subscription session whose frozen consent holds sends its deltas', async () => {
+      await connectFolder(scope, folder);
+      const ref = await resolveConsent(scope, folder);
+
+      const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
+        provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder,
+        legacyMetricsConsent: { ref, apiIdentity: 'api-x', ownerHash: 'owner-x' }
+      });
+
+      expect(result.success).toBe(true);
+      expect(bodies).toHaveLength(1);
+      expect(readDeltas().map(d => d.syncStatus)).toEqual(['synced', 'synced']);
+    });
+  });
 
   it('a prompts-only batch carries the model of the last synced reply', async () => {
     const result = await syncDeltas([

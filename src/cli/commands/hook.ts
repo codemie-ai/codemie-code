@@ -1003,6 +1003,10 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const resumeSessionId = config?.env?.[RESUME_SESSION_ENV_KEY];
     const continuesPriorSession = config?.env?.[CONTINUE_SESSION_ENV_KEY] === '1';
 
+    // Work consent for the legacy /v1/metrics gate, frozen once at start (anthropic-subscription only)
+    const { freezeLegacyMetricsConsent } = await import('../../agents/core/session/legacy-metrics-gate.js');
+    const frozenConsent = await freezeLegacyMetricsConsent(provider, project, workingDirectory);
+
     // Create session record with correlation already matched
     const startTime = event.startTime ?? Date.now();
     const session = {
@@ -1024,6 +1028,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(origin && { origin }),
       ...(resumeSessionId && { resumeSessionId }),
       ...(continuesPriorSession && { continuesPriorSession: true as const }),
+      ...frozenConsent,
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -1236,6 +1241,17 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     const session = await new SessionStore().loadSession(sessionId);
     if (isExternalOrigin(session)) {
       logger.debug('[hook:SessionStart] Skipping start metrics for external-resume session');
+      return;
+    }
+    // A missing record has no frozen consent: a gated provider withholds, the others send as before
+    const { legacyMetricsVerdict } = await import('../../agents/core/session/legacy-metrics-gate.js');
+    const verdict = await legacyMetricsVerdict(session ?? { provider: provider ?? '', workingDirectory: event.cwd || process.cwd() });
+    if (!verdict.publish) {
+      logger.debug(`[hook:SessionStart] Start metric withheld: ${verdict.reason}`);
+      // A transient verdict defers the start metric: it is sent ahead of the end metric once the gate publishes
+      if ('transient' in verdict && session) {
+        await new SessionStore().saveSession({ ...session, startMetricDeferred: event.source || 'startup' });
+      }
       return;
     }
 
