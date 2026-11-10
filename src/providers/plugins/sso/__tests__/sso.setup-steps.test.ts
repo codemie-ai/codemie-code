@@ -6,6 +6,8 @@ const mockFetchModels = vi.fn();
 const mockPrompt = vi.fn();
 
 vi.mock('../sso.auth.js', () => ({
+  effectiveExpiresAt: (c: { cookies?: Record<string, string>; expiresAt?: number }) =>
+    c.cookies?.codemie_access_token ? c.expiresAt : undefined,
   CodeMieSSO: class {
     getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
     authenticate = (...args: unknown[]) => mockAuthenticate(...args);
@@ -26,7 +28,7 @@ import { SSOSetupSteps } from '../sso.setup-steps.js';
 
 const P = 'https://profile.example.com';
 const W = 'https://workspace.example.com';
-const creds = { cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api`, expiresAt: 123 };
+const creds = { cookies: { codemie_access_token: 'jwt' }, apiUrl: `${P}/code-assistant-api`, expiresAt: 123 };
 
 describe('SSOSetupSteps platform URL resolution', () => {
   beforeEach(() => {
@@ -60,6 +62,25 @@ describe('SSOSetupSteps platform URL resolution', () => {
       } as never);
       expect(status).toEqual({ authenticated: false });
       expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cookie-only credentials', () => {
+    const cookieOnly = { cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api`, expiresAt: 123 };
+
+    it('getAuthStatus reports no expiresAt', async () => {
+      mockGetStoredCredentials.mockResolvedValue(cookieOnly);
+      const status = await SSOSetupSteps.getAuthStatus!({ provider: 'ai-run-sso', baseUrl: P } as never);
+      expect(status.authenticated).toBe(true);
+      expect(status.expiresAt).toBeUndefined();
+    });
+
+    it('validateAuth reports no expiresAt', async () => {
+      mockGetStoredCredentials.mockResolvedValue(cookieOnly);
+      mockFetchModels.mockResolvedValue([]);
+      const result = await SSOSetupSteps.validateAuth!({ provider: 'ai-run-sso', baseUrl: P } as never);
+      expect(result.valid).toBe(true);
+      expect(result.expiresAt).toBeUndefined();
     });
   });
 
