@@ -483,9 +483,10 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       symlinkSync(join(REPO_ROOT, 'node_modules'), join(pkg, 'node_modules'), 'junction');
     }, 60_000);
 
+    // Same budget as the copy above: removing a copied dist/ can pass 10 s on a slow Windows runner.
     afterAll(() => {
       rmSync(pkg, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    });
+    }, 60_000);
 
     // Above the installed version, so it is outside the notice's last-seen..installed range.
     const OTHER_VERSION = '99.0.0';
