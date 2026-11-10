@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 4,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches claude-code-otlp-endpoint.ts, a shared connector consumed by src/cli/commands/proxy/index.ts, otlp-cold-start.ts and the connect orchestrator, plus claude.plugin.ts's beforeRun lifecycle hook — two components across the Service (agent plugin) and Infrastructure (proxy connector) layers, coordinated through a new withTimeout-bounded, non-blocking call path (PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS)."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: change modifies a core shared utility (claude-code-otlp-endpoint.ts) that is consumed by multiple other call sites outside this task's direct scope (proxy/index.ts, otlp-cold-start.ts, connect-orchestrator)."
+  ],
+  "split_recommendation": null
+}

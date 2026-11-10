@@ -89,8 +89,17 @@ export async function expireCarriedAgeLocked(sessionId: string, status: SessionS
 }
 
 /** A hold that reached its original bound suspends the session before its range is dropped; false = the stop is not recorded, so nothing expires yet. */
-async function expiryStopped(rec: DeliveryFailure, onHoldExpired?: () => Promise<boolean>): Promise<boolean> {
-  return rec.reason !== 'destination_hold' || !onHoldExpired || (await onHoldExpired());
+/**
+ * At the retention bound a hold expires only once `onHoldExpired` made its outcome durable (a stop, or the ended marker a
+ * hold of `ENDED_MARKER_UNWRITTEN` waits for); false keeps it held. It receives the expiring hold.
+ */
+export type HoldExpiry = (hold: { reason: DeliveryLossReason; detail?: string }) => Promise<boolean>;
+
+/** A final refusal whose ended marker is not durable yet: held (the legacy gate reads it as pending) until it is. */
+export const ENDED_MARKER_UNWRITTEN = 'ended_marker_unwritten';
+
+async function expiryStopped(rec: DeliveryFailure, onHoldExpired?: HoldExpiry): Promise<boolean> {
+  return rec.reason !== 'destination_hold' || !onHoldExpired || (await onHoldExpired(rec));
 }
 
 /**
@@ -102,7 +111,7 @@ export async function deliveryGate(
   sessionId: string,
   stream: SpoolStream,
   now: number = Date.now(),
-  onHoldExpired?: () => Promise<boolean>
+  onHoldExpired?: HoldExpiry
 ): Promise<'go' | 'wait'> {
   // Common case first, without the lock: nothing recorded for this stream.
   const peek = await readStatus(sessionId);
@@ -143,7 +152,7 @@ export async function noteDeliveryFailure(
   failure: { reason: DeliveryLossReason; detail?: string },
   range: { cursor: number; end: number },
   now: number = Date.now(),
-  onHoldExpired?: () => Promise<boolean>
+  onHoldExpired?: HoldExpiry
 ): Promise<'noted' | 'lost' | 'stale'> {
   return withSessionLock(sessionId, async () => {
     const { cursor } = range;
@@ -197,7 +206,7 @@ export async function recordUnacknowledged(
   stream: SpoolStream,
   outcome: SendOutcome,
   range: { cursor: number; end: number },
-  onHoldExpired?: () => Promise<boolean>
+  onHoldExpired?: HoldExpiry
 ): Promise<void> {
   const failure = deliveryFailureOf(outcome);
   if (!failure) return;

@@ -9,6 +9,17 @@ import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/pr
 import { fetchProxyHealth } from './health-check.js';
 import { getEffectiveClientType } from './client-type.js';
 
+/** Poll interval `spawnDaemon` uses while waiting for the daemon to become ready. */
+const DAEMON_READY_POLL_INTERVAL_MS = 100;
+
+/**
+ * Upper bound on how long `spawnDaemon` waits for the daemon to become ready. Exported so
+ * callers that race their own timeout against a spawn (e.g. the Claude plugin's pre-spawn
+ * OTLP endpoint refresh, EPMCDME-16647) can derive their budget from this one instead of
+ * guessing at a separate magic number that can drift out of sync with it.
+ */
+export const DAEMON_READY_TIMEOUT_MS = 5_000;
+
 export interface DaemonState {
   pid: number;
   port: number;
@@ -347,9 +358,10 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
 
   spawnDetached(process.execPath, args);
 
-  // Poll up to 5 s for daemon readiness
-  for (let i = 0; i < 50; i++) {
-    await new Promise<void>(r => setTimeout(r, 100));
+  // Poll for daemon readiness, up to DAEMON_READY_TIMEOUT_MS.
+  const attempts = DAEMON_READY_TIMEOUT_MS / DAEMON_READY_POLL_INTERVAL_MS;
+  for (let i = 0; i < attempts; i++) {
+    await new Promise<void>(r => setTimeout(r, DAEMON_READY_POLL_INTERVAL_MS));
     const state = await readState(stateFile);
     if (state && (await isDaemonAlive(state))) {
       if (opts.writeRecord !== false) {
@@ -361,7 +373,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
 
   throw new ToolExecutionError(
     'proxy-daemon',
-    'Daemon failed to start within 5 seconds. Check logs: ~/.codemie/logs/'
+    `Daemon failed to start within ${DAEMON_READY_TIMEOUT_MS / 1000} seconds. Check logs: ~/.codemie/logs/`
   );
 }
 

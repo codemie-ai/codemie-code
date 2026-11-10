@@ -21,6 +21,7 @@ import {
 } from '../claude-code-otlp.js';
 import {
   checkClaudeCodeOtlpEndpoint,
+  isClaudeCodeOtlpConnected,
   readConfiguredOtlpPort,
   refreshClaudeCodeOtlpEndpoint,
 } from '../claude-code-otlp-endpoint.js';
@@ -1604,6 +1605,18 @@ describe('claude-code-otlp connector', () => {
       await removeClaudeCodeOtlpConfig();
 
       expect(await readPreferencesBytes()).toBe(before);
+    });
+  });
+
+  describe('isClaudeCodeOtlpConnected', () => {
+    it('resolves false when nothing has connected yet', async () => {
+      expect(await isClaudeCodeOtlpConnected()).toBe(false);
+    });
+
+    it('resolves true once CodeMie owns the OTLP endpoint/headers pair', async () => {
+      await writeClaudeCodeOtlpConfig();
+
+      expect(await isClaudeCodeOtlpConnected()).toBe(true);
     });
   });
 

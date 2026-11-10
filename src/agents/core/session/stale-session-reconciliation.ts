@@ -19,7 +19,7 @@ import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { BaseHookEvent } from '../types.js';
 import type { Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
-import { legacyMetricsWithheld } from './legacy-metrics-gate.js';
+import { awaitsDestination, isLegacyGatedProvider, legacyMetricsVerdict, legacyMetricsWithheld } from './legacy-metrics-gate.js';
 import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
 import { latestRecordTime } from './BaseSessionAdapter.js';
 import { syntheticSessionEnd } from './synthetic-session-end.js';
@@ -30,7 +30,8 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptNeverReached, authWasRejected, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptNeverReached, authWasRejected, awaitingDestination, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
@@ -322,9 +323,24 @@ export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise
     await restoreCounter(attempt, 'credentials rejected by the server');
   } else if (attemptNeverReached(attempt.signal)) {
     await restoreCounter(attempt, 'request never reached the server');
+  } else if (awaitingDestination(attempt.signal) && (await destinationCanStillAnswer(attempt.sessionId))) {
+    // A legacy metric withheld until the backend confirms the destination (EPMCDME-17054) spends no attempt
+    await restoreCounter(attempt, 'legacy metrics wait for the destination confirmation');
   } else if (aborted) {
     await rollBackAttempt(attempt);
   }
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Whether the destination-accepted marker can still appear for the record: its session ended (or, unended, started)
+ * within the evidence record's retention. Past it the waiting attempts count again, so the record is dropped in the end.
+ */
+async function destinationCanStillAnswer(sessionId: string): Promise<boolean> {
+  const record = await new SessionStore().loadSession(sessionId);
+  const at = record?.endTime ?? record?.startTime;
+  return at !== undefined && Date.now() - at < evidenceRecordIdleDays() * DAY_MS;
 }
 
 /** Puts the attempt's counter back to its value before the attempt. */
@@ -480,7 +496,7 @@ async function listCandidates(launch: Launch, ownSessionId: string): Promise<Ses
   }
 
   const now = Date.now();
-  const candidates: Session[] = [];
+  const candidates: Array<{ record: Session; waiting: boolean }> = [];
   for (const name of names) {
     if (!isLiveRecordFileName(name)) continue;
     let record: Session;
@@ -490,11 +506,21 @@ async function listCandidates(launch: Launch, ownSessionId: string): Promise<Ses
       continue;
     }
     if (record.sessionId !== name.slice(0, -'.json'.length) || record.sessionId === ownSessionId) continue;
-    if (await classifyRecord(record, launch, now)) candidates.push(record);
+    const kind = await classifyRecord(record, launch, now);
+    if (kind) candidates.push({ record, waiting: kind === 'undelivered' && (await awaitsDestinationNow(record)) });
   }
+  // Records whose legacy metrics wait for the backend's answer go after the ready ones (newest first in each group), so
+  // they never hold the cap's slots from an older record that can be delivered; they still get any slot left over
   return candidates
-    .sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0))
-    .slice(0, RECONCILE_PER_START);
+    .sort((a, b) => Number(a.waiting) - Number(b.waiting) || (b.record.startTime ?? 0) - (a.record.startTime ?? 0))
+    .slice(0, RECONCILE_PER_START)
+    .map((c) => c.record);
+}
+
+/** Whether a gated record's legacy metrics are withheld now while the backend's answer on the destination is awaited. Never throws. */
+async function awaitsDestinationNow(record: Session): Promise<boolean> {
+  if (!isLegacyGatedProvider(record.provider) || legacyMetricsWithheld(record)) return false;
+  return awaitsDestination(await legacyMetricsVerdict(record));
 }
 
 /** One record of the start pass under its reconcile lock, skipped when another process holds it. */
