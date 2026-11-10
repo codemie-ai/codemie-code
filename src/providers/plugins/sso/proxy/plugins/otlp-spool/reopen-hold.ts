@@ -20,8 +20,9 @@ import { OTEL_JSON_STREAMS, OTEL_STREAMS, streamFile, type SpoolStream } from '.
  * grace is let go, unsent.
  *
  * A reopen that goes on to work is released as soon as a record of real work (a model request or a tool
- * result) shows up in its own spool, without waiting for a `Stop`: otherwise a session killed before any
- * hook pass would lose everything it did. Claude Code's startup records never contain those two.
+ * result) shows up in its own log stream, without waiting for a `Stop`: otherwise a session killed before
+ * any hook pass would lose everything it did. A record counts only by its exact event name
+ * (`api_request` / `tool_result`), never by the words appearing somewhere in a payload.
  *
  * The parse state is written by the hook process; it is read here without its lock. A stale read
  * can only delay a release by one tick or, in the first moments of an open, let the earliest
@@ -30,15 +31,32 @@ import { OTEL_JSON_STREAMS, OTEL_STREAMS, streamFile, type SpoolStream } from '.
 
 const OTEL_SPOOL_STREAMS: readonly SpoolStream[] = [...OTEL_STREAMS, ...OTEL_JSON_STREAMS];
 
-/** Records only a session that really works produces (startup records never carry these names). */
-const WORK_RECORD = /claude_code\.(?:api_request|tool_result)|"(?:api_request|tool_result)"/;
-const SCAN_OVERLAP = 48;
-const SCAN_LIMIT = 8 * 1024 * 1024;
+/** Only the log streams carry events; metrics and traces are never looked at for work. */
+const WORK_STREAMS: readonly SpoolStream[] = ['logs', 'logsJson'];
+const WORK_EVENTS: readonly string[] = ['api_request', 'tool_result'];
+/** Protobuf strings are raw UTF-8 in the bytes: the event is found by its prefixed body text. */
+const WORK_TOKENS: readonly string[] = WORK_EVENTS.map((name) => `claude_code.${name}`);
+const SCAN_CHUNK = 8 * 1024 * 1024;
+const SCAN_OVERLAP = 64;
 const MEMO_LIMIT = 1000;
 
-/** Daemon-lifetime memory: when a reopened session was seen working, and how far each stream was scanned. */
+/**
+ * Daemon-lifetime memory. `workSeenAt`: when a reopened session was seen working. `scannedTo`: how far
+ * each stream was scanned. Both are an optimisation and a bridge between ticks: after a restart the scan
+ * starts again at the cursor (records already forwarded are not looked at again).
+ */
 const workSeenAt = new Map<string, number>();
 const scannedTo = new Map<string, number>();
+
+function remember(map: Map<string, number>, key: string, value: number): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > MEMO_LIMIT) {
+    const oldest = map.keys().next();
+    if (oldest.done) break;
+    map.delete(oldest.value);
+  }
+}
 
 async function modifiedAt(path: string): Promise<number> {
   try {
@@ -48,10 +66,71 @@ async function modifiedAt(path: string): Promise<number> {
   }
 }
 
+interface AnyValue {
+  stringValue?: string;
+}
+interface LogRecordShape {
+  body?: AnyValue;
+  attributes?: { key?: string; value?: AnyValue }[];
+}
+
+/** One OTLP/JSON export (one spool line): does it hold a log record of a model request or tool result? */
+function exportHoldsWork(line: string): boolean {
+  let parsed: { resourceLogs?: { scopeLogs?: { logRecords?: LogRecordShape[] }[] }[] };
+  try {
+    parsed = JSON.parse(line) as typeof parsed;
+  } catch {
+    return false;
+  }
+  for (const resource of parsed.resourceLogs ?? []) {
+    for (const scope of resource.scopeLogs ?? []) {
+      for (const record of scope.logRecords ?? []) {
+        const body = record.body?.stringValue;
+        if (body !== undefined && WORK_TOKENS.includes(body)) return true;
+        const name = record.attributes?.find((attribute) => attribute.key === 'event.name')?.value?.stringValue;
+        if (name !== undefined && WORK_EVENTS.includes(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
- * Whether the spool bytes after the cursor hold a record of real work. Streams are scanned once, from the
- * cursor or the last scanned offset (a small overlap catches a name split between two reads).
+ * Scan one stream from `from` up to one chunk. Returns whether work was found and where the next scan
+ * starts: NDJSON streams advance by whole lines only; protobuf streams advance with a small overlap so a
+ * name split between two reads is still found.
  */
+async function scanChunk(
+  path: string,
+  json: boolean,
+  from: number,
+  size: number
+): Promise<{ found: boolean; next: number }> {
+  const to = Math.min(size, from + SCAN_CHUNK);
+  if (to <= from) return { found: false, next: from };
+  let handle;
+  try {
+    handle = await open(path, 'r');
+    const buffer = Buffer.alloc(to - from);
+    const { bytesRead } = await handle.read(buffer, 0, to - from, from);
+    const bytes = buffer.subarray(0, bytesRead);
+    if (!json) {
+      const text = bytes.toString('latin1');
+      const found = WORK_TOKENS.some((token) => text.includes(token));
+      return { found, next: to >= size ? from + bytesRead : Math.max(from + 1, from + bytesRead - SCAN_OVERLAP) };
+    }
+    const lastNewline = bytes.lastIndexOf(0x0a);
+    if (lastNewline < 0) return { found: false, next: to < size ? to : from }; // one huge line: skip it; else wait for its end
+    const lines = bytes.subarray(0, lastNewline).toString('utf8').split('\n');
+    return { found: lines.some(exportHoldsWork), next: from + lastNewline + 1 };
+  } catch {
+    return { found: false, next: from }; // Unreadable now: the next tick looks again.
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** One tick: look at the new bytes after the cursor (or the last scanned offset) of the log streams. */
 async function seesOwnWork(
   sessionId: string,
   files: readonly { stream: SpoolStream; size: number }[],
@@ -59,26 +138,33 @@ async function seesOwnWork(
   now: number
 ): Promise<boolean> {
   for (const { stream, size } of files) {
+    if (!WORK_STREAMS.includes(stream)) continue;
     const key = `${sessionId}:${stream}`;
     const from = Math.max(scannedTo.get(key) ?? 0, cursors?.[stream] ?? 0);
-    const to = Math.min(size, from + SCAN_LIMIT);
-    if (to <= from) continue;
-    let handle;
-    try {
-      handle = await open(streamFile(sessionId, stream), 'r');
-      const buffer = Buffer.alloc(to - from);
-      const { bytesRead } = await handle.read(buffer, 0, to - from, from);
-      if (WORK_RECORD.test(buffer.subarray(0, bytesRead).toString('latin1'))) {
-        if (workSeenAt.size >= MEMO_LIMIT) workSeenAt.clear();
-        workSeenAt.set(sessionId, now);
-        return true;
-      }
-      if (scannedTo.size >= MEMO_LIMIT) scannedTo.clear();
-      scannedTo.set(key, Math.max(from, from + bytesRead - SCAN_OVERLAP));
-    } catch {
-      // Unreadable now: the next tick looks again.
-    } finally {
-      await handle?.close().catch(() => undefined);
+    const { found, next } = await scanChunk(streamFile(sessionId, stream), stream === 'logsJson', from, size);
+    if (found) {
+      remember(workSeenAt, sessionId, now);
+      return true;
+    }
+    remember(scannedTo, key, next);
+  }
+  return false;
+}
+
+/** Before giving up on a reopen: look at everything that is still unsent, not just the next chunk. */
+async function holdsWorkAnywhere(
+  sessionId: string,
+  files: readonly { stream: SpoolStream; size: number }[],
+  cursors: Partial<Record<SpoolStream, number>> | undefined
+): Promise<boolean> {
+  for (const { stream, size } of files) {
+    if (!WORK_STREAMS.includes(stream)) continue;
+    let from = cursors?.[stream] ?? 0;
+    while (from < size) {
+      const { found, next } = await scanChunk(streamFile(sessionId, stream), stream === 'logsJson', from, size);
+      if (found) return true;
+      if (next <= from) break;
+      from = next;
     }
   }
   return false;
@@ -117,17 +203,26 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
   if (files.length === 0) return true;
   const status = await readStatus(sessionId);
   // The session works (its own model requests or tool results are in the spool): release what was held.
+  // The release stands until the next reopen marks the state again (`reopenedAt`), whatever else the
+  // hook passes save in between.
   const seenAt = workSeenAt.get(sessionId);
-  if (seenAt !== undefined && seenAt >= (await modifiedAt(getCodemiePath('analytics', 'state', `${sessionId}.json`)))) return false;
+  if (seenAt !== undefined && seenAt >= (state.reopenedAt ?? 0)) return false;
   if (await seesOwnWork(sessionId, files, status?.cursors, now)) return false;
   // Still being written: the session is open, keep waiting for its activity.
   if (now - lastWrite < abandonedSessionGraceMs()) return true;
+  // About to give up: make sure no work is hiding in bytes the ticks have not reached yet.
+  if (await holdsWorkAnywhere(sessionId, files, status?.cursors)) {
+    remember(workSeenAt, sessionId, now);
+    return false;
+  }
 
-  // Let go only of what this reopen left unsent, and only whole lines: a stream whose earlier records still
-  // wait for a retry (a delivery range from before the reopen) keeps them, and the cut never lands inside a line.
+  // Let go only of what this reopen left unsent: a stream whose earlier records still wait for a retry (a
+  // delivery range from before the reopen) keeps them. NDJSON streams are cut at the last whole line;
+  // protobuf streams at their end (a newline byte can occur inside a message, and nothing is written now).
   for (const { stream, size } of files) {
     if (status?.delivery?.[stream]) continue;
-    const cut = await lastNewlineOffset(streamFile(sessionId, stream), size);
+    const json = (OTEL_JSON_STREAMS as readonly SpoolStream[]).includes(stream);
+    const cut = json ? await lastNewlineOffset(streamFile(sessionId, stream), size) : size;
     if (cut <= (status?.cursors?.[stream] ?? 0)) continue;
     await advanceCursor(sessionId, stream, cut, { reason: 'idle_reopen_expired', stream, bytes: cut, at: now });
   }

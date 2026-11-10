@@ -147,38 +147,54 @@ found, and what was decided:
   status file was swept, with a resume hook slower than the first OTel export, can still let the startup
   records through. Same family as D-7; a fix needs a new live scenario that sweeps and races.
 
-## Third pass: review of 2026-11-11 and the live results of the reporter (2026-11-11)
+## Third pass: reviews of 2026-11-11 and the live results of the reporter (2026-11-11)
 
-D-1..D-13 carry over, except D-10 and D-13, which are now fixed (below). The review's
-`breaking-change` flag (project selection, `AgentCLI`, copilot launcher, `ConfigLoader`) came from a diff
-taken against a base that did not yet contain #782; against `origin/main` this branch touches only the
-OTLP plugin and the spool forwarder.
+D-1..D-13 carry over, except D-10 and D-13, which are now fixed (below). Two reviews of this day flagged
+`breaking-change` and a finding about project selection (`AgentCLI`, `identity-fields`, the copilot launcher,
+`ConfigLoader`). Both ran against a local `main` that was behind `origin/main` and so lacked #782. Against
+the current `origin/main` this branch touches only the OTLP plugin and the spool forwarder. The branch was
+rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to date.
 
 ### Fixed
 
-- **D-14 (fixes D-10, review CR-001 and CR-003): the hold looks for real work and cuts safely.**
-  A held reopen is released at the first record of real work in its own spool (a `claude_code.api_request`
-  or `claude_code.tool_result`, found by name in the bytes after the cursor, JSON and protobuf streams
-  alike), with no wait for a `Stop`. The startup records Claude Code writes on every open never contain
-  those names (real list: hook_registered, plugin_loaded, managed_settings_resolved, hook_execution_*,
-  user_prompt). The release is remembered for the life of the daemon; a new reopen (the state file written
-  after the release) starts over. The expiry after 60 min still exists for a reopen that stays idle, but now
-  cuts at the last whole line and leaves a stream alone while earlier records of it still wait for a retry
-  (the delivery range from before the reopen). Live: S13 (fails on the previous hold, passes now).
-  *Residual:* a reopen that works and is killed leaves only the records after its last work record held
-  (hook_execution_* of the shutdown), dropped after the grace. They carry no usage.
+- **D-14 (fixes D-10; reviews CR-001, CR-002, CR-003 of 2026-11-11): the hold looks for real work and cuts safely.**
+  A held reopen is released at the first record of real work in its own log stream, with no wait for a `Stop`.
+  A record counts only by its exact event name: in the NDJSON stream a log record whose `event.name` is
+  `api_request` / `tool_result` (or whose body is `claude_code.<name>`), parsed per line; in the protobuf
+  stream the prefixed text `claude_code.api_request` / `claude_code.tool_result`. A bare word elsewhere in a
+  payload does not count, and metrics and traces are never looked at. The release stands until the next
+  reopen marks the parse state again (`reopenedAt`, set where the resume marks the reopen), whatever the
+  hook passes save in between; the memo is bounded by dropping the oldest entries. The expiry after 60 min
+  still exists for a reopen that stays idle: before it drops anything it scans everything still unsent for
+  work (not just the next 8 MB), it cuts an NDJSON stream at the last whole line and a protobuf stream at its
+  end (a newline byte can occur inside a protobuf message), and it leaves a stream alone while earlier records
+  of it still wait for a retry. Live: S13 (fails on the earlier hold, passes now).
+  *Residual:* after a daemon restart the release memo is gone and the scan starts again at the cursor, so
+  records written after the last work record can be held until the next one; a reopen that works and is killed
+  leaves only those trailing records (hook_execution_* of the shutdown, no usage) held, dropped after the
+  grace. *Unverified:* that Claude Code's real startup records carry neither event name; the live suite's
+  startup records are synthetic (D-8). A wrong guess fails closed (the hold waits for a `Stop`, as before).
+  To confirm: run the real `claude --resume` check once more on this build.
 - **D-15 (fixes D-13): the startup-race guard works after a sweep.** Besides "bytes written after the
   session ended", the hold now recognises a spool file created within the settle window for a session whose
   saved parse state is much older than that file (older by more than the settle time): the status is gone,
   the state file is not. Bounded by the settle time (15 s from the file's creation), so a long turn is not
   held. A brand-new ordinary session is not affected: its state is written within seconds of its first
-  record. Live: S14 (7 records leaked on the previous hold, 0 now). *Residual:* a hook slower than 15 s still
+  record. Live: S14 (7 records leaked on the earlier hold, 0 now). *Residual:* a hook slower than 15 s still
   lets records through (D-7), and a state file touched by an unrelated pass shortly before the reopen defeats
   the age test (the pass would then have marked the reopen or been an ordinary session).
+- **Test added (review CR-006):** a continuation with queue lines before and after the copies, a synthetic
+  placeholder and `/exit` lines reports nothing on Stop and SessionEnd; once real work follows, its start is
+  its own first line (the placeholder Claude Code wrote at the open, as in QA's report), not a copied or queue
+  line. A resume without a saved start still counts as a first start by design (D-3).
 
 ### Not fixed, with the reason
 
-- **CR-002 (lookup limits, copied subagent transcripts): D-1, D-2, D-4, D-12 stand.** Not verified: the
+- **Parent lookup limits, copied subagent transcripts, late `continued-in` record (reviews of 2026-11-10 CR-002 and
+  2026-11-11 CR-004): D-1, D-2, D-4, D-12 stand.** A larger change with a high regression risk and a data-loss
+  risk: a longer or wider lookup adds a scan of up to 200 transcripts (and other project folders) to every hook
+  of every ordinary session, can pick the wrong parent, and any rule that drops uuids as inherited can hide
+  real work from a session. Lines already reported are never retracted. Not verified: the
   copied-subagent case was never seen in the 4 real pairs, so a rule would be built without an example.
   Fixing the lookup means scanning other project folders on every hook of every ordinary session (cost) and
   risks choosing the wrong parent (ambiguity), and reported lines can never be retracted anyway. The branch

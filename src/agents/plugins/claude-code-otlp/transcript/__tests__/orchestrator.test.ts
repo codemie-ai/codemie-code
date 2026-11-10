@@ -3701,6 +3701,46 @@ describe('continued session (EPMCDME-16992)', () => {
     }
   });
 
+  it('Preview case of EPMCDME-16992: a continuation opened and closed without a prompt reports nothing and starts nowhere', async () => {
+    // Copies with uuid-less queue lines before and after them, then what opening and /exit leave behind.
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }], usage: { input_tokens: 0, output_tokens: 0 } },
+    });
+    const command = (uuid: string, content: string, timestamp: string): string =>
+      JSON.stringify({ type: 'user', uuid, sessionId: 'C', timestamp, message: { role: 'user', content } });
+    const lines = [
+      queued('2026-11-01T17:44:00.000Z'),
+      ...copiedLines(),
+      queued('2026-11-10T16:23:50.000Z'),
+      synthetic,
+      command('c-x1', '\n<command-name>/exit</command-name>', '2026-11-10T16:23:53.000Z'),
+      command('c-x2', '<local-command-stdout>Goodbye!</local-command-stdout>', '2026-11-10T16:23:53.100Z'),
+    ];
+    const path = writeTranscript('C.jsonl', lines);
+
+    const stop = await openMainTranscriptPass('C', path, 'Stop');
+    await stop.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+    for (const pass of [stop, end]) {
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+      expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    }
+
+    // Once there is real work, the start is the continuation's own first line (the placeholder Claude Code
+    // wrote at the open, 16:23:52 as in QA's report), never a copied line or a queue line from before it.
+    const later = writeTranscript('C.jsonl', [
+      ...lines,
+      typedUser('c-u1', 'C', '2026-11-10T16:30:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:30:05.000Z'),
+    ]);
+    const final = await openSessionEndPass('C', later, '/repo');
+    await final.finalize(true);
+    expect(final.events.find((e) => e.type === 'agent.session.summary')?.started_at).toBe('2026-11-10T16:23:52.000Z');
+  });
+
   it('reports a synthetic answer of a continuation that has already done work of its own', async () => {
     writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
     const path = writeTranscript('C.jsonl', [

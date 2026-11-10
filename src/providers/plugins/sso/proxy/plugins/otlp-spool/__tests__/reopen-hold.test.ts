@@ -15,7 +15,7 @@ function writeState(sessionId: string, fields: Record<string, unknown>): void {
   mkdirSync(join(home, 'analytics', 'state'), { recursive: true });
   writeFileSync(join(home, 'analytics', 'state', `${sessionId}.json`), JSON.stringify(fields));
 }
-function writeSpool(sessionId: string, ext: string, body: string, ageMs = 0): string {
+function writeSpool(sessionId: string, ext: string, body: string | Buffer, ageMs = 0): string {
   mkdirSync(join(home, 'proxy', 'otlp-spool'), { recursive: true });
   const path = join(home, 'proxy', 'otlp-spool', sessionId + ext);
   writeFileSync(path, body);
@@ -116,8 +116,23 @@ describe('holdForIdleReopen', () => {
   });
 
   describe('a reopen that goes on to work', () => {
-    const startup = '{"body":{"stringValue":"claude_code.hook_registered"}}\n{"body":{"stringValue":"claude_code.user_prompt"}}\n';
-    const work = '{"body":{"stringValue":"claude_code.api_request"}}\n';
+    /** One OTLP/JSON export line with one log record per name, shaped like Claude Code's. */
+    const exportOf = (names: string[], extra: Record<string, string> = {}): string =>
+      JSON.stringify({
+        resourceLogs: [{
+          scopeLogs: [{
+            logRecords: names.map((name) => ({
+              body: { stringValue: `claude_code.${name}` },
+              attributes: [
+                { key: 'event.name', value: { stringValue: name } },
+                ...Object.entries(extra).map(([key, value]) => ({ key, value: { stringValue: value } })),
+              ],
+            })),
+          }],
+        }],
+      }) + '\n';
+    const startup = exportOf(['hook_registered', 'plugin_loaded']) + exportOf(['user_prompt']);
+    const work = exportOf(['api_request']);
 
     it('keeps holding while only startup records are there', async () => {
       const { holdForIdleReopen } = await import('../reopen-hold.js');
@@ -144,8 +159,87 @@ describe('holdForIdleReopen', () => {
       const path = writeSpool('w3', '.otel_logs.ndjson', startup + work);
       expect(await holdForIdleReopen('w3')).toBe(false);
 
-      appendFileSync(path, '{"body":{"stringValue":"claude_code.hook_execution_complete"}}\n');
+      appendFileSync(path, exportOf(['hook_execution_complete']));
       expect(await holdForIdleReopen('w3')).toBe(false);
+    });
+
+    it('stays released when a later hook pass saves the parse state again', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      const reopenedAt = Date.now() - 60_000;
+      writeState('w5', { reopened: true, reopenedAt });
+      const path = writeSpool('w5', '.otel_logs.ndjson', startup + work);
+      expect(await holdForIdleReopen('w5')).toBe(false);
+
+      writeState('w5', { reopened: true, reopenedAt }); // an idle Stop pass saves the state: newer mtime
+      appendFileSync(path, exportOf(['hook_execution_complete']));
+      expect(await holdForIdleReopen('w5')).toBe(false);
+    });
+
+    it('holds again after a new reopen has marked the state', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('w6', { reopened: true, reopenedAt: Date.now() - 60_000 });
+      const path = writeSpool('w6', '.otel_logs.ndjson', startup + work);
+      expect(await holdForIdleReopen('w6')).toBe(false);
+
+      readStatusMock.mockResolvedValue({ cursors: { logsJson: Buffer.byteLength(startup + work) } });
+      writeState('w6', { reopened: true, reopenedAt: Date.now() + 1000 }); // second resume, nothing done yet
+      appendFileSync(path, startup);
+      expect(await holdForIdleReopen('w6')).toBe(true);
+    });
+
+    it('does not take the words in some other record for work', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('w7', { reopened: true });
+      writeSpool(
+        'w7',
+        '.otel_logs.ndjson',
+        exportOf(['hook_registered'], { command: 'api_request', note: 'claude_code.tool_result', 'plugin.name': '"api_request"' })
+      );
+
+      expect(await holdForIdleReopen('w7')).toBe(true);
+    });
+
+    it('finds work in a protobuf log stream by its prefixed event name', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('w8', { reopened: true });
+      writeSpool('w8', '.otel_logs.bin', 'xx claude_code.hook_registered yy');
+      expect(await holdForIdleReopen('w8')).toBe(true);
+
+      writeSpool('w8', '.otel_logs.bin', 'xx claude_code.hook_registered yy claude_code.api_request zz');
+      expect(await holdForIdleReopen('w8')).toBe(false);
+    });
+
+    it('does not take a bare api_request word in a protobuf stream for work', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('w9', { reopened: true });
+      writeSpool('w9', '.otel_logs.bin', 'xx claude_code.hook_registered api_request tool_result');
+
+      expect(await holdForIdleReopen('w9')).toBe(true);
+    });
+
+    describe('giving up after the abandoned-session grace', () => {
+      const old = 61 * 60 * 1000;
+
+      it('cuts a protobuf stream at its end, never at a newline byte inside a message', async () => {
+        const { holdForIdleReopen } = await import('../reopen-hold.js');
+        writeState('g1', { reopened: true });
+        const body = Buffer.concat([Buffer.from([0x0a, 0x05]), Buffer.from('abcde'), Buffer.from([0x0a, 0x01, 0x78])]);
+        writeSpool('g1', '.otel_logs.bin', body, old);
+
+        expect(await holdForIdleReopen('g1')).toBe(true);
+        expect(advanceCursorMock).toHaveBeenCalledWith('g1', 'logs', body.length, expect.objectContaining({ reason: 'idle_reopen_expired' }));
+      });
+
+      it('looks past the first scanned chunk for work before dropping anything', async () => {
+        const { holdForIdleReopen } = await import('../reopen-hold.js');
+        writeState('g2', { reopened: true });
+        const filler = exportOf(['hook_registered'], { pad: 'x'.repeat(1000) });
+        const lines = Math.ceil((8 * 1024 * 1024 + 4096) / Buffer.byteLength(filler));
+        writeSpool('g2', '.otel_logs.ndjson', filler.repeat(lines) + work, old);
+
+        expect(await holdForIdleReopen('g2')).toBe(false);
+        expect(advanceCursorMock).not.toHaveBeenCalled();
+      });
     });
 
     it('looks only past the cursor: work that was already forwarded does not release a later idle reopen', async () => {

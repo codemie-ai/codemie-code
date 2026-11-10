@@ -814,6 +814,7 @@ export async function openSessionStartPass(
     if (reopened) {
       state.reopened = true;
       state.reopenActive = false;
+      state.reopenedAt = Date.now();
     }
     if (!state.gitHeadStart) {
       state.gitHeadStart = gitHeadStart;
