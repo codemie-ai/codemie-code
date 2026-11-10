@@ -11,9 +11,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
-import { resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
-import { ConfigLoader } from '../dist/utils/config.js';
-import { findNearestConfigDir } from '../dist/agents/core/event-fields/identity-fields.js';
+import { loadCopilotLaunchEnv, resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
 import { getCodemiePath } from '../dist/utils/paths.js';
 
 const SAVED_MODEL_PATH = getCodemiePath('agents', 'copilot-cli', 'model.json');
@@ -115,19 +113,9 @@ function buildConfigOverrides(options) {
 }
 
 async function getCopilotModels(options) {
-  // Same lookup as AgentCLI: nearest `.codemie` up from the cwd, `.env` from the cwd itself.
-  const config = await ConfigLoader.load(await findNearestConfigDir(process.cwd()), buildConfigOverrides(options), process.cwd());
-  if (typeof options.jwtToken === 'string') {
-    process.env.CODEMIE_JWT_TOKEN = options.jwtToken;
-    config.authMethod = 'jwt';
-  }
-
-  const env = ConfigLoader.exportProviderEnvVars(config);
+  const jwtToken = typeof options.jwtToken === 'string' ? options.jwtToken : undefined;
+  const env = await loadCopilotLaunchEnv(process.cwd(), buildConfigOverrides(options), jwtToken);
   env.CODEMIE_MODEL_SOURCE = resolveInitialModelSource(options);
-  if (typeof options.jwtToken === 'string') {
-    env.CODEMIE_AUTH_METHOD = 'jwt';
-    env.CODEMIE_JWT_TOKEN = options.jwtToken;
-  }
 
   return resolveCopilotModel(env);
 }

@@ -2,7 +2,7 @@ import { evidenceDir } from '../evidence/record-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
@@ -461,10 +461,17 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     });
 
     it('walks up from CLAUDE_PROJECT_DIR to the nearest ancestor with a local .codemie config', async () => {
-      process.env['CLAUDE_PROJECT_DIR'] = '/workspace/mono/apps/web';
-      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === '/workspace/mono');
-      await run();
-      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/mono');
+      const mono = mkdtempSync(join(tmpdir(), 'mono-'));
+      mkdirSync(join(mono, '.git'));
+      mkdirSync(join(mono, 'apps', 'web'), { recursive: true });
+      process.env['CLAUDE_PROJECT_DIR'] = join(mono, 'apps', 'web');
+      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === mono);
+      try {
+        await run();
+        expect(getActiveProfileNameMock).toHaveBeenCalledWith(mono);
+      } finally {
+        rmSync(mono, { recursive: true, force: true });
+      }
     });
 
     it('falls back to CLAUDE_PROJECT_DIR itself when no ancestor has a local .codemie config', async () => {

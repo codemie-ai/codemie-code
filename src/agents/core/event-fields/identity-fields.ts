@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import type { ProjectBindingState } from '@/utils/project-binding.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
@@ -231,21 +231,37 @@ export async function resolveProjectAtCwd(cwd: string, profile?: string, policy:
   return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile, walk: policy.walkFromCwd }), policy);
 }
 
+/** The nearest ancestor (inclusive) holding `.git`: a directory in a normal repo, a file in a linked worktree. */
+async function gitWorktreeRoot(startDir: string): Promise<string | undefined> {
+  let dir = startDir;
+  for (;;) {
+    try {
+      await access(path.join(dir, '.git'));
+      return dir;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
+  }
+}
+
 /**
- * Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one.
- * An ancestor whose `.codemie` config is the global config file (a workspace below the user home) is not a local override.
+ * The local `.codemie` config dir for `startDir`: `startDir` itself when it has one, else the nearest ancestor
+ * that has one up to and including the Git worktree root. The walk never leaves the worktree, and outside a
+ * worktree only `startDir` is considered, so a config planted in a parent or shared directory is never picked up.
+ * `startDir` itself is returned when none qualifies. An ancestor whose `.codemie` config is the global config file
+ * is not a local override.
  */
 export async function findNearestConfigDir(startDir: string): Promise<string> {
+  const root = await gitWorktreeRoot(startDir);
   let dir = startDir;
   for (;;) {
     if (await ConfigLoader.hasLocalConfig(dir) && (dir === startDir || !isGlobalConfigFile(dir))) {
       return dir;
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      return startDir;
-    }
-    dir = parent;
+    if (dir === root || !root) return startDir;
+    dir = path.dirname(dir);
   }
 }
 

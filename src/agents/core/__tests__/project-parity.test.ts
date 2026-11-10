@@ -85,6 +85,7 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
     await fs.mkdir(path.join(tmp, 'home'), { recursive: true });
     await fs.mkdir(path.join(repo, '.codemie'), { recursive: true });
     await fs.mkdir(sub, { recursive: true });
+    await fs.mkdir(path.join(repo, '.git'), { recursive: true }); // the config walk stops at the Git worktree root
     vi.stubEnv('CODEMIE_HOME', path.join(tmp, 'home'));
     vi.spyOn(ProviderRegistry, 'getSetupSteps').mockReturnValue(null as never);
     for (const key of [
@@ -324,21 +325,71 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
     });
   });
 
-  describe('global config file is not a local override', () => {
-    it('a workspace below the dir that holds the global .codemie is skipped on the way up', async () => {
+  describe('config lookup boundary', () => {
+    const localCfg = JSON.stringify({ version: 2, activeProfile: 'g', profiles: {} });
+    const putLocal = async (dir: string): Promise<void> => {
+      await fs.mkdir(path.join(dir, '.codemie'), { recursive: true });
+      await fs.writeFile(path.join(dir, '.codemie', 'codemie-cli.config.json'), localCfg);
+    };
+
+    it('a config above the Git worktree root is ignored and the launch dir is used', async () => {
+      await writeGlobal({ g: sso('g-project'), x: sso('x-project') }, 'x');
+      const outer = path.join(tmp, 'outer');
+      const gitRepo = path.join(outer, 'repo');
+      const deep = path.join(gitRepo, 'pkg', 'sub');
+      await fs.mkdir(path.join(gitRepo, '.git'), { recursive: true });
+      await fs.mkdir(deep, { recursive: true });
+      await putLocal(outer);
+      expect(await findNearestConfigDir(deep)).toBe(deep);
+      expect(await managedProject(deep)).toBe('x-project');
+    });
+
+    it('the worktree root itself is included, for a normal repo and a linked worktree (.git file)', async () => {
+      for (const kind of ['dir', 'file'] as const) {
+        const root = path.join(tmp, `wt-${kind}`);
+        const deep = path.join(root, 'a', 'b');
+        await fs.mkdir(deep, { recursive: true });
+        if (kind === 'dir') await fs.mkdir(path.join(root, '.git'));
+        else await fs.writeFile(path.join(root, '.git'), 'gitdir: ../elsewhere');
+        await putLocal(root);
+        expect(await findNearestConfigDir(deep)).toBe(root);
+      }
+    });
+
+    it('the nearest config inside the repo wins, and the launch dir own config is always honored', async () => {
+      const root = path.join(tmp, 'nested');
+      const mid = path.join(root, 'apps', 'web');
+      const deep = path.join(mid, 'src');
+      await fs.mkdir(path.join(root, '.git'), { recursive: true });
+      await fs.mkdir(deep, { recursive: true });
+      await putLocal(root);
+      await putLocal(mid);
+      expect(await findNearestConfigDir(deep)).toBe(mid);
+      expect(await findNearestConfigDir(mid)).toBe(mid);
+    });
+
+    it('outside a Git worktree only the launch dir is considered, never an ancestor config', async () => {
+      const plain = path.join(tmp, 'plain');
+      const deep = path.join(plain, 'sub');
+      await fs.mkdir(deep, { recursive: true });
+      await putLocal(plain);
+      expect(await findNearestConfigDir(deep)).toBe(deep);
+      await putLocal(deep);
+      expect(await findNearestConfigDir(deep)).toBe(deep);
+    });
+
+    it('the global config file is not a local override, even below the dir that holds it inside a repo', async () => {
       const ws = path.join(tmp, 'ws');
       const proj = path.join(ws, 'proj', 'sub');
       await fs.mkdir(proj, { recursive: true });
+      await fs.mkdir(path.join(ws, '.git'), { recursive: true });
       await fs.mkdir(path.join(ws, '.codemie'), { recursive: true });
       vi.stubEnv('CODEMIE_HOME', path.join(ws, '.codemie'));
       await fs.writeFile(
         path.join(ws, '.codemie', 'codemie-cli.config.json'),
         JSON.stringify({ version: 2, activeProfile: 'x', profiles: { x: sso('x-project') } })
       );
-      // A genuine local config further up (the real ancestors of the temp dir may hold one too) is found past the global file.
-      await fs.mkdir(path.join(tmp, '.codemie'), { recursive: true });
-      await fs.writeFile(path.join(tmp, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'x', profiles: {} }));
-      expect(await findNearestConfigDir(proj)).toBe(tmp);
+      expect(await findNearestConfigDir(proj)).toBe(proj);
       expect(await managedProject(proj)).toBe('x-project');
       // The workspace root itself is the start dir: ordinary behavior, unchanged.
       expect(await findNearestConfigDir(ws)).toBe(ws);
