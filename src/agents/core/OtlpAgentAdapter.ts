@@ -86,6 +86,8 @@ const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
  */
 export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<string, unknown>> {
   abstract readonly name: string;
+  /** Only the Claude Code adapter: a native session's configured project wins over a shell CODEMIE_PROJECT. */
+  protected readonly configuredProjectWins: boolean = false;
   readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
@@ -177,7 +179,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     if (context.evidenceInputs) {
-      const stamp = await stampEvidence(context, context.evidenceInputs);
+      const stamp = await stampEvidence(context, context.evidenceInputs, { configuredWins: this.configuredProjectWins });
       if (!stamp.ok) {
         if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
           logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
@@ -236,7 +238,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         session_id: pending.fields.session_id,
         fields: pending.fields,
         cwd: context.cwd,
-        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields)),
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields), { configuredWins: this.configuredProjectWins }),
         events: payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       }, now);
     } catch (error) {
@@ -391,7 +393,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context, record),
+      resolveIdentityFields(context, record, { configuredWins: this.configuredProjectWins }),
     ]);
     return { ...repoFields, ...identityFields };
   }

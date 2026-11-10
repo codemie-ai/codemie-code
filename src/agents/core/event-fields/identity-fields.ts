@@ -40,11 +40,12 @@ export interface IdentityCandidateFields {
  */
 export async function resolveIdentityFields(
   { cwd, sessionId }: OtlpHookContext,
-  record?: EvidenceRecord
+  record?: EvidenceRecord,
+  policy: ProjectPolicy = {}
 ): Promise<IdentityFields> {
   const [identityResult, projectName, version] = await Promise.all([
     resolveIdentityTier(cwd),
-    resolveProjectName(cwd, sessionId, record),
+    resolveProjectName(cwd, sessionId, record, policy),
     getCurrentCliVersion().catch(() => null),
   ]);
   return {
@@ -72,11 +73,11 @@ async function resolveIdentityTier(
 }
 
 /**
- * In a managed launch `CODEMIE_PROJECT` (exported by the launcher into the agent's own process
+ * In a managed launch (and for adapters without `configuredWins`) `CODEMIE_PROJECT` (exported by the launcher into the agent's own process
  * env, the same source `Session.project` uses) wins when present, since it is set once for the
  * whole session and cannot drift as the hook's `cwd` moves, and is never pinned against. A native
- * session has no launcher, so the configured project wins and a shell `CODEMIE_PROJECT` is only
- * the fallback (see configuredOrShellProject).
+ * Claude session has no launcher, so there the configured project wins and a shell
+ * `CODEMIE_PROJECT` is only the fallback (see ProjectPolicy).
  *
  * Otherwise, with a `sessionId`, the first hook's resolution — the nearest `.codemie` found
  * by walking up from `CLAUDE_PROJECT_DIR` toward the filesystem root, or the global active
@@ -90,20 +91,25 @@ async function resolveIdentityTier(
 async function resolveProjectName(
   cwd: string,
   sessionId: string | undefined,
-  record?: EvidenceRecord
+  record?: EvidenceRecord,
+  policy: ProjectPolicy = {}
 ): Promise<string> {
   // A stamped session's durable record is the single source: event project, spool binding and
   // headers must agree, so env/pin/config are never consulted again (nor is a pin written).
   if (record) {
     return record.project ?? '';
   }
-  return resolveSessionProject(cwd, sessionId);
+  return resolveSessionProject(cwd, sessionId, policy);
 }
 
 /** The env/pin/config resolution, used for unstamped sessions and once to seed a new record. */
-export async function resolveSessionProject(cwd: string, sessionId: string | undefined): Promise<string> {
+export async function resolveSessionProject(
+  cwd: string,
+  sessionId: string | undefined,
+  policy: ProjectPolicy = {}
+): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
-  if (envProject && launchMode(process.env) === 'managed') {
+  if (envProject && !configuredWins(policy)) {
     return envProject;
   }
 
@@ -112,17 +118,32 @@ export async function resolveSessionProject(cwd: string, sessionId: string | und
     return pinned;
   }
 
-  const resolved = await configuredOrShellProject(await loadHookConfig(cwd));
+  const resolved = await projectFromHookConfig(await loadHookConfig(cwd), policy);
   return sessionId ? pinProjectName(sessionId, resolved) : resolved;
 }
 
 /**
- * A native session follows the managed launcher's policy: the configured project wins; a shell
- * `CODEMIE_PROJECT` is only the fallback for a profile without one, and never for `own`/`none` profiles.
+ * Set by the Claude Code hook adapter only: a native Claude session follows the managed launcher's
+ * policy (the configured project wins). Other adapters and callers keep "a shell `CODEMIE_PROJECT` wins".
  */
-async function configuredOrShellProject(hook: Awaited<ReturnType<typeof loadHookConfig>>): Promise<string> {
+export interface ProjectPolicy {
+  configuredWins?: boolean;
+}
+
+function configuredWins(policy: ProjectPolicy): boolean {
+  return policy.configuredWins === true && launchMode(process.env) === 'native';
+}
+
+/**
+ * Under `configuredWins` a shell `CODEMIE_PROJECT` is only the fallback for a profile without a
+ * project, and never for `own`/`none` profiles (the managed launcher strips it for those).
+ */
+async function projectFromHookConfig(
+  hook: Awaited<ReturnType<typeof loadHookConfig>>,
+  policy: ProjectPolicy
+): Promise<string> {
   const configured = hook?.config.codeMieProject;
-  if (configured) return configured;
+  if (configured || !configuredWins(policy)) return configured ?? '';
   const shell = process.env['CODEMIE_PROJECT']?.trim();
   if (!shell) return '';
   if (hook) {
@@ -153,10 +174,10 @@ export async function loadHookConfig(
 }
 
 /** The project the hook's current cwd resolves to, ignoring the session pin: `CODEMIE_PROJECT` wins, else the config found from cwd. */
-export async function resolveProjectAtCwd(cwd: string, profile?: string): Promise<string> {
+export async function resolveProjectAtCwd(cwd: string, profile?: string, policy: ProjectPolicy = {}): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
-  if (envProject && launchMode(process.env) === 'managed') return envProject;
-  return configuredOrShellProject(await loadHookConfig(cwd, { fromCwd: true, profile }));
+  if (envProject && !configuredWins(policy)) return envProject;
+  return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile }), policy);
 }
 
 /** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */

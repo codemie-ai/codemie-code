@@ -201,13 +201,7 @@ describe('project source for native env and pinned values', () => {
       expect(destination(headers, { 'git.example.com/org/repo': 'repo-proj' })).toBe('repo-proj');
     });
 
-    it.runIf(source === 'env')('a native shell value never replaces the configured project', async () => {
-      supply('external-proj');
-      const { record } = await frozen('shell-lost');
-      expect(record).toMatchObject({ project: 'work-proj', project_source: 'profile' });
-    });
-
-    it.runIf(source === 'pin')('different from the configured project keeps source none', async () => {
+    it('different from the configured project keeps source none', async () => {
       supply('external-proj');
       const { record, headers } = await frozen('different');
       expect(record).toMatchObject({ project: 'external-proj', project_source: 'none' });

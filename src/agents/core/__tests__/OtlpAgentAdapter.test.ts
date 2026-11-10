@@ -411,18 +411,32 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined);
     });
 
-    it('a native session keeps the configured project over a shell CODEMIE_PROJECT', async () => {
+    it('prefers CODEMIE_PROJECT over the resolved config, without even loading it', async () => {
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run();
+      expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'env-project' });
+      expect(configLoadMock).not.toHaveBeenCalled();
+    });
+
+    it('an adapter that opts into configured-wins keeps the configured project over a native shell CODEMIE_PROJECT', async () => {
+      class ClaudeLike extends FakeAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeLike();
       process.env['CODEMIE_PROJECT'] = 'env-project';
       await run();
       expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'proj-1' });
     });
 
-    it('a managed session prefers its exported CODEMIE_PROJECT over the resolved config, without even loading it', async () => {
+    it('configured-wins does not change a managed session: its exported project still wins', async () => {
+      class ClaudeLike extends FakeAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeLike();
       process.env['CODEMIE_SESSION_ID'] = 'managed-1';
       process.env['CODEMIE_PROJECT'] = 'env-project';
       await run();
       expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'env-project' });
-      expect(configLoadMock).not.toHaveBeenCalled();
     });
 
     it('ignores a blank CODEMIE_PROJECT and falls back to the resolved config', async () => {
@@ -472,8 +486,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(pinProjectNameMock).toHaveBeenCalledWith('s1', 'proj-1');
     });
 
-    it('a managed CODEMIE_PROJECT wins over a pinned project, and is never itself pinned', async () => {
-      process.env['CODEMIE_SESSION_ID'] = 'managed-1';
+    it('CODEMIE_PROJECT wins over a pinned project, and is never itself pinned', async () => {
       process.env['CODEMIE_PROJECT'] = 'env-project';
       await run({ sessionId: 's1' });
       expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'env-project' });
@@ -1027,11 +1040,20 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     });
 
     it('CR-005: project_source describes the project actually used; an env project that is not the config project has no attributable source', async () => {
-      process.env['CODEMIE_SESSION_ID'] = 'managed-1'; // managed: the exported project is authoritative
       process.env['CODEMIE_PROJECT'] = 'env-project'; // config says proj-1
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
       expect(readRecords()[0]).toMatchObject({ project: 'env-project', project_source: 'none' });
       expect(resolveProjectOriginMock).not.toHaveBeenCalled();
+    });
+
+    it('a configured-wins adapter stamps the configured project, with its config origin, over a native shell value', async () => {
+      class ClaudeStamp extends StampAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeStamp();
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run({ sessionId: 's9', payload: [{ session_id: 's9' }] });
+      expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'profile' });
     });
 
     it('CR-005: a project equal to the config project takes the config origin, asked with the real profile locality, in every launch mode', async () => {

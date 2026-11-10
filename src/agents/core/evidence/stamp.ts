@@ -4,7 +4,7 @@ import { getRawGitOrigin, repoKeyFromRemote } from '@/utils/processes.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveHookCredentials } from '../hook-credentials.js';
 import { resolveEmailFromCredentials } from '../identity-resolver.js';
-import { loadHookConfig, resolveSessionProject } from '../event-fields/identity-fields.js';
+import { loadHookConfig, resolveSessionProject, type ProjectPolicy } from '../event-fields/identity-fields.js';
 import { apiIdentity, ownerHash } from './api-identity.js';
 import { launchMode, type FundingRoute, type RoutingResult } from './routing.js';
 import { resolveConsent } from './consent-store.js';
@@ -36,11 +36,12 @@ async function hookTimeFields(
   context: OtlpHookContext,
   inputs: EvidenceInputs,
   sessionId: string,
-  api: string
+  api: string,
+  policy: ProjectPolicy
 ): Promise<PendingFields> {
   const hookConfig = await loadHookConfig(context.cwd);
   const configDir = hookConfig?.configDir ?? context.cwd;
-  const project = (await resolveSessionProject(context.cwd, sessionId)) || undefined;
+  const project = (await resolveSessionProject(context.cwd, sessionId, policy)) || undefined;
   const project_source = await projectSource(project, hookConfig, configDir);
   const rawOrigin = await getRawGitOrigin(context.cwd);
   return {
@@ -66,12 +67,13 @@ async function pendingFor(
   credentials: SSOCredentials,
   context: OtlpHookContext,
   inputs: EvidenceInputs,
-  sessionId: string
+  sessionId: string,
+  policy: ProjectPolicy
 ): Promise<{ pending: { fp: string; fields: PendingFields } } | Record<string, never>> {
   if (!isSSOCredentials(credentials) || Object.keys(credentials.cookies).length === 0) return {};
   try {
     const api = apiIdentity(credentials.apiUrl);
-    return { pending: { fp: credentialFingerprint(credentials), fields: await hookTimeFields(context, inputs, sessionId, api) } };
+    return { pending: { fp: credentialFingerprint(credentials), fields: await hookTimeFields(context, inputs, sessionId, api, policy) } };
   } catch {
     return {};
   }
@@ -113,7 +115,8 @@ function projectBindingFor(project: string | undefined): ProjectBindingState | u
  */
 export async function stampEvidence(
   context: OtlpHookContext,
-  inputs: EvidenceInputs
+  inputs: EvidenceInputs,
+  policy: ProjectPolicy = {}
 ): Promise<StampResult> {
   const sessionId = context.sessionId;
   if (!sessionId) return { ok: false, reason: 'session_id_absent' };
@@ -121,7 +124,7 @@ export async function stampEvidence(
     const credentials = await resolveHookCredentials();
     if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
     const email = resolveEmailFromCredentials(credentials);
-    if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId)) };
+    if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId, policy)) };
     let api: string;
     try {
       api = apiIdentity(credentials.apiUrl);
@@ -137,7 +140,7 @@ export async function stampEvidence(
       return { ok: true, record: found.record };
     }
 
-    const hookFields = await hookTimeFields(context, inputs, sessionId, api);
+    const hookFields = await hookTimeFields(context, inputs, sessionId, api, policy);
     // Explicit work consent is frozen as a path-free reference; only the new contract carries it, and only with a project.
     const consent_ref = hookFields.funding_route !== undefined && hookFields.project
       ? await resolveConsent({ owner_hash: ownerHash(email), api_identity: api, project: hookFields.project }, context.cwd)

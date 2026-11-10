@@ -14,7 +14,8 @@ import { AgentCLI } from '../AgentCLI.js';
 import type { AgentAdapter } from '../types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
-import { resolveSessionProject } from '../event-fields/identity-fields.js';
+import { resolveProjectAtCwd, resolveSessionProject } from '../event-fields/identity-fields.js';
+import { ClaudeCodeOtlpPlugin } from '../../plugins/claude-code-otlp/claude-code-otlp.plugin.js';
 
 // The real pin dir is resolved at import time under ~/.codemie; keep its first-write-wins semantics in memory.
 const pins = vi.hoisted(() => new Map<string, string>());
@@ -43,9 +44,9 @@ async function writeLocal(config: unknown): Promise<void> {
   await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify(config));
 }
 
-function adapter(run: AgentAdapter['run']): AgentAdapter {
+function adapter(run: AgentAdapter['run'], name = 'claude'): AgentAdapter {
   return {
-    name: 'claude', displayName: 'Claude Code', description: 'parity test adapter',
+    name, displayName: 'Claude Code', description: 'parity test adapter',
     metadata: { name: 'claude', displayName: 'Claude Code', description: 'parity test adapter', npmPackage: null, cliCommand: 'claude', envMapping: {}, supportedProviders: [] },
     install: async () => {}, uninstall: async () => {}, isInstalled: async () => true,
     run, getVersion: async () => null, getMetricsConfig: () => undefined,
@@ -53,10 +54,10 @@ function adapter(run: AgentAdapter['run']): AgentAdapter {
 }
 
 /** The project a managed launch hands the agent: its exported value, else the shell value it inherits. */
-async function managedProject(cwd: string, options: Record<string, unknown> = {}): Promise<string> {
+async function managedProject(cwd: string, options: Record<string, unknown> = {}, agent = 'claude'): Promise<string> {
   vi.spyOn(process, 'cwd').mockReturnValue(cwd);
   const run = vi.fn().mockResolvedValue(undefined);
-  const cli = new AgentCLI(adapter(run)) as unknown as { handleRun: (a: string[], o: Record<string, unknown>) => Promise<void> };
+  const cli = new AgentCLI(adapter(run, agent)) as unknown as { handleRun: (a: string[], o: Record<string, unknown>) => Promise<void> };
   await cli.handleRun([], { task: 'x', ...options });
   const env = run.mock.calls[0][1] as Record<string, string>;
   return env.CODEMIE_PROJECT ?? process.env.CODEMIE_PROJECT ?? '';
@@ -65,7 +66,7 @@ async function managedProject(cwd: string, options: Record<string, unknown> = {}
 /** The project a native hook stamps for a session whose Claude Code was started in `cwd`. */
 async function nativeProject(cwd: string): Promise<string> {
   vi.stubEnv('CLAUDE_PROJECT_DIR', cwd);
-  return resolveSessionProject(cwd, 'native-session');
+  return resolveSessionProject(cwd, 'native-session', { configuredWins: true });
 }
 
 describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908)', () => {
@@ -82,7 +83,11 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
     await fs.mkdir(sub, { recursive: true });
     vi.stubEnv('CODEMIE_HOME', path.join(tmp, 'home'));
     vi.spyOn(ProviderRegistry, 'getSetupSteps').mockReturnValue(null as never);
-    for (const key of ['CODEMIE_SESSION_ID', 'CODEMIE_PROJECT', 'CODEMIE_PROFILE_NAME', 'CODEMIE_PROJECT_BINDING', 'CLAUDE_PROJECT_DIR']) {
+    for (const key of [
+      'CODEMIE_SESSION_ID', 'CODEMIE_PROJECT', 'CODEMIE_PROFILE_NAME', 'CODEMIE_PROJECT_BINDING', 'CLAUDE_PROJECT_DIR',
+      'CODEMIE_PROVIDER', 'CODEMIE_BASE_URL', 'CODEMIE_API_KEY', 'CODEMIE_MODEL', 'CODEMIE_TIMEOUT', 'CODEMIE_URL', 'CODEMIE_AUTH_METHOD',
+      'CODEMIE_INTEGRATION_ID', 'CODEMIE_INTEGRATION_ALIAS',
+    ]) {
       vi.stubEnv(key, '');
       delete process.env[key];
     }
@@ -160,6 +165,50 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       expect(await managedProject(sub)).toBe('');
       vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
       expect(await nativeProject(sub)).toBe('');
+    });
+  });
+  describe('sibling behavior stays unchanged', () => {
+    beforeEach(async () => {
+      await writeGlobal({ g: { ...sso('g-project'), model: 'gpt-5' }, x: { ...sso('x-project'), model: 'gpt-5' } }, 'x');
+      await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
+    });
+
+    it('a non-Claude launcher still reads config from its own cwd only', async () => {
+      expect(await managedProject(sub, {}, 'codex')).toBe('x-project');
+      expect(await managedProject(repo, {}, 'codex')).toBe('g-project');
+    });
+
+    it('a hook without the Claude policy keeps "shell CODEMIE_PROJECT wins" (other OTLP adapters, proxy analytics)', async () => {
+      vi.stubEnv('CLAUDE_PROJECT_DIR', sub);
+      vi.stubEnv('CODEMIE_PROJECT', 'shell-project');
+      expect(await resolveSessionProject(sub, 'sibling-session')).toBe('shell-project');
+      expect(await resolveProjectAtCwd(sub)).toBe('shell-project');
+    });
+
+    it('only the Claude hook adapter opts into configured-wins', () => {
+      const flag = (o: object) => (o as { configuredProjectWins: boolean }).configuredProjectWins;
+      expect(flag(new ClaudeCodeOtlpPlugin())).toBe(true);
+    });
+
+    it('a managed Claude session keeps its exported project even with the Claude policy', async () => {
+      vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
+      vi.stubEnv('CODEMIE_PROJECT', 'exported-project');
+      expect(await nativeProject(sub)).toBe('exported-project');
+    });
+  });
+
+  describe('.env stays in the launch cwd', () => {
+    it('reads sub/.env, not the parent .env, while config comes from the repo .codemie', async () => {
+      await writeGlobal({ g: sso('g-project') }, 'g');
+      await writeLocal({ version: 2, activeProfile: 'g', profiles: {} });
+      await fs.writeFile(path.join(sub, '.env'), 'CODEMIE_TIMEOUT=111\n');
+      await fs.writeFile(path.join(repo, '.env'), 'CODEMIE_TIMEOUT=222\n');
+      vi.spyOn(process, 'cwd').mockReturnValue(sub);
+      const run = vi.fn().mockResolvedValue(undefined);
+      const cli = new AgentCLI(adapter(run)) as unknown as { handleRun: (a: string[], o: Record<string, unknown>) => Promise<void> };
+      await cli.handleRun([], { task: 'x' });
+      expect((run.mock.calls[0][1] as Record<string, string>).CODEMIE_PROJECT).toBe('g-project');
+      expect(process.env.CODEMIE_TIMEOUT).toBe('111');
     });
   });
 });
