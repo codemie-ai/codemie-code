@@ -107,9 +107,11 @@ export function getLegacyNpmPrefixPath(platform: NodeJS.Platform = process.platf
   return path.join(homedir(), '.codemie', 'npm-prefix');
 }
 
+const NPM_LOOKUP_TIMEOUT_MS = 5000;
+
 async function readNpmValue(args: string[]): Promise<string | null> {
   try {
-    const result = await exec('npm', args, { shell: isWindows() });
+    const result = await exec('npm', args, { shell: isWindows(), timeout: NPM_LOOKUP_TIMEOUT_MS });
     if (result.code !== 0) {
       return null;
     }
