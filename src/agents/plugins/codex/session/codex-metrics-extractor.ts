@@ -74,15 +74,18 @@ export function extractCodexMetrics(records: CodexRolloutRecord[]): ParsedSessio
         }
       }
     } else if (item.type === 'custom_tool_call' && item.name === 'apply_patch' && item.input) {
+      // A call without a result yet is skipped, as the incremental processor does, so both paths agree.
+      const outcome = item.call_id ? patchOk.get(item.call_id) : undefined;
+      if (outcome === undefined) {
+        continue;
+      }
       toolCounts.apply_patch = (toolCounts.apply_patch || 0) + 1;
       if (!toolStatus.apply_patch) {
         toolStatus.apply_patch = { success: 0, failure: 0 };
       }
-      // A call without a result yet stays unresolved and is backfilled as a failure below.
-      const outcome = item.call_id ? patchOk.get(item.call_id) : undefined;
       if (outcome === true) {
         toolStatus.apply_patch.success += 1;
-      } else if (outcome === false) {
+      } else {
         toolStatus.apply_patch.failure += 1;
       }
     }

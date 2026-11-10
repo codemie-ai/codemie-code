@@ -87,6 +87,14 @@ describe('collectApplyPatchCalls', () => {
     expect(calls.map((c) => [c.callId, c.ok])).toEqual([['bad', false], ['good', true]]);
   });
 
+  it('prefers exit code 0 over failure-looking output text', () => {
+    const [c] = collectApplyPatchCalls([
+      call('c1', patch),
+      output('c1', JSON.stringify({ output: 'Error handling added. Success', metadata: { exit_code: 0 } })),
+    ]);
+    expect(c.ok).toBe(true);
+  });
+
   it('treats error text in the output as failure', () => {
     const [c] = collectApplyPatchCalls([call('c1', patch), output('c1', 'apply_patch verification failed: no match')]);
     expect(c.ok).toBe(false);

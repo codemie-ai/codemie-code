@@ -262,9 +262,11 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
         payload: type === 'task_started' ? { type, turn_attribution: { turn_id: 't1' } } : { type, turn_id: 't1' },
       });
 
-    async function runSessionEnd(lines: string[], calls: string[]): Promise<{ saves: Array<Record<string, unknown>> }> {
+    async function runSessionEnd(lines: string[], calls: string[], parentLines?: string[]): Promise<{ saves: Array<Record<string, unknown>> }> {
       const rolloutPath = join(dir, 'rollout-2026-11-10T10-00-00-11111111-2222-3333-4444-555555555555.jsonl');
       writeFileSync(rolloutPath, lines.join('\n') + '\n');
+      const parentPath = join(dir, 'rollout-2026-11-10T09-00-00-99999999-2222-3333-4444-555555555555.jsonl');
+      if (parentLines) writeFileSync(parentPath, parentLines.join('\n') + '\n');
       const saves: Array<Record<string, unknown>> = [];
       const stored = { sessionId: 'sid-dur', agentName: 'codex', status: 'active', correlation: { status: 'matched', agentSessionId: 'sid-dur', agentSessionFile: '', retryCount: 0 } };
       vi.doMock('../../../core/session/SessionStore.js', () => ({
@@ -284,7 +286,7 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
           parseSessionFile = vi.fn().mockResolvedValue({ metadata: { projectPath: process.cwd() } });
           processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 1, failedProcessors: [] });
         },
-        resolveParentRollout: async (p: string) => p,
+        resolveParentRollout: async (p: string) => (parentLines ? parentPath : p),
       }));
       vi.doMock('../../../../cli/commands/hook.js', () => ({
         processEvent: vi.fn().mockImplementation(async () => {
@@ -306,6 +308,18 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
 
       expect(saves.find((s) => s.activeDurationMs !== undefined)).toMatchObject({ activeDurationMs: 45_000 });
       expect(calls).toEqual(['save-duration', 'processEvent']);
+    });
+
+    it('computes active time from the resolved parent rollout, not the picked child', async () => {
+      const calls: string[] = [];
+      const t0 = Date.now() - 120_000;
+      const { saves } = await runSessionEnd(
+        [turnLine(t0, 'task_started'), turnLine(t0 + 5_000, 'task_complete')],
+        calls,
+        [turnLine(t0, 'task_started'), turnLine(t0 + 45_000, 'task_complete')]
+      );
+
+      expect(saves.find((s) => s.activeDurationMs !== undefined)).toMatchObject({ activeDurationMs: 45_000 });
     });
 
     it('writes nothing when the rollout has no turns', async () => {

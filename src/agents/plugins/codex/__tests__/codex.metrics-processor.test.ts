@@ -398,6 +398,21 @@ describe('CodexMetricsProcessor — apply_patch deltas', () => {
     expect(deltas[0].fileOperations[0]).toMatchObject({ type: 'write', path: 'a.ts' });
   });
 
+  it('keeps loaded sub-agent apply_patch calls when the rollout family cannot be loaded', async () => {
+    vi.doMock('../codex.session.js', () => ({
+      loadRolloutFamilyRecords: vi.fn().mockRejectedValue(new Error('boom')),
+    }));
+    const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
+    const parsed = session([]) as unknown as { metadata: Record<string, unknown>; subagents: unknown[] };
+    parsed.metadata.rolloutPath = '/tmp/missing-rollout.jsonl';
+    parsed.subagents = [
+      { agentId: 'child', filePath: '/tmp/child.jsonl', messages: [patchCall('kid', body('*** Add File: k.ts\n+1')), endEvent('kid', true)] },
+    ];
+    await new CodexMetricsProcessor().process(parsed as never, {} as never);
+    vi.doUnmock('../codex.session.js');
+    expect(readDeltas().map((d) => d.recordId)).toEqual(['kid']);
+  });
+
   it('writes the same file operations as extractCodexMetrics over the same records', async () => {
     const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
     const { extractCodexMetrics } = await import('../session/codex-metrics-extractor.js');

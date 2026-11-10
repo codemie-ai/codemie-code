@@ -146,6 +146,8 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
   };
 
   const timer = setInterval(() => {
+    // A tick already running owns the stored promise, so stop awaits the real one.
+    if (tickInFlight.get(options.sessionId)) return;
     const running = tick().finally(() => {
       if (tickPromises.get(options.sessionId) === running) tickPromises.delete(options.sessionId);
     });

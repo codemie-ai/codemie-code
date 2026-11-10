@@ -208,6 +208,6 @@ async function familyRecords(
     );
   } catch (error) {
     logger.debug('[codex-metrics] Could not load the rollout family; using the picked rollout', error);
-    return records;
+    return [...records, ...subagents.flatMap((s) => s.messages as CodexRolloutRecord[])];
   }
 }

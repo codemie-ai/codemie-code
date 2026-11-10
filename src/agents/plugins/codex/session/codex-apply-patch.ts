@@ -101,7 +101,7 @@ function outputFailed(output: unknown): boolean {
       const parsed = JSON.parse(output) as { output?: unknown; metadata?: { exit_code?: unknown } } | null;
       if (parsed && typeof parsed === 'object') {
         const exit = parsed.metadata?.exit_code;
-        if (typeof exit === 'number' && exit !== 0) return true;
+        if (typeof exit === 'number') return exit !== 0;
         if (typeof parsed.output === 'string') text = parsed.output;
       }
     } catch {
@@ -110,7 +110,7 @@ function outputFailed(output: unknown): boolean {
   } else if (output && typeof output === 'object') {
     const obj = output as { metadata?: { exit_code?: unknown }; output?: unknown };
     const exit = obj.metadata?.exit_code;
-    if (typeof exit === 'number' && exit !== 0) return true;
+    if (typeof exit === 'number') return exit !== 0;
     if (typeof obj.output === 'string') text = obj.output;
   }
   return /^\s*(error|failed|apply_patch (verification )?failed)|verification failed/i.test(text);

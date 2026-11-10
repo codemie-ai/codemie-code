@@ -42,11 +42,20 @@ describe('extractCodexMetrics apply_patch', () => {
     ]);
   });
 
+  it('skips a result-less apply_patch call, as the processor does', () => {
+    const pending = [
+      { type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'p1', name: 'apply_patch', input: '*** Begin Patch\n*** Add File: x.ts\n+a\n*** End Patch' } },
+    ] as unknown as CodexRolloutRecord[];
+    const metrics = extractCodexMetrics(pending);
+    expect(metrics.tools.apply_patch).toBeUndefined();
+    expect(metrics.toolStatus.apply_patch).toBeUndefined();
+  });
+
   it('reports a failed patch with no operations and a failure status', () => {
     const metrics = extractCodexMetrics(load('apply-patch-failures.jsonl'));
     expect(metrics.fileOperations).toEqual([]);
-    expect(metrics.tools.apply_patch).toBe(3);
-    expect(metrics.toolStatus.apply_patch.failure).toBe(3);
+    expect(metrics.tools.apply_patch).toBe(2);
+    expect(metrics.toolStatus.apply_patch.failure).toBe(2);
   });
 
   it('aggregates one write and one edit to files_created 1 and files_modified 1', async () => {
