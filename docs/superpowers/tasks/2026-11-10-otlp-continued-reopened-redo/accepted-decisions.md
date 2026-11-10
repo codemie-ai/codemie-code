@@ -126,7 +126,7 @@ found, and what was decided:
 - **D-9 (new): a held reopen is dropped after the abandoned-session grace.** If a reopen stays idle for
   `OTLP_ABANDONED_SESSION_GRACE_MINUTES` (60) with no new OTel write, the held records are discarded unsent
   (recorded as `idle_reopen_expired`).
-- **D-10 (new, from code review CR-003): a reopen that works but never gets a Stop hook.** A reopened
+- **D-10 (SUPERSEDED by D-14, fixed 2026-11-11): a reopen that works but never gets a Stop hook.** A reopened
   session is released from the hold only when a hook pass (`Stop`/`SessionEnd`) has seen its own
   activity in the transcript. If the terminal is killed after real work and before any such hook, the
   daemon still sees an idle reopen and drops the held OTel records after the abandoned-session grace
@@ -143,6 +143,57 @@ found, and what was decided:
   A parent record that lands after the third hook pass, or a parent in another project folder, leaves the
   copies counted. Retrying longer would add a sibling-folder scan (up to 200 transcripts) to every hook of
   every ordinary session. *Reopen if* such a continuation is seen in real data.
-- **D-13 (new, code review CR-008): the startup-race guard needs the session status.** A reopen after the
+- **D-13 (SUPERSEDED by D-15, fixed 2026-11-11): the startup-race guard needs the session status.** A reopen after the
   status file was swept, with a resume hook slower than the first OTel export, can still let the startup
   records through. Same family as D-7; a fix needs a new live scenario that sweeps and races.
+
+## Third pass: review of 2026-11-11 and the live results of the reporter (2026-11-11)
+
+D-1..D-13 carry over, except D-10 and D-13, which are now fixed (below). The review's
+`breaking-change` flag (project selection, `AgentCLI`, copilot launcher, `ConfigLoader`) came from a diff
+taken against a base that did not yet contain #782; against `origin/main` this branch touches only the
+OTLP plugin and the spool forwarder.
+
+### Fixed
+
+- **D-14 (fixes D-10, review CR-001 and CR-003): the hold looks for real work and cuts safely.**
+  A held reopen is released at the first record of real work in its own spool (a `claude_code.api_request`
+  or `claude_code.tool_result`, found by name in the bytes after the cursor, JSON and protobuf streams
+  alike), with no wait for a `Stop`. The startup records Claude Code writes on every open never contain
+  those names (real list: hook_registered, plugin_loaded, managed_settings_resolved, hook_execution_*,
+  user_prompt). The release is remembered for the life of the daemon; a new reopen (the state file written
+  after the release) starts over. The expiry after 60 min still exists for a reopen that stays idle, but now
+  cuts at the last whole line and leaves a stream alone while earlier records of it still wait for a retry
+  (the delivery range from before the reopen). Live: S13 (fails on the previous hold, passes now).
+  *Residual:* a reopen that works and is killed leaves only the records after its last work record held
+  (hook_execution_* of the shutdown), dropped after the grace. They carry no usage.
+- **D-15 (fixes D-13): the startup-race guard works after a sweep.** Besides "bytes written after the
+  session ended", the hold now recognises a spool file created within the settle window for a session whose
+  saved parse state is much older than that file (older by more than the settle time): the status is gone,
+  the state file is not. Bounded by the settle time (15 s from the file's creation), so a long turn is not
+  held. A brand-new ordinary session is not affected: its state is written within seconds of its first
+  record. Live: S14 (7 records leaked on the previous hold, 0 now). *Residual:* a hook slower than 15 s still
+  lets records through (D-7), and a state file touched by an unrelated pass shortly before the reopen defeats
+  the age test (the pass would then have marked the reopen or been an ordinary session).
+
+### Not fixed, with the reason
+
+- **CR-002 (lookup limits, copied subagent transcripts): D-1, D-2, D-4, D-12 stand.** Not verified: the
+  copied-subagent case was never seen in the 4 real pairs, so a rule would be built without an example.
+  Fixing the lookup means scanning other project folders on every hook of every ordinary session (cost) and
+  risks choosing the wrong parent (ambiguity), and reported lines can never be retracted anyway. The branch
+  is unchanged for the real cases checked.
+- **Passthrough hooks (D-5).** Not verified: no real capture shows `Notification` on an idle reopen (the real
+  `claude --resume` run sent 0 records). Gating those hooks risks dropping events of ordinary sessions,
+  which fire the same hooks.
+- **Failed lock forwards the raw Stop/SessionEnd (D-6).** Rare (lock timeout) and not fixable without a
+  lock-free marker file, which adds persistence and a new failure mode for a case not seen in practice.
+- **Reopen hold reads the parse state without its lock.** A stale read delays a release by one tick; the
+  lock would make the forwarder wait on hook processes. Documented in the code.
+- **`inheritedUuids` has no size cap; sibling scans repeat while a lookup is incomplete.** Bounded by the
+  3-pass limit and the 200-file cap; a cap would drop uuids and bring back double counting.
+- **An assistant line without a model counts as activity.** Not verified: only the id-less synthetic
+  placeholder was ever seen (already handled); a rule without an example risks hiding real work.
+- **Project attribution, "duration ends at the last original activity", the Postgres regression test and the
+  backend fixes of comment 16077824.** Outside this repository (backend/UI). On the CLI side an idle reopen
+  now sends nothing, so those figures cannot move because of it. Needs the Preview check after merge.
