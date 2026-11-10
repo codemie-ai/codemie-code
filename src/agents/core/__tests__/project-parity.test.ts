@@ -176,6 +176,16 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       expect(await nativeProject(sub)).toBe('');
     });
 
+    it.each([[undefined], ['bogus']])('an unrecognized identity state (%s) does not let it through', async (state) => {
+      vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockResolvedValue({ state } as never);
+      expect(await nativeProject(sub)).toBe('');
+    });
+
+    it('a local config that is JSON but not a v2 config fails closed through the loader', async () => {
+      await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), '{"foo":1}');
+      expect(await nativeProject(sub)).toBe('');
+    });
+
     it('a failed identity lookup does not let it through', async () => {
       vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('boom'));
       expect(await nativeProject(sub)).toBe('');

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
+import type { ProjectBindingState } from '@/utils/project-binding.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -153,14 +154,18 @@ async function projectFromHookConfig(
   if (!shell) return '';
   // The shell value is attributed only when the profile identity is confirmed; anything unknown fails closed.
   if (!hook) return withheld('hook config unavailable');
-  let state: string | undefined;
+  let state: ProjectBindingState | undefined;
   try {
     state = (await ConfigLoader.resolveProfileIdentity(hook.configDir, hook.config.name)).state;
   } catch (error) {
     return withheld(`identity lookup failed (${errorName(error)})`);
   }
-  if (state === 'own' || state === 'none') return '';
-  // ConfigLoader reads a malformed config file as empty, so a lookup alone cannot confirm the identity.
+  // Only a profile that can carry no project of its own falls back to the shell value: own/none and anything unrecognized do not.
+  if (state !== 'local' && state !== 'unowned' && state !== 'not-applicable') {
+    return state === 'own' || state === 'none' ? '' : withheld('profile identity state unrecognized');
+  }
+  // ConfigLoader reads a malformed config file as empty, so a lookup alone cannot confirm the identity;
+  // this only checks that each existing file is a readable JSON object, not its schema.
   const files = [path.join(hook.configDir, '.codemie', 'codemie-cli.config.json'), getCodemiePath('codemie-cli.config.json')];
   for (const file of files) {
     if (!(await configFileIsReadable(file))) return withheld('config file unreadable');
