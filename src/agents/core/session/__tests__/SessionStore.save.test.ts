@@ -159,6 +159,18 @@ describe('SessionStore.saveSession', () => {
     expect(completed.deliveryAttempts).toBe(2);
   });
 
+  it('keeps the legacy-metrics consent frozen in completed_ when a completed copy without it is merged', async () => {
+    const consent = { ref: 'consent-ref-1', apiIdentity: 'api-x', ownerHash: 'owner-x' };
+    writeFileSync(livePath(), JSON.stringify(makeSession({ legacyMetricsConsent: consent })));
+    await renameToCompletedDuringWrite(makeSession({ status: 'completed', legacyMetricsConsent: consent }));
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'exit' }));
+
+    expect(existsSync(livePath())).toBe(false);
+    expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).legacyMetricsConsent).toEqual(consent);
+  });
+
   it('keeps the saving copy\'s larger attempt counter when merging into completed_', async () => {
     writeFileSync(livePath(), JSON.stringify(makeSession()));
     await renameToCompletedDuringWrite(makeSession({ status: 'completed', deliveryAttempts: 1 }));

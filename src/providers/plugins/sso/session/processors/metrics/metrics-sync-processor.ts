@@ -24,6 +24,7 @@ import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
+import { legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
 import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
@@ -133,6 +134,15 @@ export class MetricsSyncProcessor implements SessionProcessor {
       if (!sessionMetadata) {
         logger.error(`[${this.name}] Session not found: ${session.sessionId}`);
         return { success: false, message: 'Session metadata not found' };
+      }
+
+      // The legacy work-consent gate (EPMCDME-17054): withheld deltas stay as they are, never sent or retried here.
+      // A final verdict is persisted on the record, so the delivered checks count the deltas as delivered.
+      const verdict = await legacyMetricsVerdict(sessionMetadata);
+      if (!verdict.publish) {
+        logger.debug(`[${this.name}] Legacy metrics withheld: ${verdict.reason}`);
+        if (!('transient' in verdict)) await persistLegacyMetricsWithheld(session.sessionId, verdict.reason);
+        return { success: true, message: `legacy metrics withheld: ${verdict.reason}` };
       }
 
       // 4. Get agent metrics config for post-processing (lazy-load to avoid circular dependency)
