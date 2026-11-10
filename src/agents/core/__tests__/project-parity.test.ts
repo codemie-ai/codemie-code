@@ -344,7 +344,7 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
       expect(await managedProject(deep)).toBe('x-project');
     });
 
-    it('the worktree root itself is included, for a normal repo and a linked worktree (.git file)', async () => {
+    it('the worktree root itself is included, for a normal repo and a linked-worktree style .git file (marker only, Git metadata is not validated)', async () => {
       for (const kind of ['dir', 'file'] as const) {
         const root = path.join(tmp, `wt-${kind}`);
         const deep = path.join(root, 'a', 'b');

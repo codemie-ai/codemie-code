@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { access, readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import type { ProjectBindingState } from '@/utils/project-binding.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
@@ -231,14 +231,24 @@ export async function resolveProjectAtCwd(cwd: string, profile?: string, policy:
   return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile, walk: policy.walkFromCwd }), policy);
 }
 
-/** The nearest ancestor (inclusive) holding `.git`: a directory in a normal repo, a file in a linked worktree. */
+/**
+ * The nearest ancestor (inclusive) holding a `.git` marker: a directory in a normal repo, a file in a linked
+ * worktree (the marker is only detected, Git metadata is not validated). Only a definite absence continues
+ * upward; any other filesystem error (e.g. an unreadable marker) means the boundary is unknown and yields
+ * `undefined`, so the caller stays at the launch dir instead of reaching into a containing worktree.
+ */
 async function gitWorktreeRoot(startDir: string): Promise<string | undefined> {
   let dir = startDir;
   for (;;) {
     try {
-      await access(path.join(dir, '.git'));
+      await lstat(path.join(dir, '.git'));
       return dir;
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        logger.debug(`[event-fields] git boundary unknown (${code ?? errorName(error)}): config lookup stays at the launch dir`);
+        return undefined;
+      }
       const parent = path.dirname(dir);
       if (parent === dir) return undefined;
       dir = parent;
