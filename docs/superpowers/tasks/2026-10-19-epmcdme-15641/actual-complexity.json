@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-10-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 31,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New leaf model-classify.ts plus model-compat.ts registry helper; classifyModel hook added to AgentMetadata and wired into claude, codex, gemini, kimi plugins; AgentCLI launch guard; CLI setup, models switch/list, profile display; SSO setup-steps; profile utils and env/provider types. Multiple subsystems and a new abstraction." },
+    { "dimension": "technical_risk", "reason": "Name-based model/harness classification has no exact precedent; launch guard can block agent start (behavior-changing); router/unverified edge cases and confirmedModels persistence. Legacy profiles must stay unchanged. Mitigated by leaf-module cycle avoidance and extensive edge-case tests." },
+    { "dimension": "file_change_estimate", "reason": "31 files per diffstat (about 12 tests, 4 docs, rest source); 16+ maps to XXL." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk held at L: security/behavior-sensitive launch guard with no direct precedent; enumerated edge/variant cases covered by new parameterized tests",
+    "Component Scope at XL: touches core shared types (AgentMetadata, profile types) used across agents and providers"
+  ],
+  "split_recommendation": null
+}

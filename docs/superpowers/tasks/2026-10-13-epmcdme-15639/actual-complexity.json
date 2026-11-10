@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "generated": "2026-10-14T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 38,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Spans a new ProviderProfile.models array and resolveProfileModels()/switchActiveProfileModel() in src/utils/config.ts, two new CLI surfaces (src/cli/commands/models.ts 'switch' subcommand plus the new raw-mode picker in models-switch-prompt.ts), the setup wizard's multi-select step and profile display (setup.ts, profile/display.ts, utils/profile.ts), and independent CODEMIE_PROFILE_MODELS filtering logic re-implemented per agent plugin (claude.plugin.ts, codex-models.ts, opencode-model-configs.ts, pi.models.ts, codemie-code.plugin.ts) plus AgentCLI.ts. Five architecturally separate plugin subsystems each had to add their own filter-to-profile function against a new shared env contract, which is a shared-contract/cross-subsystem change rather than a single pattern applied once."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent existed for persisting a model list and switching the active one in place; switchActiveProfileModel() is new, bespoke write logic. The Claude-tier-refresh network call added to 'models switch' is explicitly guarded (try/catch with a comment referencing CR-006) so a transient catalog fetch failure degrades to skipping the tier refresh rather than aborting the otherwise-local config write. Each plugin's filter function (filterAvailableModelsToProfile, filterEntriesToProfile, etc.) carries its own AC22-referenced fallback to the unfiltered catalog when CODEMIE_PROFILE_MODELS matches nothing, so the models.json/model picker is never left empty. Reversible (plain JSON config edit, no migration), which keeps this at L rather than XL."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "diffstat reports 38 files changed (2521 insertions, 78 deletions), which lands in the 16+ file XXL band outright; the non-test footprint alone covers src/env/types.ts, src/utils/config.ts, src/utils/profile.ts, 5 agent-plugin source files, 4 CLI command files, and 4 docs files, with the remaining ~19 files being new or updated unit tests for each of those surfaces."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Touches CLI/UI (setup.ts multi-select, models.ts, models-switch-prompt.ts, profile/display.ts), Service (AgentCLI.ts and five agent-plugin model-resolution modules), DB-Persistence (ConfigLoader read/write of the new `models` field and the active `model` in-place patch), and External (the live catalog fetch — ProviderRegistry.getModelProxy().fetchModels — re-run during 'models switch' to refresh Claude tiers). No new migration file was added since `models` is additive and optional, which keeps this at XL rather than XXL."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
