@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { computeActiveDuration } from '../codex.active-duration.js';
@@ -9,8 +10,10 @@ describe('computeActiveDuration', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'codex-active-'));
   });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+  afterEach(async () => {
+    // Async removal: a rollout stream closes only when the event loop runs, and on Windows the
+    // file stays held until then.
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   const at = (s: number): string => new Date(Date.UTC(2026, 10, 10, 10, 0, 0) + s * 1000).toISOString();
