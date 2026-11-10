@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "task": "Fix the QA-found gap where the first Claude Code session after a proxy daemon port respawn still loses native OTel telemetry because the settings.json endpoint rewrite happens during SessionStart, after Claude Code's own OTel exporter has already initialized.",
+  "generated": "2026-11-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 5, "label": "XL" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The ticket's own suggested fix direction (inject the OTLP endpoint into the codemie-claude launcher's spawn env) is directly contradicted by this codebase's recorded precedent (EPMCDME-10988): Claude Code's settings.json env block overrides spawn-time process env for exactly this variable family, and claude-code-otlp already declares OTEL_EXPORTER_OTLP_ENDPOINT there. The native (unmanaged) launch path has no CodeMie-owned pre-spawn moment at all, so whether/how to cover it is an unresolved architectural decision, not a coding detail. No automated test can confirm the fix works against the real failure mode (Claude Code's own OTel SDK init timing) — only production verification can."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "A viable fix likely spans the CLI/proxy layer (otlp-cold-start.ts's ensureOtlpProxy/refreshClaudeCodeOtlpEndpoint, already existing and tested) and the agent/adapter launcher layer (BaseAgentAdapter.ts / claude.plugin.ts beforeRun) if the fix is placed pre-spawn for managed launches, per the user's own framing that a base-adapter-level mechanism should be generic rather than claude-code-only. Touching BaseAgentAdapter — a shared class across all managed agent launches — is a core-shared-utility change even though it is reused, not newly built."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent exists for resolving/writing the OTLP endpoint before Claude Code's own process startup (today's machinery is hook-time-only, run once per short-lived `codemie hook` process). A rollback plan is feasible (revert the new pre-spawn call site), but correctness is unverifiable by unit tests alone and rests on the same kind of production evidence QA already needed to surface this gap."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): fix likely touches BaseAgentAdapter.ts, a core shared utility used by every managed agent launch, even though via an existing, idempotent primitive (ensureOtlpProxy).",
+    "Requirements Clarity bumped from L (4) to XL (5): vague acceptance criteria / architectural decision unmade — the task's suggested fix direction is contradicted by existing codebase precedent, and whether/how to handle the native (unmanaged) launch path is undecided."
+  ],
+  "split_recommendation": null
+}
