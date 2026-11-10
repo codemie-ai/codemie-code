@@ -241,6 +241,16 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
     });
   });
 
+  describe('Copilot folder-change recheck reads .env like the stamp does', () => {
+    it('resolveProjectAtCwd takes the hook cwd .env, not the walked-to config dir .env', async () => {
+      await writeGlobal({ l: { provider: 'litellm', model: 'm', baseUrl: 'https://l.example.com', apiKey: 'k' } }, 'l');
+      await writeLocal({ version: 2, activeProfile: 'l', profiles: {} });
+      await fs.writeFile(path.join(sub, '.env'), 'CODEMIE_PROJECT=cwd-env-project' + String.fromCharCode(10));
+      await fs.writeFile(path.join(repo, '.env'), 'CODEMIE_PROJECT=parent-env-project' + String.fromCharCode(10));
+      expect(await resolveProjectAtCwd(sub, undefined, { configuredWins: true, walkFromCwd: true })).toBe('cwd-env-project');
+    });
+  });
+
   describe('global config file is not a local override', () => {
     it('a workspace below the dir that holds the global .codemie is skipped on the way up', async () => {
       const ws = path.join(tmp, 'ws');

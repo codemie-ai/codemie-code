@@ -172,7 +172,7 @@ export async function loadHookConfig(
   try {
     const configDir = start ? await findNearestConfigDir(start) : cwd;
     // `.env` stays where it always was: the hook's cwd when `walk` alone found the config dir, else the config dir.
-    const envDir = opts.walk && !opts.fromCwd && !process.env['CLAUDE_PROJECT_DIR']?.trim() ? cwd : configDir;
+    const envDir = opts.walk && !process.env['CLAUDE_PROJECT_DIR']?.trim() ? cwd : configDir;
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the
     // globally active profile, selects hook config, routing proof and project. Native has no such export.
     const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
@@ -191,7 +191,7 @@ export async function loadHookConfig(
 export async function resolveProjectAtCwd(cwd: string, profile?: string, policy: ProjectPolicy = {}): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
   if (envProject && !configuredWins(policy)) return envProject;
-  return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile }), policy);
+  return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile, walk: policy.walkFromCwd }), policy);
 }
 
 /**
