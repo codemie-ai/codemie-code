@@ -25,7 +25,8 @@ const { freezeLegacyMetricsConsent, legacyMetricsVerdict, isLegacyGateSkip, isLe
 const { connectFolder, consentStorePath, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice, writeStop, markerState } = await import('@/agents/core/evidence/stop-marker.js');
-const { evidenceDir, stopFileName } = await import('@/agents/core/evidence/record-store.js');
+const { acceptedFileName, evidenceDir, stopFileName } = await import('@/agents/core/evidence/record-store.js');
+const { writeAccepted, acceptedState } = await import('@/agents/core/evidence/accepted-marker.js');
 const { advanceCursor, createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
 const { recordUnacknowledged } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-state.js');
 const { statusFile, streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
@@ -61,6 +62,9 @@ describe('legacy /v1/metrics gate', () => {
   }
 
   const PENDING = { publish: false, reason: 'destination-pending', transient: true };
+  const UNCONFIRMED = { publish: false, reason: 'destination-unconfirmed', transient: true };
+  /** What the forwarder writes on the backend's verified acceptance of the consented project. */
+  const accept = (id = NATIVE_ID): Promise<void> => writeAccepted(recordKey('api-x', 'owner-x', id), id);
   const UNAVAILABLE = { publish: false, reason: 'verdict-unavailable', transient: true };
 
   it('gates anthropic-subscription only', () => {
@@ -97,7 +101,59 @@ describe('legacy /v1/metrics gate', () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
     expect(s.legacyMetricsConsent).toMatchObject({ apiIdentity: 'api-x', ownerHash: 'owner-x' });
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('consent alone does not publish: the session waits, transiently, for the backend to accept its destination', async () => {
+    // A short session that ends before the forwarder's first send (QA ed56e443 / cb5ee530): no status, no answer yet
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    expect(await legacyMetricsVerdict(s)).toEqual(UNCONFIRMED);
+    // A status with nothing acknowledged yet is no answer either
+    await writeStatus(NATIVE_ID, createStatus());
+    expect(await legacyMetricsVerdict(s)).toEqual(UNCONFIRMED);
+    await accept();
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('an acceptance outlives the swept spool status: a later retry still publishes', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await writeStatus(NATIVE_ID, createStatus());
+    await accept();
+    rmSync(statusFile(NATIVE_ID));
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('a later hold or stop wins over an earlier acceptance', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await accept();
+    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'stamp_pending', since: 1 } } });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+    await writeStatus(NATIVE_ID, { ...createStatus(), stopIntent: 'consent_revoked' });
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'destination-held' });
+  });
+
+  it('an unreadable acceptance marker is verdict-unavailable; a corrupt one is no confirmation', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    const path = join(evidenceDir(), acceptedFileName(recordKey('api-x', 'owner-x', NATIVE_ID)));
+    mkdirSync(path, { recursive: true });
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+    rmSync(path, { recursive: true });
+    writeFileSync(path, '{not json');
+    expect(await acceptedState(recordKey('api-x', 'owner-x', NATIVE_ID))).toBe('absent');
+    expect(await legacyMetricsVerdict(s)).toEqual(UNCONFIRMED);
+  });
+
+  it('the acceptance marker is create-once', async () => {
+    const key = recordKey('api-x', 'owner-x', NATIVE_ID);
+    expect(await acceptedState(key)).toBe('absent');
+    await writeAccepted(key, NATIVE_ID);
+    await writeAccepted(key, NATIVE_ID);
+    expect(await acceptedState(key)).toBe('accepted');
   });
 
   it('a disconnect after the freeze is consent-revoked', async () => {
@@ -124,6 +180,8 @@ describe('legacy /v1/metrics gate', () => {
     await recordUnacknowledged(NATIVE_ID, 'hooks', { kind: 'retry', reason: 'http_503', detail: 'project_unavailable', hold: true }, { cursor: 0, end: 100 });
     expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
     await advanceCursor(NATIVE_ID, 'hooks', 100);
+    expect(await legacyMetricsVerdict(s)).toEqual(UNCONFIRMED);
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
@@ -140,6 +198,8 @@ describe('legacy /v1/metrics gate', () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
     await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'stamp_pending', since: 1 } } });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
     await writeStatus(NATIVE_ID, createStatus());
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
@@ -185,6 +245,7 @@ describe('legacy /v1/metrics gate', () => {
     expect(s.legacyMetricsConsent).toBeUndefined();
     expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
     writeFileSync(consentStorePath(), good);
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
     await disconnectFolder(SCOPE, folder);
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'no-work-consent' });
@@ -197,6 +258,7 @@ describe('legacy /v1/metrics gate', () => {
     writeFileSync(consentStorePath(), '{not json');
     const s = await session();
     writeFileSync(consentStorePath(), good);
+    await accept();
     identity.current = null; // signed out / unreadable credentials at send time
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
     identity.current = { api_identity: 'api-other', owner_hash: 'owner-other' };
@@ -250,6 +312,7 @@ describe('legacy /v1/metrics gate', () => {
     await writeStatus(NATIVE_ID, { ...createStatus(), lastDiscard: { reason: 'session_project_conflict', stream: 'hooks', bytes: 10, at: Date.now() } });
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'destination-held' });
     await writeStatus(NATIVE_ID, createStatus());
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
@@ -257,6 +320,7 @@ describe('legacy /v1/metrics gate', () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
     await writeStatus(NATIVE_ID, { ...createStatus(), lastDiscard: { reason: 'payload_rejected', stream: 'logsJson', bytes: 10, at: Date.now() } });
+    await accept();
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 

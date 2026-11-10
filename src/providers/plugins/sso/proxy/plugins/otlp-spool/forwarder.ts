@@ -36,6 +36,7 @@ import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
+import { writeAccepted } from '@/agents/core/evidence/accepted-marker.js';
 import { beginSend, endSend, stopOrRecordIntent, tryStop } from './stop-intent.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
@@ -213,6 +214,10 @@ async function send(req: SendRequest): Promise<SendOutcome> {
         // Never acknowledged, and never retried into more unverified publication: the session stops with a notice.
         outcome = { kind: 'failed', reason: 'response_unverified' };
         await stopped(ctx, 'response_unverified');
+      } else if (outcome.kind === 'ok' && !outcome.reason && ctx.consent) {
+        // The backend accepted the consented project as the destination: the legacy /v1/metrics gate waits for this.
+        // Best effort: an unwritten marker only keeps the legacy path withheld (fail closed).
+        await writeAccepted(ctx.key, ctx.record.session_id).catch(() => undefined);
       } else if (outcome.final) {
         await stopped(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');

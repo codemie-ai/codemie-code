@@ -14,6 +14,7 @@ const getPolicyStateMock = vi.fn();
 const isStoppedMock = vi.fn();
 const writeStopMock = vi.fn();
 const writeNoticeMock = vi.fn();
+const writeAcceptedMock = vi.fn(async () => undefined);
 const consentHoldsMock = vi.fn();
 const noteFailureMock = vi.fn(async () => 'noted');
 const refreshPolicyMock = vi.fn();
@@ -50,6 +51,7 @@ vi.mock('../verdict-store.js', async (importOriginal) => ({
   replaceVerdict: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('@/agents/core/evidence/stop-marker.js', () => ({ isStopped: isStoppedMock, writeStop: writeStopMock, writeNotice: writeNoticeMock }));
+vi.mock('@/agents/core/evidence/accepted-marker.js', () => ({ writeAccepted: writeAcceptedMock }));
 vi.mock('@/agents/core/evidence/consent-store.js', () => ({ consentHolds: consentHoldsMock }));
 vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js', () => ({
   readClaudeAnalyticsPreferences: vi.fn().mockResolvedValue({ kind: 'ok', value: { collectionGeneration: 0 } }),
@@ -142,6 +144,29 @@ describe('new-contract forwarding', () => {
     await run();
     expect(sentHeaders()['X-CodeMie-Work-Consent']).toBe('explicit-folder');
     expect(advanceCursorMock).toHaveBeenCalled();
+    // The backend accepted the consented project: the legacy /v1/metrics gate may publish (EPMCDME-17054)
+    expect(writeAcceptedMock).toHaveBeenCalledWith(expect.any(String), 's1');
+  });
+
+  it('an N1 acceptance whose marker cannot be written is still acknowledged (the legacy path just stays withheld)', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeAcceptedMock.mockRejectedValueOnce(new Error('EACCES'));
+    fetchMock.mockImplementation(async () => respond(200, {}, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).toHaveBeenCalled();
+    expect(writeStopMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an N0 acceptance (no consent)', undefined, () => respond(200, {}, echo('personal'))],
+    ['an N1 unverified echo', 'abcdef0123456789', () => respond(200, {}, echo('project', 'other'))],
+    ['an N1 503 project_unavailable hold', 'abcdef0123456789', () => respond(503, { reason: 'project_unavailable', disposition: 'hold' })],
+    ['an N1 final discard', 'abcdef0123456789', () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' })],
+  ])('%s writes no destination-accepted marker', async (_n, consentRef, answer) => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, ...(consentRef ? { consent_ref: consentRef } : {}) } });
+    fetchMock.mockImplementation(async () => answer());
+    await run();
+    expect(writeAcceptedMock).not.toHaveBeenCalled();
   });
 
   it.each([

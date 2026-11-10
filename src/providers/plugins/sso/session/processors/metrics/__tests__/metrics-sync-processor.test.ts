@@ -143,9 +143,27 @@ describe('MetricsSyncProcessor', () => {
       expect(readRecord()).toMatchObject({ endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
     });
 
-    it('an anthropic-subscription session whose frozen consent holds sends its deltas', async () => {
+    it('an anthropic-subscription session whose frozen consent holds waits for the backend to accept its destination', async () => {
       await connectFolder(scope, folder);
       const ref = await resolveConsent(scope, folder);
+
+      const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
+        provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder,
+        legacyMetricsConsent: { ref, apiIdentity: 'api-x', ownerHash: 'owner-x' }
+      });
+
+      expect(result).toMatchObject({ success: true, message: 'legacy metrics withheld: destination-unconfirmed' });
+      expect(bodies).toEqual([]);
+      expect(readDeltas().map(d => d.syncStatus)).toEqual(['pending', 'pending']);
+      expect(readRecord().legacyMetricsWithheld).toBeUndefined();
+    });
+
+    it('an anthropic-subscription session whose frozen consent holds sends its deltas once the backend accepted it', async () => {
+      await connectFolder(scope, folder);
+      const ref = await resolveConsent(scope, folder);
+      const { writeAccepted } = await import('@/agents/core/evidence/accepted-marker.js');
+      const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+      await writeAccepted(recordKey('api-x', 'owner-x', 'agent-1'), 'agent-1');
 
       const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
         provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder,

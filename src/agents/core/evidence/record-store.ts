@@ -94,6 +94,9 @@ export function stopAckFileName(key: string): string {
 
 export const publicationModeFileName = (key: string): string => `${key}.publication.json`;
 
+/** Destination-accepted sidecar for a record key; shares the record's retention (never matches RECORD_RE). */
+export const acceptedFileName = (key: string): string => `${key}.accepted.json`;
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -307,6 +310,7 @@ export async function sweepRecords(
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
       await unlink(join(dir, publicationModeFileName(key))).catch(() => undefined);
+      await unlink(join(dir, acceptedFileName(key))).catch(() => undefined);
       return true;
     } catch { return false; }
   };
