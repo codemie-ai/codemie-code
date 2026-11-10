@@ -376,15 +376,22 @@ async function buildFullAccumulator(
   }
 
   // Lines a continued session copied from its parent are not its own work: dropped here so no
-  // summary figure (models, tools, turns, timestamps) includes them.
+  // summary figure (models, tools, turns, timestamps) includes them. A copy is told by its uuid,
+  // but Claude Code also copies lines without one (`queue-operation`, ...) that carry a timestamp,
+  // so for a continuation everything before the first own line with a uuid is a copy too.
   const rawLines: string[] = [];
   const allLines: TranscriptLine[] = [];
+  let ownStarted = excluded.size === 0;
 
   for (const line of raw.split('\n')) {
     if (line.trim().length === 0) continue;
     try {
       const parsed = JSON.parse(line) as TranscriptLine;
       if (typeof parsed?.uuid === 'string' && excluded.has(parsed.uuid)) continue;
+      if (!ownStarted) {
+        if (typeof parsed?.uuid !== 'string') continue;
+        ownStarted = true;
+      }
       allLines.push(parsed);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
@@ -466,7 +473,13 @@ async function buildFullAccumulator(
   const startedAt = firstTimestamp(parsedLines);
   const endedAt = firstTimestamp([...parsedLines].reverse());
 
-  return { acc, named, startedAt, endedAt, hasOwnLines: parsedLines.length > 0 };
+  // Own activity is the bar the usage pass uses: a real answer or a genuine prompt. The synthetic
+  // placeholder and local-command lines written when a continuation is opened and closed are not.
+  const hasOwnLines = parsedLines.some(
+    (line) => (line.type === 'assistant' && !isSyntheticModel(String(line.message?.model ?? ''))) || isGenuineUserTurn(line)
+  );
+
+  return { acc, named, startedAt, endedAt, hasOwnLines };
 }
 
 /**

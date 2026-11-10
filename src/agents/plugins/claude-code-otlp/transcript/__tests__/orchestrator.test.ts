@@ -3634,6 +3634,56 @@ describe('continued session (EPMCDME-16992)', () => {
     expect(summary?.turns).toBe(1);
   });
 
+  /** A line Claude Code writes without a `uuid` but with a `timestamp`; a continuation copies those too. */
+  const queued = (timestamp: string): string =>
+    JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 'C', timestamp, content: 'queued' });
+
+  it('starts the summary at the first own line, not at a copied line that has no uuid', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      queued('2026-11-01T17:44:00.000Z'),
+      ...copiedLines(),
+      queued('2026-11-01T17:47:00.000Z'),
+      typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z'),
+    ]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary).toMatchObject({
+      started_at: '2026-11-01T19:50:00.000Z',
+      ended_at: '2026-11-01T19:50:10.000Z',
+      duration_ms: 10000,
+    });
+  });
+
+  it('sends no summary for a continuation whose copies are followed only by uuid-less lines', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [queued('2026-11-01T17:44:00.000Z'), ...copiedLines(), queued('2026-11-10T16:23:52.000Z')]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+  });
+
+  it('sends no summary for a continuation whose only own line is a synthetic answer', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] },
+    });
+    const path = writeTranscript('C.jsonl', [...copiedLines(), synthetic]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
   it('counts every line when the parent transcript is absent', async () => {
     const path = writeTranscript('C.jsonl', copiedLines());
 
