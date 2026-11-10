@@ -30,7 +30,8 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptNeverReached, authWasRejected, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptNeverReached, authWasRejected, awaitingDestination, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
@@ -322,9 +323,24 @@ export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise
     await restoreCounter(attempt, 'credentials rejected by the server');
   } else if (attemptNeverReached(attempt.signal)) {
     await restoreCounter(attempt, 'request never reached the server');
+  } else if (awaitingDestination(attempt.signal) && (await destinationCanStillAnswer(attempt.sessionId))) {
+    // A legacy metric withheld until the backend confirms the destination (EPMCDME-17054) spends no attempt
+    await restoreCounter(attempt, 'legacy metrics wait for the destination confirmation');
   } else if (aborted) {
     await rollBackAttempt(attempt);
   }
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Whether the destination-accepted marker can still appear for the record: its session ended (or, unended, started)
+ * within the evidence record's retention. Past it the waiting attempts count again, so the record is dropped in the end.
+ */
+async function destinationCanStillAnswer(sessionId: string): Promise<boolean> {
+  const record = await new SessionStore().loadSession(sessionId);
+  const at = record?.endTime ?? record?.startTime;
+  return at !== undefined && Date.now() - at < evidenceRecordIdleDays() * DAY_MS;
 }
 
 /** Puts the attempt's counter back to its value before the attempt. */

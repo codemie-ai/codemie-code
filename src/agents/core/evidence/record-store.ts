@@ -97,6 +97,9 @@ export const publicationModeFileName = (key: string): string => `${key}.publicat
 /** Destination-accepted sidecar for a record key; shares the record's retention (never matches RECORD_RE). */
 export const acceptedFileName = (key: string): string => `${key}.accepted.json`;
 
+/** Destination-ended sidecar: a discard that ended the session's publication; swept with the record, after the accepted one. */
+export const endedFileName = (key: string): string => `${key}.ended.json`;
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -310,7 +313,12 @@ export async function sweepRecords(
       // Sticky verdict shares the record's key and retention (and its pending protection).
       await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
       await unlink(join(dir, publicationModeFileName(key))).catch(() => undefined);
-      await unlink(join(dir, acceptedFileName(key))).catch(() => undefined);
+      // The ended marker goes only once its acceptance is gone: a lone acceptance would authorize a legacy send again
+      const acceptedGone = await unlink(join(dir, acceptedFileName(key))).then(
+        () => true,
+        (err: NodeJS.ErrnoException) => err.code === 'ENOENT'
+      );
+      if (acceptedGone) await unlink(join(dir, endedFileName(key))).catch(() => undefined);
       return true;
     } catch { return false; }
   };

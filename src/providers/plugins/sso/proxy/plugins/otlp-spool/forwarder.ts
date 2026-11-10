@@ -14,6 +14,7 @@ import {
 } from './spool-paths.js';
 import {
   advanceCursor,
+  endsSessionDiscard,
   markSessionEnded,
   readStatus,
   type Discard,
@@ -36,7 +37,7 @@ import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
-import { writeAccepted } from '@/agents/core/evidence/accepted-marker.js';
+import { recordDestinationMarker } from './destination-intent.js';
 import { beginSend, endSend, stopOrRecordIntent, tryStop } from './stop-intent.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
@@ -216,8 +217,8 @@ async function send(req: SendRequest): Promise<SendOutcome> {
         await stopped(ctx, 'response_unverified');
       } else if (outcome.kind === 'ok' && !outcome.reason && ctx.consent) {
         // The backend accepted the consented project as the destination: the legacy /v1/metrics gate waits for this.
-        // Best effort: an unwritten marker only keeps the legacy path withheld (fail closed).
-        await writeAccepted(ctx.key, ctx.record.session_id).catch(() => undefined);
+        // Before the cursor advances: a marker that cannot be written is kept as an intent and repaired from there.
+        await recordDestinationMarker('accepted', ctx.key, sessionId);
       } else if (outcome.final) {
         await stopped(ctx, outcome.reason === 'publication_contract_requires_session' ? 'requires_session'
           : outcome.reason?.startsWith('consent') ? 'consent_invalid' : 'contract_unsupported');
@@ -255,6 +256,12 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       ...sanitizeLogArgs({ sessionId, stream, err: msg })
     );
     outcome = { kind: 'retry', reason: 'request_error' };
+  }
+  // A discard that ends the session's publication outlives the swept status as a marker the legacy gate checks first,
+  // written before the cursor advances (acknowledge records the same discard in the status)
+  const recorded = req.evidence ?? req.guard;
+  if (recorded && acknowledged(outcome) && outcome.reason && endsSessionDiscard({ reason: outcome.reason, stream })) {
+    await recordDestinationMarker('ended', recorded.key, sessionId);
   }
   await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
   // Outcome processed (acknowledged, held or retried): the checkpoint is released unless a required stop is recorded nowhere durable.

@@ -14,7 +14,7 @@ const getPolicyStateMock = vi.fn();
 const isStoppedMock = vi.fn();
 const writeStopMock = vi.fn();
 const writeNoticeMock = vi.fn();
-const writeAcceptedMock = vi.fn(async () => undefined);
+const writeAcceptedMock = vi.fn(async (_key: string, _sessionId: string) => undefined);
 const consentHoldsMock = vi.fn();
 const noteFailureMock = vi.fn(async () => 'noted');
 const refreshPolicyMock = vi.fn();
@@ -40,7 +40,10 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock, writeStatus: vi.fn(async () => undefined) }));
+vi.mock('../session-status.js', async (importOriginal) => ({
+  endsSessionDiscard: (await importOriginal<typeof import('../session-status.js')>()).endsSessionDiscard,
+  advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock, writeStatus: vi.fn(async () => undefined),
+}));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
 vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({ ...(await importOriginal<object>()), readRecord: readRecordMock }));
 vi.mock('../policy-cache.js', async (importOriginal) => ({ ...(await importOriginal<object>()), getPolicyState: getPolicyStateMock, refreshPolicy: refreshPolicyMock }));
@@ -51,7 +54,10 @@ vi.mock('../verdict-store.js', async (importOriginal) => ({
   replaceVerdict: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('@/agents/core/evidence/stop-marker.js', () => ({ isStopped: isStoppedMock, writeStop: writeStopMock, writeNotice: writeNoticeMock }));
-vi.mock('@/agents/core/evidence/accepted-marker.js', () => ({ writeAccepted: writeAcceptedMock }));
+vi.mock('@/agents/core/evidence/accepted-marker.js', () => ({
+  writeAccepted: writeAcceptedMock,
+  writeDestinationMarker: (marker: string, key: string, sessionId: string) => (marker === 'accepted' ? writeAcceptedMock(key, sessionId) : undefined),
+}));
 vi.mock('@/agents/core/evidence/consent-store.js', () => ({ consentHolds: consentHoldsMock }));
 vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js', () => ({
   readClaudeAnalyticsPreferences: vi.fn().mockResolvedValue({ kind: 'ok', value: { collectionGeneration: 0 } }),

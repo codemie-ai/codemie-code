@@ -93,6 +93,24 @@ export interface SessionStatus {
   stopIntent?: StopReason;
   /** Write-ahead checkpoint of a new-contract network attempt: set durably before the POST, cleared once its outcome is processed (see stop-intent.ts). */
   sendCheckpoint?: true;
+  /** Destination markers the forwarder owes but could not write yet: the status is not swept while set (see destination-intent.ts). */
+  destinationIntent?: DestinationIntent;
+}
+
+/** The record key (a hash, no identity text) and the destination markers still to write for it. */
+export interface DestinationIntent {
+  key: string;
+  accepted?: true;
+  ended?: true;
+}
+
+const RECORD_KEY_RE = /^[0-9a-f]{64}$/;
+
+function parseDestinationIntent(raw: unknown): DestinationIntent | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { key, accepted, ended } = raw as Record<string, unknown>;
+  if (typeof key !== 'string' || !RECORD_KEY_RE.test(key) || (accepted !== true && ended !== true)) return undefined;
+  return { key, ...(accepted === true && { accepted: true }), ...(ended === true && { ended: true }) };
 }
 
 export interface AgeSegment {
@@ -305,6 +323,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
   if (source['sendCheckpoint'] === true) status.sendCheckpoint = true;
+  const intent = parseDestinationIntent(source['destinationIntent']);
+  if (intent) status.destinationIntent = intent;
   const carried = parseCarriedAge(source['carriedAge']);
   if (carried) status.carriedAge = carried;
   if (typeof source['stopIntent'] === 'string' && (STOP_REASONS as readonly string[]).includes(source['stopIntent'])) {
