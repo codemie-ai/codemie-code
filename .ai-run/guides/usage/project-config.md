@@ -149,8 +149,7 @@ interface ConfigWithSources {
 wizard (agents, then each agent's models and active model), keyed by base agent
 name (ACP variants share it): `models` is what the agent may use, `activeModel` its
 active model, and optional `confirmedModels` the ids accepted despite the agent's
-model-name rule. Agents with no in-session model menu (`activeModelOnly`: gemini,
-kimi, copilot-cli, openwiki) hold only their active model. The top-level `model`
+model-name rule. The top-level `model`
 mirrors the first agent's active model. A profile without `agentModels` (like
 `default` above) is legacy: read as `[model]`, never migrated, and a launch with
 an incompatible model only warns; with `agentModels` that launch is blocked unless
@@ -160,7 +159,10 @@ At launch each agent sees only its own set: `CODEMIE_MODEL` is its active model
 and `CODEMIE_PROFILE_MODELS` its `models` (empty for a legacy profile or an agent
 not in `agentModels`), which narrows Claude/Codex/OpenCode/codemie-code/Pi's
 in-session model menus. `codemie models switch [--agent <name>]` changes one
-agent's active model in the scope that owns `agentModels`.
+agent's active model in the scope that owns `agentModels`. Gemini, Copilot CLI, Kimi
+and OpenWiki have no menu CodeMie can fill, so the proxy's `profile-model-follower`
+plugin applies a switch to their running session: it re-reads the profile and
+rewrites the launch model to the new active model on the next request.
 
 ---
 

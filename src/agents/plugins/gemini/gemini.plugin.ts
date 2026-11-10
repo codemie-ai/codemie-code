@@ -49,7 +49,6 @@ const metadata = {
   supportedProviders: ['ai-run-sso', 'litellm', 'bearer-auth'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
   classifyModel: (id, ctx) => classifyWithPredicate(isGeminiCompatibleModelName, id, ctx),
-  activeModelOnly: true, // no in-session model switcher
   recommendedModels: ['gemini-3-pro'],
 
   ssoConfig: {

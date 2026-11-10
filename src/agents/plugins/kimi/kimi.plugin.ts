@@ -55,7 +55,6 @@ export const KimiPluginMetadata: AgentMetadata = {
   supportedProviders: ['moonshot-subscription', 'ai-run-sso'],
   blockedModelPatterns: [],
   classifyModel: (id, ctx) => classifyWithPredicate(isKimiCompatibleModelName, id, ctx),
-  activeModelOnly: true, // no in-session model switcher
   recommendedModels: ['kimi-k2.6', 'kimi-for-coding', 'kimi-k2'],
   ssoConfig: { enabled: true, clientType: 'codemie-kimi' },
   flagMappings: {

@@ -1083,8 +1083,7 @@ export class ConfigLoader {
     const applyMutation = (profile: ProviderProfile): void => {
       const agentSet = agent ? resolveAgentModelSet(profile, agent) : undefined;
       if (agentSet) {
-        // A model outside the agent's list (an active-model-only agent, switched from the
-        // catalog) becomes its only model.
+        // A model outside the agent's list becomes its only model.
         if (!agentSet.models.includes(modelId)) {
           agentSet.models = [modelId];
           delete agentSet.confirmedModels;
