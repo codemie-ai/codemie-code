@@ -234,7 +234,6 @@ describe('PiConversationsProcessor', () => {
 
     const [payload] = readPayloads();
     expect(payload.payload.folder).toBe('omp');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const assistant = payload.payload.history[1] as any;
     expect(assistant.thoughts.map((t: { author_name: string }) => t.author_name)).toContain('Oh My Pi Reasoning');
   });
