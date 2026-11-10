@@ -4,7 +4,7 @@
   "test_repo": { "separate": false, "root": "." },
   "publication": {
     "visibility": "public",
-    "ticket_refs": "ticket",
+    "ticket_refs": "none",
     "repo_urls": "derive",
     "environment_urls": "env_var",
     "ticket_data": "store",

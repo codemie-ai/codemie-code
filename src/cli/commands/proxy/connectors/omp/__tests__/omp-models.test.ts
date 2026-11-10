@@ -84,9 +84,9 @@ describe('buildOmpModelRoster', () => {
         simple: { model: 'known-cap' }, medium: { model: 'unknown' },
         complex: { model: 'unknown' }, reasoning: { model: 'unknown' },
       } }),
-      // @case EPMCDME-16259_TC_003
+      // @case omp-models_TC_003
       model({ deployment_name: 'cache-cost', cost: { cache_read_input_token_cost: 1e-7, cache_creation_input_token_cost: 5e-7 } }),
-      // @case EPMCDME-16259_TC_003
+      // @case omp-models_TC_003
       model({ deployment_name: 'vision', multimodal: true }),
     ]);
     expect(roster.openai.find(({ id }) => id === 'cost')).toMatchObject({
@@ -96,11 +96,11 @@ describe('buildOmpModelRoster', () => {
     expect(roster.openai.find(({ id }) => id === 'router-min')?.maxTokens).toBe(64000);
     expect(roster.openai.find(({ id }) => id === 'router-unknown')?.maxTokens).toBe(32000);
     expect(roster.openai.find(({ id }) => id === 'router-partial')?.maxTokens).toBe(100000);
-    // @case EPMCDME-16259_TC_003
+    // @case omp-models_TC_003
     expect(roster.openai.find(({ id }) => id === 'cache-cost')).toMatchObject({
       cost: { cacheRead: 0.1, cacheWrite: 0.5 },
     });
-    // @case EPMCDME-16259_TC_003
+    // @case omp-models_TC_003
     expect(roster.openai.find(({ id }) => id === 'vision')?.input).toEqual(['text', 'image']);
   });
 

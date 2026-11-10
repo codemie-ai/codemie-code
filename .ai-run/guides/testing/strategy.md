@@ -46,7 +46,8 @@ Orphaned, not wired into any Vitest project and not referenced elsewhere: `tests
 - Full "Running Tests and Validation" section in `CONTRIBUTING.md` (matches `package.json` scripts exactly).
 - `tests/README.md` states the project's own target split: Integration 70% / Unit 30%, and documents the `CLIRunner`/`TempWorkspace` helpers.
 - `.ai-run/guides/testing/testing-patterns.md` (pre-existing, written independently of this file) covers mocking patterns, lazy-getter overrides, and cross-platform path assertions in depth — read it alongside this file rather than duplicating it here.
-- New tests continue citing the originating ticket key in file-header comments and `describe`/`it` names (e.g. `EPMCDME-15411, AC4`), matching the existing convention — this is informal prose, not a structured marker, and is separate from the factory's own `@case <ID>` comment, which every generated test carries regardless.
+- New tests continue citing the originating ticket key in file-header comments and `describe`/`it` names (e.g. `EPMCDME-15411, AC4`), matching the existing convention — this is informal prose, not a structured marker.
+- **No ticket references in the factory's own case IDs.** The `// @case <case ID>` traceability comment that every generated test carries is ticket-free (`<slug>_TC_001`) — common approach across repos, independent of the ticket citation above and of `git_conventions` below. Do not add a ticket key to it (PR #783 review).
 
 ## Known-failure policy
 
