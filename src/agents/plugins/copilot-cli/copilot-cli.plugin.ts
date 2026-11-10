@@ -254,7 +254,6 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
   supportedProviders: [...COPILOT_COMPATIBLE_PROVIDERS],
   blockedModelPatterns: [/embedding/i, /rerank/i, /whisper/i, /tts/i, /image/i],
   classifyModel: (id, ctx) => classifyWithPredicate(isCopilotCompatibleModelName, id, ctx),
-  activeModelOnly: true, // no in-session model switcher
   recommendedModels: [...COPILOT_RECOMMENDED_MODELS],
   ssoConfig: {
     enabled: true,

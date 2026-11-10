@@ -347,7 +347,7 @@ export class CodeMieProxy {
       }
 
       // 3. Forward request to upstream
-      const targetUrl = this.buildTargetUrl(req.url!);
+      const targetUrl = this.buildTargetUrl(context.url);
       context.targetUrl = targetUrl.toString();
 
       logger.info(

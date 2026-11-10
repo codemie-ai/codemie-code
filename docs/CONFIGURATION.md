@@ -158,13 +158,6 @@ back one screen, and Ctrl+C or Cancel leaves without saving.
    library" row.
 3. **For each agent: Active model** - one of that agent's picked models. Skipped
    when the agent has a single model.
-
-   Agents with no in-session model menu (`activeModelOnly` in their plugin metadata:
-   `gemini`, `kimi`, `copilot-cli`, `openwiki`) always run on their active model, so
-   steps 2 and 3 become a single **Active model** screen. It lists the models the
-   agent supports, accepts typed names and search the same way, and notes that the
-   model is changed with `codemie models switch --agent <name>`. The saved set holds
-   that one model.
 4. **Review** - one line per agent, active model first; Save writes the profile.
 
 On an update, the saved agents and models are preselected. The wizard is skipped
@@ -179,11 +172,15 @@ for providers that auto-pick their single model (`anthropic-subscription`,
   tiers when the agent is Claude). Without `--agent`, the model id picks the agent
   when only one agent has it; otherwise you choose the agent, then its model, from
   that agent's own list. An agent with one model is a no-op. On a legacy profile
-  `--agent` is rejected. An `activeModelOnly` agent has no saved list to choose
-  from: it is offered the provider's live catalog, narrowed to the models it can
-  use, and the chosen model replaces its set. A model id the catalog does not list
-  is accepted unless the agent's rules reject it; when the catalog cannot be
-  fetched, pass the model id.
+  `--agent` is rejected. The picker works like the other selection prompts: Space
+  pre-selects a model, Enter applies the pre-selected one.
+- A switch also reaches a session that is already running. Gemini CLI, GitHub
+  Copilot CLI, Kimi Code and OpenWiki have no model menu CodeMie can fill, so the
+  proxy re-reads the profile (about once a second) and sends the next request of
+  that session to the new active model, in the same chat. Only requests naming the
+  model the session started with are rewritten, so a model the agent picks itself
+  is left alone. Copilot CLI cannot change between Claude and GPT models in a
+  session (a warning is logged and the session keeps its model); restart it for that.
 - `codemie models list [--agent <name>]` prints an "Agents:" block (each agent's
   models, active first), then the catalog with an `AGENTS` column listing the
   agents each model is available to, `*` marking the agents that start with it. A

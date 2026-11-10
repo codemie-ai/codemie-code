@@ -84,24 +84,6 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
     expect(result).toBe(false);
     expect(logs()).toContain('codemie models switch --agent gemini');
   });
-
-  it('suggests the switch for an agent that always runs on its active model, even with one model', () => {
-    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    const result = validate(cfg({
-      provider: 'ai-run-sso',
-      model: 'gpt-x',
-      agentModels: {
-        gemini: { models: ['gpt-x'], activeModel: 'gpt-x' },
-        codex: { models: ['gpt-x', 'gpt-y'], activeModel: 'gpt-x' },
-      },
-    }));
-
-    // Gemini has no in-session model menu: the switch offers it the live catalog, not a saved list.
-    expect(result).toBe(false);
-    expect(logs()).toContain('codemie models switch --agent gemini');
-  });
 });
 
 describe('AgentCLI.validateCompatibility — persisted active model vs launching harness (EPMCDME-15641)', () => {

@@ -11,7 +11,6 @@ import {
   getClassifierAgents,
   getModelRuleFreeAgents,
   getOfferedHarnesses,
-  isActiveModelOnly,
   routerAcceptedModels,
   uncoveredHarnesses,
   unsupportedProviderHarnesses,
@@ -129,10 +128,7 @@ export function createDraft(agent: string, input: AgentModelsWizardInput): Agent
 
   const existing = input.existing?.agentModels?.[agent];
   if (existing) {
-    // An agent that always runs on its active model keeps only that model.
-    const models = isActiveModelOnly(agent) && existing.models.includes(existing.activeModel)
-      ? [existing.activeModel]
-      : [...existing.models];
+    const models = [...existing.models];
     return {
       models,
       activeModel: existing.activeModel,

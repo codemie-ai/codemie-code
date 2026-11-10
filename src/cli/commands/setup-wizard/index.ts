@@ -7,7 +7,7 @@
  * Esc steps back one screen, Ctrl+C (or Cancel) leaves without saving.
  */
 
-import { getAgentDisplayName, getOfferedHarnesses, isActiveModelOnly } from '@/agents/core/model-compat.js';
+import { getAgentDisplayName, getOfferedHarnesses } from '@/agents/core/model-compat.js';
 import type { AgentDraft, AgentModelsResult, AgentModelsWizardInput, ListScreenResult, ListScreenSpec } from './types.js';
 import { runListScreen } from './list-screen.js';
 import { SEARCH_ROW_ID, WIZARD_TEXT } from './constants.js';
@@ -30,8 +30,6 @@ type WizardStep =
   | { kind: 'agents' }
   | { kind: 'models'; agent: string }
   | { kind: 'active'; agent: string }
-  /** Active model of an `activeModelOnly` agent: picked straight from the catalog. */
-  | { kind: 'single'; agent: string }
   | { kind: 'review' };
 
 /** Shows one screen; injectable so the flow can be tested without a TTY. */
@@ -40,9 +38,7 @@ export type ScreenRunner = (spec: ListScreenSpec) => Promise<ListScreenResult>;
 function buildSteps(agents: string[]): WizardStep[] {
   return [
     { kind: 'agents' },
-    ...agents.flatMap((agent): WizardStep[] => isActiveModelOnly(agent)
-      ? [{ kind: 'single', agent }]
-      : [{ kind: 'models', agent }, { kind: 'active', agent }]),
+    ...agents.flatMap((agent): WizardStep[] => [{ kind: 'models', agent }, { kind: 'active', agent }]),
     { kind: 'review' },
   ];
 }
@@ -119,18 +115,6 @@ export async function runAgentModelsWizard(
       if (draft.models.length === 1) draft.activeModel = draft.models[0];
     } else if (step.kind === 'active') {
       draftFor(step.agent).activeModel = result.selected[0];
-    } else if (step.kind === 'single') {
-      const draft = draftFor(step.agent);
-      addExtraModels(step.agent, input, draft, result.added);
-      let chosen = result.selected[0];
-      if (result.action === 'row' && result.id === SEARCH_ROW_ID) {
-        const found = await input.searchModel?.();
-        if (found) addExtraModels(step.agent, input, draft, [found]);
-        chosen = found ?? chosen;
-      }
-      draft.models = chosen ? [chosen] : [];
-      draft.activeModel = chosen;
-      if (result.action === 'row') continue;
     } else {
       return Object.fromEntries(agents.map(agent => [agent, finalizeDraft(agent, input, draftFor(agent))]));
     }
@@ -188,26 +172,6 @@ function specFor(step: WizardStep, ctx: SpecContext): ListScreenSpec {
       customRow: query => buildCustomRow(step.agent, input, query),
       validate: selected => (selected.length > 0 ? undefined : WIZARD_TEXT.MODELS_REQUIRED(name)),
       status: selected => WIZARD_TEXT.SELECTED_COUNT(selected.length),
-    };
-  }
-
-  if (step.kind === 'single') {
-    const name = getAgentDisplayName(step.agent);
-    const draft = ctx.draftFor(step.agent);
-    return {
-      stages,
-      stageIndex,
-      title: WIZARD_TEXT.ACTIVE_TITLE(name),
-      notes: [
-        WIZARD_TEXT.ACTIVE_ONLY_NOTE(step.agent, name),
-        ...(input.models.length === 0 ? [WIZARD_TEXT.MODELS_EMPTY_CATALOG_NOTE] : []),
-      ],
-      mode: 'single',
-      rows: buildModelRows(step.agent, input, draft),
-      selected: draft.activeModel ? [draft.activeModel] : [],
-      searchable: true,
-      customRow: query => buildCustomRow(step.agent, input, query),
-      validate: selected => (selected.length > 0 ? undefined : WIZARD_TEXT.ACTIVE_REQUIRED(name)),
     };
   }
 
