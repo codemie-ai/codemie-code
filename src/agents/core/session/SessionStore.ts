@@ -48,6 +48,7 @@ function mergeCompleted(saving: Session, other: Session): Session {
     endMetricSentAt: saving.endMetricSentAt ?? other.endMetricSentAt,
     endMetricSkipped: saving.endMetricSkipped ?? other.endMetricSkipped,
     legacyMetricsConsent: saving.legacyMetricsConsent ?? other.legacyMetricsConsent,
+    legacyMetricsWithheld: saving.legacyMetricsWithheld ?? other.legacyMetricsWithheld,
     droppedAt: saving.droppedAt ?? other.droppedAt,
     deliveryAttempts: larger(saving.deliveryAttempts, other.deliveryAttempts),
     finalizeAttempts: larger(saving.finalizeAttempts, other.finalizeAttempts),

@@ -19,7 +19,7 @@ import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { BaseHookEvent } from '../types.js';
 import type { Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
-import { isLegacyGateSkip } from './legacy-metrics-gate.js';
+import { legacyMetricsWithheld } from './legacy-metrics-gate.js';
 import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
 import { latestRecordTime } from './BaseSessionAdapter.js';
 import { syntheticSessionEnd } from './synthetic-session-end.js';
@@ -144,7 +144,7 @@ async function hasUndeliveredData(record: Session): Promise<boolean> {
   if (record.correlation?.status !== 'matched') return false;
   try {
     // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
-    if (!isLegacyGateSkip(record.endMetricSkipped)) {
+    if (!legacyMetricsWithheld(record)) {
       const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[reconcile]');
       if (deltas.some((delta) => delta.syncStatus !== 'synced')) return true;
     }

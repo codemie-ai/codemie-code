@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,19 +14,20 @@ vi.mock('@/agents/core/evidence/consent-store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/core/evidence/consent-store.js')>();
   return {
     ...actual,
-    consentHolds: vi.fn(async (...args: Parameters<typeof actual.consentHolds>) => {
+    consentStatus: vi.fn(async (...args: Parameters<typeof actual.consentStatus>) => {
       if (faults.consentThrows) throw new Error('consent store lock timeout');
-      return actual.consentHolds(...args);
+      return actual.consentStatus(...args);
     }),
   };
 });
 
 const { freezeLegacyMetricsConsent, legacyMetricsVerdict, isLegacyGateSkip, isLegacyGatedProvider } = await import('../legacy-metrics-gate.js');
-const { connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
+const { connectFolder, consentStorePath, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice, writeStop, markerState } = await import('@/agents/core/evidence/stop-marker.js');
 const { evidenceDir, stopFileName } = await import('@/agents/core/evidence/record-store.js');
 const { createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+const { statusFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
 
 const SCOPE = { api_identity: 'api-x', owner_hash: 'owner-x', project: 'test321' };
 const NATIVE_ID = 'native-17054';
@@ -52,8 +53,8 @@ describe('legacy /v1/metrics gate', () => {
   });
 
   async function session(provider = GATED, project: string | undefined = 'test321', agentSessionId = NATIVE_ID) {
-    const legacyMetricsConsent = await freezeLegacyMetricsConsent(provider, project, folder);
-    return { provider, project, workingDirectory: folder, correlation: { agentSessionId }, legacyMetricsConsent };
+    const frozen = await freezeLegacyMetricsConsent(provider, project, folder);
+    return { provider, project, workingDirectory: folder, correlation: { agentSessionId }, ...frozen };
   }
 
   const PENDING = { publish: false, reason: 'destination-pending', transient: true };
@@ -83,10 +84,10 @@ describe('legacy /v1/metrics gate', () => {
 
   it('freezes nothing without an identity or a project', async () => {
     await connectFolder(SCOPE, folder);
-    expect(await freezeLegacyMetricsConsent(GATED, '', folder)).toBeUndefined();
-    expect(await freezeLegacyMetricsConsent(GATED, undefined, folder)).toBeUndefined();
+    expect(await freezeLegacyMetricsConsent(GATED, '', folder)).toEqual({});
+    expect(await freezeLegacyMetricsConsent(GATED, undefined, folder)).toEqual({});
     identity.current = null;
-    expect(await freezeLegacyMetricsConsent(GATED, 'test321', folder)).toBeUndefined();
+    expect(await freezeLegacyMetricsConsent(GATED, 'test321', folder)).toEqual({});
   });
 
   it('publishes while the frozen consent holds', async () => {
@@ -111,11 +112,14 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'consent-revoked' });
   });
 
-  it('a notice marker (a recoverable hold) is a transient destination-pending, never a final skip', async () => {
+  it('a notice marker outlives its hold: once the spool holds clear the session publishes', async () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
     await writeNotice(recordKey('api-x', 'owner-x', NATIVE_ID), 'hold_project_unavailable', NATIVE_ID);
+    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'verdict_unavailable', since: 1 } } });
     expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+    await writeStatus(NATIVE_ID, createStatus());
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
   it('a non-empty spool holds entry is a transient destination-pending until the hold clears', async () => {
@@ -134,6 +138,50 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
   });
 
+  it('a corrupt marker is a stop, as isStopped reads it: destination-held', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    mkdirSync(evidenceDir(), { recursive: true });
+    writeFileSync(join(evidenceDir(), stopFileName(recordKey('api-x', 'owner-x', NATIVE_ID))), '{not json');
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'destination-held' });
+  });
+
+  it('a spool status that cannot be parsed is transient verdict-unavailable, even when it may carry a stop intent', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await writeStatus(NATIVE_ID, createStatus());
+    writeFileSync(statusFile(NATIVE_ID), '{"stopIntent":"consent_revoked"');
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+  });
+
+  it('an unreadable consent store at send time is transient verdict-unavailable, never consent-revoked', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    writeFileSync(consentStorePath(), '{not json');
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+  });
+
+  it('a consent store unreadable at start is resolved at send time instead of a final no-work-consent', async () => {
+    await connectFolder(SCOPE, folder);
+    const { readFileSync } = await import('node:fs');
+    const good = readFileSync(consentStorePath(), 'utf-8');
+    writeFileSync(consentStorePath(), '{not json');
+    const s = await session();
+    expect(s).toMatchObject({ legacyMetricsConsentUnresolved: true });
+    expect(s.legacyMetricsConsent).toBeUndefined();
+    expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
+    writeFileSync(consentStorePath(), good);
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+    await disconnectFolder(SCOPE, folder);
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'no-work-consent' });
+  });
+
+  it('a final verdict persisted on the record is honoured without re-checking', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    expect(await legacyMetricsVerdict({ ...s, legacyMetricsWithheld: 'consent-revoked' })).toEqual({ publish: false, reason: 'consent-revoked' });
+  });
+
   it('an error while establishing the verdict is transient verdict-unavailable', async () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
@@ -141,10 +189,10 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
   });
 
-  it('an unsafe native session id never reaches a spool or marker path: transient verdict-unavailable', async () => {
+  it('a missing or unsafe native session id can never be checked: final session-unverifiable, no spool or marker path', async () => {
     await connectFolder(SCOPE, folder);
-    for (const unsafe of ['../escape', 'a/b', 'a\\b']) {
-      expect(await legacyMetricsVerdict(await session(GATED, 'test321', unsafe))).toEqual(UNAVAILABLE);
+    for (const id of ['../escape', 'a/b', 'a\\b', '', 'unknown']) {
+      expect(await legacyMetricsVerdict(await session(GATED, 'test321', id))).toEqual({ publish: false, reason: 'session-unverifiable' });
     }
   });
 
@@ -166,7 +214,14 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
   });
 
-  it('markerState tells absent, notice, stop and unreadable apart', async () => {
+  it('a rejected legacy OTEL batch (payload_rejected) drops that batch only: the session still publishes', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await writeStatus(NATIVE_ID, { ...createStatus(), lastDiscard: { reason: 'payload_rejected', stream: 'logsJson', bytes: 10, at: Date.now() } });
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('markerState tells absent, notice, stop and unreadable apart; a corrupt marker is a stop', async () => {
     const key = recordKey('api-x', 'owner-x', 'other');
     expect(await markerState(key)).toBe('absent');
     await writeNotice(key, 'hold_project_unavailable', 'other');
@@ -176,5 +231,8 @@ describe('legacy /v1/metrics gate', () => {
     const unreadable = recordKey('api-x', 'owner-x', 'unreadable');
     mkdirSync(join(evidenceDir(), stopFileName(unreadable)), { recursive: true });
     expect(await markerState(unreadable)).toBe('unknown');
+    const corrupt = recordKey('api-x', 'owner-x', 'corrupt');
+    writeFileSync(join(evidenceDir(), stopFileName(corrupt)), '');
+    expect(await markerState(corrupt)).toBe('stop');
   });
 });

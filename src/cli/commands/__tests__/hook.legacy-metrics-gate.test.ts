@@ -39,9 +39,9 @@ vi.mock('@/agents/core/evidence/consent-store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/core/evidence/consent-store.js')>();
   return {
     ...actual,
-    consentHolds: vi.fn(async (...args: Parameters<typeof actual.consentHolds>) => {
+    consentStatus: vi.fn(async (...args: Parameters<typeof actual.consentStatus>) => {
       if (faults.consentThrows) throw new Error('consent store lock timeout');
-      return actual.consentHolds(...args);
+      return actual.consentStatus(...args);
     }),
   };
 });
@@ -52,8 +52,9 @@ const { getSessionMetricsPath } = await import('@/agents/core/session/session-co
 const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
 const { getCodemiePath } = await import('@/utils/paths.js');
 const { consentStorePath, connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
-const { evidenceDir, recordKey, stopFileName } = await import('@/agents/core/evidence/record-store.js');
+const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice } = await import('@/agents/core/evidence/stop-marker.js');
+const { createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
 
 interface Sent {
   url: string;
@@ -145,7 +146,13 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
   }
 
   const markerKey = (): string => recordKey(IDENTITY.api_identity, IDENTITY.owner_hash, NATIVE_ID);
-  const clearMarker = (): void => rmSync(join(evidenceDir(), stopFileName(markerKey())), { force: true });
+  /** A backend hold as the forwarder records it: the create-once notice marker plus the live spool hold. */
+  const hold = async (): Promise<void> => {
+    await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
+    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'verdict_unavailable', since: 1 } } });
+  };
+  /** The hold recovers: the spool hold clears, the notice marker stays (it is never removed in production). */
+  const recover = (): Promise<void> => writeStatus(NATIVE_ID, createStatus());
 
   async function endMetricSkipped(sessionId: string): Promise<string | undefined> {
     return (await new SessionStore().loadSession(sessionId))?.endMetricSkipped;
@@ -181,22 +188,34 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     expect(await endMetricSkipped(sessionId)).toBe('consent-revoked');
   });
 
-  it('(c) a recoverable hold (notice marker) at SessionEnd leaves the end metric unmarked; it is sent once the hold clears', async () => {
+  it('(c) a recoverable hold at SessionEnd leaves the end metric unmarked; it is sent once the hold clears', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
 
-    const sessionId = await runSession('anthropic-subscription', async () => {
-      await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
-    });
+    const sessionId = await runSession('anthropic-subscription', hold);
 
     expect(lifecycleStatuses()).toEqual(['started']);
     expect(await endMetricSkipped(sessionId)).toBeUndefined();
     expect(await isDeliveryDone(sessionId, configFor('anthropic-subscription', sessionId))).toBe(false);
 
-    clearMarker();
+    await recover();
     await deliverSession(sessionId, configFor('anthropic-subscription', sessionId));
 
     expect(lifecycleStatuses()).toEqual(['started', 'completed']);
     expect(await endMetricSkipped(sessionId)).toBeUndefined();
+  });
+
+  it('(c3) a recoverable hold at SessionStart defers the start metric: it is sent ahead of the end once the hold clears', async () => {
+    await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await hold();
+
+    const sessionId = await runSession('anthropic-subscription', async () => {
+      expect(lifecycleStatuses()).toEqual([]);
+      expect((await new SessionStore().loadSession(`gate-17054-${idCounter}`))?.startMetricDeferred).toBe('startup');
+      await recover();
+    });
+
+    expect(lifecycleStatuses()).toEqual(['started', 'completed']);
+    expect((await new SessionStore().loadSession(sessionId))?.startMetricDeferred).toBeUndefined();
   });
 
   it('(c2) a final hold (stop marker) at SessionEnd is persisted as destination-held', async () => {
@@ -236,7 +255,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     const config = configFor('anthropic-subscription', sessionId);
 
     await processEvent({ ...base, hook_event_name: 'SessionStart', source: 'startup', startTime: Date.parse('2026-11-01T10:00:00Z') } as never, config);
-    await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
+    await hold();
     await processEvent({ ...base, hook_event_name: 'Stop' } as never, config);
     await processEvent({ ...base, hook_event_name: 'SessionEnd', reason: 'exit' } as never, config);
 
@@ -245,7 +264,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     expect(await endMetricSkipped(sessionId)).toBeUndefined();
     expect(await isDeliveryDone(sessionId, config)).toBe(false);
 
-    clearMarker();
+    await recover();
     await deliverSession(sessionId, config);
 
     expect(lifecycleStatuses()).toEqual(['started', 'completed']);

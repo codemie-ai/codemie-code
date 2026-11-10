@@ -1,6 +1,8 @@
 import { logger } from '@/utils/logger.js';
 import type { CookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type { SessionStore } from '@/agents/core/session/SessionStore.js';
+import type { Session } from '@/agents/core/session/types.js';
+import type { MetricsSender } from '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
@@ -10,10 +12,42 @@ import { loadAnalyticsCookies } from './analytics-cookies.js';
 async function markEndMetric(
   sessionStore: SessionStore,
   sessionId: string,
-  outcome: { endMetricSentAt: number } | { endMetricSkipped: string }
+  outcome: { endMetricSentAt: number } | { endMetricSkipped: string; legacyMetricsWithheld?: string }
 ): Promise<void> {
   const latest = await sessionStore.loadSession(sessionId);
   if (latest) await sessionStore.saveSession({ ...latest, ...outcome });
+}
+
+/**
+ * The start metric a transient gate verdict withheld at SessionStart, sent ahead of the end metric so the backend
+ * never sees a `completed` session without its `started`. Cleared on the record once accepted.
+ */
+async function sendDeferredStartMetric(
+  sender: MetricsSender,
+  sessionStore: SessionStore,
+  session: Session,
+  agentSessionId: string,
+  meta: { agentName: string; provider?: string; project?: string; model?: string }
+): Promise<void> {
+  await sender.sendSessionStart(
+    {
+      sessionId: agentSessionId,
+      agentName: meta.agentName,
+      provider: meta.provider || 'unknown',
+      project: meta.project,
+      model: meta.model,
+      startTime: session.startTime,
+      workingDirectory: session.workingDirectory,
+      ...(session.repository && { repository: session.repository })
+    },
+    session.workingDirectory,
+    { status: 'started', reason: session.startMetricDeferred }
+  );
+  const latest = await sessionStore.loadSession(session.sessionId);
+  if (latest) {
+    const { startMetricDeferred: _sent, ...rest } = latest;
+    await sessionStore.saveSession(rest);
+  }
 }
 
 /**
@@ -106,7 +140,9 @@ export async function sendSessionEndMetrics(
     if (!verdict.publish) {
       logger.debug(`[hook:SessionEnd] End metric withheld: ${verdict.reason}`);
       // A transient verdict is not persisted: the end metric stays unmarked and delivery retries it
-      if (!('transient' in verdict)) await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason });
+      if (!('transient' in verdict)) {
+        await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason, legacyMetricsWithheld: verdict.reason });
+      }
       return;
     }
 
@@ -143,6 +179,10 @@ export async function sendSessionEndMetrics(
       deadlineMs: options.deadlineMs,
       abortSignal: options.abortSignal
     });
+
+    if (session.startMetricDeferred !== undefined) {
+      await sendDeferredStartMetric(sender, sessionStore, session, agentSessionId, { agentName, provider, project, model });
+    }
 
     // The id the run's start metric was accepted under, else (none or empty) the agent session id
     await sender.sendSessionEnd(

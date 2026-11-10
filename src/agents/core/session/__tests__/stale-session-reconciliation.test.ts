@@ -1591,6 +1591,16 @@ describe('EPMCDME-17054 a legacy gate skip counts as delivered', () => {
     expect(load(closed.sessionId).droppedAt).toBeUndefined();
   });
 
+  it('an end metric sent before a final gate verdict withheld the deltas: no droppedAt', async () => {
+    const closed = record({ status: 'completed', endTime: Date.now(), provider: 'anthropic-subscription', endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
+    save(closed);
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+  });
+
   it('a record skipped for another reason with pending deltas is still marked dropped', async () => {
     const closed = completedWithPendingDeltas('no-analytics-config');
 

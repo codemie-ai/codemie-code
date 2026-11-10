@@ -6,17 +6,21 @@ import type { Session } from './types.js';
 /*
  * EPMCDME-17054: the legacy `POST /v1/metrics` path of an `anthropic-subscription` session publishes only while
  * the work consent frozen at SessionStart still holds for the folder and the new pipeline has not held or
- * discarded the session. Every legacy sender asks `legacyMetricsVerdict` at send time. Fail closed throughout.
+ * discarded the session. Every legacy sender asks `legacyMetricsVerdict` at send time. Fail closed throughout:
+ * nothing is published unless every check passes.
  *
- * A final skip (LEGACY_GATE_SKIPS) is persisted as `endMetricSkipped` and the session's deltas count as delivered.
- * A transient verdict sends nothing and persists nothing, so delivery retries once the hold clears:
- * - `destination-pending`: a recoverable hold (a notice-only marker, a non-empty spool `holds` entry);
- * - `verdict-unavailable`: the verdict could not be established (an error, an unreadable marker, or a native
- *   session id unsafe as a path segment, which is never used to build a spool or marker path).
+ * A final skip (LEGACY_GATE_SKIPS) is persisted as `legacyMetricsWithheld` by whichever sender meets it first (the
+ * end metric also as `endMetricSkipped`); the session's deltas then count as delivered. A transient verdict sends
+ * nothing and persists nothing, so delivery retries once it clears:
+ * - `destination-pending`: a recoverable hold (a non-empty spool `holds` entry);
+ * - `verdict-unavailable`: the verdict could not be established for now (an unreadable consent store, marker or
+ *   spool status, or any other error).
+ * A condition that can never clear is final: a missing or unsafe native session id (`session-unverifiable`; an
+ * unsafe one is never used to build a spool or marker path).
  */
 
-export type LegacyMetricsSkip = 'no-work-consent' | 'consent-revoked' | 'destination-held';
-export const LEGACY_GATE_SKIPS: readonly LegacyMetricsSkip[] = ['no-work-consent', 'consent-revoked', 'destination-held'];
+export type LegacyMetricsSkip = 'no-work-consent' | 'consent-revoked' | 'destination-held' | 'session-unverifiable';
+export const LEGACY_GATE_SKIPS: readonly LegacyMetricsSkip[] = ['no-work-consent', 'consent-revoked', 'destination-held', 'session-unverifiable'];
 
 export type LegacyMetricsPending = 'destination-pending' | 'verdict-unavailable';
 
@@ -30,67 +34,120 @@ export function isLegacyGateSkip(reason: string | undefined): boolean {
   return reason !== undefined && (LEGACY_GATE_SKIPS as readonly string[]).includes(reason);
 }
 
+/** Whether a final gate verdict withholds this record's metric deltas for good (they count as delivered). */
+export function legacyMetricsWithheld(record: Pick<Session, 'endMetricSkipped' | 'legacyMetricsWithheld'>): boolean {
+  return isLegacyGateSkip(record.legacyMetricsWithheld) || isLegacyGateSkip(record.endMetricSkipped);
+}
+
 export function isLegacyGatedProvider(provider: string | undefined): boolean {
   return provider === ProviderName.ANTHROPIC_SUBSCRIPTION;
 }
 
-/** SessionStart: undefined unless gated provider + identity + resolveConsent(...) all succeed. Never throws. */
+type FrozenConsent = Pick<Session, 'legacyMetricsConsent' | 'legacyMetricsConsentUnresolved'>;
+
+/**
+ * SessionStart: the consent entry for a gated provider with a project, signed in. `legacyMetricsConsentUnresolved`
+ * when it could not be read (an error, an unreadable store), so it is not mistaken for "no entry". Never throws.
+ */
 export async function freezeLegacyMetricsConsent(
   provider: string | undefined,
   project: string | undefined,
   cwd: string
-): Promise<Session['legacyMetricsConsent']> {
-  if (!isLegacyGatedProvider(provider) || !project?.trim()) return undefined;
+): Promise<FrozenConsent> {
+  if (!isLegacyGatedProvider(provider) || !project?.trim()) return {};
   try {
     const { currentEvidenceIdentity } = await import('@/agents/core/evidence/hook-identity.js');
     const identity = await currentEvidenceIdentity();
-    if (!identity) return undefined;
-    const { resolveConsent } = await import('@/agents/core/evidence/consent-store.js');
-    const ref = await resolveConsent({ ...identity, project }, cwd);
-    return ref ? { ref, apiIdentity: identity.api_identity, ownerHash: identity.owner_hash } : undefined;
+    if (!identity) return {};
+    const { lookupConsent } = await import('@/agents/core/evidence/consent-store.js');
+    const found = await lookupConsent({ ...identity, project }, cwd);
+    if (found.kind === 'unknown') return { legacyMetricsConsentUnresolved: true };
+    if (found.kind === 'none') return {};
+    return { legacyMetricsConsent: { ref: found.ref, apiIdentity: identity.api_identity, ownerHash: identity.owner_hash } };
   } catch (error) {
-    logger.debug('[legacy-metrics-gate] Consent could not be resolved at start: no-work-consent', error instanceof Error ? error.name : 'unknown');
-    return undefined;
+    logger.debug('[legacy-metrics-gate] Consent could not be resolved at start: resolved at send time', error instanceof Error ? error.name : 'unknown');
+    return { legacyMetricsConsentUnresolved: true };
   }
 }
 
-type GateInput = Pick<Session, 'provider' | 'project' | 'workingDirectory' | 'legacyMetricsConsent'> & {
-  correlation?: { agentSessionId?: string };
-};
+type GateInput = Pick<Session, 'provider' | 'project' | 'workingDirectory' | 'legacyMetricsConsent'> &
+  Partial<Pick<Session, 'legacyMetricsConsentUnresolved' | 'legacyMetricsWithheld'>> & {
+    correlation?: { agentSessionId?: string };
+  };
 
-type DestinationState = 'clear' | 'held' | LegacyMetricsPending;
+type DestinationState = 'clear' | 'held' | 'unverifiable' | LegacyMetricsPending;
+
+/**
+ * A spool discard that ends the session's publication: the backend's project conflict, or a discard of the
+ * hooks stream. A rejected legacy OTEL JSON batch (`payload_rejected`) drops that batch only.
+ */
+function endsSession(discard: { reason: string; stream: string }): boolean {
+  return discard.reason === 'session_project_conflict' || (discard.stream === 'hooks' && discard.reason !== 'payload_rejected');
+}
 
 /** Whether the new pipeline stopped or discarded the session for good (`held`) or holds it for now (pending). */
 async function destinationState(consent: NonNullable<Session['legacyMetricsConsent']>, nativeId: string | undefined): Promise<DestinationState> {
-  if (!nativeId || nativeId === 'unknown') return 'clear';
-  if (!isSafeSessionId(nativeId)) return 'verdict-unavailable';
+  if (!nativeId || nativeId === 'unknown' || !isSafeSessionId(nativeId)) return 'unverifiable';
   const { recordKey } = await import('@/agents/core/evidence/record-store.js');
   const { markerState } = await import('@/agents/core/evidence/stop-marker.js');
+  // A notice marker is create-once and outlives the hold it announced: the live hold is read from the spool status
   const marker = await markerState(recordKey(consent.apiIdentity, consent.ownerHash, nativeId));
   if (marker === 'stop') return 'held';
   if (marker === 'unknown') return 'verdict-unavailable';
-  const { readStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
-  const status = await readStatus(nativeId);
-  if (status?.lastDiscard !== undefined || status?.stopIntent !== undefined) return 'held';
-  if (marker === 'notice' || Object.keys(status?.holds ?? {}).length > 0) return 'destination-pending';
+  const { readStatusState } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+  const read = await readStatusState(nativeId);
+  if (read.kind === 'unreadable') return 'verdict-unavailable';
+  if (read.kind === 'absent') return 'clear';
+  const { status } = read;
+  if (status.stopIntent !== undefined || (status.lastDiscard && endsSession(status.lastDiscard))) return 'held';
+  if (Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
   return 'clear';
+}
+
+/** The consent to check: the frozen one, else (start could not read it) the entry resolved now. */
+async function consentToCheck(session: GateInput): Promise<NonNullable<Session['legacyMetricsConsent']> | LegacyMetricsVerdict> {
+  if (session.legacyMetricsConsent) return session.legacyMetricsConsent;
+  if (!session.legacyMetricsConsentUnresolved) return { publish: false, reason: 'no-work-consent' };
+  const now = await freezeLegacyMetricsConsent(session.provider, session.project, session.workingDirectory);
+  if (now.legacyMetricsConsent) return now.legacyMetricsConsent;
+  return now.legacyMetricsConsentUnresolved
+    ? { publish: false, reason: 'verdict-unavailable', transient: true }
+    : { publish: false, reason: 'no-work-consent' };
 }
 
 /** Send time. Never throws; any doubt => withhold, transiently unless the outcome is final. */
 export async function legacyMetricsVerdict(session: GateInput): Promise<LegacyMetricsVerdict> {
   if (!isLegacyGatedProvider(session.provider)) return { publish: true };
-  const consent = session.legacyMetricsConsent;
-  if (!consent) return { publish: false, reason: 'no-work-consent' };
+  if (isLegacyGateSkip(session.legacyMetricsWithheld)) {
+    return { publish: false, reason: session.legacyMetricsWithheld as LegacyMetricsSkip };
+  }
   try {
-    const { consentHolds } = await import('@/agents/core/evidence/consent-store.js');
+    const consent = await consentToCheck(session);
+    if ('publish' in consent) return consent;
+    const { consentStatus } = await import('@/agents/core/evidence/consent-store.js');
     const scope = { owner_hash: consent.ownerHash, api_identity: consent.apiIdentity, project: session.project ?? '' };
-    if (!(await consentHolds(consent.ref, scope, session.workingDirectory))) return { publish: false, reason: 'consent-revoked' };
+    const held = await consentStatus(consent.ref, scope, session.workingDirectory);
+    if (held === 'revoked') return { publish: false, reason: 'consent-revoked' };
+    if (held === 'unknown') return { publish: false, reason: 'verdict-unavailable', transient: true };
     const state = await destinationState(consent, session.correlation?.agentSessionId);
     if (state === 'clear') return { publish: true };
     if (state === 'held') return { publish: false, reason: 'destination-held' };
+    if (state === 'unverifiable') return { publish: false, reason: 'session-unverifiable' };
     return { publish: false, reason: state, transient: true };
   } catch (error) {
     logger.debug('[legacy-metrics-gate] Verdict could not be established: verdict-unavailable', error instanceof Error ? error.name : 'unknown');
     return { publish: false, reason: 'verdict-unavailable', transient: true };
+  }
+}
+
+/** Persist a final verdict on the record (best effort), so every sender and the delivered checks honour it. */
+export async function persistLegacyMetricsWithheld(sessionId: string, reason: LegacyMetricsSkip): Promise<void> {
+  try {
+    const { SessionStore } = await import('./SessionStore.js');
+    const store = new SessionStore();
+    const latest = await store.loadSession(sessionId);
+    if (latest && latest.legacyMetricsWithheld === undefined) await store.saveSession({ ...latest, legacyMetricsWithheld: reason });
+  } catch (error) {
+    logger.debug('[legacy-metrics-gate] Final verdict could not be persisted', error instanceof Error ? error.name : 'unknown');
   }
 }

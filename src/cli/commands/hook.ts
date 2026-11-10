@@ -1005,7 +1005,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
 
     // Work consent for the legacy /v1/metrics gate, frozen once at start (anthropic-subscription only)
     const { freezeLegacyMetricsConsent } = await import('../../agents/core/session/legacy-metrics-gate.js');
-    const legacyMetricsConsent = await freezeLegacyMetricsConsent(provider, project, workingDirectory);
+    const frozenConsent = await freezeLegacyMetricsConsent(provider, project, workingDirectory);
 
     // Create session record with correlation already matched
     const startTime = event.startTime ?? Date.now();
@@ -1028,7 +1028,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(origin && { origin }),
       ...(resumeSessionId && { resumeSessionId }),
       ...(continuesPriorSession && { continuesPriorSession: true as const }),
-      ...(legacyMetricsConsent && { legacyMetricsConsent }),
+      ...frozenConsent,
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -1248,6 +1248,10 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     const verdict = await legacyMetricsVerdict(session ?? { provider: provider ?? '', workingDirectory: event.cwd || process.cwd() });
     if (!verdict.publish) {
       logger.debug(`[hook:SessionStart] Start metric withheld: ${verdict.reason}`);
+      // A transient verdict defers the start metric: it is sent ahead of the end metric once the gate publishes
+      if ('transient' in verdict && session) {
+        await new SessionStore().saveSession({ ...session, startMetricDeferred: event.source || 'startup' });
+      }
       return;
     }
 

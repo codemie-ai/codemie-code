@@ -88,30 +88,58 @@ async function save(entries: ConsentEntry[]): Promise<void> {
 const scopeMatches = (e: ConsentEntry, s: ConsentScope): boolean =>
   e.owner_hash === s.owner_hash && e.api_identity === s.api_identity && sameProject(e.project, s.project);
 
+/** A consent lookup that keeps "no entry" apart from "the store could not be read". */
+export type ConsentLookup = { kind: 'found'; ref: string } | { kind: 'none' } | { kind: 'unknown' };
+
 /**
- * The reference of the entry that grants consent for this owner, backend, project and folder (the folder or an
- * ancestor of it is connected), else undefined. Never throws; any doubt is no consent.
+ * The entry that grants consent for this owner, backend, project and folder (the folder or an ancestor of it is
+ * connected): `found`, `none` when no entry grants it, `unknown` when the store or the folder could not be read.
+ * Never throws.
  */
-export async function resolveConsent(scope: ConsentScope, cwd: string): Promise<string | undefined> {
-  if (!scope.project.trim()) return undefined;
-  const store = await load();
-  if (store.kind !== 'ok') return undefined;
-  const canonicalCwd = await canonicalizePath(cwd);
-  for (const e of store.entries) {
-    if (scopeMatches(e, scope) && isPathInside(canonicalCwd, e.folder)) return consentRef(e);
+export async function lookupConsent(scope: ConsentScope, cwd: string): Promise<ConsentLookup> {
+  if (!scope.project.trim()) return { kind: 'none' };
+  try {
+    const store = await load();
+    if (store.kind !== 'ok') return { kind: 'unknown' };
+    const canonicalCwd = await canonicalizePath(cwd);
+    const entry = store.entries.find((e) => scopeMatches(e, scope) && isPathInside(canonicalCwd, e.folder));
+    return entry ? { kind: 'found', ref: consentRef(entry) } : { kind: 'none' };
+  } catch {
+    return { kind: 'unknown' };
   }
-  return undefined;
 }
 
-/** Whether the entry a record froze is still connected for this scope (and, with `cwd`, still covers that folder). */
+/**
+ * The reference of the entry that grants consent for this owner, backend, project and folder, else undefined.
+ * Never throws; any doubt is no consent.
+ */
+export async function resolveConsent(scope: ConsentScope, cwd: string): Promise<string | undefined> {
+  const found = await lookupConsent(scope, cwd);
+  return found.kind === 'found' ? found.ref : undefined;
+}
+
+/**
+ * Whether the entry a record froze is still connected for this scope (and, with `cwd`, still covers that folder):
+ * `holds`, `revoked`, or `unknown` when the store or the folder could not be read. Never throws.
+ */
+export async function consentStatus(ref: string, scope: ConsentScope, cwd?: string): Promise<'holds' | 'revoked' | 'unknown'> {
+  if (!scope.project.trim()) return 'revoked';
+  try {
+    const store = await load();
+    if (store.kind !== 'ok') return 'unknown';
+    const canonicalCwd = cwd === undefined ? undefined : await canonicalizePath(cwd);
+    const holds = store.entries.some(
+      (e) => scopeMatches(e, scope) && consentRef(e) === ref && (canonicalCwd === undefined || isPathInside(canonicalCwd, e.folder))
+    );
+    return holds ? 'holds' : 'revoked';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Whether the entry a record froze is still connected for this scope; any doubt is false. */
 export async function consentHolds(ref: string, scope: ConsentScope, cwd?: string): Promise<boolean> {
-  if (!scope.project.trim()) return false;
-  const store = await load();
-  if (store.kind !== 'ok') return false;
-  const canonicalCwd = cwd === undefined ? undefined : await canonicalizePath(cwd);
-  return store.entries.some(
-    (e) => scopeMatches(e, scope) && consentRef(e) === ref && (canonicalCwd === undefined || isPathInside(canonicalCwd, e.folder))
-  );
+  return (await consentStatus(ref, scope, cwd)) === 'holds';
 }
 
 /** Roots, the home directory and any ancestor of it are too broad to connect. */

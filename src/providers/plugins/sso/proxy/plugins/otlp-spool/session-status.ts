@@ -308,6 +308,23 @@ export async function readStatus(sessionId: string): Promise<SessionStatus | nul
   }
 }
 
+/** Like `readStatus`, but keeps "no status file" apart from "a status file that could not be read or parsed". */
+export async function readStatusState(
+  sessionId: string
+): Promise<{ kind: 'absent' } | { kind: 'ok'; status: SessionStatus } | { kind: 'unreadable' }> {
+  let raw: string;
+  try {
+    raw = await readFile(statusFile(sessionId), 'utf-8');
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable' };
+  }
+  try {
+    return { kind: 'ok', status: normalizeStatus(JSON.parse(raw)) };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
 export async function writeStatus(sessionId: string, status: SessionStatus): Promise<void> {
   // A failed update must retain the previous write-ahead checkpoint, not truncate it.
   await writeJsonFileAtomic(statusFile(sessionId), status, { directoryMode: 0o700 });

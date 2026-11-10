@@ -98,8 +98,8 @@ export async function isDeliveryDone(sessionId: string, config?: HookProcessingC
   // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
   // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
-  const { isLegacyGateSkip } = await import('../../../agents/core/session/legacy-metrics-gate.js');
-  return hasNoPendingData(sessionId, isLegacyGateSkip(record.endMetricSkipped));
+  const { legacyMetricsWithheld } = await import('../../../agents/core/session/legacy-metrics-gate.js');
+  return hasNoPendingData(sessionId, legacyMetricsWithheld(record));
 }
 
 /**

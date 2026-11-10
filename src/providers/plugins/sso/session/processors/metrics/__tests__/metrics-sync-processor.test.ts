@@ -13,7 +13,7 @@ import { MetricsSyncProcessor } from '../metrics-sync-processor.js';
 import * as metricsApiClient from '../metrics-api-client.js';
 import { logger } from '../../../../../../../utils/logger.js';
 import type { ParsedSession } from '../../../BaseSessionAdapter.js';
-import { connectFolder, resolveConsent } from '@/agents/core/evidence/consent-store.js';
+import { connectFolder, disconnectFolder, resolveConsent } from '@/agents/core/evidence/consent-store.js';
 import type { ProcessingContext } from '../../../BaseProcessor.js';
 
 const SESSION_ID = 'sync-model-session';
@@ -108,7 +108,10 @@ describe('MetricsSyncProcessor', () => {
     const readDeltas = (): Array<{ syncStatus: string; syncAttempts: number }> =>
       readFileSync(join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
 
-    it('an anthropic-subscription session without frozen consent sends no delta and leaves them pending', async () => {
+    const readRecord = (): Record<string, unknown> =>
+      JSON.parse(readFileSync(join(home, 'sessions', `${SESSION_ID}.json`), 'utf-8'));
+
+    it('an anthropic-subscription session without frozen consent sends no delta and persists the final verdict', async () => {
       const send = vi.spyOn(metricsApiClient.MetricsSender.prototype, 'sendSessionMetric');
       try {
         const result = await syncDeltas([delta('p-1', 'pending'), delta('p-2', 'pending')], {}, {
@@ -119,9 +122,25 @@ describe('MetricsSyncProcessor', () => {
         expect(send).not.toHaveBeenCalled();
         expect(bodies).toEqual([]);
         expect(readDeltas().map(d => [d.syncStatus, d.syncAttempts])).toEqual([['pending', 0], ['pending', 0]]);
+        expect(readRecord().legacyMetricsWithheld).toBe('no-work-consent');
       } finally {
         send.mockRestore();
       }
+    });
+
+    it('consent revoked after the end metric was sent: the deltas withheld for good are persisted as such', async () => {
+      await connectFolder(scope, folder);
+      const ref = await resolveConsent(scope, folder);
+      await disconnectFolder(scope, folder);
+
+      const result = await syncDeltas([delta('p-1', 'pending')], {}, {
+        provider: 'anthropic-subscription', project: 'test321', workingDirectory: folder, endMetricSentAt: 1,
+        legacyMetricsConsent: { ref, apiIdentity: 'api-x', ownerHash: 'owner-x' }
+      });
+
+      expect(result.success).toBe(true);
+      expect(bodies).toEqual([]);
+      expect(readRecord()).toMatchObject({ endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
     });
 
     it('an anthropic-subscription session whose frozen consent holds sends its deltas', async () => {

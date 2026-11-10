@@ -195,6 +195,12 @@ export interface Session {
   endMetricSkipped?: string;
   /** Work consent frozen at SessionStart for the legacy /v1/metrics gate (anthropic-subscription only). Hashes, no PII. */
   legacyMetricsConsent?: { ref: string; apiIdentity: string; ownerHash: string };
+  /** SessionStart could not read the work consent (not "no entry"): the legacy gate resolves it at send time instead */
+  legacyMetricsConsentUnresolved?: true;
+  /** A final legacy-gate skip met by any legacy sender: no /v1/metrics is sent for this session and its deltas count as delivered */
+  legacyMetricsWithheld?: string;
+  /** The start metric was withheld by a transient legacy-gate verdict (its reason, e.g. `startup`): sent before the end metric */
+  startMetricDeferred?: string;
   /** Delivery attempts of a completed but undelivered record */
   deliveryAttempts?: number;
   /** Finalization attempts of a stranded or legacy record */
