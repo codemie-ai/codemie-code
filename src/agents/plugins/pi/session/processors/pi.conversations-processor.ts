@@ -45,7 +45,17 @@ import {
 import { parseSkillWrapper } from '../pi-named-invocations.js';
 
 const PI_CONVERSATIONS_PROCESSOR_NAME = 'pi-conversations';
-const PI_CONVERSATION_FOLDER = 'pi';
+
+/**
+ * How a conversation is filed and who authors its thoughts. Pi keeps `pi` / `Pi`; the
+ * oh-my-pi fork reuses this processor under `omp` / `Oh My Pi`.
+ */
+export interface PiConversationIdentity {
+  folder: string;
+  authorName: string;
+}
+
+const PI_CONVERSATION_IDENTITY: PiConversationIdentity = { folder: 'pi', authorName: 'Pi' };
 
 /** Caps on what a single thought contributes to the PUT body. */
 const MAX_TOOL_INPUT_CHARS = 4_000;
@@ -120,6 +130,8 @@ interface PiThought {
 export class PiConversationsProcessor implements SessionProcessor {
   readonly name = PI_CONVERSATIONS_PROCESSOR_NAME;
   readonly priority = 2;
+
+  constructor(private readonly identity: PiConversationIdentity = PI_CONVERSATION_IDENTITY) {}
 
   shouldProcess(session: ParsedSession): boolean {
     if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
@@ -336,7 +348,7 @@ export class PiConversationsProcessor implements SessionProcessor {
       if (endSourceIndex <= cursorSourceIndex) break;
 
       const sentinel = `${conversationId}@${endSourceIndex}`;
-      const history = queuedSentinels.has(sentinel) ? [] : turnToHistory(turn, cursorSourceIndex);
+      const history = queuedSentinels.has(sentinel) ? [] : turnToHistory(turn, cursorSourceIndex, this.identity.authorName);
 
       if (history.length > 0) {
         if (!directoryReady) {
@@ -354,7 +366,7 @@ export class PiConversationsProcessor implements SessionProcessor {
           payload: {
             conversationId,
             assistantId: CODEMIE_ASSISTANT_ID,
-            folder: PI_CONVERSATION_FOLDER,
+            folder: this.identity.folder,
             llmModel,
             history,
           },
@@ -650,7 +662,7 @@ function summariesUpTo(
   );
 }
 
-function turnToHistory(turn: PiConversationTurn, cursorSourceIndex: number): any[] {
+function turnToHistory(turn: PiConversationTurn, cursorSourceIndex: number, authorName: string): any[] {
   const history: any[] = [];
   const finalAssistant = lastEventOfKind(turn.events, 'assistant_text');
 
@@ -669,7 +681,7 @@ function turnToHistory(turn: PiConversationTurn, cursorSourceIndex: number): any
   }
 
   if (finalAssistant && finalAssistant.sourceIndex > cursorSourceIndex) {
-    const thoughts = buildThoughts(turn.events, turn.historyIndex, finalAssistant);
+    const thoughts = buildThoughts(turn.events, turn.historyIndex, finalAssistant, authorName);
     history.push({
       role: 'Assistant',
       message: finalAssistant.text,
@@ -688,7 +700,8 @@ function turnToHistory(turn: PiConversationTurn, cursorSourceIndex: number): any
 function buildThoughts(
   events: PiNormalizedEvent[],
   historyIndex: number,
-  finalAssistant: PiNormalizedEvent
+  finalAssistant: PiNormalizedEvent,
+  authorName: string
 ): PiThought[] {
   const thoughts: PiThought[] = [];
   const toolThoughtByCallId = new Map<string, PiThought>();
@@ -711,7 +724,7 @@ function buildThoughts(
       }
     }
 
-    const thought = createThought(event, historyIndex);
+    const thought = createThought(event, historyIndex, authorName);
     thoughts.push(thought);
     if (event.kind === 'tool_call' && event.callId) {
       toolThoughtByCallId.set(event.callId, thought);
@@ -721,7 +734,7 @@ function buildThoughts(
   return thoughts;
 }
 
-function createThought(event: PiNormalizedEvent, historyIndex: number): PiThought {
+function createThought(event: PiNormalizedEvent, historyIndex: number, authorName: string): PiThought {
   const thought: PiThought = {
     id: `pi-${event.kind}-${historyIndex}-${event.sourceIndex}`,
     parent_id: null,
@@ -736,7 +749,7 @@ function createThought(event: PiNormalizedEvent, historyIndex: number): PiThough
     input_text: event.inputText ?? '',
     message: event.text ?? '',
     author_type: 'Agent',
-    author_name: 'Pi',
+    author_name: authorName,
     output_format: 'text',
     error: event.error === true,
     interrupted: false,
@@ -753,7 +766,7 @@ function createThought(event: PiNormalizedEvent, historyIndex: number): PiThough
       thought.author_name = event.authorName ?? 'Unknown Tool';
       break;
     case 'thinking':
-      thought.author_name = 'Pi Reasoning';
+      thought.author_name = `${authorName} Reasoning`;
       break;
     case 'summary':
       thought.author_name = event.authorName ?? 'Summary';

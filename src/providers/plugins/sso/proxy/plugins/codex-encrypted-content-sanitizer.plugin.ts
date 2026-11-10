@@ -24,8 +24,8 @@
  * Stripping is the same trade as before: reasoning effort, visible messages,
  * tool calls, and tool outputs survive; prior hidden reasoning does not.
  *
- * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, vscode-byok, codex-desktop,
- * codemie-codex-acp, and codemie-daemon.
+ * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, codemie-omp, vscode-byok,
+ * codex-desktop, codemie-codex-acp, and codemie-daemon.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -37,6 +37,8 @@ const ALLOWED_AGENTS = [
   'codemie-code',
   'codemie-opencode',
   'codemie-pi',
+  // oh-my-pi, both as the managed `codemie omp` agent and as the `connect --omp` daemon identity.
+  'codemie-omp',
   'vscode-byok',
   // The Codex desktop app speaks the Responses API and replays reasoning state
   // exactly like the Codex CLI. It has its own daemon client type, so without
@@ -46,7 +48,7 @@ const ALLOWED_AGENTS = [
   // custom model provider with wire_api="responses", so it replays
   // reasoning.encrypted_content the same way the Codex CLI does.
   'codemie-codex-acp',
-  // Generic identity for `proxy start` and `connect --omp`; omp replays GPT-5.x/6 Responses reasoning state.
+  // Generic identity for `proxy start`.
   'codemie-daemon',
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';

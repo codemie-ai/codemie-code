@@ -183,6 +183,47 @@ describe('session records', () => {
   });
 });
 
+describe('oh-my-pi subagent sessions', () => {
+  // omp re-binds every extension factory to each subagent session its task tool starts, and marks
+  // those with `ctx.agent.kind === 'sub'`. Their transcripts must never become a session of their own.
+  const subagentCtx = (): unknown => ({ ...(fakeCtx() as object), agent: { kind: 'sub' } });
+
+  it('records nothing for a subagent session start or shutdown', async () => {
+    const pi = await activate();
+    const before = ledgerLines().length;
+
+    pi.handlers.get('session_start')!({ reason: 'startup' }, subagentCtx());
+    pi.handlers.get('session_shutdown')!({ reason: 'quit' }, subagentCtx());
+
+    expect(ledgerLines()).toHaveLength(before);
+  });
+
+  it('still records the main omp session, whose agent kind is not sub', async () => {
+    const pi = await activate();
+
+    pi.handlers.get('session_start')!({ reason: 'startup' }, { ...(fakeCtx() as object), agent: { kind: 'main' } });
+    pi.handlers.get('session_shutdown')!({ reason: 'quit' }, { ...(fakeCtx() as object), agent: {} });
+
+    expect(ledgerLines().map((l) => l.t)).toEqual(['boot', 'session', 'shutdown']);
+  });
+
+  it('still records a Pi session, which has no ctx.agent at all', async () => {
+    const pi = await activate();
+
+    pi.handlers.get('session_start')!({ reason: 'startup' }, fakeCtx());
+
+    expect(ledgerLines().map((l) => l.t)).toEqual(['boot', 'session']);
+  });
+
+  it('tolerates an agent getter that throws', async () => {
+    const pi = await activate();
+    const ctx = { ...(fakeCtx() as object), get agent(): never { throw new Error('boom'); } };
+
+    expect(() => pi.handlers.get('session_start')!({ reason: 'startup' }, ctx)).not.toThrow();
+    expect(ledgerLines().map((l) => l.t)).toEqual(['boot', 'session']);
+  });
+});
+
 describe('slash-command records', () => {
   it.each([
     ['/skill:brave-search find things', 'skill', 'brave-search'],

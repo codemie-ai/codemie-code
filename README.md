@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Oh My Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, GitHub Copilot CLI, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, GitHub Copilot CLI, Gemini, OpenCode, Pi, Oh My Pi, Kimi Code, and built-in agent.
 - 🔄 **Multi-Provider Support** - CodeMie SSO, Bearer Authorization, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, and Moonshot Subscription.
 - 🚀 **Built-in Agent** - `codemie-code` ships with the CLI: file operations, command execution, planning mode, and native plugins.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -78,7 +78,7 @@ Before installing, verify the following:
 | Network access | Access to `registry.npmjs.org` (or an enterprise npm mirror that exposes the `@codemieai` scope) **and** to GitHub Releases (`github.com`, `objects.githubusercontent.com`) — some native dependencies (e.g. `keytar`) fetch prebuilt binaries from there via `prebuild-install` |
 | npm permissions | A user-writable global npm prefix is recommended for `npm install -g`; when global npm is not writable, the bootstrap installers configure a user-local prefix automatically |
 
-Confirm the installed Node.js version with `node --version` before proceeding. Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-kimi`, etc.) additionally require a **global** installation — see [Local/Project npm Installation](#localproject-npm-installation).
+Confirm the installed Node.js version with `node --version` before proceeding. Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-omp`, `codemie-kimi`, etc.) additionally require a **global** installation — see [Local/Project npm Installation](#localproject-npm-installation).
 
 ### Native Bootstrap Installers
 
@@ -167,7 +167,7 @@ npm install @codemieai/code
 npx @codemieai/code --help
 ```
 
-**Note:** Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-code`, `codemie-opencode`, `codemie-pi`, `codemie-kimi`, etc.) require global installation.
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-code`, `codemie-opencode`, `codemie-pi`, `codemie-omp`, `codemie-kimi`, etc.) require global installation.
 
 ### Installation Troubleshooting
 
@@ -238,6 +238,7 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | OpenCode | `codemie install opencode` | `codemie-opencode` | `opencode-ai` |
 | OpenCode ACP | `codemie install opencode-acp` | `codemie-opencode-acp` | `opencode-ai` (`acp` mode) |
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
+| Oh My Pi | `codemie install omp` | `codemie-omp` | `@oh-my-pi/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
 | OpenWiki | `codemie install openwiki` | `codemie-openwiki` | `openwiki` |
@@ -544,9 +545,32 @@ codemie-pi --resume <session-id>              # open a specific session
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
 | **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
-| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Bare oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
+
+### Oh My Pi (`codemie-omp`)
+
+Oh My Pi (`omp`) is a batteries-included fork of Pi ([`@oh-my-pi/pi-coding-agent`](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent); also available through Homebrew). `codemie-omp` is a *managed* launcher: it routes omp through your CodeMie profile and reports its sessions to CodeMie, so they appear under their own **`codemie-omp`** client on the web Analytics → CLI Insights tab.
+
+```bash
+codemie install omp                           # or install omp yourself (npm / Homebrew)
+codemie-omp "Add retry logic to the HTTP client"
+codemie-omp                                   # interactive session
+codemie-omp --continue                        # continue the latest session
+codemie-omp --resume <session-id>             # resume a specific session (passed to omp as --resume=<id>)
+```
+
+**What CodeMie configures for you:**
+
+| What | How |
+|---|---|
+| **Your omp stays untouched** | Nothing is written to `~/.omp` and `PI_CODING_AGENT_DIR` is not redirected: your omp config, sessions, skills and extensions are used as they are. |
+| **Model routing** | The profile's provider/model list is written to `~/.codemie/omp/providers/<session>.json` for the run and registered by a CodeMie extension (`~/.codemie/omp/extensions/codemie-providers`, loaded with `omp -e`) as providers `codemie-proxy`, `codemie-anthropic` or `ollama`; omp is started with `--model <provider>/<model>`. The file is removed when the run ends. |
+| **Session analytics** | A second CodeMie extension (`~/.codemie/omp/extensions/codemie-metrics`) records which transcripts the run wrote; tokens, tools, models and conversations are synced to CodeMie as the `omp` agent (`codemie-omp` client, `omp` conversation folder) and visible in `codemie analytics`. Subagent transcripts are not uploaded as separate sessions. |
+| **Local analytics** | Transcripts of a managed run carry a CodeMie ownership marker, so `codemie analytics --include-external` does not count them a second time as native omp sessions. |
+
+Providers: CodeMie SSO, Bearer Auth, LiteLLM, Ollama. `CODEMIE_OMP_BIN` overrides the `omp` binary.
 
 ## Claude Code Statusline
 
@@ -700,7 +724,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
-codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog (reported as the codemie-omp client)
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -834,7 +858,7 @@ Comprehensive guides are available in the `docs/` directory:
   - `CODEMIE_INSECURE=1` — disable SSL verification for self-signed certs or local dev environments (SSL is on by default)
 - **[Commands](docs/COMMANDS.md)** - Complete command reference including analytics and workflow commands
 - **[Analytics Report](docs/ANALYTICS-REPORT.md)** - HTML dashboard: all 8 views, filters, session drill-down, cost and efficiency metrics
-- **[Agents](docs/AGENTS.md)** - Per-agent detail (built-in, Claude Code, Claude Code ACP, Gemini, OpenCode; Pi and Kimi are documented in this README)
+- **[Agents](docs/AGENTS.md)** - Per-agent detail (built-in, Claude Code, Claude Code ACP, Gemini, OpenCode; Pi, Oh My Pi and Kimi are documented in this README)
 - **[Authentication](docs/AUTHENTICATION.md)** - SSO setup, token management, enterprise authentication
 - **[Plugins](docs/PLUGINS.md)** - Reusable packages of skills, commands, agents, hooks, and MCP servers (`.claude-plugin/plugin.json` format)
 - **[Skills](docs/SKILLS.md)** - Injecting custom knowledge into agents via markdown + YAML frontmatter

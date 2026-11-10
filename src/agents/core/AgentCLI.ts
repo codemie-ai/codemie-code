@@ -25,6 +25,7 @@ import { CodexAcpPluginMetadata } from '../plugins/codex/codex-acp.plugin.js';
 import { KimiPluginMetadata } from '../plugins/kimi/kimi.plugin.js';
 import { KimiAcpPluginMetadata } from '../plugins/kimi/kimi-acp.plugin.js';
 import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
+import { OmpPluginMetadata } from '../plugins/omp/omp.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
@@ -706,6 +707,7 @@ export class AgentCLI {
       'kimi': KimiPluginMetadata,
       'kimi-acp': KimiAcpPluginMetadata,
       'pi': PiPluginMetadata,
+      'omp': OmpPluginMetadata,
       'openwiki': OpenWikiPluginMetadata,
       'copilot-cli': CopilotCliPluginMetadata,
     };

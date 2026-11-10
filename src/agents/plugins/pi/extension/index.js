@@ -1,5 +1,5 @@
 /**
- * CodeMie run ledger — a Pi extension.
+ * CodeMie run ledger — a Pi (and oh-my-pi) extension.
  *
  * Pi writes its session transcripts lazily, under names it chooses, and a single
  * run can produce several of them (`/new`, `/fork`, `--session` into another
@@ -33,6 +33,11 @@
  *      cannot transform or swallow what the user typed.
  *   6. Only parsed *names* are recorded. Prompt and argument text never enters the
  *      ledger.
+ *
+ *   7. oh-my-pi re-binds every extension factory to each SUBAGENT session its task tool
+ *      starts (`ctx.agent.kind === 'sub'`). Those sessions are skipped, so a subagent
+ *      transcript is never recorded — and never uploaded — as a session of its own; the
+ *      parent's transcript already links them. Pi has no `ctx.agent`, so Pi is unaffected.
  *
  * Writes are synchronous (`appendFileSync`) so a hard exit cannot lose the last
  * line, and every write is individually guarded — a read-only disk degrades this
@@ -98,10 +103,14 @@ export default function codemieMetrics(pi) {
       mode: safe(() => ctx.mode),
     });
 
+    /** True for an oh-my-pi subagent session; always false under Pi, which has no `ctx.agent`. */
+    const isSubagent = (ctx) => safe(() => ctx.agent && ctx.agent.kind) === 'sub';
+
     append({ t: 'boot', pid: process.pid });
 
     pi.on('session_start', (event, ctx) => {
       try {
+        if (isSubagent(ctx)) return undefined;
         append({
           t: 'session',
           reason: safe(() => event.reason),
@@ -116,6 +125,7 @@ export default function codemieMetrics(pi) {
 
     pi.on('session_shutdown', (event, ctx) => {
       try {
+        if (isSubagent(ctx)) return undefined;
         append({
           t: 'shutdown',
           reason: safe(() => event.reason),

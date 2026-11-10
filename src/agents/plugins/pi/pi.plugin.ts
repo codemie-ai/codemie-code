@@ -96,9 +96,25 @@ export function preparePiInvocation(
   return { args: piArgs, envOverrides: overrides };
 }
 
-function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+/**
+ * What distinguishes one agent sharing the Pi machinery (Pi itself, oh-my-pi) in the data
+ * CodeMie reports: the registry name sessions are recorded under and the `codemie_client`
+ * value they are attributed to.
+ */
+export interface PiFamilyIdentity {
+  agentName: string;
+  clientType: string;
+}
+
+const PI_IDENTITY: PiFamilyIdentity = { agentName: 'pi', clientType: 'codemie-pi' };
+
+export function buildPiHookConfig(
+  env: NodeJS.ProcessEnv,
+  sessionId: string,
+  identity: PiFamilyIdentity = PI_IDENTITY
+): HookProcessingConfig {
   return {
-    agentName: env.CODEMIE_AGENT || 'pi',
+    agentName: env.CODEMIE_AGENT || identity.agentName,
     sessionId,
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
@@ -109,7 +125,7 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
-    clientType: 'codemie-pi',
+    clientType: identity.clientType,
     ...wrapperOwnerFromEnv(env),
   };
 }
@@ -130,7 +146,11 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
  *   whole session under the transcript's cwd, which may be a different repository
  *   than the one CodeMie was launched from.
  */
-async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Promise<void> {
+export async function correlateRunToSession(
+  sessionId: string,
+  ledger: PiRunLedger,
+  agentName: string = PI_IDENTITY.agentName
+): Promise<void> {
   if (!ledger.primaryTranscript) return;
 
   try {
@@ -166,7 +186,7 @@ async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Pr
     // Ownership sidecars, so analytics can tell a CodeMie-managed transcript from a
     // bare `pi` one.
     for (const transcript of ledger.transcripts) {
-      writeOwnershipMarker(transcript, sessionId, 'pi');
+      writeOwnershipMarker(transcript, sessionId, agentName);
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -350,120 +370,143 @@ export const PiPluginMetadata: AgentMetadata = {
     },
 
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
-      try {
-        const { processEvent } = await import('../../../cli/commands/hook.js');
-        await processEvent(
-          {
-            hook_event_name: 'SessionStart',
-            session_id: sessionId,
-            transcript_path: '',
-            permission_mode: 'default',
-            cwd: process.cwd(),
-            source: 'startup',
-          },
-          buildPiHookConfig(env, sessionId)
-        );
-        logger.info(`[pi] SessionStart hook completed for session ${sessionId}`);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
-      }
-
-      // Flush metrics during the run, so a hard kill loses at most one interval instead of the
-      // whole session. Ledger-driven: it processes exactly the transcripts the extension
-      // recorded, never a directory scan.
-      startPiIncrementalSync({
-        sessionId,
-        metadata: PiPluginMetadata,
-        buildContext: () => ({
-          sessionId,
-          apiBaseUrl: sendPathApiUrl(env) || '',
-          cookies: '',
-          clientType: 'codemie-pi',
-          version: env.CODEMIE_CLI_VERSION ?? '',
-          dryRun: false,
-        }),
-        ssoUrl: env.CODEMIE_URL,
-        env,
-        syncApiUrl: sendPathApiUrl(env),
-        cliVersion: env.CODEMIE_CLI_VERSION,
-      });
+      await startPiFamilySession(sessionId, env, PiPluginMetadata, PI_IDENTITY);
     },
 
     async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
-      const sessionId = env.CODEMIE_SESSION_ID;
-      if (!sessionId) {
-        logger.debug('[pi] No CODEMIE_SESSION_ID in environment, skipping session end');
-        return;
-      }
-
-      // Stop the mid-run flush FIRST, and wait for any tick already running: it appends to the
-      // same metrics JSONL this final flush is about to, and two writers that both read the
-      // existing record ids before either appends would upload every delta twice.
-      await stopPiIncrementalSync(sessionId);
-
-      // The extension recorded which transcripts this run wrote, from inside Pi.
-      // Nothing else is claimed: a transcript absent from the ledger belongs to
-      // another process, and uploading it would leak that session's prompts.
-      const ledger = await readPiRunLedger(sessionId);
-
-      // Slash commands never reach the transcript — Pi expands prompt templates into plain user
-      // text before persisting — so the ledger is their only record. Hand them to the adapter the
-      // hook pipeline will reach through the registry.
-      try {
-        const { AgentRegistry } = await import('../../registry.js');
-        const adapter = AgentRegistry.getAgent('pi')?.getSessionAdapter?.();
-        if (adapter instanceof PiSessionAdapter) {
-          adapter.setLedgerInvocations({
-            commandInvocations: ledger.commandInvocations,
-            skillCommandInvocations: ledger.skillCommandInvocations,
-          });
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[pi] Could not attach ledger invocations (non-blocking): ${msg}`);
-      }
-      if (!ledger.loaded) {
-        logger.warn(
-          '[pi] The CodeMie run ledger is missing, so this run\'s transcripts cannot be '
-          + 'identified. Reporting session lifecycle only — no tool metrics for this session.'
-        );
-      } else if (ledger.transcripts.length === 0) {
-        logger.debug('[pi] Run produced no transcript (session ended before its first reply)');
-      }
-
-      await correlateRunToSession(sessionId, ledger);
-
-      const reason = env.CODEMIE_EXIT_SIGNAL
-        ? `signal(${env.CODEMIE_EXIT_SIGNAL})`
-        : exitCode === 0
-          ? 'exit'
-          : `exit(${exitCode})`;
-
-      try {
-        const { processEvent } = await import('../../../cli/commands/hook.js');
-        await processEvent(
-          {
-            hook_event_name: 'SessionEnd',
-            // Pi's own session id: the conversation's; the end metric carries the start metric's id.
-            session_id: ledger.piSessionId ?? sessionId,
-            transcript_path: ledger.transcripts[0] ?? '',
-            transcript_paths: ledger.transcripts.length > 0 ? ledger.transcripts : undefined,
-            permission_mode: 'default',
-            // `--session <path>` runs the whole session under the transcript's cwd.
-            cwd: ledger.cwd ?? process.cwd(),
-            reason,
-          },
-          buildPiHookConfig(env, sessionId)
-        );
-        logger.info(`[pi] SessionEnd hook completed for session ${sessionId}`);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[pi] SessionEnd hook failed (non-blocking): ${msg}`);
-      }
+      await endPiFamilySession(exitCode, env, PI_IDENTITY);
     },
   },
 };
+
+/**
+ * SessionStart for any agent sharing the Pi machinery: report the start, then flush metrics
+ * during the run so a hard kill loses at most one interval instead of the whole session.
+ */
+export async function startPiFamilySession(
+  sessionId: string,
+  env: NodeJS.ProcessEnv,
+  metadata: AgentMetadata,
+  identity: PiFamilyIdentity
+): Promise<void> {
+  try {
+    const { processEvent } = await import('../../../cli/commands/hook.js');
+    await processEvent(
+      {
+        hook_event_name: 'SessionStart',
+        session_id: sessionId,
+        transcript_path: '',
+        permission_mode: 'default',
+        cwd: process.cwd(),
+        source: 'startup',
+      },
+      buildPiHookConfig(env, sessionId, identity)
+    );
+    logger.info(`[pi] SessionStart hook completed for session ${sessionId}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
+  }
+
+  // Flush metrics during the run, so a hard kill loses at most one interval instead of the
+  // whole session. Ledger-driven: it processes exactly the transcripts the extension
+  // recorded, never a directory scan.
+  startPiIncrementalSync({
+    sessionId,
+    metadata,
+    buildContext: () => ({
+      sessionId,
+      apiBaseUrl: sendPathApiUrl(env) || '',
+      cookies: '',
+      clientType: identity.clientType,
+      version: env.CODEMIE_CLI_VERSION ?? '',
+      dryRun: false,
+    }),
+    ssoUrl: env.CODEMIE_URL,
+    env,
+    syncApiUrl: sendPathApiUrl(env),
+    cliVersion: env.CODEMIE_CLI_VERSION,
+  });
+
+}
+
+/** SessionEnd for any agent sharing the Pi machinery: flush, correlate, report the end. */
+export async function endPiFamilySession(
+  exitCode: number,
+  env: NodeJS.ProcessEnv,
+  identity: PiFamilyIdentity
+): Promise<void> {
+  const sessionId = env.CODEMIE_SESSION_ID;
+  if (!sessionId) {
+    logger.debug('[pi] No CODEMIE_SESSION_ID in environment, skipping session end');
+    return;
+  }
+
+  // Stop the mid-run flush FIRST, and wait for any tick already running: it appends to the
+  // same metrics JSONL this final flush is about to, and two writers that both read the
+  // existing record ids before either appends would upload every delta twice.
+  await stopPiIncrementalSync(sessionId);
+
+  // The extension recorded which transcripts this run wrote, from inside Pi.
+  // Nothing else is claimed: a transcript absent from the ledger belongs to
+  // another process, and uploading it would leak that session's prompts.
+  const ledger = await readPiRunLedger(sessionId);
+
+  // Slash commands never reach the transcript — Pi expands prompt templates into plain user
+  // text before persisting — so the ledger is their only record. Hand them to the adapter the
+  // hook pipeline will reach through the registry.
+  try {
+    const { AgentRegistry } = await import('../../registry.js');
+    const adapter = AgentRegistry.getAgent(identity.agentName)?.getSessionAdapter?.();
+    if (adapter instanceof PiSessionAdapter) {
+      adapter.setLedgerInvocations({
+        commandInvocations: ledger.commandInvocations,
+        skillCommandInvocations: ledger.skillCommandInvocations,
+      });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug(`[pi] Could not attach ledger invocations (non-blocking): ${msg}`);
+  }
+  if (!ledger.loaded) {
+    logger.warn(
+      '[pi] The CodeMie run ledger is missing, so this run\'s transcripts cannot be '
+      + 'identified. Reporting session lifecycle only — no tool metrics for this session.'
+    );
+  } else if (ledger.transcripts.length === 0) {
+    logger.debug('[pi] Run produced no transcript (session ended before its first reply)');
+  }
+
+  await correlateRunToSession(sessionId, ledger, identity.agentName);
+
+  const reason = env.CODEMIE_EXIT_SIGNAL
+    ? `signal(${env.CODEMIE_EXIT_SIGNAL})`
+    : exitCode === 0
+      ? 'exit'
+      : `exit(${exitCode})`;
+
+  try {
+    const { processEvent } = await import('../../../cli/commands/hook.js');
+    await processEvent(
+      {
+        hook_event_name: 'SessionEnd',
+        // Pi's own session id: the conversation's; the end metric carries the start metric's id.
+        session_id: ledger.piSessionId ?? sessionId,
+        transcript_path: ledger.transcripts[0] ?? '',
+        transcript_paths: ledger.transcripts.length > 0 ? ledger.transcripts : undefined,
+        permission_mode: 'default',
+        // `--session <path>` runs the whole session under the transcript's cwd.
+        cwd: ledger.cwd ?? process.cwd(),
+        reason,
+      },
+      buildPiHookConfig(env, sessionId, identity)
+    );
+    logger.info(`[pi] SessionEnd hook completed for session ${sessionId}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(`[pi] SessionEnd hook failed (non-blocking): ${msg}`);
+  }
+}
 
 export class PiPlugin extends BaseAgentAdapter {
   private sessionAdapter: SessionAdapter;

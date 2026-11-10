@@ -219,6 +219,26 @@ describe('PiConversationsProcessor', () => {
     expect(payloads[0].payload.history[0].message).toBe('add a health endpoint');
   });
 
+  it('files an omp turn under the omp folder, authored by Oh My Pi', async () => {
+    const { PiConversationsProcessor } = await import('../session/processors/pi.conversations-processor.js');
+    const processor = new PiConversationsProcessor({ folder: 'omp', authorName: 'Oh My Pi' });
+    const session = buildSession([
+      userEntry('add a health endpoint'),
+      assistantEntry([
+        { type: 'thinking', thinking: 'plan' },
+        { type: 'text', text: 'Added GET /health.' },
+      ], '2026-08-01T10:00:10.000Z'),
+    ]);
+
+    await processor.process(session, buildContext());
+
+    const [payload] = readPayloads();
+    expect(payload.payload.folder).toBe('omp');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const assistant = payload.payload.history[1] as any;
+    expect(assistant.thoughts.map((t: { author_name: string }) => t.author_name)).toContain('Oh My Pi Reasoning');
+  });
+
   it('turns a complete turn into a User + Assistant payload filed under the pi folder', async () => {
     const processor = await createProcessor();
     const session = buildSession([
@@ -1044,5 +1064,13 @@ describe('resolveConversationFolder — pi', () => {
 
   it('files an agent named pi under the pi folder', async () => {
     expect(await syncPayloadWithoutFolder({ clientType: 'unknown' }, 'pi')).toBe('pi');
+  });
+
+  it('files a codemie-omp client under the omp folder', async () => {
+    expect(await syncPayloadWithoutFolder({ clientType: 'codemie-omp' }, 'Oh My Pi')).toBe('omp');
+  });
+
+  it('files an agent named omp under the omp folder', async () => {
+    expect(await syncPayloadWithoutFolder({ clientType: 'unknown' }, 'omp')).toBe('omp');
   });
 });
