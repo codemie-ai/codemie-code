@@ -35,4 +35,15 @@ describe('isSessionRejection401', () => {
   it('is false when the status code is missing', () => {
     expect(isSessionRejection401({ headers: {} })).toBe(false);
   });
+
+  // Known limitation (accepted, EPMCDME-17014): the predicate is status-only, so a 401 that is not
+  // caused by a dead SSO session (denied model, relayed upstream failure) is also matched. The
+  // caller's loop guard, lock and cooldown bound the resulting sign-ins.
+  it('KNOWN LIMITATION: matches a non-session 401 because the predicate is status-only', () => {
+    const nonSession401 = {
+      statusCode: 401,
+      headers: { 'content-type': 'application/json', 'x-upstream-error': 'model access denied' },
+    };
+    expect(isSessionRejection401(nonSession401)).toBe(true);
+  });
 });

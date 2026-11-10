@@ -15,6 +15,12 @@
  * narrow the predicate to the observed difference and update the fixtures in
  * `__tests__/session-rejection.test.ts`.
  *
+ * KNOWN LIMITATION (accepted with the spec owner): every 401 is treated as a rejected session, so a
+ * non-session 401 triggers one spurious sign-in and a rewritten 401 body before the loop guard,
+ * lock and cooldown stop it. The first occurrence of such a 401 therefore does not meet the
+ * "non-session 401 starts no sign-in" criterion (AC8). Pinned by a test in
+ * `__tests__/session-rejection.test.ts`.
+ *
  * A 403 is deliberately not a session rejection: it means "authenticated but not allowed", and
  * signing in again cannot fix it.
  */

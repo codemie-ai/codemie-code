@@ -39,6 +39,7 @@ vi.mock('../../providers/plugins/sso/sso.auth.js', async (importOriginal) => {
 });
 
 import { getCodemieClient } from '../sdk-client.js';
+import { getAuthenticatedClient } from '../auth.js';
 
 const P = 'https://profile.example.com';
 const W = 'https://workspace.example.com';
@@ -92,6 +93,25 @@ describe('getCodemieClient credential lookup', () => {
     mockRetrieveSSOCredentials.mockResolvedValue(stale);
 
     await getCodemieClient(true);
+
+    expect(mockClearSSOCredentials).not.toHaveBeenCalled();
+    expect(mockCodeMieClient).toHaveBeenCalledWith(
+      expect.objectContaining({ codemie_api_domain: stale.apiUrl, cookies: stale.cookies })
+    );
+  });
+
+  it('loads a stale cookie-only credential on the assistants-chat path without clearing it', async () => {
+    useRealSso = true;
+    const stale = {
+      cookies: { _oauth2_proxy: 'cookie-value' },
+      apiUrl: `${P}/code-assistant-api`,
+      expiresAt: Date.now() - (24 * 60 * 60 * 1000 + 60_000),
+    };
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+    mockRetrieveSSOCredentials.mockResolvedValue(stale);
+
+    // assistants chat obtains its client through getAuthenticatedClient (non-JWT branch).
+    await getAuthenticatedClient({ provider: 'ai-run-sso', baseUrl: P } as never, { nonInteractive: true });
 
     expect(mockClearSSOCredentials).not.toHaveBeenCalled();
     expect(mockCodeMieClient).toHaveBeenCalledWith(
