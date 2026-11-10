@@ -51,7 +51,9 @@ function toolkit({ te, backend, daemon }) {
   const run = async (sid, proj, steps) => { for (const [name, extra] of steps) await fire(sid, proj, name, extra); };
   const standard = [['SessionStart', { source: 'startup', model: MODEL }], ['Stop', {}], ['SessionEnd', { reason: 'other' }]];
   const startup = [native.hook_registered, native.plugin_loaded, native.managed_settings_resolved, native.mcp_server_connection, native.hook_execution_start, native.hook_execution_complete];
-  const postStartupRecords = (sid, atMs = Date.now()) => postLogs(daemon, startup.map((b, i) => b(sid, atMs + i * 40)));
+  // `withExit` adds the native record Claude Code writes for a `/exit` typed right after opening (QA case 1).
+  const postStartupRecords = (sid, atMs = Date.now(), { withExit = false } = {}) =>
+    postLogs(daemon, [...startup, ...(withExit ? [native.user_prompt] : [])].map((b, i) => b(sid, atMs + i * 40)));
   const settle = (ms = 9000) => sleep(ms);
   return { fire, run, standard, postStartupRecords, settle, te, backend, daemon };
 }
@@ -127,7 +129,7 @@ export const scenarios = [
       const k = toolkit(ctx);
       const [P, C] = [randomUUID(), randomUUID()];
       const proj = ctx.te.project('s4');
-      const { parentLines, childLines } = continuation({ parentSid: P, childSid: C, noUuidCopies: true, own: exitCommandLines(randomUUID(), '2026-11-10T16:23:52.000Z') });
+      const { parentLines, childLines } = continuation({ parentSid: P, childSid: C, noUuidCopies: true, own: exitCommandLines(C, '2026-11-10T16:23:52.000Z') });
       writeTranscript(proj.transcriptPath(P), parentLines);
       writeTranscript(proj.transcriptPath(C), childLines);
       await k.run(C, proj, k.standard);
@@ -197,7 +199,7 @@ export const scenarios = [
       const mark = Date.now();
       appendTranscript(proj.transcriptPath(sid), reopenRecords(sid, new Date(mark).toISOString()));
       await k.fire(sid, proj, 'SessionStart', { source: 'resume', model: MODEL });
-      await k.postStartupRecords(sid);
+      await k.postStartupRecords(sid, undefined, { withExit: true });
       await k.run(sid, proj, [['Stop', {}], ['SessionEnd', { reason: 'prompt_input_exit' }]]);
       await k.settle();
       const o = observe(ctx.backend, sid, mark);
@@ -219,13 +221,14 @@ export const scenarios = [
       await k.settle(5000);
       const mark = Date.now();
       appendTranscript(proj.transcriptPath(sid), reopenRecords(sid, new Date(mark).toISOString()));
-      await k.postStartupRecords(sid, mark);
+      await k.postStartupRecords(sid, mark, { withExit: true });
       await k.fire(sid, proj, 'SessionStart', { source: 'resume', model: MODEL });
       await k.run(sid, proj, [['Stop', {}], ['SessionEnd', { reason: 'prompt_input_exit' }]]);
       await k.settle();
       const o = observe(ctx.backend, sid, mark);
       return { observed: o, checks: [
         ok(o.forwardedAfterMark === 0, `nothing stamped at or after the reopen reaches the backend (got ${o.forwardedAfterMark})`),
+        ok(o.usageRequests === 6, `control: the ordinary session did reach the backend, 6 requests (got ${o.usageRequests})`),
       ] };
     },
   },
@@ -291,12 +294,13 @@ export const scenarios = [
       const mark = Date.now();
       appendTranscript(proj.transcriptPath(sid), reopenRecords(sid, new Date(mark).toISOString()));
       await k.fire(sid, proj, 'SessionStart', { source: 'resume', model: MODEL });
-      await k.postStartupRecords(sid);
+      await k.postStartupRecords(sid, undefined, { withExit: true });
       await k.run(sid, proj, [['Stop', {}], ['SessionEnd', { reason: 'prompt_input_exit' }]]);
       await k.settle();
       const o = observe(ctx.backend, sid, mark);
       return { observed: o, checks: [
         ok(o.forwardedAfterMark === 0, `nothing stamped at or after the reopen reaches the backend (got ${o.forwardedAfterMark})`),
+        ok(o.usageRequests === 6, `control: the ordinary session did reach the backend, 6 requests (got ${o.usageRequests})`),
       ] };
     },
   },
@@ -314,7 +318,7 @@ export const scenarios = [
       for (let i = 0; i < 2; i += 1) {
         appendTranscript(proj.transcriptPath(sid), reopenRecords(sid, new Date().toISOString()));
         await k.fire(sid, proj, 'SessionStart', { source: 'resume', model: MODEL });
-        await k.postStartupRecords(sid);
+        await k.postStartupRecords(sid, undefined, { withExit: true });
         await k.run(sid, proj, [['Stop', {}], ['SessionEnd', { reason: 'prompt_input_exit' }]]);
       }
       await k.settle(6000);

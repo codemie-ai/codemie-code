@@ -1,8 +1,8 @@
 {
   "label": "baseline-pr779",
-  "repo": "C:\\Users\\OlehPrusak\\codemie-eval\\wt\\pr779",
-  "ranAt": "2026-11-10T19:11:30.405Z",
-  "backendRequests": 63,
+  "repo": "pr779",
+  "ranAt": "2026-11-10T20:04:00.825Z",
+  "backendRequests": 62,
   "results": [
     {
       "id": "S1-ordinary-session",
@@ -32,7 +32,7 @@
           "api_request"
         ],
         "forwardedAfterMark": null,
-        "lastForwardedTs": "2026-11-10T19:08:16.383Z"
+        "lastForwardedTs": "2026-11-10T20:01:09.459Z"
       },
       "checks": [
         {
@@ -48,7 +48,7 @@
           "message": "2 native records forwarded (got 2)"
         }
       ],
-      "ms": 45024
+      "ms": 35194
     },
     {
       "id": "S2-continuation-no-own-work",
@@ -75,7 +75,7 @@
         },
         "nativeForwarded": [],
         "forwardedAfterMark": null,
-        "lastForwardedTs": "2026-11-10T19:08:14.519Z"
+        "lastForwardedTs": "2026-11-10T20:01:09.526Z"
       },
       "checks": [
         {
@@ -91,7 +91,7 @@
           "message": "no summary (got {\"started_at\":\"2026-11-10T16:23:52.000Z\",\"ended_at\":\"2026-11-10T16:23:53.100Z\",\"duration_ms\":1100,\"turns\":2,\"tool_calls\":0})"
         }
       ],
-      "ms": 43526
+      "ms": 35286
     },
     {
       "id": "S3-continuation-uuidless-copies",
@@ -118,7 +118,7 @@
         },
         "nativeForwarded": [],
         "forwardedAfterMark": null,
-        "lastForwardedTs": "2026-11-10T19:08:15.449Z"
+        "lastForwardedTs": "2026-11-10T20:01:09.487Z"
       },
       "checks": [
         {
@@ -134,7 +134,7 @@
           "message": "1 turn (got 1)"
         }
       ],
-      "ms": 44224
+      "ms": 35199
     },
     {
       "id": "S4-continuation-qa-case",
@@ -160,7 +160,7 @@
         },
         "nativeForwarded": [],
         "forwardedAfterMark": null,
-        "lastForwardedTs": "2026-11-10T19:08:15.206Z"
+        "lastForwardedTs": "2026-11-10T20:01:09.522Z"
       },
       "checks": [
         {
@@ -172,7 +172,7 @@
           "message": "no summary dated before the continuation (got 2026-11-01T17:44:35.647Z)"
         }
       ],
-      "ms": 44016
+      "ms": 35212
     },
     {
       "id": "S5-parent-and-child-both-reported-once",
@@ -200,7 +200,7 @@
           },
           "nativeForwarded": [],
           "forwardedAfterMark": null,
-          "lastForwardedTs": "2026-11-10T19:09:04.794Z"
+          "lastForwardedTs": "2026-11-10T20:01:50.664Z"
         },
         "child": {
           "hookEventTypes": {
@@ -224,7 +224,7 @@
           },
           "nativeForwarded": [],
           "forwardedAfterMark": null,
-          "lastForwardedTs": "2026-11-10T19:09:05.068Z"
+          "lastForwardedTs": "2026-11-10T20:01:49.270Z"
         }
       },
       "checks": [
@@ -237,7 +237,7 @@
           "message": "child reports its own request only (got 1 / 77)"
         }
       ],
-      "ms": 51397
+      "ms": 41417
     },
     {
       "id": "S6-late-parent-record",
@@ -263,7 +263,7 @@
           },
           "nativeForwarded": [],
           "forwardedAfterMark": null,
-          "lastForwardedTs": "2026-11-10T19:08:53.475Z"
+          "lastForwardedTs": "2026-11-10T20:01:37.253Z"
         },
         "afterAll": {
           "hookEventTypes": {
@@ -287,7 +287,7 @@
           },
           "nativeForwarded": [],
           "forwardedAfterMark": null,
-          "lastForwardedTs": "2026-11-10T19:09:20.005Z"
+          "lastForwardedTs": "2026-11-10T20:02:01.015Z"
         }
       },
       "checks": [
@@ -296,7 +296,7 @@
           "message": "second pass adds only the own request (6 -> 7)"
         }
       ],
-      "ms": 64832
+      "ms": 51853
     },
     {
       "id": "S7-reopen-idle-hook-first",
@@ -327,22 +327,23 @@
           "managed_settings_resolved",
           "mcp_server_connection",
           "hook_execution_start",
-          "hook_execution_complete"
+          "hook_execution_complete",
+          "user_prompt"
         ],
-        "forwardedAfterMark": 6,
-        "lastForwardedTs": "2026-11-10T19:09:20.455Z"
+        "forwardedAfterMark": 7,
+        "lastForwardedTs": "2026-11-10T20:02:04.811Z"
       },
       "checks": [
         {
           "ok": false,
-          "message": "nothing stamped at or after the reopen reaches the backend (got 6)"
+          "message": "nothing stamped at or after the reopen reaches the backend (got 7)"
         },
         {
           "ok": true,
           "message": "usage unchanged: 6 requests (got 6)"
         }
       ],
-      "ms": 81215
+      "ms": 72523
     },
     {
       "id": "S8-reopen-idle-native-first",
@@ -373,18 +374,23 @@
           "managed_settings_resolved",
           "mcp_server_connection",
           "hook_execution_start",
-          "hook_execution_complete"
+          "hook_execution_complete",
+          "user_prompt"
         ],
-        "forwardedAfterMark": 6,
-        "lastForwardedTs": "2026-11-10T19:09:13.699Z"
+        "forwardedAfterMark": 7,
+        "lastForwardedTs": "2026-11-10T20:01:56.348Z"
       },
       "checks": [
         {
           "ok": false,
-          "message": "nothing stamped at or after the reopen reaches the backend (got 6)"
+          "message": "nothing stamped at or after the reopen reaches the backend (got 7)"
+        },
+        {
+          "ok": true,
+          "message": "control: the ordinary session did reach the backend, 6 requests (got 6)"
         }
       ],
-      "ms": 84159
+      "ms": 71243
     },
     {
       "id": "S9-reopen-then-prompt",
@@ -404,8 +410,8 @@
         "summaries": 4,
         "summary": {
           "started_at": "2026-11-01T17:44:35.647Z",
-          "ended_at": "2026-11-10T19:10:08.081Z",
-          "duration_ms": 782732434,
+          "ended_at": "2026-11-10T20:02:45.879Z",
+          "duration_ms": 785890232,
           "turns": 3,
           "tool_calls": 6
         },
@@ -420,7 +426,7 @@
           "api_request"
         ],
         "forwardedAfterMark": 14,
-        "lastForwardedTs": "2026-11-10T19:10:23.715Z"
+        "lastForwardedTs": "2026-11-10T20:02:57.131Z"
       },
       "checks": [
         {
@@ -432,7 +438,7 @@
           "message": "native records of the active reopen are forwarded (got hook_registered,plugin_loaded,managed_settings_resolved,mcp_server_connection,hook_execution_start,hook_execution_complete,user_prompt,api_request)"
         }
       ],
-      "ms": 77427
+      "ms": 66205
     },
     {
       "id": "S10-ordinary-resume-sources",
@@ -466,7 +472,7 @@
           "hook_execution_complete"
         ],
         "forwardedAfterMark": null,
-        "lastForwardedTs": "2026-11-10T19:10:20.394Z"
+        "lastForwardedTs": "2026-11-10T20:02:52.896Z"
       },
       "checks": [
         {
@@ -478,7 +484,7 @@
           "message": "usage reported once: 6 (got 6)"
         }
       ],
-      "ms": 60320
+      "ms": 51697
     },
     {
       "id": "S11-reopen-after-spool-swept",
@@ -509,18 +515,23 @@
           "managed_settings_resolved",
           "mcp_server_connection",
           "hook_execution_start",
-          "hook_execution_complete"
+          "hook_execution_complete",
+          "user_prompt"
         ],
-        "forwardedAfterMark": 6,
-        "lastForwardedTs": "2026-11-10T19:10:31.050Z"
+        "forwardedAfterMark": 7,
+        "lastForwardedTs": "2026-11-10T20:03:06.696Z"
       },
       "checks": [
         {
           "ok": false,
-          "message": "nothing stamped at or after the reopen reaches the backend (got 6)"
+          "message": "nothing stamped at or after the reopen reaches the backend (got 7)"
+        },
+        {
+          "ok": true,
+          "message": "control: the ordinary session did reach the backend, 6 requests (got 6)"
         }
       ],
-      "ms": 67016
+      "ms": 57298
     },
     {
       "id": "S12-two-idle-reopens-then-work",
@@ -553,15 +564,17 @@
             "mcp_server_connection",
             "hook_execution_start",
             "hook_execution_complete",
+            "user_prompt",
             "hook_registered",
             "plugin_loaded",
             "managed_settings_resolved",
             "mcp_server_connection",
             "hook_execution_start",
-            "hook_execution_complete"
+            "hook_execution_complete",
+            "user_prompt"
           ],
-          "forwardedAfterMark": 12,
-          "lastForwardedTs": "2026-11-10T19:10:53.677Z"
+          "forwardedAfterMark": 14,
+          "lastForwardedTs": "2026-11-10T20:03:25.061Z"
         },
         "afterWork": {
           "hookEventTypes": {
@@ -578,8 +591,8 @@
           "summaries": 4,
           "summary": {
             "started_at": "2026-11-01T17:44:35.647Z",
-            "ended_at": "2026-11-10T19:11:15.391Z",
-            "duration_ms": 782799744,
+            "ended_at": "2026-11-10T20:03:45.508Z",
+            "duration_ms": 785949861,
             "turns": 3,
             "tool_calls": 6
           },
@@ -590,28 +603,30 @@
             "mcp_server_connection",
             "hook_execution_start",
             "hook_execution_complete",
+            "user_prompt",
             "hook_registered",
             "plugin_loaded",
             "managed_settings_resolved",
             "mcp_server_connection",
             "hook_execution_start",
-            "hook_execution_complete"
+            "hook_execution_complete",
+            "user_prompt"
           ],
-          "forwardedAfterMark": 18,
-          "lastForwardedTs": "2026-11-10T19:11:20.999Z"
+          "forwardedAfterMark": 20,
+          "lastForwardedTs": "2026-11-10T20:03:51.476Z"
         }
       },
       "checks": [
         {
           "ok": false,
-          "message": "idle reopens change nothing (forwarded 12, usage 6)"
+          "message": "idle reopens change nothing (forwarded 14, usage 6)"
         },
         {
           "ok": true,
           "message": "the new request is reported once (got 7)"
         }
       ],
-      "ms": 100301
+      "ms": 89278
     }
   ]
 }

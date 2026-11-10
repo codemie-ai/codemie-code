@@ -48,7 +48,7 @@ script then waits 9 s to out-wait the OTel-only skip window).
 | `lib/seed-credentials.mjs` | Child script that stores a fake SSO login (JWT with an `email` claim) for the fake backend URL in the temp credential store. |
 | `lib/no-keytar*.mjs` | `--import` preload that makes `import('keytar')` fail in every child, so the OS keychain / Credential Vault is never touched (the CLI then uses its file store under the temp CODEMIE_HOME). Verified at daemon start (`assertKeytarBlocked`). |
 | `lib/otlp-records.mjs` | `native.*` record builders (`hook_registered`, `plugin_loaded`, `managed_settings_resolved`, `mcp_server_connection`, `hook_execution_start/complete`, `user_prompt`, `api_request`, `tool_result`), `postLogs(daemon, records)`. |
-| `lib/transcripts.mjs` | Ordinary session, continuation copy (with/without no-uuid copied lines, synthetic and `/exit` own lines), `continued-in` record, reopen records, reopen-with-prompt. Copied from `C:\Users\OlehPrusak\codemie-eval\harness.mjs`. |
+| `lib/transcripts.mjs` | Ordinary session, continuation copy (with/without no-uuid copied lines, synthetic and `/exit` own lines), `continued-in` record, reopen records, reopen-with-prompt. |
 | `scripts/smoke.mjs` | The smoke described below. |
 | `fixtures/`, `evidence/` | Reserved for `native-startup-records.json` and scenario output (Task 2 follow-up). |
 

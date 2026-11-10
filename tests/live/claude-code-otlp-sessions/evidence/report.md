@@ -3,7 +3,7 @@
 Real hook process -> real proxy daemon and forwarder (built `dist`) -> fake backend, under a temp `CODEMIE_HOME`.
 Nothing touches the real `~/.codemie`, `~/.claude` or the real daemon.
 
-Ran: origin/main (no fix) (2026-11-10T19:11:36.606Z); #779 re-applied (what QA tested) (2026-11-10T19:11:30.405Z); this branch (2026-11-10T19:11:29.133Z)
+Ran: origin/main (no fix) (2026-11-10T20:04:04.692Z); #779 re-applied (what QA tested) (2026-11-10T20:04:00.825Z); this branch (2026-11-10T20:00:30.204Z)
 
 ## Result per scenario (all checks of the scenario passed = PASS)
 
@@ -119,10 +119,10 @@ _16992 (accepted D-2): parent record lands after the first pass; later passes se
 _16993: reopen without a prompt; native startup records arrive AFTER the SessionStart(resume) hook_
 
 - **origin/main (no fix)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 11)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 14)
   - ok: usage unchanged: 6 requests (got 6)
 - **#779 re-applied (what QA tested)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 6)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 7)
   - ok: usage unchanged: 6 requests (got 6)
 - **this branch**
   - ok: nothing stamped at or after the reopen reaches the backend (got 0)
@@ -133,11 +133,14 @@ _16993: reopen without a prompt; native startup records arrive AFTER the Session
 _16993 race: native startup records arrive BEFORE the SessionStart(resume) hook has marked the reopen_
 
 - **origin/main (no fix)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 13)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 14)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 - **#779 re-applied (what QA tested)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 6)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 7)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 - **this branch**
   - ok: nothing stamped at or after the reopen reaches the backend (got 0)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 
 ### S9-reopen-then-prompt
 
@@ -172,21 +175,24 @@ _startup/clear sources: native records of a session that was not reopened are ne
 _16993: reopen days later, after the sweep has already removed the spool of the session (the reporter case)_
 
 - **origin/main (no fix)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 13)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 14)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 - **#779 re-applied (what QA tested)**
-  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 6)
+  - **FAIL**: nothing stamped at or after the reopen reaches the backend (got 7)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 - **this branch**
   - ok: nothing stamped at or after the reopen reaches the backend (got 0)
+  - ok: control: the ordinary session did reach the backend, 6 requests (got 6)
 
 ### S12-two-idle-reopens-then-work
 
 _16993: two prompt-less reopens in a row change nothing; real work afterwards is reported once_
 
 - **origin/main (no fix)**
-  - **FAIL**: idle reopens change nothing (forwarded 26, usage 6)
+  - **FAIL**: idle reopens change nothing (forwarded 28, usage 6)
   - ok: the new request is reported once (got 7)
 - **#779 re-applied (what QA tested)**
-  - **FAIL**: idle reopens change nothing (forwarded 12, usage 6)
+  - **FAIL**: idle reopens change nothing (forwarded 14, usage 6)
   - ok: the new request is reported once (got 7)
 - **this branch**
   - ok: idle reopens change nothing (forwarded 0, usage 6)

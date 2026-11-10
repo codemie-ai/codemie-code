@@ -1,4 +1,4 @@
-// Transcript builders (line shapes copied from the external harness C:\Users\OlehPrusak\codemie-eval\harness.mjs).
+// Transcript builders (line shapes copied from an external prototype harness).
 // All builders return arrays of JSONL lines; writeTranscript/appendTranscript put them on disk.
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';

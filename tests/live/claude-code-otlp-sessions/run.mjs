@@ -3,7 +3,7 @@
 // usage: node tests/live/claude-code-otlp-sessions/run.mjs --label branch [--only S7,S9] [--concurrency 4] [--keep]
 //        LIVE_REPO_ROOT=<clean origin/main checkout, built> node ... --label baseline
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { SUITE_DIR, REPO_ROOT, createTestEnv } from './lib/env.mjs';
 import { createFakeBackend } from './lib/fake-backend.mjs';
 import { startDaemon } from './lib/daemon.mjs';
@@ -45,11 +45,15 @@ try {
   const outDir = join(SUITE_DIR, 'evidence');
   mkdirSync(outDir, { recursive: true });
   results.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-  writeFileSync(join(outDir, `${label}.json`), JSON.stringify({ label, repo: REPO_ROOT, ranAt: new Date().toISOString(), backendRequests: backend.requests.length, results }, null, 2));
+  // A partial run (--only) never replaces the committed full evidence. The checkout is recorded by its
+  // folder name only: an absolute path would put the local user name into the repository.
+  const file = only?.length ? `${label}.partial.json` : `${label}.json`;
+  writeFileSync(join(outDir, file), JSON.stringify({ label, repo: basename(REPO_ROOT), ranAt: new Date().toISOString(), backendRequests: backend.requests.length, results }, null, 2));
   await daemon.stop();
   await backend.stop();
   te.cleanup();
 }
 const failed = results.filter((r) => r.error || r.checks.some((c) => !c.ok)).length;
 console.log(`\n${label}: ${results.length - failed}/${results.length} scenarios passed all checks`);
-process.exit(label === 'baseline' ? 0 : failed ? 1 : 0);
+// A baseline run documents a build WITHOUT the fix: failures there are the expected result.
+process.exit(label.startsWith('baseline') ? 0 : failed ? 1 : 0);
