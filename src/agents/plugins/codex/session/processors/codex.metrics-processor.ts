@@ -22,6 +22,7 @@ import type {
   CodexSessionMetadata,
 } from '../../codex-message-types.js';
 import { hasCodexMetadata } from '../../codex-message-types.js';
+import { collectApplyPatchCalls, isApplyPatchItem } from '../codex-apply-patch.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 
@@ -63,6 +64,8 @@ export class CodexMetricsProcessor implements SessionProcessor {
         if (!item.call_id) continue;
 
         if (item.type === 'function_call') {
+          // apply_patch takes its own path below (outcome-aware, with file operations)
+          if (isApplyPatchItem(item)) continue;
           functionCalls.push({ callId: item.call_id, item, timestamp: record.timestamp });
         } else if (item.type === 'function_call_output') {
           outputs.set(item.call_id, item);
@@ -96,11 +99,35 @@ export class CodexMetricsProcessor implements SessionProcessor {
         existingCallIds.add(callId);
       }
 
+      // apply_patch: one delta per call with a known outcome, carrying its file operations. The call_id
+      // dedupe runs before the patch is parsed.
+      const patchCalls = collectApplyPatchCalls(records, existingCallIds);
+      const window = deltas.length > 0 || patchCalls.length > 0 ? await resolveRunWindow(session.sessionId, context) : undefined;
+      for (const call of patchCalls) {
+        const callTime = call.timestamp ? Date.parse(call.timestamp) : NaN;
+        // The generic window below keeps its lower bound off; apply_patch calls are filtered on their own time
+        if (window && !isNaN(callTime) && callTime < window.startTime) continue;
+        deltas.push({
+          recordId: call.callId,
+          sessionId: session.sessionId,
+          agentSessionId: meta.codexSessionId,
+          timestamp: isNaN(callTime) ? baseTimestamp : callTime,
+          tools: { apply_patch: 1 },
+          toolStatus: { apply_patch: { success: call.ok ? 1 : 0, failure: call.ok ? 0 : 1 } },
+          ...(call.ok && call.fileOperations.length > 0
+            ? { fileOperations: call.fileOperations as NonNullable<MetricDelta['fileOperations']> }
+            : {}),
+          ...(resolvedBranch ? { gitBranch: resolvedBranch } : {}),
+          ...(meta.model ? { models: [meta.model] } : {}),
+        });
+        existingCallIds.add(call.callId);
+      }
+
       let deltasWritten = 0;
-      if (deltas.length > 0) {
+      if (deltas.length > 0 && window) {
         // ponytail: a call without a timestamped line gets the session's createdAt, earlier than a resumed record's
-        // start, so the window's lower bound stays off; enable it once every call carries its own line time.
-        const window = await resolveRunWindow(session.sessionId, context);
+        // start, so the window's lower bound stays off for generic calls; apply_patch calls are filtered on their
+        // own line time above. Enable the bound once every call carries its own line time.
         const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
         if (appended.gone) {
           logger.warn(`[codex-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
@@ -113,7 +140,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
         '[codex-metrics] Wrote deltas',
         ...sanitizeLogArgs({
           deltasWritten,
-          totalCalls: functionCalls.length,
+          totalCalls: functionCalls.length + patchCalls.length,
         })
       );
 
@@ -121,7 +148,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
         success: true,
         message: `Generated ${deltasWritten} delta${deltasWritten === 1 ? '' : 's'}`,
         metadata: {
-          recordsProcessed: functionCalls.length,
+          recordsProcessed: functionCalls.length + patchCalls.length,
           deltasWritten,
         },
       };
