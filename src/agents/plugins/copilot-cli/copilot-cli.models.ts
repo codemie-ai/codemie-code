@@ -15,6 +15,8 @@ interface RankedCopilotModel {
   score: number[];
 }
 
+type ConfigSource = 'default' | 'global' | 'project' | 'env' | 'cli';
+
 const COPILOT_INCOMPATIBLE_MODEL_PATTERNS: RegExp[] = [
   /embedding/i,
   /rerank/i,
@@ -170,6 +172,7 @@ async function fetchCodeMieModelsForCopilot(env: NodeJS.ProcessEnv): Promise<Llm
 
 export async function resolveCopilotModel(env: NodeJS.ProcessEnv): Promise<CopilotModelResolution> {
   const currentModel = env.CODEMIE_MODEL;
+  const modelSource = (env.CODEMIE_MODEL_SOURCE || 'default') as ConfigSource;
 
   let rawModels: LlmModel[] = [];
   try {
@@ -206,8 +209,9 @@ export async function resolveCopilotModel(env: NodeJS.ProcessEnv): Promise<Copil
 
   const selectedModel = rankedModels[0].id;
   const rankedIds = rankedModels.map((entry) => entry.id);
+  const shouldPreserveConfiguredModel = modelSource === 'cli' || modelSource === 'env';
   const effectiveModel =
-    currentModel && rankedIds.includes(currentModel)
+    shouldPreserveConfiguredModel && currentModel && rankedIds.includes(currentModel)
       ? currentModel
       : selectedModel;
 

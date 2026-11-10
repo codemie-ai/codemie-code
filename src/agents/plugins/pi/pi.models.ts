@@ -6,7 +6,6 @@ import { logger } from '../../../utils/logger.js';
 import type { ModelPrice } from '../../../utils/pricing.js';
 import { lookupPrice } from '../../../utils/pricing.js';
 import { getPiAgentDir, getPiModelsPath } from './pi.paths.js';
-import { filterToProfileModels } from '../../core/profile-model-filter.js';
 
 export interface PiModelClassification {
   provider: 'codemie-proxy' | 'codemie-anthropic';
@@ -400,19 +399,6 @@ function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: stri
   return buildModelsConfig([entry], baseUrl, apiKey);
 }
 
-/**
- * Narrow live model entries to the active profile's own models, keeping the configured
- * CODEMIE_MODEL (see `filterToProfileModels`). Never leaves models.json empty (AC22).
- */
-export function filterEntriesToProfile(entries: PiModelEntry[], env: NodeJS.ProcessEnv): PiModelEntry[] {
-  return filterToProfileModels(entries, env.CODEMIE_PROFILE_MODELS, {
-    getId: entry => entry.id,
-    activeModel: env.CODEMIE_MODEL,
-    noMatchMessage:
-      '[pi-models] None of this agent\'s profile models are in the live catalog — the model menu shows the full catalog',
-  });
-}
-
 export async function fetchAndBuildPiModels(
   env: NodeJS.ProcessEnv,
   cwd: string = process.cwd(),
@@ -437,7 +423,6 @@ export async function fetchAndBuildPiModels(
     entries = rawModels
       .filter(model => model.enabled)
       .map(convertLlmModelToPiEntry);
-    entries = filterEntriesToProfile(entries, env);
     logger.debug(`[pi-models] Loaded ${entries.length} models from CodeMie API`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

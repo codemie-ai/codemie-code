@@ -43,7 +43,6 @@
 
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
-import { classifyWithPredicate } from '../../core/model-classify.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
@@ -54,7 +53,6 @@ import { ConfigurationError } from '../../../utils/errors.js';
 import { CodexSessionAdapter } from './codex.session.js';
 import {
   assertExplicitCodexModelAllowed,
-  filterAvailableModelsToProfile,
   isCodexCompatibleModelName,
   resolveCodexModel,
 } from './codex-models.js';
@@ -149,7 +147,6 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
   supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama'],
   blockedModelPatterns: [],
-  classifyModel: (id, ctx) => classifyWithPredicate(isCodexCompatibleModelName, id, ctx),
   recommendedModels: ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
 
   ssoConfig: {
@@ -519,8 +516,7 @@ export class CodexPlugin extends BaseAgentAdapter {
           ids.unshift(env.CODEMIE_MODEL);
         }
         if (ids.length > 0) {
-          const filteredIds = filterAvailableModelsToProfile(ids, env);
-          env.CODEMIE_CODEX_AVAILABLE_MODELS = filteredIds.join(',');
+          env.CODEMIE_CODEX_AVAILABLE_MODELS = ids.join(',');
         }
       } catch (error) {
         logger.debug('[codex] Failed to list Ollama models; keeping configured model only', error);
@@ -537,7 +533,7 @@ export class CodexPlugin extends BaseAgentAdapter {
         );
       }
 
-      env.CODEMIE_CODEX_AVAILABLE_MODELS = filterAvailableModelsToProfile([env.CODEMIE_MODEL], env).join(',');
+      env.CODEMIE_CODEX_AVAILABLE_MODELS = env.CODEMIE_MODEL;
       await super.setupProxy(env);
       return;
     }
@@ -545,7 +541,7 @@ export class CodexPlugin extends BaseAgentAdapter {
     const resolution = await resolveCodexModel(env);
 
     env.CODEMIE_MODEL = resolution.selectedModel;
-    env.CODEMIE_CODEX_AVAILABLE_MODELS = filterAvailableModelsToProfile(resolution.availableModels, env).join(',');
+    env.CODEMIE_CODEX_AVAILABLE_MODELS = resolution.availableModels.join(',');
     if (resolution.catalogPath) {
       env.CODEMIE_CODEX_MODEL_CATALOG_JSON = resolution.catalogPath;
     }

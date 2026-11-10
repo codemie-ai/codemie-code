@@ -8,7 +8,6 @@
 import chalk from 'chalk';
 import type { ProviderTemplate } from '../core/types.js';
 import { getSystemCapabilities, modelFitsSystem } from '../../utils/hardware.js';
-import { formatAgentModelsLine, type AgentModelsDisplay } from '../../utils/profile.js';
 
 /**
  * Format provider choice for inquirer
@@ -265,26 +264,16 @@ export function getAllModelChoices(
 /**
  * Display success message
  *
- * Shows formatted success message with configuration summary. A profile set up
- * per agent lists each agent's models instead of the single top-level model,
- * which only mirrors the first agent's active model.
+ * Shows formatted success message with configuration summary
  */
 export function displaySetupSuccess(
   profileName: string,
   provider: string,
-  model: string,
-  agentModels?: AgentModelsDisplay[]
+  model: string
 ): void {
   console.log(chalk.bold.green(`\n✅ Profile "${profileName}" configured successfully!\n`));
   console.log(chalk.cyan(`🔗 Provider: ${provider}`));
-  if (agentModels && agentModels.length > 0) {
-    console.log(chalk.cyan('🤖 Agent models:'));
-    for (const entry of agentModels) {
-      console.log(chalk.cyan(`   ${formatAgentModelsLine(entry)}`));
-    }
-  } else {
-    console.log(chalk.cyan(`🤖 Model: ${model}`));
-  }
+  console.log(chalk.cyan(`🤖 Model: ${model}`));
   console.log(chalk.cyan(`📁 Config: ~/.codemie/codemie-cli.config.json\n`));
   
   console.log(chalk.bold('  Next Steps:'));
