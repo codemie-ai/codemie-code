@@ -91,6 +91,22 @@ export async function isStopped(key: string): Promise<boolean> {
   }
 }
 
+export type MarkerState = 'absent' | 'notice' | 'stop' | 'unknown';
+
+/**
+ * Which marker exists: none, a notice (recoverable), a stop (final), or `unknown` when the file could not be read
+ * for now (an I/O error). A corrupt marker is a stop, as `isStopped` reads it.
+ */
+export async function markerState(key: string): Promise<MarkerState> {
+  try {
+    const m = JSON.parse(await readFile(pathOf(key), 'utf-8')) as Partial<MarkerFile>;
+    return m.stop === false ? 'notice' : 'stop';
+  } catch (err) {
+    if (err instanceof SyntaxError) return 'stop'; // corrupt marker
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unknown';
+  }
+}
+
 /** The pending notice reason, once: marks it shown before returning. Undefined when none, already shown or unreadable. */
 export async function takeNotice(key: string): Promise<StopReason | undefined> {
   // Only the ack file is written (never the marker), under the lock so two hooks do not both show it.

@@ -97,17 +97,24 @@ export async function isDeliveryDone(sessionId: string, config?: HookProcessingC
   if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return false;
   // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
-  return hasNoPendingData(sessionId);
+  // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
+  const { legacyMetricsWithheld } = await import('../../../agents/core/session/legacy-metrics-gate.js');
+  return hasNoPendingData(sessionId, legacyMetricsWithheld(record));
 }
 
-/** No metric line pending / retryable and no conversation payload waiting; false when they cannot be read. */
-async function hasNoPendingData(sessionId: string): Promise<boolean> {
+/**
+ * No metric line pending / retryable (unless `metricsWithheld`) and no conversation payload waiting;
+ * false when they cannot be read.
+ */
+async function hasNoPendingData(sessionId: string, metricsWithheld: boolean): Promise<boolean> {
   try {
     const { readJSONLTolerant } = await import('../../../agents/core/session/utils/jsonl-reader.js');
-    const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');
-    const deltas = await readJSONLTolerant<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId), '[hook:SessionEnd]');
-    if (deltas.some(isDeltaSendCandidate)) {
-      return false;
+    if (!metricsWithheld) {
+      const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');
+      const deltas = await readJSONLTolerant<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId), '[hook:SessionEnd]');
+      if (deltas.some(isDeltaSendCandidate)) {
+        return false;
+      }
     }
     const { isSendCandidate } = await import('../../../providers/plugins/sso/session/processors/conversations/payload-queue.js');
     const payloads = await readJSONLTolerant<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId), '[hook:SessionEnd]');
