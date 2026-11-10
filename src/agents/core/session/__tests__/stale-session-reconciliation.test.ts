@@ -13,7 +13,7 @@ import { join, resolve } from 'path';
 import type { Session } from '../types.js';
 import type { BaseHookEvent } from '../../types.js';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
-import { boundedRequest, noteSendAttempt } from '@/providers/plugins/sso/session/bounded-request.js';
+import { boundedRequest, noteAwaitingDestination, noteSendAttempt } from '@/providers/plugins/sso/session/bounded-request.js';
 import { processStartedAt } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
 import { onFakeClock } from '../../../../../tests/helpers/fake-clock.js';
@@ -41,6 +41,19 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/providers/core/codemie-auth-helpers.js')>()),
   getStoredAnalyticsCredentials: vi.fn(async () => ({ credentials: { cookies: { session: 'abc' } } })),
 }));
+
+/** The legacy gate as the start pass sees it: the real one unless a test names the native ids that wait on the backend. */
+const gate = vi.hoisted(() => ({ waiting: new Set<string>() }));
+vi.mock('../legacy-metrics-gate.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../legacy-metrics-gate.js')>();
+  return {
+    ...actual,
+    legacyMetricsVerdict: vi.fn(async (session: Parameters<typeof actual.legacyMetricsVerdict>[0]) =>
+      gate.waiting.has(session.correlation?.agentSessionId ?? '')
+        ? { publish: false, reason: 'destination-unconfirmed', transient: true } as const
+        : actual.legacyMetricsVerdict(session)),
+  };
+});
 
 const {
   reconcileOtherSessions,
@@ -120,6 +133,7 @@ beforeEach(() => {
   mkdirSync(sessionsDir, { recursive: true });
   vi.mocked(fsPromises.readFile).mockClear();
   vi.mocked(fsPromises.stat).mockClear();
+  gate.waiting.clear();
 });
 
 afterEach(() => {
@@ -262,6 +276,40 @@ describe('reconcileOtherSessions', () => {
 
     expect(load(refused.sessionId).deliveryAttempts).toBe(1);
     expect(load(timedOut.sessionId).deliveryAttempts).toBe(2);
+  });
+
+  it('gives back the attempt whose legacy metrics wait for the destination confirmation, within the evidence retention', async () => {
+    const DAY = 24 * HOUR;
+    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryAttempts: 2 });
+    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryAttempts: 2 });
+    save(recent);
+    save(expired);
+    // What the end-metric / metrics-sync senders do on a destination-unconfirmed verdict: nothing sent, the signal flagged
+    const hook = pipeline({ deliverSession: async (_id, config) => noteAwaitingDestination(config.abortSignal) });
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.deliverSession).toHaveBeenCalledTimes(2);
+    expect(load(recent.sessionId).deliveryAttempts).toBe(2);
+    // Past the retention the marker can no longer appear: the attempt counts, so the record is dropped in the end
+    expect(load(expired.sessionId).deliveryAttempts).toBe(3);
+  });
+
+  it('records whose legacy metrics wait for the destination never hold the cap from an older ready record', async () => {
+    const waiting = Array.from({ length: 5 }, (_, i) => record({
+      status: 'completed', provider: 'anthropic-subscription', startTime: Date.now() - (i + 1) * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: `native-waiting-${i}` },
+    }));
+    waiting.forEach((r) => { save(r); gate.waiting.add(r.correlation!.agentSessionId!); });
+    const ready = record({ status: 'completed', provider: 'anthropic-subscription', startTime: Date.now() - 10 * HOUR });
+    save(ready);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    const handled = hook.deliverSession.mock.calls.map(([sessionId]) => sessionId);
+    // The ready one first; the waiting ones keep the slots left over, newest first
+    expect(handled).toEqual([ready.sessionId, ...waiting.slice(0, 4).map((r) => r.sessionId)]);
   });
 
   it('leaves a completed record of a live owner untouched; one of a dead owner is delivered once', async () => {

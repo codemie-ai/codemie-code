@@ -1,6 +1,7 @@
 /**
  * EPMCDME-17054: the legacy `POST /v1/metrics` path of an `anthropic-subscription` session publishes only
- * while work consent holds for the folder and the new pipeline has not held or discarded the session.
+ * while work consent holds for the folder, the backend has accepted the session's destination through the new
+ * pipeline, and the new pipeline has not held or discarded the session.
  *
  * Seam: `processEvent`. The network boundary is `fetch`; records, the consent store and the evidence
  * markers are real files under a per-test CODEMIE_HOME; the signed-in identity is mocked.
@@ -54,6 +55,7 @@ const { getCodemiePath } = await import('@/utils/paths.js');
 const { consentStorePath, connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice } = await import('@/agents/core/evidence/stop-marker.js');
+const { writeAccepted } = await import('@/agents/core/evidence/accepted-marker.js');
 const { advanceCursor, createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
 const { recordUnacknowledged } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-state.js');
 const { streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
@@ -155,8 +157,13 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
     await recordUnacknowledged(NATIVE_ID, 'hooks', { kind: 'retry', reason: 'http_503', detail: 'project_unavailable', hold: true }, { cursor: 0, end: 100 });
   };
-  /** The hold recovers: the backend acknowledges the range; the notice marker stays (it is never removed in production). */
-  const recover = (): Promise<void> => advanceCursor(NATIVE_ID, 'hooks', 100);
+  /** The backend accepts the session's publication to the consented project, as the forwarder records it. */
+  const accept = (): Promise<void> => writeAccepted(markerKey(), NATIVE_ID, 'test321');
+  /** The hold recovers: the backend acknowledges and accepts the range; the notice marker stays (it is never removed in production). */
+  const recover = async (): Promise<void> => {
+    await advanceCursor(NATIVE_ID, 'hooks', 100);
+    await accept();
+  };
 
   async function endMetricSkipped(sessionId: string): Promise<string | undefined> {
     return (await new SessionStore().loadSession(sessionId))?.endMetricSkipped;
@@ -171,8 +178,9 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     expect(await endMetricSkipped(sessionId)).toBe('no-work-consent');
   });
 
-  it('(a) with consent connected for the cwd, start and end are POSTed with X-CodeMie-Project', async () => {
+  it('(a) with consent connected for the cwd and the destination accepted, start and end are POSTed with X-CodeMie-Project', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept();
 
     const sessionId = await runSession('anthropic-subscription');
 
@@ -181,8 +189,30 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
     expect(await endMetricSkipped(sessionId)).toBeUndefined();
   });
 
+  it('(a2) consent without the backend accepting the destination (e.g. not a project member): nothing is sent, the record stays undelivered', async () => {
+    // QA ed56e443 / cb5ee530: a short session ends before the forwarder's first send, so no hold is known yet
+    await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+
+    const sessionId = await runSession('anthropic-subscription');
+
+    expect(metricCalls()).toEqual([]);
+    expect(await endMetricSkipped(sessionId)).toBeUndefined();
+    expect(await isDeliveryDone(sessionId, configFor('anthropic-subscription', sessionId))).toBe(false);
+
+    // The backend then refuses the destination: still nothing on a later delivery
+    await hold();
+    await deliverSession(sessionId, configFor('anthropic-subscription', sessionId));
+    expect(metricCalls()).toEqual([]);
+
+    // A member's session is accepted later: the deferred start goes ahead of the end
+    await recover();
+    await deliverSession(sessionId, configFor('anthropic-subscription', sessionId));
+    expect(lifecycleStatuses()).toEqual(['started', 'completed']);
+  });
+
   it('(b) consent revoked between start and end: only the start metric is sent', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept();
 
     const sessionId = await runSession('anthropic-subscription', async () => {
       await disconnectFolder(IDENTITY, repo);
@@ -194,6 +224,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
   it('(c) a recoverable hold at SessionEnd leaves the end metric unmarked; it is sent once the hold clears', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept(); // accepted at first, then held: a later hold wins over the earlier acceptance
 
     const sessionId = await runSession('anthropic-subscription', hold);
 
@@ -224,6 +255,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
   it('(c2) a final hold (stop marker) at SessionEnd is persisted as destination-held', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept();
     const { writeStop } = await import('@/agents/core/evidence/stop-marker.js');
 
     const sessionId = await runSession('anthropic-subscription', async () => {
@@ -236,6 +268,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
   it('(e) a gate error at SessionEnd sends nothing and leaves the end metric unmarked; a later delivery sends it', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept();
 
     const sessionId = await runSession('anthropic-subscription', async () => {
       faults.consentThrows = true;
@@ -252,6 +285,7 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
 
   it('(f) usage deltas under a recoverable hold stay pending and are sent once the hold clears', async () => {
     await connectFolder({ ...IDENTITY, project: 'test321' }, repo);
+    await accept(); // accepted at first, then held: a later hold wins over the earlier acceptance
     const sessionId = 'gate-17054-held-deltas';
     const transcript = join(repo, 'held-deltas.jsonl');
     writeFileSync(transcript, `${transcriptLines().join('\n')}\n`);

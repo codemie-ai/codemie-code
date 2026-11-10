@@ -1,0 +1,53 @@
+{
+  "decision": "request-changes",
+  "rationale": "Blind and edge-case lenses ran; acceptance was skipped (no-spec: sdlc-light has no story/spec artifact), so confidence is low. Four blocking findings: the reopen activity signal counts non-message transcript records (attachment/mode/permission-mode lines that Claude Code writes on resume), which would lift the 16993 suppression at once; PreCompact/StopFailure still forward their hook event for an idle reopened session; the parent lookup marks an incomplete scan (cap reached, parent unreadable) as definitively resolved; and two input guards are missing (empty transcript_path scans cwd, non-array inheritedUuids from a hand-edited state throws). Deferred (not emitted): sibling-file memory/latency under the parse-state lock, duplicate storage of inherited uuids in seenMessageUuids, copied lines without a uuid, a failed lock on resume SessionStart re-announcing the start, and a first-pass lookup that cannot be retried later. Dismissed: 6 duplicate or speculative blind-lens notes.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {"standard": "code-quality (ES modules, .js imports, no any, logger.debug)", "status": "pass", "notes": "npm run lint (zero warnings), tsc --noEmit and npm run build are clean"},
+    {"standard": "git-workflow (Conventional Commits, header <= 100)", "status": "pass", "notes": "commit c5310672 passed commitlint"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "deriveMainEvents sets ownActivity for every line that passes the counted-line filter, including non-message records (attachment hook output, mode, permission-mode, last-prompt, file-history-snapshot) that Claude Code appends when a session is reopened.",
+      "impact": "A real prompt-less reopen sets reopenActive on its first pass, so Stop/SessionEnd lifecycle events and the summary are forwarded again and EPMCDME-16993 is not fixed in practice; the unit tests only used message lines.",
+      "recommendation": "Count activity only for a non-synthetic assistant line or a genuine user turn (isGenuineUserTurn); add a test where the reopen appends attachment/mode lines only and suppression holds.",
+      "location": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts:deriveMainEvents",
+      "sources": ["edge-case", "blind"]
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "onPreCompactEvent and onStopFailureEvent use openMainTranscriptPass but ignore pass.suppressLifecycle, so the raw hook event is still forwarded for an idle reopened session.",
+      "impact": "A lifecycle-class hook stamped at the reopen time still reaches the backend.",
+      "recommendation": "Return an empty payload with finalize when pass.suppressLifecycle is true in both handlers; add a plugin test for each.",
+      "location": "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts:onPreCompactEvent,onStopFailureEvent",
+      "sources": ["edge-case"]
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "resolveInheritedUuids returns [] (resolved for good) even when the scan was incomplete: more than 200 siblings, or a candidate file that could not be read.",
+      "impact": "A parent that was missed or momentarily unreadable leaves its copied lines counted as the child's own work, permanently (the 16992 symptom) with no log.",
+      "recommendation": "Return null (not resolved) when the sibling cap truncated the scan or a candidate read failed, and log it with logger.debug.",
+      "location": "src/agents/plugins/claude-code-otlp/transcript/continuation.ts:resolveInheritedUuids",
+      "sources": ["edge-case", "blind"]
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Two input guards are missing: an empty transcriptPath makes dirname return '.', so the process cwd is scanned for *.jsonl; and ensureInherited calls new Set(state.inheritedUuids) without checking it is an array.",
+      "impact": "An unrelated file can be taken as the parent; a corrupt or hand-edited state value throws inside the pass and drops the batch.",
+      "recommendation": "Return null for an empty transcriptPath; use Array.isArray(state.inheritedUuids) in ensureInherited.",
+      "location": "src/agents/plugins/claude-code-otlp/transcript/continuation.ts:resolveInheritedUuids, transcript/orchestrator.ts:ensureInherited",
+      "sources": ["edge-case", "blind"]
+    }
+  ]
+}

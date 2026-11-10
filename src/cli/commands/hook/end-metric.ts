@@ -7,6 +7,7 @@ import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
 import { loadAnalyticsCookies } from './analytics-cookies.js';
+import { noteAwaitingDestination } from '@/providers/plugins/sso/session/bounded-request.js';
 
 /** Saves the end metric's outcome on the latest copy of the record. */
 async function markEndMetric(
@@ -135,10 +136,12 @@ export async function sendSessionEndMetrics(
       return;
     }
 
-    const { legacyMetricsVerdict } = await import('../../../agents/core/session/legacy-metrics-gate.js');
+    const { awaitsDestination, legacyMetricsVerdict } = await import('../../../agents/core/session/legacy-metrics-gate.js');
     const verdict = await legacyMetricsVerdict(session);
     if (!verdict.publish) {
       logger.debug(`[hook:SessionEnd] End metric withheld: ${verdict.reason}`);
+      // Reconciliation does not count this attempt: the record waits for the backend's answer, not for a retry
+      if (awaitsDestination(verdict)) noteAwaitingDestination(options.abortSignal);
       // A transient verdict is not persisted: the end metric stays unmarked and delivery retries it
       if (!('transient' in verdict)) {
         await markEndMetric(sessionStore, sessionId, { endMetricSkipped: verdict.reason, legacyMetricsWithheld: verdict.reason });
