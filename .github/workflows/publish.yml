@@ -54,9 +54,17 @@ jobs:
       - name: Run CI checks
         run: npm run ci
 
+      - name: Pack and validate completion artifacts
+        id: package
+        run: |
+          tarball=$(npm pack --ignore-scripts)
+          node scripts/validate-completion-artifacts.mjs "$tarball"
+          printf 'tarball=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
+
       - name: Publish to NPM
-        run: npm publish --access public
+        run: npm publish "$TARBALL" --access public --ignore-scripts
         env:
+          TARBALL: ${{ steps.package.outputs.tarball }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Prepare installer artifacts

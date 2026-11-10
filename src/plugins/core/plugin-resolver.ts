@@ -6,13 +6,11 @@
  * win when the same plugin exists in multiple locations.
  */
 
-import { join, basename } from 'path';
-import { existsSync } from 'fs';
-import { readdir } from 'fs/promises';
+import { basename } from 'path';
 import { logger } from '../../utils/logger.js';
-import { getCodemiePath } from '../../utils/paths.js';
+import { discoverPluginSources } from './plugin-discovery.js';
 import { loadPlugin } from './plugin-loader.js';
-import type { LoadedPlugin, PluginSettings, PluginSource } from './types.js';
+import type { LoadedPlugin, PluginSettings } from './types.js';
 
 /**
  * Options for plugin resolution
@@ -48,17 +46,14 @@ export async function resolvePlugins(
   const enabledSet = settings.enabled ? new Set(settings.enabled) : null;
 
   // Discover from all sources
-  const sources: Array<{ dirs: string[]; source: PluginSource; priority: number }> = [
-    { dirs: cliDirs, source: 'local', priority: 400 },
-    { dirs: await getProjectPluginDirs(cwd), source: 'project', priority: 300 },
-    { dirs: await getUserPluginDirs(), source: 'user', priority: 200 },
-    { dirs: settings.dirs || [], source: 'local', priority: 100 },
-  ];
+  const sources = await discoverPluginSources(cwd, settings, cliDirs, error => {
+    logger.debug(`[plugin] Failed to read user plugin cache: ${error instanceof Error ? error.message : String(error)}`);
+  });
 
   // Load all plugins from all sources
   const pluginMap = new Map<string, LoadedPlugin>();
 
-  for (const { dirs, source, priority: _priority } of sources) {
+  for (const { dirs, source } of sources) {
     for (const dir of dirs) {
       try {
         const isEnabled = determineEnabled(dir, enabledSet, disabledSet);
@@ -85,47 +80,6 @@ export async function resolvePlugins(
   logger.debug(`[plugin] Resolved ${plugins.length} plugins (${plugins.filter(p => p.enabled).length} enabled)`);
 
   return plugins;
-}
-
-/**
- * Get project-level plugin directories
- *
- * Scans .codemie/plugins/ for subdirectories, each treated as a plugin root.
- */
-async function getProjectPluginDirs(cwd: string): Promise<string[]> {
-  const projectPluginsDir = join(cwd, '.codemie', 'plugins');
-  if (!existsSync(projectPluginsDir)) {
-    return [];
-  }
-
-  try {
-    const entries = await readdir(projectPluginsDir, { withFileTypes: true });
-    return entries
-      .filter(entry => entry.isDirectory())
-      .map(entry => join(projectPluginsDir, entry.name));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get user-level plugin directories from cache
- */
-async function getUserPluginDirs(): Promise<string[]> {
-  const cacheDir = getCodemiePath('plugins', 'cache');
-  if (!existsSync(cacheDir)) {
-    return [];
-  }
-
-  try {
-    const entries = await readdir(cacheDir, { withFileTypes: true });
-    return entries
-      .filter(entry => entry.isDirectory())
-      .map(entry => join(cacheDir, entry.name));
-  } catch (error) {
-    logger.debug(`[plugin] Failed to read user plugin cache: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
-  }
 }
 
 /**

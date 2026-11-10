@@ -59,6 +59,11 @@ jobs:
       - name: Build project
         run: npm run build
 
+      - name: Validate packed completion artifacts
+        run: |
+          tarball=$(npm pack --ignore-scripts)
+          node scripts/validate-completion-artifacts.mjs "$tarball"
+
       # Upload build artifacts to share with test jobs
       - name: Upload build artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
