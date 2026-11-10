@@ -261,3 +261,37 @@ describe('acquireParseStateLock', () => {
     await reacquireRelease();
   });
 });
+
+describe('continuation and reopen fields', () => {
+  it('loads a state saved without the fields with them undefined', async () => {
+    const dir = join(codemieHome, 'analytics', 'state');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'old-session.json'), JSON.stringify({ mainOffset: 12 }), 'utf-8');
+
+    const state = await loadParseState('old-session');
+
+    expect(state.mainOffset).toBe(12);
+    expect(state.inheritedUuids).toBeUndefined();
+    expect(state.inheritedResolved).toBeUndefined();
+    expect(state.reopened).toBeUndefined();
+    expect(state.reopenActive).toBeUndefined();
+  });
+
+  it('round-trips the fields through save and load', async () => {
+    const state: TranscriptParseState = {
+      ...createParseState(),
+      inheritedUuids: ['u1', 'u2'],
+      inheritedResolved: true,
+      reopened: true,
+      reopenActive: false,
+    };
+
+    await saveParseState('new-session', state);
+    const loaded = await loadParseState('new-session');
+
+    expect(loaded.inheritedUuids).toEqual(['u1', 'u2']);
+    expect(loaded.inheritedResolved).toBe(true);
+    expect(loaded.reopened).toBe(true);
+    expect(loaded.reopenActive).toBe(false);
+  });
+});
