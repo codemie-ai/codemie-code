@@ -411,3 +411,93 @@ describe('CodexMetricsProcessor — apply_patch deltas', () => {
     expect(fromDeltas).toEqual(extractCodexMetrics(messages as never).fileOperations);
   });
 });
+
+describe('CodexMetricsProcessor — parent and direct children', () => {
+  let tempHome: string;
+  let dayDir: string;
+  let originalCodemieHome: string | undefined;
+
+  const PARENT_ID = '01a1c558-d216-7c70-95b7-83cb9ab38a05';
+  const CHILD_ID = '01a1c56c-4e89-7281-a20a-509bf93321b4';
+  const body = (b: string): string => `*** Begin Patch\n${b}\n*** End Patch`;
+  const line = (timestamp: string, type: string, payload: unknown): string => JSON.stringify({ timestamp, type, payload });
+  const patch = (ts: string, callId: string, file: string): string[] => [
+    line(ts, 'response_item', { type: 'custom_tool_call', call_id: callId, name: 'apply_patch', input: body(`*** Add File: ${file}\n+x`) }),
+    line(ts, 'event_msg', { type: 'patch_apply_end', call_id: callId, success: true }),
+  ];
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), 'codex-family-test-'));
+    originalCodemieHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = tempHome;
+    mkdirSync(join(tempHome, 'sessions'), { recursive: true });
+    writeFileSync(join(tempHome, 'sessions', 'codemie-session-xyz.json'), JSON.stringify({ sessionId: 'codemie-session-xyz', startTime: 0 }));
+    dayDir = join(tempHome, 'codex-sessions', '2026', '11', '10');
+    mkdirSync(dayDir, { recursive: true });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    rmSync(tempHome, { recursive: true, force: true });
+    if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
+    else delete process.env.CODEMIE_HOME;
+  });
+
+  function writeParent(): string {
+    const path = join(dayDir, `rollout-2026-11-10T10-00-00-${PARENT_ID}.jsonl`);
+    writeFileSync(path, [
+      line('2026-11-10T10:00:00.000Z', 'session_meta', { id: PARENT_ID, timestamp: '2026-11-10T10:00:00.000Z', cwd: '/tmp/work', source: 'cli' }),
+      line('2026-11-10T10:01:00.000Z', 'response_item', { type: 'function_call', call_id: 'spawn1', name: 'spawn_agent', arguments: '{"agent_type":"worker"}' }),
+      line('2026-11-10T10:01:01.000Z', 'event_msg', { type: 'collab_agent_spawn_end', call_id: 'spawn1', new_thread_id: CHILD_ID }),
+      line('2026-11-10T10:02:00.000Z', 'response_item', { type: 'function_call', call_id: 'wait1', name: 'wait_agent', arguments: JSON.stringify({ targets: [CHILD_ID] }) }),
+      line('2026-11-10T10:03:00.000Z', 'response_item', { type: 'function_call_output', call_id: 'wait1', output: 'done' }),
+      ...patch('2026-11-10T10:04:00.000Z', 'parent-patch', 'parent.ts'),
+    ].join('\n') + '\n');
+    return path;
+  }
+
+  function writeChild(parentId = PARENT_ID): string {
+    const path = join(dayDir, `rollout-2026-11-10T10-01-30-${CHILD_ID}.jsonl`);
+    writeFileSync(path, [
+      line('2026-11-10T10:01:30.000Z', 'session_meta', {
+        id: CHILD_ID, timestamp: '2026-11-10T10:01:30.000Z', cwd: '/tmp/work', parent_thread_id: parentId,
+        source: { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1 } } },
+      }),
+      ...patch('2026-11-10T10:02:30.000Z', 'child-patch', 'child.ts'),
+    ].join('\n') + '\n');
+    return path;
+  }
+
+  const readIds = (): string[] => {
+    const path = join(tempHome, 'sessions', 'codemie-session-xyz_metrics.jsonl');
+    return existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).recordId).filter((id: string) => id.endsWith('-patch')).sort() : [];
+  };
+
+  async function run(pickedPath: string): Promise<void> {
+    const { CodexSessionAdapter } = await import('../codex.session.js');
+    const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
+    const parsed = await new CodexSessionAdapter({ name: 'codex', dataPaths: { home: '.codex', sessionsDir: 'sessions' } } as never).parseSessionFile(pickedPath, 'codemie-session-xyz');
+    await new CodexMetricsProcessor().process(parsed, {} as never);
+  }
+
+  it('counts parent and child patches once across two passes', async () => {
+    const parent = writeParent();
+    writeChild();
+    await run(parent);
+    await run(parent);
+    expect(readIds()).toEqual(['child-patch', 'parent-patch']);
+  });
+
+  it('still reports the parent patches when a fresh child rollout is picked over an older parent', async () => {
+    writeParent();
+    const child = writeChild();
+    await run(child);
+    expect(readIds()).toEqual(['child-patch', 'parent-patch']);
+  });
+
+  it('uses the picked rollout when no parent is found', async () => {
+    const child = writeChild('01a1c558-0000-7c70-95b7-000000000000');
+    await run(child);
+    expect(readIds()).toEqual(['child-patch']);
+  });
+});

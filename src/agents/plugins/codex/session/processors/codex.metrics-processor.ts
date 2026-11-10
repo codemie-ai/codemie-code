@@ -101,7 +101,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
 
       // apply_patch: one delta per call with a known outcome, carrying its file operations. The call_id
       // dedupe runs before the patch is parsed.
-      const patchCalls = collectApplyPatchCalls(records, existingCallIds);
+      const patchCalls = collectApplyPatchCalls(await familyRecords(meta, records, session), existingCallIds);
       const window = deltas.length > 0 || patchCalls.length > 0 ? await resolveRunWindow(session.sessionId, context) : undefined;
       for (const call of patchCalls) {
         const callTime = call.timestamp ? Date.parse(call.timestamp) : NaN;
@@ -182,5 +182,32 @@ async function resolveBranch(meta: CodexSessionMetadata): Promise<string | undef
     return branch ?? undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Records apply_patch calls are read from: the parent rollout plus its direct children, so a fresh
+ * child picked over an older (resumed) parent still reports the parent's edits. Without a rollout
+ * path the picked records and the loaded sub-agents are used.
+ */
+async function familyRecords(
+  meta: CodexSessionMetadata,
+  records: CodexRolloutRecord[],
+  session: ParsedSession
+): Promise<CodexRolloutRecord[]> {
+  const subagents = (session.subagents ?? []) as Array<{ filePath: string; messages: unknown[] }>;
+  if (!meta.rolloutPath) {
+    return [...records, ...subagents.flatMap((s) => s.messages as CodexRolloutRecord[])];
+  }
+  try {
+    const { loadRolloutFamilyRecords } = await import('../../codex.session.js');
+    return await loadRolloutFamilyRecords(
+      meta.rolloutPath,
+      records,
+      subagents as Array<{ agentId: string; filePath: string; messages: unknown[] }>
+    );
+  } catch (error) {
+    logger.debug('[codex-metrics] Could not load the rollout family; using the picked rollout', error);
+    return records;
   }
 }
