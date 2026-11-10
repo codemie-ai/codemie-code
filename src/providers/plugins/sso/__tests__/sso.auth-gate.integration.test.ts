@@ -25,7 +25,9 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 import { ensureCodeMieSsoAuthOrWait } from '../sso.auth-gate.js';
-import { startDetachedSsoLogin, waitForDetachedSsoLogin } from '@/providers/plugins/sso/sso.detached-login.js';
+import { SSOSessionExpiryPlugin } from '../proxy/plugins/sso-session-expiry.plugin.js';
+import type { IncomingMessage } from 'http';
+import { startDetachedSsoLogin, waitForDetachedSsoLogin, getLastSignInAt } from '@/providers/plugins/sso/sso.detached-login.js';
 
 const BASE_URL = 'https://codemie.example.com';
 const configured = { provider: 'ai-run-sso', ssoUrl: BASE_URL, syncApiUrl: BASE_URL };
@@ -65,5 +67,58 @@ describe('ensureCodeMieSsoAuthOrWait with real credential lookup (cookie-only cr
     expect(startDetachedSsoLogin).not.toHaveBeenCalled();
     expect(openBrowser).not.toHaveBeenCalled();
     expect(clearSSOCredentials).not.toHaveBeenCalled();
+  });
+
+  describe('after the session-expiry plugin records a rejection', () => {
+    const cookieCredentials = {
+      cookies: { _oauth2_proxy: 'cookie-value' },
+      apiUrl: `${BASE_URL}/code-assistant-api`,
+    };
+
+    /** Runs the real plugin interceptor against a fake upstream rejection. */
+    async function rejectThroughPlugin(response: Partial<IncomingMessage>): Promise<void> {
+      const plugin = new SSOSessionExpiryPlugin();
+      const interceptor = await plugin.createInterceptor({
+        credentials: cookieCredentials,
+        config: { targetApiUrl: `${BASE_URL}/code-assistant-api` },
+      } as never);
+      const tools = {
+        readBody: vi.fn().mockResolvedValue(Buffer.alloc(0)),
+        retry: vi.fn(),
+        fromBuffer: vi.fn().mockImplementation(() => ({ headers: {} })),
+      };
+      const result = await interceptor.onUpstreamResponse!(
+        { headers: { cookie: '_oauth2_proxy=cookie-value' } } as never,
+        response as IncomingMessage,
+        tools as never
+      );
+      expect(result.statusCode).toBe(401);
+    }
+
+    beforeEach(() => {
+      retrieveSSOCredentials.mockResolvedValue({ ...cookieCredentials, expiresAt: Date.now() + 3_600_000 });
+      vi.mocked(getLastSignInAt).mockResolvedValue(null);
+    });
+
+    const rejections: Array<[string, Partial<IncomingMessage>]> = [
+      ['an oauth2 redirect', { statusCode: 302, headers: { location: `${BASE_URL}/oauth2/start?rd=/` } }],
+      ['a session-shaped 401', { statusCode: 401, headers: {} }],
+    ];
+
+    it.each(rejections)('starts one sign-in for %s and proceeds after sign-in without a second launch', async (_name, response) => {
+      await rejectThroughPlugin(response);
+      vi.mocked(startDetachedSsoLogin).mockClear();
+
+      vi.mocked(waitForDetachedSsoLogin).mockImplementation(async () => {
+        vi.mocked(getLastSignInAt).mockResolvedValue(Date.now() + 5_000);
+        return { status: 'succeeded' } as never;
+      });
+
+      const result = await ensureCodeMieSsoAuthOrWait(configured, { waitMs: 60_000 });
+
+      expect(result).toEqual({ ok: true });
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+      expect(openBrowser).not.toHaveBeenCalled();
+    });
   });
 });
