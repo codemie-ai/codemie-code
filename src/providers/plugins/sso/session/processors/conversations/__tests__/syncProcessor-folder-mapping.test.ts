@@ -167,4 +167,46 @@ describe('createSyncProcessor — Copilot folder mapping', () => {
     expect(upsertConversation).toHaveBeenCalledTimes(1);
     expect(upsertConversation.mock.calls[0][3]).toBe('opencode');
   });
+
+  it('routes codemie-omp sessions to the omp folder', async () => {
+    const { createSyncProcessor } = await import('../syncProcessor.js');
+
+    const sessionsDir = join(tempHome, 'sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, 'sess-omp_conversation.jsonl'),
+      JSON.stringify({
+        payloadId: 'omp-conv-1@0',
+        timestamp: Date.now(),
+        isTurnContinuation: false,
+        historyIndices: [0, 0],
+        messageCount: 2,
+        lastProcessedMessageUuid: 'omp-conv-1@0',
+        payload: {
+          conversationId: 'omp-conv-1',
+          history: [
+            { role: 'User', message: 'hello', history_index: 0 },
+            { role: 'Assistant', message: 'world', history_index: 0 },
+          ],
+        },
+        status: 'pending',
+      }) + '\n'
+    );
+
+    const processor = createSyncProcessor();
+    const result = await processor.process(
+      { sessionId: 'sess-omp', agentName: 'omp' } as never,
+      {
+        apiBaseUrl: 'http://localhost:4000',
+        cookies: '',
+        clientType: 'codemie-omp',
+        version: '0.0.0',
+        dryRun: false,
+      } as never,
+    );
+
+    expect(result.success).toBe(true);
+    expect(upsertConversation).toHaveBeenCalledTimes(1);
+    expect(upsertConversation.mock.calls[0][3]).toBe('omp');
+  });
 });
