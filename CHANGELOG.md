@@ -22,7 +22,6 @@ All notable changes to this project are documented in this file, following [Keep
 - Native (untracked) Pi and oh-my-pi sessions now report tool calls, skills and sub-agents; oh-my-pi `/skill:` prompts, `skill://` loads and `task` dispatches are recognized, and `sdlc-factory/…`, `sdlc-standard`, `sdlc-doctor` and `sdlc-status` mark a session as CodeMie AI Factory
 - Encrypted reasoning-content recovery now also covers `codemie proxy start` and `codemie proxy connect --omp` daemons
 - Legacy metrics are published only after the backend accepts the destination, and subscription sessions without consent are kept out of them
-- Copied and no-activity Claude session history is skipped in analytics
 - Local-proxy Claude sessions are classified as CodeMie-routed
 - Windows transcript paths are matched case-insensitively in analytics
 - A delivered session keeps its attribution on metrics
