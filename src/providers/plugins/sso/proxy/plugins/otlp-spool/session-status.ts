@@ -74,6 +74,11 @@ export interface SessionStatus {
    * advanced, never an accepted send, so it stays visible here (AC18). Reason capped at 200 chars.
    */
   lastDiscard?: Discard;
+  /**
+   * The first discard that ended the session's publication (`endsSessionDiscard`). Sticky: a later benign discard
+   * replaces `lastDiscard`, never this.
+   */
+  endingDiscard?: Discard;
   /** Provenance decided at the last tick: evidence request or today's legacy request. */
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
@@ -222,6 +227,15 @@ function parseDelivery(raw: unknown): SessionStatus['delivery'] {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * A discard that ends the session's publication: the backend's project conflict, or any discard of the hooks stream
+ * (a final 422 refusal or a 2xx with `accepted: 0`). A rejected legacy OTEL JSON batch (`payload_rejected`) or an OTLP
+ * partial rejection drops that batch only.
+ */
+export function endsSessionDiscard(discard: Pick<Discard, 'reason' | 'stream'>): boolean {
+  return discard.reason === 'session_project_conflict' || (discard.stream === 'hooks' && discard.reason !== 'payload_rejected');
+}
+
 function parseDiscard(raw: unknown): Discard | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const { reason, stream, bytes, at } = raw as Record<string, unknown>;
@@ -286,6 +300,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (delivery) status.delivery = delivery;
   const discard = parseDiscard(source['lastDiscard']);
   if (discard) status.lastDiscard = discard;
+  const ending = parseDiscard(source['endingDiscard']);
+  if (ending) status.endingDiscard = ending;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
   if (source['sendCheckpoint'] === true) status.sendCheckpoint = true;
@@ -375,6 +391,7 @@ export async function advanceCursor(
       }
     }
     if (discard) status.lastDiscard = { ...discard, reason: discard.reason.slice(0, 200) };
+    if (discard && !status.endingDiscard && endsSessionDiscard(discard)) status.endingDiscard = status.lastDiscard;
   });
 }
 

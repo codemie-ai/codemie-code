@@ -27,6 +27,8 @@ export interface ConsentEntry {
    * earlier connection's reference is never authorized by the new one.
    */
   id: string;
+  /** Unix ms of the connect; absent on entries written by older builds. */
+  connected_at?: number;
 }
 
 export interface ConsentScope {
@@ -89,7 +91,7 @@ const scopeMatches = (e: ConsentEntry, s: ConsentScope): boolean =>
   e.owner_hash === s.owner_hash && e.api_identity === s.api_identity && sameProject(e.project, s.project);
 
 /** A consent lookup that keeps "no entry" apart from "the store could not be read". */
-export type ConsentLookup = { kind: 'found'; ref: string } | { kind: 'none' } | { kind: 'unknown' };
+export type ConsentLookup = { kind: 'found'; ref: string; connectedAt?: number } | { kind: 'none' } | { kind: 'unknown' };
 
 /**
  * The entry that grants consent for this owner, backend, project and folder (the folder or an ancestor of it is
@@ -103,7 +105,8 @@ export async function lookupConsent(scope: ConsentScope, cwd: string): Promise<C
     if (store.kind !== 'ok') return { kind: 'unknown' };
     const canonicalCwd = await canonicalizePath(cwd);
     const entry = store.entries.find((e) => scopeMatches(e, scope) && isPathInside(canonicalCwd, e.folder));
-    return entry ? { kind: 'found', ref: consentRef(entry) } : { kind: 'none' };
+    if (!entry) return { kind: 'none' };
+    return { kind: 'found', ref: consentRef(entry), ...(typeof entry.connected_at === 'number' && { connectedAt: entry.connected_at }) };
   } catch {
     return { kind: 'unknown' };
   }
@@ -173,7 +176,7 @@ export async function connectFolder(scope: ConsentScope, folder: string): Promis
     if (store.kind !== 'ok') {
       throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
     }
-    const entry: ConsentEntry = { ...scope, project: scope.project.trim(), folder: canonical, id: randomBytes(8).toString('hex') };
+    const entry: ConsentEntry = { ...scope, project: scope.project.trim(), folder: canonical, id: randomBytes(8).toString('hex'), connected_at: Date.now() };
     if (!store.entries.some((e) => sameTarget(e, entry))) await save([...store.entries, entry]);
     return canonical;
   });

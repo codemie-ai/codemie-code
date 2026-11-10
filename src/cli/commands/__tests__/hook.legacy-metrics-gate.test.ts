@@ -54,7 +54,9 @@ const { getCodemiePath } = await import('@/utils/paths.js');
 const { consentStorePath, connectFolder, disconnectFolder } = await import('@/agents/core/evidence/consent-store.js');
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice } = await import('@/agents/core/evidence/stop-marker.js');
-const { createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+const { advanceCursor, createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+const { recordUnacknowledged } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-state.js');
+const { streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
 
 interface Sent {
   url: string;
@@ -146,13 +148,15 @@ describe('EPMCDME-17054 legacy /v1/metrics work-consent gate', () => {
   }
 
   const markerKey = (): string => recordKey(IDENTITY.api_identity, IDENTITY.owner_hash, NATIVE_ID);
-  /** A backend hold as the forwarder records it: the create-once notice marker plus the live spool hold. */
+  /** A backend 503 `project_unavailable` hold as the forwarder records it: the create-once notice plus the held delivery. */
   const hold = async (): Promise<void> => {
+    await writeStatus(NATIVE_ID, createStatus());
+    writeFileSync(streamFile(NATIVE_ID, 'hooks'), 'x'.repeat(100));
     await writeNotice(markerKey(), 'hold_project_unavailable', NATIVE_ID);
-    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'verdict_unavailable', since: 1 } } });
+    await recordUnacknowledged(NATIVE_ID, 'hooks', { kind: 'retry', reason: 'http_503', detail: 'project_unavailable', hold: true }, { cursor: 0, end: 100 });
   };
-  /** The hold recovers: the spool hold clears, the notice marker stays (it is never removed in production). */
-  const recover = (): Promise<void> => writeStatus(NATIVE_ID, createStatus());
+  /** The hold recovers: the backend acknowledges the range; the notice marker stays (it is never removed in production). */
+  const recover = (): Promise<void> => advanceCursor(NATIVE_ID, 'hooks', 100);
 
   async function endMetricSkipped(sessionId: string): Promise<string | undefined> {
     return (await new SessionStore().loadSession(sessionId))?.endMetricSkipped;

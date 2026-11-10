@@ -26,8 +26,10 @@ const { connectFolder, consentStorePath, disconnectFolder } = await import('@/ag
 const { recordKey } = await import('@/agents/core/evidence/record-store.js');
 const { writeNotice, writeStop, markerState } = await import('@/agents/core/evidence/stop-marker.js');
 const { evidenceDir, stopFileName } = await import('@/agents/core/evidence/record-store.js');
-const { createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
-const { statusFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
+const { advanceCursor, createStatus, writeStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+const { recordUnacknowledged } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-state.js');
+const { statusFile, streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
+const { dirname } = await import('node:path');
 
 const SCOPE = { api_identity: 'api-x', owner_hash: 'owner-x', project: 'test321' };
 const NATIVE_ID = 'native-17054';
@@ -53,8 +55,9 @@ describe('legacy /v1/metrics gate', () => {
   });
 
   async function session(provider = GATED, project: string | undefined = 'test321', agentSessionId = NATIVE_ID) {
+    const startTime = Date.now();
     const frozen = await freezeLegacyMetricsConsent(provider, project, folder);
-    return { provider, project, workingDirectory: folder, correlation: { agentSessionId }, ...frozen };
+    return { provider, project, workingDirectory: folder, startTime, correlation: { agentSessionId }, ...frozen };
   }
 
   const PENDING = { publish: false, reason: 'destination-pending', transient: true };
@@ -112,14 +115,25 @@ describe('legacy /v1/metrics gate', () => {
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'consent-revoked' });
   });
 
-  it('a notice marker outlives its hold: once the spool holds clear the session publishes', async () => {
+  it('a backend hold (503 project_unavailable, as the forwarder records it) is pending until acknowledged; the notice outlives it', async () => {
     await connectFolder(SCOPE, folder);
     const s = await session();
-    await writeNotice(recordKey('api-x', 'owner-x', NATIVE_ID), 'hold_project_unavailable', NATIVE_ID);
-    await writeStatus(NATIVE_ID, { ...createStatus(), holds: { session: { reason: 'verdict_unavailable', since: 1 } } });
-    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
     await writeStatus(NATIVE_ID, createStatus());
+    writeFileSync(streamFile(NATIVE_ID, 'hooks'), 'x'.repeat(100));
+    await writeNotice(recordKey('api-x', 'owner-x', NATIVE_ID), 'hold_project_unavailable', NATIVE_ID);
+    await recordUnacknowledged(NATIVE_ID, 'hooks', { kind: 'retry', reason: 'http_503', detail: 'project_unavailable', hold: true }, { cursor: 0, end: 100 });
+    expect(await legacyMetricsVerdict(s)).toEqual(PENDING);
+    await advanceCursor(NATIVE_ID, 'hooks', 100);
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+  });
+
+  it('a session-ending discard stays held after a later benign discard replaces lastDiscard', async () => {
+    await connectFolder(SCOPE, folder);
+    const s = await session();
+    await writeStatus(NATIVE_ID, createStatus());
+    await advanceCursor(NATIVE_ID, 'hooks', 10, { reason: 'session_project_conflict', stream: 'hooks', bytes: 10, at: Date.now() });
+    await advanceCursor(NATIVE_ID, 'logsJson', 10, { reason: 'payload_rejected', stream: 'logsJson', bytes: 10, at: Date.now() });
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'destination-held' });
   });
 
   it('a non-empty spool holds entry is a transient destination-pending until the hold clears', async () => {
@@ -167,12 +181,37 @@ describe('legacy /v1/metrics gate', () => {
     const good = readFileSync(consentStorePath(), 'utf-8');
     writeFileSync(consentStorePath(), '{not json');
     const s = await session();
-    expect(s).toMatchObject({ legacyMetricsConsentUnresolved: true });
+    expect(s).toMatchObject({ legacyMetricsConsentUnresolved: { apiIdentity: 'api-x', ownerHash: 'owner-x' } });
     expect(s.legacyMetricsConsent).toBeUndefined();
     expect(await legacyMetricsVerdict(s)).toEqual(UNAVAILABLE);
     writeFileSync(consentStorePath(), good);
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
     await disconnectFolder(SCOPE, folder);
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'no-work-consent' });
+  });
+
+  it('the send-time lookup runs under the start identity, whoever is signed in now', async () => {
+    await connectFolder(SCOPE, folder);
+    const { readFileSync } = await import('node:fs');
+    const good = readFileSync(consentStorePath(), 'utf-8');
+    writeFileSync(consentStorePath(), '{not json');
+    const s = await session();
+    writeFileSync(consentStorePath(), good);
+    identity.current = null; // signed out / unreadable credentials at send time
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: true });
+    identity.current = { api_identity: 'api-other', owner_hash: 'owner-other' };
+    await connectFolder({ ...SCOPE, api_identity: 'api-other', owner_hash: 'owner-other' }, folder);
+    await disconnectFolder(SCOPE, folder);
+    expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'no-work-consent' });
+  });
+
+  it('an entry connected after the session started never counts for an unresolved session', async () => {
+    mkdirSync(dirname(consentStorePath()), { recursive: true });
+    writeFileSync(consentStorePath(), '{not json');
+    const s = await session();
+    rmSync(consentStorePath());
+    await new Promise((r) => setTimeout(r, 5));
+    await connectFolder(SCOPE, folder);
     expect(await legacyMetricsVerdict(s)).toEqual({ publish: false, reason: 'no-work-consent' });
   });
 

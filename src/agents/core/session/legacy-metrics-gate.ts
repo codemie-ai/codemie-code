@@ -12,7 +12,8 @@ import type { Session } from './types.js';
  * A final skip (LEGACY_GATE_SKIPS) is persisted as `legacyMetricsWithheld` by whichever sender meets it first (the
  * end metric also as `endMetricSkipped`); the session's deltas then count as delivered. A transient verdict sends
  * nothing and persists nothing, so delivery retries once it clears:
- * - `destination-pending`: a recoverable hold (a non-empty spool `holds` entry);
+ * - `destination-pending`: a live hold of the new pipeline (a spool `holds` entry, or a stream whose delivery the
+ *   backend holds, e.g. `project_unavailable`; acknowledgement clears it);
  * - `verdict-unavailable`: the verdict could not be established for now (an unreadable consent store, marker or
  *   spool status, or any other error).
  * A condition that can never clear is final: a missing or unsafe native session id (`session-unverifiable`; an
@@ -46,8 +47,10 @@ export function isLegacyGatedProvider(provider: string | undefined): boolean {
 type FrozenConsent = Pick<Session, 'legacyMetricsConsent' | 'legacyMetricsConsentUnresolved'>;
 
 /**
- * SessionStart: the consent entry for a gated provider with a project, signed in. `legacyMetricsConsentUnresolved`
- * when it could not be read (an error, an unreadable store), so it is not mistaken for "no entry". Never throws.
+ * SessionStart: the consent entry for a gated provider with a project, signed in. When the store cannot be read,
+ * `legacyMetricsConsentUnresolved` keeps the identity of this moment, so it is not mistaken for "no entry" and the
+ * send-time lookup runs under the start's owner and backend. No identity (signed out) is no consent, as the new
+ * pipeline treats it. Never throws.
  */
 export async function freezeLegacyMetricsConsent(
   provider: string | undefined,
@@ -61,29 +64,24 @@ export async function freezeLegacyMetricsConsent(
     if (!identity) return {};
     const { lookupConsent } = await import('@/agents/core/evidence/consent-store.js');
     const found = await lookupConsent({ ...identity, project }, cwd);
-    if (found.kind === 'unknown') return { legacyMetricsConsentUnresolved: true };
+    if (found.kind === 'unknown') {
+      return { legacyMetricsConsentUnresolved: { apiIdentity: identity.api_identity, ownerHash: identity.owner_hash } };
+    }
     if (found.kind === 'none') return {};
     return { legacyMetricsConsent: { ref: found.ref, apiIdentity: identity.api_identity, ownerHash: identity.owner_hash } };
   } catch (error) {
-    logger.debug('[legacy-metrics-gate] Consent could not be resolved at start: resolved at send time', error instanceof Error ? error.name : 'unknown');
-    return { legacyMetricsConsentUnresolved: true };
+    // Both lookups never throw: only a failed module load lands here, with no identity to look up under later
+    logger.debug('[legacy-metrics-gate] Consent could not be resolved at start: no-work-consent', error instanceof Error ? error.name : 'unknown');
+    return {};
   }
 }
 
 type GateInput = Pick<Session, 'provider' | 'project' | 'workingDirectory' | 'legacyMetricsConsent'> &
-  Partial<Pick<Session, 'legacyMetricsConsentUnresolved' | 'legacyMetricsWithheld'>> & {
+  Partial<Pick<Session, 'legacyMetricsConsentUnresolved' | 'legacyMetricsWithheld' | 'startTime'>> & {
     correlation?: { agentSessionId?: string };
   };
 
 type DestinationState = 'clear' | 'held' | 'unverifiable' | LegacyMetricsPending;
-
-/**
- * A spool discard that ends the session's publication: the backend's project conflict, or a discard of the
- * hooks stream. A rejected legacy OTEL JSON batch (`payload_rejected`) drops that batch only.
- */
-function endsSession(discard: { reason: string; stream: string }): boolean {
-  return discard.reason === 'session_project_conflict' || (discard.stream === 'hooks' && discard.reason !== 'payload_rejected');
-}
 
 /** Whether the new pipeline stopped or discarded the session for good (`held`) or holds it for now (pending). */
 async function destinationState(consent: NonNullable<Session['legacyMetricsConsent']>, nativeId: string | undefined): Promise<DestinationState> {
@@ -94,25 +92,39 @@ async function destinationState(consent: NonNullable<Session['legacyMetricsConse
   const marker = await markerState(recordKey(consent.apiIdentity, consent.ownerHash, nativeId));
   if (marker === 'stop') return 'held';
   if (marker === 'unknown') return 'verdict-unavailable';
-  const { readStatusState } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
+  const { endsSessionDiscard, readStatusState } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
   const read = await readStatusState(nativeId);
   if (read.kind === 'unreadable') return 'verdict-unavailable';
   if (read.kind === 'absent') return 'clear';
   const { status } = read;
-  if (status.stopIntent !== undefined || (status.lastDiscard && endsSession(status.lastDiscard))) return 'held';
-  if (Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
+  // `lastDiscard` too: a status written before `endingDiscard` existed
+  const ended = status.endingDiscard ?? (status.lastDiscard && endsSessionDiscard(status.lastDiscard) ? status.lastDiscard : undefined);
+  if (status.stopIntent !== undefined || ended) return 'held';
+  const backendHold = Object.values(status.delivery ?? {}).some((failure) => failure?.reason === 'destination_hold');
+  if (backendHold || Object.keys(status.holds ?? {}).length > 0) return 'destination-pending';
   return 'clear';
 }
 
-/** The consent to check: the frozen one, else (start could not read it) the entry resolved now. */
+/**
+ * The consent to check: the frozen one, else (start could not read the store) the entry looked up now under the
+ * start's identity. An entry connected after the session started does not count: consent is never granted
+ * retroactively. An entry from an older build carries no connect time and counts as connected before the start.
+ */
 async function consentToCheck(session: GateInput): Promise<NonNullable<Session['legacyMetricsConsent']> | LegacyMetricsVerdict> {
   if (session.legacyMetricsConsent) return session.legacyMetricsConsent;
-  if (!session.legacyMetricsConsentUnresolved) return { publish: false, reason: 'no-work-consent' };
-  const now = await freezeLegacyMetricsConsent(session.provider, session.project, session.workingDirectory);
-  if (now.legacyMetricsConsent) return now.legacyMetricsConsent;
-  return now.legacyMetricsConsentUnresolved
-    ? { publish: false, reason: 'verdict-unavailable', transient: true }
-    : { publish: false, reason: 'no-work-consent' };
+  const identity = session.legacyMetricsConsentUnresolved;
+  if (!identity || !session.project?.trim()) return { publish: false, reason: 'no-work-consent' };
+  const { lookupConsent } = await import('@/agents/core/evidence/consent-store.js');
+  const found = await lookupConsent(
+    { owner_hash: identity.ownerHash, api_identity: identity.apiIdentity, project: session.project },
+    session.workingDirectory
+  );
+  if (found.kind === 'unknown') return { publish: false, reason: 'verdict-unavailable', transient: true };
+  if (found.kind === 'none') return { publish: false, reason: 'no-work-consent' };
+  if (found.connectedAt !== undefined && (session.startTime === undefined || found.connectedAt > session.startTime)) {
+    return { publish: false, reason: 'no-work-consent' };
+  }
+  return { ref: found.ref, apiIdentity: identity.apiIdentity, ownerHash: identity.ownerHash };
 }
 
 /** Send time. Never throws; any doubt => withhold, transiently unless the outcome is final. */
