@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "generated": "2026-11-10T00:00:00Z",
+  "test_repo": { "separate": false, "root": "." },
+  "publication": {
+    "visibility": "public",
+    "ticket_refs": "none",
+    "repo_urls": "derive",
+    "environment_urls": "env_var",
+    "ticket_data": "store",
+    "run_artifacts": "local",
+    "leak_gate": { "enabled": true, "builtin": true }
+  },
+  "disciplines": {
+    "unit":          { "practiced": true,  "owner": "dev", "framework": "vitest" },
+    "api":           { "practiced": true,  "owner": "dev", "framework": "vitest" },
+    "e2e_ui":        { "practiced": false, "desired": false },
+    "accessibility": { "practiced": false, "desired": false },
+    "performance":   { "practiced": false, "desired": false },
+    "security":      { "practiced": false, "desired": false },
+    "contract":      { "practiced": false, "desired": false }
+  },
+  "adapters": {
+    "ticket": {
+      "name": "jira", "status": "configured", "method": "skill:codemie-jira-assistant",
+      "project_key": "EPMCDME", "search": true,
+      "schema": {
+        "issue_types": ["Story", "Bug", "Task", "Epic"],
+        "custom_fields": {
+          "customfield_14500": "Epic Link",
+          "customfield_38401": "Client Type (Account Segment)",
+          "customfield_35710": "Product",
+          "customfield_34405": "Job type"
+        },
+        "link_types": [
+          { "id": 10600, "name": "Test", "inward": "is_tested_by", "outward": "is_a_test_for" },
+          { "id": 14501, "name": "Tests", "inward": "tested by", "outward": "tests" },
+          { "id": 10500, "name": "Defect", "inward": "is blocked by defect", "outward": "is a defect of" }
+        ]
+      },
+      "defects": {
+        "filing": "allowed", "issue_type": "Bug", "required_fields": ["summary"],
+        "fields": { "priority": "priority", "components": "components" },
+        "severity_map": { "critical": "Critical", "major": "Major", "minor": "Minor" }
+      }
+    },
+    "test_management": { "status": "not configured" },
+    "vcs": { "name": "github", "status": "configured", "method": "cli:gh", "schema": {} },
+    "runtime": { "status": "not configured" }
+  },
+  "git_conventions": {
+    "status": "partial",
+    "branch": {
+      "status": "user_provided",
+      "pattern": "<type>/<slug>",
+      "example": "test/subscription-analytics-tests"
+    },
+    "commit": {
+      "status": "user_provided",
+      "pattern": "<type>(<scope>): <subject>",
+      "types_observed": ["feat", "fix", "chore", "test", "docs", "ci"],
+      "example": "test(analytics): add subscription-isolation regression coverage"
+    },
+    "mr_title": {
+      "status": "user_provided",
+      "pattern": "<type>(<scope>): <subject>",
+      "example": "test(analytics): add subscription-isolation regression coverage"
+    }
+  },
+  "code_repos": [
+    { "label": "codemie-code", "local_path": "." },
+    { "label": "codemie", "local_path": "../codemie", "vcs": { "name": "gitlab", "method": "cli:glab" } },
+    {
+      "label": "codemie-sdk", "role": "test-dependency", "change_policy": "free",
+      "local_path": "../codemie-sdk", "package_path": "sdk/codemie-nodejs",
+      "visibility": "public",
+      "guide_path": "AGENTS.md",
+      "setup": "npm install --no-audit --no-fund",
+      "verify": ["npm run lint", "npm test"],
+      "consume": {
+        "local": "cd ../codemie-sdk/sdk/codemie-nodejs && npm run build && npm link && cd - && npm link codemie-sdk",
+        "check": "node -e \"process.exit(require('fs').realpathSync('node_modules/codemie-sdk').includes('codemie-sdk/sdk/codemie-nodejs') ? 0 : 1)\"",
+        "restore": "npm unlink codemie-sdk && npm install codemie-sdk@0.1.648",
+        "after_merge": "a maintainer publishes a new codemie-sdk release, then someone bumps the pinned codemie-sdk version in this repo's package.json"
+      },
+      "publication": { "ticket_refs": "none", "leak_gate": { "enabled": false } },
+      "vcs": { "name": "github", "method": "cli:gh" },
+      "git_conventions": {
+        "status": "detected",
+        "branch":   { "status": "detected", "pattern": "<type>/<slug>", "example": "fix/user-reactivate-endpoint" },
+        "commit":   { "status": "detected", "pattern": "<type>(<scope>): <subject>", "types_observed": ["feat", "fix", "chore", "ci", "style", "docs"], "example": "fix(node): normalize assistant IDs and preserve HTTP error diagnostics" },
+        "mr_title": { "status": "detected", "pattern": "<type>(<scope>): <subject>", "example": "fix(node): normalize assistant IDs and preserve HTTP error diagnostics" }
+      }
+    }
+  ]
+}
