@@ -1,15 +1,15 @@
 /**
  * Raw-mode picker for `codemie models switch`.
  *
- * Built the same way profile/index.ts's promptProfileSelectionCustom is, on
- * top of the shared selection UI primitives — but renders model ids instead
- * of ProfileInfo rows, and is scoped to the active profile's own model list
+ * Works like the other selection prompts (e.g. the agent-target picker): Space
+ * pre-selects the row under the cursor, Enter confirms the pre-selected row, and
+ * Continue / Cancel buttons close the screen. Scoped to the list it is given
  * (never the full provider catalog).
  */
 
 import chalk from 'chalk';
-import { buildSingleChoiceRow, buildTopLine } from './shared/selection/ui.js';
-import { ANSI, KEY } from './shared/selection/constants.js';
+import { buildButtons, buildSingleChoiceRow, buildTopLine } from './shared/selection/ui.js';
+import { ANSI, KEY, SHARED_TEXT } from './shared/selection/constants.js';
 import { COLOR } from './shared/constants.js';
 
 /** The user left a switch prompt (Esc / Ctrl+C); nothing was changed. */
@@ -25,6 +25,13 @@ export interface ModelSwitchSelectionUIOptions {
   models: string[];
   activeModel: string;
   cursorIndex: number;
+  /** Pre-selected id (marked with ●); defaults to the active model. */
+  selectedModel?: string;
+  /** True while the Continue / Cancel buttons hold the focus instead of the rows. */
+  buttonsFocused?: boolean;
+  focusedButton?: 'continue' | 'cancel';
+  /** Validation message shown under the rows. */
+  error?: string;
   /** Per-model agents whose list holds it; omitted for legacy profiles (no annotation). */
   agentLabels?: Record<string, string[]>;
   /** Screen title; defaults to "Models". */
@@ -42,6 +49,7 @@ export function formatAgentsSuffix(agents: string[] | undefined): string {
 function buildModelSelectionRow(
   label: string,
   isActive: boolean,
+  isSelected: boolean,
   isCursor: boolean,
   agents?: string[]
 ): string {
@@ -51,7 +59,7 @@ function buildModelSelectionRow(
   return buildSingleChoiceRow({
     label: displayName,
     isCursor,
-    isSelected: isActive,
+    isSelected,
     formatLabel: value => value,
     formatSelectedMarker: marker => chalk.green(marker),
     formatUnselectedMarker: marker => chalk.white(marker),
@@ -63,6 +71,10 @@ export function renderModelSwitchSelectionUI({
   models,
   activeModel,
   cursorIndex,
+  selectedModel = activeModel,
+  buttonsFocused = false,
+  focusedButton = 'continue',
+  error,
   agentLabels,
   title = 'Models',
   rowLabel = id => id,
@@ -77,13 +89,24 @@ export function renderModelSwitchSelectionUI({
     output += buildModelSelectionRow(
       rowLabel(modelId),
       modelId === activeModel,
-      index === cursorIndex,
+      modelId === selectedModel,
+      !buttonsFocused && index === cursorIndex,
       agentLabels?.[modelId]
     ) + '\n';
   });
 
+  if (error) {
+    output += '\n' + chalk.red(error) + '\n';
+  }
+
   output += '\n';
-  output += chalk.dim('↑↓ to Navigate • Enter to Confirm • Esc to Cancel\n');
+  output += buildButtons({
+    areNavigationButtonsFocused: buttonsFocused,
+    focusedButton,
+    isSearchFocused: false,
+    isPaginationFocused: null,
+  });
+  output += chalk.dim(SHARED_TEXT.INSTRUCTIONS_SINGLE_CHOICE + '\n');
 
   return output;
 }
@@ -121,12 +144,88 @@ export async function promptAgentSwitchSelection(
   });
 }
 
-function promptRawSingleChoice(options: Omit<ModelSwitchSelectionUIOptions, 'cursorIndex'>): Promise<string> {
+interface SingleChoiceState {
+  cursorIndex: number;
+  selectedModel?: string;
+  buttonsFocused: boolean;
+  focusedButton: 'continue' | 'cancel';
+  error?: string;
+}
+
+export type SingleChoiceOutcome =
+  | { type: 'render' }
+  | { type: 'none' }
+  | { type: 'confirm'; model: string }
+  | { type: 'cancel' };
+
+/**
+ * Applies one key to the picker state. Space pre-selects the row under the cursor; Enter
+ * confirms the pre-selected row (or cancels when the Cancel button is focused).
+ */
+export function applySingleChoiceKey(
+  state: SingleChoiceState,
+  models: string[],
+  key: string
+): SingleChoiceOutcome {
+  state.error = undefined;
+
+  switch (key) {
+    case KEY.CTRL_C:
+    case KEY.ESC:
+      return { type: 'cancel' };
+    case KEY.ARROW_UP:
+      if (state.buttonsFocused) {
+        state.buttonsFocused = false;
+      } else {
+        state.cursorIndex = Math.max(0, state.cursorIndex - 1);
+      }
+      return { type: 'render' };
+    case KEY.ARROW_DOWN:
+      if (!state.buttonsFocused && state.cursorIndex === models.length - 1) {
+        state.buttonsFocused = true;
+        state.focusedButton = 'continue';
+      } else if (!state.buttonsFocused) {
+        state.cursorIndex = Math.min(models.length - 1, state.cursorIndex + 1);
+      }
+      return { type: 'render' };
+    case KEY.ARROW_LEFT:
+    case KEY.ARROW_RIGHT:
+      if (!state.buttonsFocused) return { type: 'none' };
+      state.focusedButton = state.focusedButton === 'continue' ? 'cancel' : 'continue';
+      return { type: 'render' };
+    case KEY.SPACE:
+      if (state.buttonsFocused) return { type: 'none' };
+      state.selectedModel = models[state.cursorIndex];
+      return { type: 'render' };
+    case KEY.ENTER:
+    case KEY.NEWLINE:
+      if (state.buttonsFocused && state.focusedButton === 'cancel') {
+        return { type: 'cancel' };
+      }
+      if (!state.selectedModel) {
+        state.error = 'Press Space to select an item, then Enter to confirm.';
+        return { type: 'render' };
+      }
+      return { type: 'confirm', model: state.selectedModel };
+    default:
+      return { type: 'none' };
+  }
+}
+
+function promptRawSingleChoice(
+  options: Omit<ModelSwitchSelectionUIOptions, 'cursorIndex' | 'selectedModel' | 'buttonsFocused' | 'focusedButton' | 'error'>
+): Promise<string> {
   const { models, activeModel } = options;
-  let cursorIndex = Math.max(0, models.findIndex(id => id === activeModel));
+  const activeIndex = models.findIndex(id => id === activeModel);
+  const state: SingleChoiceState = {
+    cursorIndex: Math.max(0, activeIndex),
+    selectedModel: activeIndex >= 0 ? activeModel : undefined,
+    buttonsFocused: false,
+    focusedButton: 'continue',
+  };
 
   function render(): void {
-    process.stdout.write(renderModelSwitchSelectionUI({ ...options, cursorIndex }));
+    process.stdout.write(renderModelSwitchSelectionUI({ ...options, ...state }));
   }
 
   return new Promise((resolve, reject) => {
@@ -153,27 +252,15 @@ function promptRawSingleChoice(options: Omit<ModelSwitchSelectionUIOptions, 'cur
     process.stdin.setEncoding('utf8');
 
     process.stdin.on('data', (key: string) => {
-      switch (key) {
-        case KEY.ARROW_UP:
-          cursorIndex = Math.max(0, cursorIndex - 1);
-          render();
-          break;
-        case KEY.ARROW_DOWN:
-          cursorIndex = Math.min(models.length - 1, cursorIndex + 1);
-          render();
-          break;
-        case KEY.ENTER:
-        case KEY.NEWLINE:
-          cleanup();
-          resolve(models[cursorIndex]);
-          break;
-        case KEY.ESC:
-        case KEY.CTRL_C:
-          cleanup();
-          reject(new ModelSwitchCancelledError());
-          break;
-        default:
-          break;
+      const outcome = applySingleChoiceKey(state, models, key);
+      if (outcome.type === 'render') {
+        render();
+      } else if (outcome.type === 'confirm') {
+        cleanup();
+        resolve(outcome.model);
+      } else if (outcome.type === 'cancel') {
+        cleanup();
+        reject(new ModelSwitchCancelledError());
       }
     });
 
