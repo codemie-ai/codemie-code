@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import stripAnsi from 'strip-ansi';
 
-const { getAnalyticsAuthStatus, clearAnalyticsAuthStatus, getLastSignInAt, summarizeSpoolDelivery } = vi.hoisted(
-  () => ({
-    getAnalyticsAuthStatus: vi.fn(),
-    clearAnalyticsAuthStatus: vi.fn(),
-    getLastSignInAt: vi.fn(),
-    summarizeSpoolDelivery: vi.fn(),
-  })
-);
+const {
+  getAnalyticsAuthStatus,
+  clearAnalyticsAuthStatus,
+  getLastSignInAt,
+  summarizeSpoolDelivery,
+  getStoredAnalyticsCredentials,
+  forwarderIdentity,
+  getPolicyState,
+} = vi.hoisted(() => ({
+  getAnalyticsAuthStatus: vi.fn(),
+  clearAnalyticsAuthStatus: vi.fn(),
+  getLastSignInAt: vi.fn(),
+  summarizeSpoolDelivery: vi.fn(),
+  getStoredAnalyticsCredentials: vi.fn(),
+  forwarderIdentity: vi.fn(),
+  getPolicyState: vi.fn(),
+}));
 
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus,
@@ -23,6 +32,16 @@ vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
 }));
 vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js', () => ({
   summarizeSpoolDelivery,
+}));
+vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getStoredAnalyticsCredentials,
+}));
+vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js', () => ({
+  forwarderIdentity,
+}));
+vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js', () => ({
+  getPolicyState,
 }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -59,7 +78,10 @@ describe('collectDeliveryHealth', () => {
     vi.clearAllMocks();
     getAnalyticsAuthStatus.mockResolvedValue(null);
     getLastSignInAt.mockResolvedValue(null);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, classificationUnreachable: false });
+    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: { apiUrl: URL, email: 'user@example.com' }, url: URL });
+    forwarderIdentity.mockReturnValue({ api_identity: 'id', owner_hash: 'hash' });
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
   });
 
   it('is healthy when the reply is ok and nothing else applies', async () => {
@@ -171,11 +193,65 @@ describe('collectDeliveryHealth', () => {
     getAnalyticsAuthStatus.mockRejectedValue(new Error('boom'));
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
   });
+
+  it('reports classification_unreachable when the spool flags it and capability is not evidence', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: false, classificationUnreachable: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unreachable',
+      pendingBytes: 7,
+    });
+  });
+
+  it('threads the resolved capability into summarizeSpoolDelivery', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
+      pendingBytes: 0,
+      mismatchHeld: false,
+      sendFailed: false,
+      classificationUnreachable: capability !== 'evidence',
+    }));
+    const health = await collectDeliveryHealth(state, ok);
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+    expect(health).toMatchObject({ status: 'healthy' });
+  });
+
+  it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {
+    forwarderIdentity.mockReturnValue(null);
+    // Mirrors the real spool's own capability check, so this only passes if 'evidence' was threaded through.
+    summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
+      pendingBytes: 7,
+      mismatchHeld: false,
+      sendFailed: false,
+      classificationUnreachable: capability !== 'evidence',
+    }));
+    const health = await collectDeliveryHealth(state, ok);
+    expect(health.reason).not.toBe('classification_unreachable');
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+  });
+
+  it('keeps send_failed ahead of classification_unreachable in precedence', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailed: true, classificationUnreachable: true });
+    expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
+  });
+
+  it('still resolves normally when there is no stored analytics credential', async () => {
+    getStoredAnalyticsCredentials.mockResolvedValue(null);
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+  });
 });
 
 describe('DELIVERY_REASONS', () => {
-  it('labels every reason and gives a remedy to all but send_failed', () => {
-    const codes: DeliveryReason[] = ['credentials_expired', 'auth_rejected', 'identity_mismatch', 'send_failed'];
+  it('labels every reason and gives a remedy to all but send_failed and classification_unreachable', () => {
+    const codes: DeliveryReason[] = [
+      'credentials_expired',
+      'auth_rejected',
+      'identity_mismatch',
+      'send_failed',
+      'classification_unreachable',
+    ];
     expect(Object.keys(DELIVERY_REASONS).sort()).toEqual([...codes].sort());
     for (const code of codes) {
       expect(DELIVERY_REASONS[code].label.length).toBeGreaterThan(0);
@@ -184,6 +260,7 @@ describe('DELIVERY_REASONS', () => {
     expect(DELIVERY_REASONS.auth_rejected.run).toBe('codemie profile login');
     expect(DELIVERY_REASONS.identity_mismatch.run).toBe('codemie proxy restart');
     expect(DELIVERY_REASONS.send_failed.run).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unreachable.run).toBeUndefined();
   });
 });
 

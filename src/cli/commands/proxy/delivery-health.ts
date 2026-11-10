@@ -1,12 +1,19 @@
 import chalk from 'chalk';
-import { getAnalyticsPlatformSource, getPlatformUrl } from '@/providers/core/codemie-auth-helpers.js';
+import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { summarizeSpoolDelivery } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
+import { forwarderIdentity } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
+import { getPolicyState, type Capability } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
 
-export type DeliveryReason = 'credentials_expired' | 'auth_rejected' | 'identity_mismatch' | 'send_failed';
+export type DeliveryReason =
+  | 'credentials_expired'
+  | 'auth_rejected'
+  | 'identity_mismatch'
+  | 'send_failed'
+  | 'classification_unreachable';
 
 export interface DeliveryHealth {
   status: 'healthy' | 'unhealthy' | 'unknown';
@@ -24,9 +31,28 @@ export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: str
   auth_rejected: { label: 'analytics auth rejected', run: 'codemie profile login' },
   identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
   send_failed: { label: 'sending to analytics failed on this machine' },
+  classification_unreachable: { label: 'analytics backend has never answered for this session' },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
+
+/**
+ * The backend capability for the active profile's namespace, read from the on-disk stored
+ * credential — never the daemon's live one, never a network probe. `'evidence'` is also the
+ * safe fallback whenever no NamespaceId can be resolved, so an unresolved identity can never
+ * produce a false `classification_unreachable` (spec AC3).
+ */
+async function resolveCapability(state: DaemonState): Promise<Capability> {
+  const stored = await getStoredAnalyticsCredentials(state.syncCodeMieUrl, {}, {
+    provider: state.provider,
+    baseUrl: state.targetUrl,
+  });
+  if (!stored) return 'evidence';
+  const identity = forwarderIdentity(stored.credentials);
+  if (!identity) return 'evidence';
+  const policy = await getPolicyState({ ...identity, profile: state.profile });
+  return policy.capability;
+}
 
 /**
  * Whether analytics reach CodeMie, judged from the daemon's `/health` reply, the auth marker and the
@@ -43,16 +69,18 @@ export async function collectDeliveryHealth(
       {},
       { provider: state.provider, baseUrl: state.targetUrl }
     );
-    const [marker, spool] = await Promise.all([
+    const [marker, capability] = await Promise.all([
       applicableAuthMarker(source, [state.targetUrl, state.syncApiUrl, getPlatformUrl(source)]),
-      summarizeSpoolDelivery(),
+      resolveCapability(state),
     ]);
+    const spool = await summarizeSpoolDelivery(capability);
 
     const reason: DeliveryReason | undefined =
       reply?.credentials === 'stale' ? 'credentials_expired'
       : marker ? 'auth_rejected'
       : spool.mismatchHeld ? 'identity_mismatch'
       : spool.sendFailed ? 'send_failed'
+      : spool.classificationUnreachable ? 'classification_unreachable'
       : undefined;
 
     if (reason) {
