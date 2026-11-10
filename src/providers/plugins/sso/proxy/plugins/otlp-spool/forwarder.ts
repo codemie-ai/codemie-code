@@ -259,10 +259,13 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     outcome = { kind: 'retry', reason: 'request_error' };
   }
   // A discard that ends the session's publication outlives the swept status as a marker the legacy gate checks first,
-  // written before the cursor advances (acknowledge records the same discard in the status)
+  // written before the cursor advances (acknowledge records the same discard in the status). Neither the marker nor its
+  // intent durable: the batch stays unacknowledged, so its resend meets the same final answer and tries again.
   const recorded = req.evidence ?? req.guard;
   if (recorded && acknowledged(outcome) && outcome.reason && endsSessionDiscard({ reason: outcome.reason, stream })) {
-    await recordDestinationMarker({ marker: 'ended' }, recorded.key, sessionId);
+    if ((await recordDestinationMarker({ marker: 'ended' }, recorded.key, sessionId)) === 'lost') {
+      outcome = { kind: 'retry', reason: 'ended_marker_unwritten' };
+    }
   }
   await recordUnacknowledged(sessionId, stream, outcome, req.range, holdExpiredStop(req.evidence));
   // Outcome processed (acknowledged, held or retried): the checkpoint is released unless a required stop is recorded nowhere durable.

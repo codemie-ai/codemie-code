@@ -16,6 +16,9 @@ const writeStopMock = vi.fn();
 const writeNoticeMock = vi.fn();
 /** Sees every destination marker write before the real one runs (a rejection stands for a failed write). */
 const writeAcceptedMock = vi.fn(async (_key: string, _sessionId: string, _projectTag: string) => undefined);
+const writeEndedMock = vi.fn(async (_key: string, _sessionId: string) => undefined);
+/** A status write that records a destination intent fails (the spool's own storage is unwritable too). */
+const statusFaults = vi.hoisted(() => ({ intentWriteFails: false }));
 const consentHoldsMock = vi.fn();
 const noteFailureMock = vi.fn(async () => 'noted');
 const refreshPolicyMock = vi.fn();
@@ -43,7 +46,10 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
 });
 vi.mock('../session-status.js', async (importOriginal) => ({
   endsSessionDiscard: (await importOriginal<typeof import('../session-status.js')>()).endsSessionDiscard,
-  advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock, writeStatus: vi.fn(async () => undefined),
+  advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock,
+  writeStatus: vi.fn(async (_id: string, status: { destinationIntent?: unknown }) => {
+    if (statusFaults.intentWriteFails && status.destinationIntent) throw new Error('ENOSPC');
+  }),
   readStatusState: vi.fn(async () => ({ kind: 'absent' })),
 }));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
@@ -66,6 +72,7 @@ vi.mock('@/agents/core/evidence/accepted-marker.js', async (importOriginal) => {
     writeDestinationMarker: async (...args: Parameters<typeof actual.writeDestinationMarker>) => {
       const [target, key, sessionId] = args;
       if (target.marker === 'accepted') await writeAcceptedMock(key, sessionId, target.projectTag);
+      else await writeEndedMock(key, sessionId);
       return actual.writeDestinationMarker(...args);
     },
   };
@@ -115,6 +122,7 @@ describe('new-contract forwarding', () => {
     consentHoldsMock.mockResolvedValue(true);
     snapshotNdjsonMock.mockResolvedValue(null);
     snapshotBytesMock.mockResolvedValue(null);
+    statusFaults.intentWriteFails = false;
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -166,6 +174,36 @@ describe('new-contract forwarding', () => {
     // Under the forwarder's own record key (the daemon's identity, the spool session id) and the frozen project's tag.
     const { projectTag, recordKey } = await import('@/agents/core/evidence/record-store.js');
     expect(writeAcceptedMock).toHaveBeenCalledWith(recordKey('https://api', 'h', 's1'), 's1', projectTag('Proj A'));
+  });
+
+  it('a final discard that ends the session is written as the ended marker under the forwarder key before the cursor advances', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    const order: string[] = [];
+    writeEndedMock.mockImplementationOnce(async () => { order.push('ended'); });
+    advanceCursorMock.mockImplementationOnce(async () => { order.push('cursor'); });
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+    expect(writeEndedMock).toHaveBeenCalledWith(recordKey('https://api', 'h', 's1'), 's1');
+    expect(order).toEqual(['ended', 'cursor']);
+  });
+
+  it('an ended marker that is neither written nor recorded as an intent keeps the batch unacknowledged', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeEndedMock.mockRejectedValueOnce(new Error('EACCES'));
+    statusFaults.intentWriteFails = true;
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(noteFailureMock).toHaveBeenCalledWith({ reason: 'delivery_failed', detail: 'ended_marker_unwritten' });
+  });
+
+  it('an ended marker kept as an intent lets the batch be acknowledged', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeEndedMock.mockRejectedValueOnce(new Error('EACCES'));
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).toHaveBeenCalled();
   });
 
   it('the legacy gate reads the acceptance the forwarder wrote: same key, same project; another project stays unconfirmed', async () => {
