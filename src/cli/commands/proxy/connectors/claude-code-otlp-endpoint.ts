@@ -26,6 +26,11 @@ async function readOwnedOtlpEnv(): Promise<{ settings: ClaudeSettings; env: Reco
   }
 }
 
+/** Whether CodeMie currently owns the OTLP endpoint/headers pair in `~/.claude/settings.json`. */
+export async function isClaudeCodeOtlpConnected(): Promise<boolean> {
+  return (await readOwnedOtlpEnv()) !== null;
+}
+
 /** Port of the loopback endpoint Claude Code is currently told to export to, or null. */
 export async function readConfiguredOtlpPort(): Promise<number | null> {
   const owned = await readOwnedOtlpEnv();

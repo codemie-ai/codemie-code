@@ -45,6 +45,7 @@ describe('resolveHookAuthProfile', () => {
     // A directory with no local config in it or in any ancestor below the temp root.
     outsideDir = path.join(tempBase, 'outside');
     await fs.mkdir(nestedDir, { recursive: true });
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true }); // the walk stops at the Git worktree root
     await fs.mkdir(outsideDir, { recursive: true });
 
     // The walk-up would otherwise climb out of the temp dir into the real home directory and treat the
@@ -144,6 +145,35 @@ describe('resolveHookAuthProfile', () => {
       vi.spyOn(ConfigLoader, 'load').mockRejectedValueOnce(new Error('disk full'));
 
       await expect(resolveHookAuthProfile({}, nestedDir)).rejects.toThrow('disk full');
+    });
+  });
+
+  describe('nested directory with differing local and global profiles', () => {
+    // @case production-claude-code-session-opens_TC_001
+    it('keeps the session profile and never selects the global Preview profile', async () => {
+      const expected = { provider: 'ai-run-sso', baseUrl: PROD_BASE_URL, ssoUrl: PROD_SSO_URL };
+
+      // Launch profile wins from a nested cwd.
+      const fromLaunchEnv = await resolveHookAuthProfile(
+        { CODEMIE_PROFILE_CONFIG: JSON.stringify(PROD_PROFILE) },
+        nestedDir
+      );
+      expect(fromLaunchEnv).toEqual(expected);
+
+      // No launch env: nearest ancestor local config is used, from cwd and from CLAUDE_PROJECT_DIR.
+      const fromAncestorCwd = await resolveHookAuthProfile({}, nestedDir);
+      expect(fromAncestorCwd).toEqual(expected);
+      const fromProjectDir = await resolveHookAuthProfile({ CLAUDE_PROJECT_DIR: repoRoot }, nestedDir);
+      expect(fromProjectDir).toEqual(expected);
+
+      // Malformed launch value is ignored and the ancestor config is used.
+      const fromMalformed = await resolveHookAuthProfile({ CODEMIE_PROFILE_CONFIG: '{not json' }, nestedDir);
+      expect(fromMalformed).toEqual(expected);
+
+      for (const profile of [fromLaunchEnv, fromAncestorCwd, fromProjectDir, fromMalformed]) {
+        expect(profile.baseUrl).not.toBe(PREVIEW_BASE_URL);
+        expect(profile.ssoUrl).not.toBe(PREVIEW_SSO_URL);
+      }
     });
   });
 });

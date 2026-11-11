@@ -2,7 +2,7 @@ import { evidenceDir } from '../evidence/record-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
@@ -418,6 +418,27 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(configLoadMock).not.toHaveBeenCalled();
     });
 
+    it('an adapter that opts into configured-wins keeps the configured project over a native shell CODEMIE_PROJECT', async () => {
+      class ClaudeLike extends FakeAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeLike();
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run();
+      expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'proj-1' });
+    });
+
+    it('configured-wins does not change a managed session: its exported project still wins', async () => {
+      class ClaudeLike extends FakeAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeLike();
+      process.env['CODEMIE_SESSION_ID'] = 'managed-1';
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run();
+      expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'env-project' });
+    });
+
     it('ignores a blank CODEMIE_PROJECT and falls back to the resolved config', async () => {
       process.env['CODEMIE_PROJECT'] = '   ';
       await run();
@@ -440,10 +461,17 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     });
 
     it('walks up from CLAUDE_PROJECT_DIR to the nearest ancestor with a local .codemie config', async () => {
-      process.env['CLAUDE_PROJECT_DIR'] = '/workspace/mono/apps/web';
-      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === '/workspace/mono');
-      await run();
-      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/mono');
+      const mono = mkdtempSync(join(tmpdir(), 'mono-'));
+      mkdirSync(join(mono, '.git'));
+      mkdirSync(join(mono, 'apps', 'web'), { recursive: true });
+      process.env['CLAUDE_PROJECT_DIR'] = join(mono, 'apps', 'web');
+      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === mono);
+      try {
+        await run();
+        expect(getActiveProfileNameMock).toHaveBeenCalledWith(mono);
+      } finally {
+        rmSync(mono, { recursive: true, force: true });
+      }
     });
 
     it('falls back to CLAUDE_PROJECT_DIR itself when no ancestor has a local .codemie config', async () => {
@@ -1023,6 +1051,16 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
       expect(readRecords()[0]).toMatchObject({ project: 'env-project', project_source: 'none' });
       expect(resolveProjectOriginMock).not.toHaveBeenCalled();
+    });
+
+    it('a configured-wins adapter stamps the configured project, with its config origin, over a native shell value', async () => {
+      class ClaudeStamp extends StampAdapter {
+        protected override readonly configuredProjectWins = true;
+      }
+      adapter = new ClaudeStamp();
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run({ sessionId: 's9', payload: [{ session_id: 's9' }] });
+      expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'profile' });
     });
 
     it('CR-005: a project equal to the config project takes the config origin, asked with the real profile locality, in every launch mode', async () => {

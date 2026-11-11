@@ -142,19 +142,15 @@ describe('applyReasoningEffort — cli-config strategy (codex)', () => {
   });
 });
 
-// ── applyReasoningEffort: cli-flag (opencode) ────────────────────────────────
+// ── applyReasoningEffort: env without variables (opencode) ───────────────────
 
-describe('applyReasoningEffort — cli-flag strategy (opencode)', () => {
-  it('injects minimal without clamping (opencode supports the full range)', () => {
-    const out = applyReasoningEffort(['run', 'task'], {}, opencodeEffort, 'minimal', 'opencode').args;
-    expect(out).toEqual(['run', 'task', '--variant', 'minimal']);
-  });
-
-  it('suppresses injection when the native --variant flag is already present', () => {
-    const args = ['run', 'task', '--variant', 'max'];
-    const out = applyReasoningEffort(args, {}, opencodeEffort, 'high', 'opencode').args;
-    expect(out).toEqual(['run', 'task', '--variant', 'max']);
-    expect(out.filter(a => a === '--variant')).toHaveLength(1);
+describe('applyReasoningEffort — opencode (level applied by the plugin)', () => {
+  it('leaves argv and env untouched: OpenCode v2 takes the level as a model variant', () => {
+    const args = ['run', 'task'];
+    const env: NodeJS.ProcessEnv = {};
+    const out = applyReasoningEffort(args, env, opencodeEffort, 'minimal', 'opencode').args;
+    expect(out).toEqual(args);
+    expect(env).toEqual({});
   });
 });
 

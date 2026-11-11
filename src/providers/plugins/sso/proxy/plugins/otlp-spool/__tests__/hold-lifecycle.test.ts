@@ -64,6 +64,25 @@ describe('backend 503 hold lifecycle', () => {
     expect((await readStatus(SESSION))?.lastLoss).toMatchObject({ reason: 'destination_hold', detail: 'project_unavailable' });
   });
 
+  it('a lost ended marker is held until its expiry makes the marker durable: the expiry gets the hold, false keeps it', async () => {
+    const { ENDED_MARKER_UNWRITTEN, recordUnacknowledged, deliveryGate } = await import('../delivery-state.js');
+    const { readStatus } = await import('../session-status.js');
+    const lost = { kind: 'retry', reason: ENDED_MARKER_UNWRITTEN, detail: ENDED_MARKER_UNWRITTEN, hold: true } as const;
+    const markerWritten = vi.fn(async () => false);
+    await recordUnacknowledged(SESSION, 'hooks', lost, range, markerWritten);
+    expect((await readStatus(SESSION))?.delivery?.hooks).toMatchObject({ reason: 'destination_hold', detail: ENDED_MARKER_UNWRITTEN });
+    vi.setSystemTime(T0 + 2 * DAY);
+    await recordUnacknowledged(SESSION, 'hooks', lost, range, markerWritten);
+    expect(markerWritten).toHaveBeenCalledWith(expect.objectContaining({ reason: 'destination_hold', detail: ENDED_MARKER_UNWRITTEN }));
+    // Past the bound and still not durable: nothing dropped, the refusal stays held
+    expect((await readStatus(SESSION))?.delivery?.hooks?.reason).toBe('destination_hold');
+    expect((await readStatus(SESSION))?.lastLoss).toBeUndefined();
+    expect(await deliveryGate(SESSION, 'hooks', T0 + 3 * DAY, markerWritten)).toBe('wait');
+    markerWritten.mockResolvedValue(true);
+    expect(await deliveryGate(SESSION, 'hooks', T0 + 4 * DAY, markerWritten)).toBe('go');
+    expect((await readStatus(SESSION))?.delivery).toBeUndefined();
+  });
+
   it('an ordinary 503 expiry never reports a hold expiry', async () => {
     const { recordUnacknowledged } = await import('../delivery-state.js');
     const expired = vi.fn(async () => true);

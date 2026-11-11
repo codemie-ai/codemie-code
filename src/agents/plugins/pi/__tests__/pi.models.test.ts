@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'fs/promises';
 import type { LlmModel } from '../../../../providers/plugins/sso/sso.http-client.js';
 
 vi.mock('../../../../utils/pricing.js', () => ({
@@ -36,12 +37,21 @@ vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
     getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
   },
 }));
+vi.mock('../../../../providers/plugins/ollama/ollama.models.js', () => ({
+  OllamaModelProxy: class {
+    fetchModels(): Promise<never> {
+      return Promise.reject(new Error('Ollama unreachable'));
+    }
+  },
+  toCloudOffloadTag: (id: string): string => id,
+}));
 
 import { lookupPrice } from '../../../../utils/pricing.js';
 import { convertLlmModelToPiEntry, fetchAndBuildPiModels } from '../pi.models.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { getPiModelsPath } from '../pi.paths.js';
 
 /** What `lookupPrice` returns for a Claude model: already USD per million, with a 1h write rate Pi has no field for. */
 const VENDORED_CLAUDE = {
@@ -348,5 +358,69 @@ describe('fetchAndBuildPiModels SSO lookup (profile baseUrl first)', () => {
     );
 
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+  });
+});
+
+/**
+ * Pi validates provider-level `compat` against a strict schema and drops the whole `models.json`
+ * when it meets an unknown `thinkingFormat` literal, which surfaces as `Unknown provider "..."`.
+ * Every code path that writes the file must therefore omit the field.
+ */
+describe('fetchAndBuildPiModels — provider compat accepted by Pi', () => {
+  let cwd: string;
+
+  beforeEach(async () => {
+    vi.mocked(lookupPrice).mockReset();
+    vi.mocked(lookupPrice).mockReturnValue(null);
+    cwd = await mkdtemp(join(tmpdir(), 'pi-models-compat-'));
+  });
+
+  afterEach(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  async function buildAndRead(env: NodeJS.ProcessEnv): Promise<Record<string, { compat?: Record<string, unknown> }>> {
+    await fetchAndBuildPiModels(env, cwd);
+    const parsed = JSON.parse(await readFile(getPiModelsPath(cwd), 'utf-8')) as {
+      providers: Record<string, { compat?: Record<string, unknown> }>;
+    };
+    return parsed.providers;
+  }
+
+  function expectAcceptedCompat(providers: Record<string, { compat?: Record<string, unknown> }>): void {
+    for (const provider of Object.values(providers)) {
+      expect(provider.compat).not.toHaveProperty('thinkingFormat');
+      expect(provider.compat?.supportsReasoningEffort).toBe(true);
+    }
+  }
+
+  it('should omit thinkingFormat for codemie-anthropic on the static fallback path', async () => {
+    const providers = await buildAndRead({
+      CODEMIE_BASE_URL: 'http://127.0.0.1:4000',
+      CODEMIE_MODEL: 'claude-sonnet-4-6',
+    });
+
+    expect(providers).toHaveProperty('codemie-anthropic');
+    expectAcceptedCompat(providers);
+  });
+
+  it('should omit thinkingFormat for codemie-proxy on the static fallback path', async () => {
+    const providers = await buildAndRead({
+      CODEMIE_BASE_URL: 'http://127.0.0.1:4000',
+      CODEMIE_MODEL: 'gpt-5.4',
+    });
+
+    expect(providers).toHaveProperty('codemie-proxy');
+    expectAcceptedCompat(providers);
+  });
+
+  it('should omit thinkingFormat for the ollama provider', async () => {
+    const providers = await buildAndRead({
+      CODEMIE_PROVIDER: 'ollama',
+      CODEMIE_MODEL: 'qwen3',
+    });
+
+    expect(providers).toHaveProperty('ollama');
+    expectAcceptedCompat(providers);
   });
 });

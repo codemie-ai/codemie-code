@@ -61,10 +61,17 @@ import {
 import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
 import { ProviderRegistry } from '@/providers/index.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
-import { fundingRoute, oauthAccountPays, routedViaCodemie } from '@/agents/core/evidence/routing.js';
+import {
+  fundingRoute,
+  localProxyCandidate,
+  oauthAccountPays,
+  routedViaCodemie,
+  type RoutingInput,
+} from '@/agents/core/evidence/routing.js';
 import { loadHookConfig } from '@/agents/core/event-fields/identity-fields.js';
 import { readClaudeOrganization } from './event-fields/claude-org.js';
 import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
+import { resolveLocalProxy } from './event-fields/local-proxy.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -106,6 +113,7 @@ const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
+  protected override readonly configuredProjectWins = true;
   protected async extractHookContext(hookInput: HookInput): Promise<OtlpHookContext> {
     const [settings, hookConfig] = await Promise.all([
       readClaudeSettingsEnv(hookInput.cwd),
@@ -114,13 +122,22 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const config = hookConfig?.config;
     const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
     const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');
-    const routingInput = {
+    const routingInput: RoutingInput = {
       env: process.env,
       settingsEnv: settings.env,
       settingsUnknown: !settings.complete,
       codemieProvider,
       profileBaseUrl: config?.baseUrl,
+      profileName: config?.name,
     };
+    // Native launch on a loopback endpoint: the live proxy daemon is the only thing that can prove it routed.
+    if (localProxyCandidate(routingInput)) {
+      routingInput.localProxy = await resolveLocalProxy();
+      const daemonProfile = routingInput.localProxy?.profile;
+      if (routingInput.localProxy && daemonProfile !== routingInput.profileName) {
+        logger.debug(`[${this.name}] local proxy daemon serves another profile; routing stays unproven`);
+      }
+    }
     const routing = routedViaCodemie(routingInput);
     const prefs = await readClaudeAnalyticsPreferences();
     const evidenceInputs: EvidenceInputs = {
@@ -239,7 +256,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     if (prefs.kind !== 'ok') return 'unreadable';
     return scopeViolation(record, {
       cwd,
-      projectAtCwd: await resolveProjectAtCwd(cwd, record.profile),
+      projectAtCwd: await resolveProjectAtCwd(cwd, record.profile, { configuredWins: true }),
       generation: prefs.value.collectionGeneration,
     });
   }

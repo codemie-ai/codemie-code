@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +23,8 @@ const INFERENCE_KEYS = [
 
 interface InferenceModelEntry {
   name: string;
+  /** Display name Claude Desktop shows in the model picker instead of the raw ID. */
+  labelOverride?: string;
 }
 
 export interface ManagedMcpServerEntry {
@@ -212,6 +214,26 @@ export function selectPreferredClaudeModels(
   return resolved;
 }
 
+const ROUTER_MODEL_PATTERN = /^claude-(.+-)?router(-.+)?$/i;
+
+function isRouterModel(id: string): boolean {
+  return ROUTER_MODEL_PATTERN.test(id);
+}
+
+/**
+ * Desktop has no built-in display name for router aliases and would show the
+ * raw ID, so derive one: `claude-router-premium` → `Router Premium`.
+ */
+export function toInferenceModelEntry(id: string): InferenceModelEntry {
+  if (!isRouterModel(id)) return { name: id };
+  const labelOverride = id
+    .replace(/^claude-/i, '')
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+  return { name: id, labelOverride };
+}
+
 /**
  * Build the exact model set Claude Desktop should be offered.
  *
@@ -228,6 +250,9 @@ export function selectDesktopClaudeModels(
   preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
 ): string[] {
   const resolved = selectPreferredClaudeModels(available, preferred);
+  // Router aliases (e.g. `claude-router-standard`, `claude-smart-router`) are not tied to a family, so
+  // they bypass the curated list and are always offered when the gateway serves them.
+  const routers = available.filter((id) => isRouterModel(id) && !resolved.includes(id));
   let opusKept = false;
   let sonnetKept = false;
   let haikuKept = false;
@@ -248,7 +273,7 @@ export function selectDesktopClaudeModels(
       return true;
     }
     return true;
-  });
+  }).concat(routers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -600,6 +625,21 @@ export interface ReconcileResult {
 }
 
 /**
+ * Keys Claude Desktop stamps on entries it stores itself (e.g. `source: "user"`
+ * on servers added through its UI) but rejects inside `managedMcpServers`.
+ * Preserved entries are re-written as managed ones, so drop them.
+ */
+const DESKTOP_LOCAL_MCP_KEYS = ['source'] as const;
+
+function stripDesktopLocalKeys(server: unknown): unknown {
+  if (!isRecord(server)) return server;
+  if (!DESKTOP_LOCAL_MCP_KEYS.some((key) => key in server)) return server;
+  const copy: Record<string, unknown> = { ...server };
+  for (const key of DESKTOP_LOCAL_MCP_KEYS) delete copy[key];
+  return copy;
+}
+
+/**
  * Reconcile the managed MCP set into an existing managedMcpServers array.
  *
  * - `managed`: the entries CodeMie owns this run (public defaults + fetched
@@ -644,7 +684,7 @@ export function reconcileManagedMcpServers(
     if (ownedLower.has(name.toLowerCase())) return false;
     if (url && managedUrls.has(url)) return false;
     return true;
-  });
+  }).map(stripDesktopLocalKeys);
 
   return {
     servers: [...managed.map(cloneManagedEntry), ...filtered],
@@ -817,7 +857,7 @@ export async function writeDesktopConfig(
       'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
     );
   }
-  const inferenceModels: InferenceModelEntry[] = resolvedModels.map((name) => ({ name }));
+  const inferenceModels: InferenceModelEntry[] = resolvedModels.map(toInferenceModelEntry);
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
   // failure we must NOT revoke previously-managed org entries (a transient backend
@@ -942,4 +982,121 @@ export async function writeDesktopConfig(
   await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
 
   return configPath;
+}
+
+export interface RemoveDesktopConfigResult {
+  removed: boolean;
+  /** Config file the gateway settings were removed from; absent when none was found. */
+  configPath?: string;
+  /** True when nothing but CodeMie settings was left, so the config file was deleted. */
+  deletedConfigFile: boolean;
+  /** Why nothing was removed; absent when `removed` is true. */
+  reason?: string;
+}
+
+function isLoopbackGatewayUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    const { hostname } = new URL(value);
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reverse {@link writeDesktopConfig}: strip the CodeMie gateway settings and managed MCP
+ * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
+ * normal login.
+ *
+ * Only acts on a config whose gateway points at a loopback address — a gateway anywhere else
+ * was configured by the user, not by `connect`. MCP servers the user added themselves and any
+ * unrelated keys are preserved. When nothing else remains, the config file is deleted and its
+ * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied.
+ */
+export async function removeDesktopConfig(
+  baseDir: string = getDesktopBaseDir(),
+  managedStatePath: string = getManagedMcpStatePath()
+): Promise<RemoveDesktopConfigResult> {
+  const libDir = join(baseDir, 'configLibrary');
+  const metaPath = join(libDir, '_meta.json');
+  if (!existsSync(metaPath)) {
+    return { removed: false, deletedConfigFile: false, reason: 'Claude Desktop config not found' };
+  }
+
+  let meta: ConfigMeta;
+  try {
+    meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Claude Desktop config index at ${metaPath} is unreadable: ` +
+      `${error instanceof Error ? error.message : String(error)}. The file was not changed.`
+    );
+  }
+
+  const configId = meta.appliedId;
+  const configPath = configId ? join(libDir, `${configId}.json`) : undefined;
+  if (!configId || !configPath || !existsSync(configPath)) {
+    return { removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' };
+  }
+
+  let existing: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(configPath, 'utf-8'));
+    if (!isRecord(parsed)) throw new Error('expected a JSON object');
+    existing = parsed;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Claude Desktop config at ${configPath} is unreadable: ` +
+      `${error instanceof Error ? error.message : String(error)}. The file was not changed.`
+    );
+  }
+
+  if (existing.inferenceProvider !== 'gateway' || !isLoopbackGatewayUrl(existing.inferenceGatewayBaseUrl)) {
+    return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
+  }
+
+  for (const key of INFERENCE_KEYS) {
+    delete existing[key];
+  }
+  delete existing.inferenceModels;
+  delete existing.coworkEgressAllowedHosts;
+
+  // Drop every server CodeMie manages (names recorded on earlier runs plus the bundled
+  // defaults) but keep the ones the user added. Passing the defaults as the "managed" set
+  // makes the reconcile also match them by URL; the first `defaults.length` results are
+  // those clones, so they are sliced off.
+  const previouslyManagedNames = await readManagedMcpState(managedStatePath);
+  const userServers = reconcileManagedMcpServers(
+    existing.managedMcpServers,
+    [...DEFAULT_MANAGED_MCP_SERVERS],
+    previouslyManagedNames
+  ).servers.slice(DEFAULT_MANAGED_MCP_SERVERS.length);
+  if (userServers.length > 0) {
+    existing.managedMcpServers = JSON.stringify(userServers);
+  } else {
+    delete existing.managedMcpServers;
+  }
+
+  const deletedConfigFile = Object.keys(existing).length === 0;
+  if (deletedConfigFile) {
+    await rm(configPath, { force: true });
+    const updatedMeta: ConfigMeta = {
+      ...meta,
+      entries: (meta.entries ?? []).filter((entry) => entry.id !== configId),
+    };
+    delete updatedMeta.appliedId;
+    await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
+  } else {
+    await writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
+  }
+
+  await rm(managedStatePath, { force: true });
+
+  logger.info(
+    '[proxy] Removed CodeMie config from Claude Desktop',
+    ...sanitizeLogArgs({ configPath, deletedConfigFile, keptUserServerCount: userServers.length })
+  );
+
+  return { removed: true, configPath, deletedConfigFile };
 }

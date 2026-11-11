@@ -14,6 +14,11 @@ const getPolicyStateMock = vi.fn();
 const isStoppedMock = vi.fn();
 const writeStopMock = vi.fn();
 const writeNoticeMock = vi.fn();
+/** Sees every destination marker write before the real one runs (a rejection stands for a failed write). */
+const writeAcceptedMock = vi.fn(async (_key: string, _sessionId: string, _projectTag: string) => undefined);
+const writeEndedMock = vi.fn(async (_key: string, _sessionId: string) => undefined);
+/** A status write that records a destination intent fails (the spool's own storage is unwritable too). */
+const statusFaults = vi.hoisted(() => ({ intentWriteFails: false }));
 const consentHoldsMock = vi.fn();
 const noteFailureMock = vi.fn(async () => 'noted');
 const refreshPolicyMock = vi.fn();
@@ -39,7 +44,14 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock, writeStatus: vi.fn(async () => undefined) }));
+vi.mock('../session-status.js', async (importOriginal) => ({
+  endsSessionDiscard: (await importOriginal<typeof import('../session-status.js')>()).endsSessionDiscard,
+  advanceCursor: advanceCursorMock, markSessionEnded: vi.fn(), readStatus: readStatusMock,
+  writeStatus: vi.fn(async (_id: string, status: { destinationIntent?: unknown }) => {
+    if (statusFaults.intentWriteFails && status.destinationIntent) throw new Error('ENOSPC');
+  }),
+  readStatusState: vi.fn(async () => ({ kind: 'absent' })),
+}));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
 vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({ ...(await importOriginal<object>()), readRecord: readRecordMock }));
 vi.mock('../policy-cache.js', async (importOriginal) => ({ ...(await importOriginal<object>()), getPolicyState: getPolicyStateMock, refreshPolicy: refreshPolicyMock }));
@@ -49,8 +61,23 @@ vi.mock('../verdict-store.js', async (importOriginal) => ({
   recordVerdict: vi.fn().mockResolvedValue({ schema: 1, class: 'personal', created: 0 }),
   replaceVerdict: vi.fn().mockResolvedValue(false),
 }));
-vi.mock('@/agents/core/evidence/stop-marker.js', () => ({ isStopped: isStoppedMock, writeStop: writeStopMock, writeNotice: writeNoticeMock }));
-vi.mock('@/agents/core/evidence/consent-store.js', () => ({ consentHolds: consentHoldsMock }));
+vi.mock('@/agents/core/evidence/stop-marker.js', () => ({
+  isStopped: isStoppedMock, writeStop: writeStopMock, writeNotice: writeNoticeMock, markerState: vi.fn(async () => 'absent'),
+}));
+// The real markers (under the test's CODEMIE_HOME), so the legacy gate reads what the forwarder wrote
+vi.mock('@/agents/core/evidence/accepted-marker.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/core/evidence/accepted-marker.js')>();
+  return {
+    ...actual,
+    writeDestinationMarker: async (...args: Parameters<typeof actual.writeDestinationMarker>) => {
+      const [target, key, sessionId] = args;
+      if (target.marker === 'accepted') await writeAcceptedMock(key, sessionId, target.projectTag);
+      else await writeEndedMock(key, sessionId);
+      return actual.writeDestinationMarker(...args);
+    },
+  };
+});
+vi.mock('@/agents/core/evidence/consent-store.js', () => ({ consentHolds: consentHoldsMock, consentStatus: vi.fn(async () => 'holds') }));
 vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js', () => ({
   readClaudeAnalyticsPreferences: vi.fn().mockResolvedValue({ kind: 'ok', value: { collectionGeneration: 0 } }),
 }));
@@ -95,6 +122,7 @@ describe('new-contract forwarding', () => {
     consentHoldsMock.mockResolvedValue(true);
     snapshotNdjsonMock.mockResolvedValue(null);
     snapshotBytesMock.mockResolvedValue(null);
+    statusFaults.intentWriteFails = false;
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -142,6 +170,77 @@ describe('new-contract forwarding', () => {
     await run();
     expect(sentHeaders()['X-CodeMie-Work-Consent']).toBe('explicit-folder');
     expect(advanceCursorMock).toHaveBeenCalled();
+    // The backend accepted the consented project: the legacy /v1/metrics gate may publish (EPMCDME-17054).
+    // Under the forwarder's own record key (the daemon's identity, the spool session id) and the frozen project's tag.
+    const { projectTag, recordKey } = await import('@/agents/core/evidence/record-store.js');
+    expect(writeAcceptedMock).toHaveBeenCalledWith(recordKey('https://api', 'h', 's1'), 's1', projectTag('Proj A'));
+  });
+
+  it('a final discard that ends the session is written as the ended marker under the forwarder key before the cursor advances', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    const order: string[] = [];
+    writeEndedMock.mockImplementationOnce(async () => { order.push('ended'); });
+    advanceCursorMock.mockImplementationOnce(async () => { order.push('cursor'); });
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+    expect(writeEndedMock).toHaveBeenCalledWith(recordKey('https://api', 'h', 's1'), 's1');
+    expect(order).toEqual(['ended', 'cursor']);
+  });
+
+  it('an ended marker that is neither written nor recorded as an intent keeps the batch unacknowledged', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeEndedMock.mockRejectedValueOnce(new Error('EACCES'));
+    statusFaults.intentWriteFails = true;
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    // A hold, which the legacy gate reads as pending, not an ordinary failure
+    expect(noteFailureMock).toHaveBeenCalledWith({ reason: 'destination_hold', detail: 'ended_marker_unwritten' });
+  });
+
+  it('an ended marker kept as an intent lets the batch be acknowledged', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeEndedMock.mockRejectedValueOnce(new Error('EACCES'));
+    fetchMock.mockImplementation(async () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' }, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).toHaveBeenCalled();
+  });
+
+  it('the legacy gate reads the acceptance the forwarder wrote: same key, same project; another project stays unconfirmed', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    fetchMock.mockImplementation(async () => respond(200, {}, echo('project', 'proj a')));
+    const { legacyMetricsVerdict } = await import('@/agents/core/session/legacy-metrics-gate.js');
+    // The identity frozen at SessionStart is the one the daemon sends with; the native session id is the spool's
+    const session = (project: string) => ({
+      provider: 'anthropic-subscription', project, workingDirectory: home, correlation: { agentSessionId: 's1' },
+      legacyMetricsConsent: { ref: 'abcdef0123456789', apiIdentity: 'https://api', ownerHash: 'h' },
+    });
+    expect(await legacyMetricsVerdict(session('Proj A'))).toEqual({ publish: false, reason: 'destination-unconfirmed', transient: true });
+    await run();
+    expect(await legacyMetricsVerdict(session('Proj A'))).toEqual({ publish: true });
+    expect(await legacyMetricsVerdict(session('Proj B'))).toEqual({ publish: false, reason: 'destination-unconfirmed', transient: true });
+  });
+
+  it('an N1 acceptance whose marker cannot be written is still acknowledged (the legacy path just stays withheld)', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, consent_ref: 'abcdef0123456789' } });
+    writeAcceptedMock.mockRejectedValueOnce(new Error('EACCES'));
+    fetchMock.mockImplementation(async () => respond(200, {}, echo('project', 'Proj A')));
+    await run();
+    expect(advanceCursorMock).toHaveBeenCalled();
+    expect(writeStopMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an N0 acceptance (no consent)', undefined, () => respond(200, {}, echo('personal'))],
+    ['an N1 unverified echo', 'abcdef0123456789', () => respond(200, {}, echo('project', 'other'))],
+    ['an N1 503 project_unavailable hold', 'abcdef0123456789', () => respond(503, { reason: 'project_unavailable', disposition: 'hold' })],
+    ['an N1 final discard', 'abcdef0123456789', () => respond(200, { accepted: 0, dropped: 1, reason: 'session_contract_conflict' })],
+  ])('%s writes no destination-accepted marker', async (_n, consentRef, answer) => {
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, ...(consentRef ? { consent_ref: consentRef } : {}) } });
+    fetchMock.mockImplementation(async () => answer());
+    await run();
+    expect(writeAcceptedMock).not.toHaveBeenCalled();
   });
 
   it.each([

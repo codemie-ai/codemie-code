@@ -90,7 +90,11 @@ codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
+codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
+codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
 codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
+codemie proxy connect --omp              # Give oh-my-pi the live CodeMie model catalog
+codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
@@ -316,6 +320,38 @@ The daemon keeps running — it may still be serving other connected targets. St
 
 The `codemie-codex` CLI agent isolates its own state under `~/.codex/codemie/home`, while the desktop app uses the default `~/.codex`. That is deliberate, so running the CLI never disturbs the app. The consequence is that the two surfaces have separate sessions, history and settings; the same conversation will not appear in both. If you set `CODEX_HOME` yourself, the connector honours it and prints the config path it resolved.
 
+### oh-my-pi (omp)
+
+Give [oh-my-pi](https://github.com/can1357/oh-my-pi) the models of the active CodeMie profile — the same list `codemie models list` prints — with their cost, context window, output cap, and image input:
+
+```bash
+codemie proxy connect --omp
+codemie proxy connect --omp --profile work
+```
+
+The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/codemie-models.js` (`PI_CODING_AGENT_DIR` and `PI_CONFIG_DIR` are honoured the way omp honours them). omp loads it on startup, and it registers two providers whose model lists are fetched live from the proxy daemon's `/v1/llm_models?include_all=true`:
+
+| omp provider | Wire | Models |
+|---|---|---|
+| `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything else |
+| `codemie-claude` | Anthropic Messages | Claude deployments (id contains `claude` or `anthropic`) and routers whose tiers are all Claude |
+
+An omp provider binds one base URL, API and auth mode, so the OpenAI wire uses `<daemon>/v1` with a Bearer key while the Anthropic Messages wire uses the `<daemon>` root with `authHeader`. Per-model API overrides within one provider are unverified against omp v18.12.3.
+
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation and embedding deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. A router's `maxTokens` is the lowest `max_output_tokens` among its tier targets (128,000 on the current catalog). This value comes from metadata, and a `max_tokens: 128001` request was accepted, so it is not a proven hard limit. When no tier cap is known, 32,000 is used. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) once when omp loads the extension, and uses it for both model discovery and inference, so restart omp after the daemon's port or key changes; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
+
+To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
+
+When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. It cannot be combined with `--vscode`, because the two need different identities. A later `connect --vscode` restarts the shared daemon as `vscode-byok`, and omp traffic carries that identity until `--omp` is re-run. When `--omp` is combined with `--claude-desktop`/`--vscode-claude-code`, `--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp` or `--codex-desktop`, the daemon takes that target's identity in this priority order: `claude-desktop`, `claude-code-otlp`, `copilot-chat-otlp`, `copilot-cli-otlp`, `codex-desktop`. omp traffic is then attributed to that client, and under every identity except `codex-desktop` it also loses the encrypted reasoning-content recovery that `codemie-daemon` enables. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped before the daemon starts: omp is still installed and the daemon keeps the `codemie-daemon` identity. Without an interactive terminal that combination needs `--silent`, otherwise the whole run fails before omp is configured. An analytics hook (`--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp`) never restarts a running daemon, but when none is running it starts one with its own identity, which omp then shares until `--omp` is re-run.
+
+`--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
+
+```bash
+codemie proxy disconnect --omp
+```
+
+Disconnect deletes the extension only if CodeMie installed it. Restart omp to drop the two providers.
+
 ### Global Options
 
 ```bash
@@ -461,7 +497,7 @@ A level outside an agent's supported range is **clamped to the nearest supported
 |-------|------------------|------------------|-----------------------|
 | `codemie-claude` | `--effort <level>` | low, medium, high, xhigh, max | `minimal` → `low` |
 | `codemie-codex` | `--config model_reasoning_effort=<level>` | minimal, low, medium, high, xhigh | `max` → `xhigh` |
-| `codemie-opencode` | `--variant <level>` | minimal … max (provider-specific) | passed through |
+| `codemie-opencode` | model variant (`provider/model#<level>`) | Responses API models: minimal, low, medium, high, xhigh; other models: low, medium, high | clamped to the model's list (`max` → `xhigh` or `high`, `minimal` → `low`) |
 | `codemie-gemini` | — (not supported) | — | flag ignored, warns on stderr |
 
 ```bash
@@ -692,10 +728,11 @@ agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
 activity and no token usage is dropped and counted in neither.
 
 **Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
-scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
+scans native agent logs (Claude Code, Codex, Gemini, GitHub Copilot CLI, Pi and oh-my-pi — see
+[`docs/ANALYTICS-REPORT.md#session-provenance`](ANALYTICS-REPORT.md#session-provenance)) and deduplicates them by path against
 tracked sessions. By default only sessions CodeMie launched are counted; pass
 `--include-external` to also count sessions from agents run directly — e.g. the plain
-`claude` command on your Anthropic subscription.
+`claude` command on your Anthropic subscription, or a bare `pi`/`omp` run.
 
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by
@@ -1417,7 +1454,7 @@ codemie self-update
 export CODEMIE_AUTO_UPDATE=false
 ```
 
-**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect on the next command execution.
+**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect once the `codemie` first on your PATH is the updated install; `codemie self-update` warns when an older install shadows it.
 
 ### `codemie doctor`
 

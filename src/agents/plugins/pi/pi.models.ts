@@ -82,6 +82,17 @@ function detectLimits(id: string): { contextWindow: number; maxTokens: number } 
   return { contextWindow: 128000, maxTokens: 4096 };
 }
 
+/**
+ * The catalog's own window (LiteLLM `max_input_tokens`) wins over the `detectLimits` guess, which
+ * stays the fallback for models the catalog does not size. Screened because it arrives from
+ * `JSON.parse`: Pi rejects a non-positive window, and one bad value voids the whole `models.json`.
+ */
+function catalogContextWindow(maxInputTokens: unknown, fallback: number): number {
+  return typeof maxInputTokens === 'number' && Number.isSafeInteger(maxInputTokens) && maxInputTokens > 0
+    ? maxInputTokens
+    : fallback;
+}
+
 function defaultThinkingLevelMap(): Record<string, string | null> {
   return {
     off: null,
@@ -209,7 +220,7 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id,
     name: model.label || id,
     input: model.multimodal ? ['text', 'image'] : ['text'],
-    contextWindow: limits.contextWindow,
+    contextWindow: catalogContextWindow(model.max_input_tokens, limits.contextWindow),
     maxTokens: limits.maxTokens,
   };
 
@@ -241,6 +252,7 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
   return entry;
 }
 
+// Pi validates provider `compat` against a strict schema; an unknown `thinkingFormat` literal makes Pi drop the whole file.
 interface PiModelsConfig {
   providers: Record<string, {
     baseUrl: string;
@@ -300,7 +312,6 @@ function buildModelsConfig(
       apiKey,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
       },
       models: proxyModels,
     };
@@ -314,7 +325,6 @@ function buildModelsConfig(
       authHeader: true,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
       },
       models: anthropicModels,
     };
@@ -388,7 +398,6 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
         apiKey,
         compat: {
           supportsReasoningEffort: true,
-          thinkingFormat: 'reasoning_effort',
         },
         models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
       },

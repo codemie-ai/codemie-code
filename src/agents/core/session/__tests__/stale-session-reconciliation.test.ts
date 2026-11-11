@@ -13,7 +13,7 @@ import { join, resolve } from 'path';
 import type { Session } from '../types.js';
 import type { BaseHookEvent } from '../../types.js';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
-import { boundedRequest, noteSendAttempt } from '@/providers/plugins/sso/session/bounded-request.js';
+import { boundedRequest, noteAwaitingDestination, noteSendAttempt } from '@/providers/plugins/sso/session/bounded-request.js';
 import { processStartedAt } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
 import { onFakeClock } from '../../../../../tests/helpers/fake-clock.js';
@@ -42,9 +42,23 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
   getStoredAnalyticsCredentials: vi.fn(async () => ({ credentials: { cookies: { session: 'abc' } } })),
 }));
 
+/** The legacy gate as the start pass sees it: the real one unless a test names the native ids that wait on the backend. */
+const gate = vi.hoisted(() => ({ waiting: new Set<string>() }));
+vi.mock('../legacy-metrics-gate.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../legacy-metrics-gate.js')>();
+  return {
+    ...actual,
+    legacyMetricsVerdict: vi.fn(async (session: Parameters<typeof actual.legacyMetricsVerdict>[0]) =>
+      gate.waiting.has(session.correlation?.agentSessionId ?? '')
+        ? { publish: false, reason: 'destination-unconfirmed', transient: true } as const
+        : actual.legacyMetricsVerdict(session)),
+  };
+});
+
 const {
   reconcileOtherSessions,
   finalizeOwnRecord,
+  markDroppedIfUndelivered,
   LEGACY_IDLE_MS,
   ABANDON_WAIT_MS,
 } = await import('../stale-session-reconciliation.js');
@@ -119,6 +133,7 @@ beforeEach(() => {
   mkdirSync(sessionsDir, { recursive: true });
   vi.mocked(fsPromises.readFile).mockClear();
   vi.mocked(fsPromises.stat).mockClear();
+  gate.waiting.clear();
 });
 
 afterEach(() => {
@@ -261,6 +276,40 @@ describe('reconcileOtherSessions', () => {
 
     expect(load(refused.sessionId).deliveryAttempts).toBe(1);
     expect(load(timedOut.sessionId).deliveryAttempts).toBe(2);
+  });
+
+  it('gives back the attempt whose legacy metrics wait for the destination confirmation, within the evidence retention', async () => {
+    const DAY = 24 * HOUR;
+    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryAttempts: 2 });
+    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryAttempts: 2 });
+    save(recent);
+    save(expired);
+    // What the end-metric / metrics-sync senders do on a destination-unconfirmed verdict: nothing sent, the signal flagged
+    const hook = pipeline({ deliverSession: async (_id, config) => noteAwaitingDestination(config.abortSignal) });
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.deliverSession).toHaveBeenCalledTimes(2);
+    expect(load(recent.sessionId).deliveryAttempts).toBe(2);
+    // Past the retention the marker can no longer appear: the attempt counts, so the record is dropped in the end
+    expect(load(expired.sessionId).deliveryAttempts).toBe(3);
+  });
+
+  it('records whose legacy metrics wait for the destination never hold the cap from an older ready record', async () => {
+    const waiting = Array.from({ length: 5 }, (_, i) => record({
+      status: 'completed', provider: 'anthropic-subscription', startTime: Date.now() - (i + 1) * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: `native-waiting-${i}` },
+    }));
+    waiting.forEach((r) => { save(r); gate.waiting.add(r.correlation!.agentSessionId!); });
+    const ready = record({ status: 'completed', provider: 'anthropic-subscription', startTime: Date.now() - 10 * HOUR });
+    save(ready);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    const handled = hook.deliverSession.mock.calls.map(([sessionId]) => sessionId);
+    // The ready one first; the waiting ones keep the slots left over, newest first
+    expect(handled).toEqual([ready.sessionId, ...waiting.slice(0, 4).map((r) => r.sessionId)]);
   });
 
   it('leaves a completed record of a live owner untouched; one of a dead owner is delivered once', async () => {
@@ -869,7 +918,9 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
   });
 
   it('an unqueued record (no CodeMie host): returns at the deadline', async () => {
-    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here
+    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here. The wait itself
+    // polls with real fs calls (not fake-timed); once the fake clock reaches the deadline the hold lets those real
+    // reads/writes finish for free, so their latency does not get counted as elapsed time.
     const unqueued = record({ status: 'completed', codemieUrl: undefined });
     saveWithHeldMetricsLock(unqueued);
     let startedAt = 0;
@@ -879,7 +930,7 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
       startedAt = Date.now();
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: pipeline() }).done;
       doneAt = Date.now();
-    });
+    }, { while: () => startedAt !== 0 && Date.now() >= startedAt + 10_000, maxRealMs: 2_000 });
 
     expect(doneAt - startedAt).toBeLessThan(10_500);
     expectStillLive(unqueued.sessionId);
@@ -1571,5 +1622,49 @@ describe('nextRecordStart', () => {
     // The later run links the transcript: only its ledger grows, its record file is not rewritten.
     writeFileSync(join(sessionsDir, `${later.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: shared })}\n`);
     expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
+  });
+});
+
+describe('EPMCDME-17054 a legacy gate skip counts as delivered', () => {
+  function completedWithPendingDeltas(endMetricSkipped: string): Session {
+    const closed = record({ status: 'completed', endTime: Date.now(), provider: 'anthropic-subscription', endMetricSkipped });
+    save(closed);
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
+    return closed;
+  }
+
+  it('a record skipped for no work consent leaves the queue with its pending deltas but no droppedAt', async () => {
+    const closed = completedWithPendingDeltas('no-work-consent');
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('an end metric sent before a final gate verdict withheld the deltas: no droppedAt', async () => {
+    const closed = record({ status: 'completed', endTime: Date.now(), provider: 'anthropic-subscription', endMetricSentAt: 1, legacyMetricsWithheld: 'consent-revoked' });
+    save(closed);
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('a record skipped for another reason with pending deltas is still marked dropped', async () => {
+    const closed = completedWithPendingDeltas('no-analytics-config');
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
+  });
+
+  it('a gate-skipped record with a pending conversation payload is still marked dropped', async () => {
+    const closed = completedWithPendingDeltas('destination-held');
+    writeFileSync(join(sessionsDir, `${closed.sessionId}_conversation.jsonl`), `${JSON.stringify({ status: 'pending', payload: { conversationId: 'c', history: [] }, timestamp: 1 })}\n`);
+
+    await markDroppedIfUndelivered(closed.sessionId);
+
+    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
   });
 });

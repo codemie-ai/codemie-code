@@ -179,6 +179,14 @@ If npm reports `404 Not Found`, verify that you are installing `@codemieai/code`
 
 If the installer says `@codemieai/code` is not visible in the registry, ask IT to expose the package through the approved virtual npm repository.
 
+On Windows, run the read-only diagnostic script to collect system requirements, user rights, PATH and installation state, and network reachability in one report:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install\windows\clidiag.ps1
+```
+
+Group Policy PATH checks are skipped by default; add `-RunGpoCheck` to include them. See [install/README.md](install/README.md#windows-diagnostics-installwindowsclidiagps1) for all parameters.
+
 ### From Source
 
 ```bash
@@ -534,8 +542,9 @@ codemie-pi --resume <session-id>              # open a specific session
 |---|---|
 | **Managed agent dir** | `~/.pi/agent` is copied once to `<project>/.pi/codemie/agent`; Pi runs against the copy via `PI_CODING_AGENT_DIR`. Your skills, prompts, and extensions carry over — your Pi home is never modified. |
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
-| **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
+| **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
@@ -691,6 +700,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -701,8 +711,12 @@ Flags are composable: a single run configures every target you pass, prints a pe
 Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
+codemie proxy disconnect --claude-desktop --vscode-claude-code
 codemie proxy disconnect --codex-desktop
+codemie proxy disconnect --omp
 ```
+
+`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. Quit and reopen the app afterwards.
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
 

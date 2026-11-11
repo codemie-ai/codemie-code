@@ -35,6 +35,8 @@ const FREE_TEXT_MAX_CHARS = 300;
 
 export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, CliBlockOutput> {
   public readonly name = COPILOT_CLI_OTLP_AGENT_NAME;
+  protected override readonly configuredProjectWins = true;
+  protected override readonly walkProjectFromCwd = true;
 
   protected parseHookInput(raw: string): CopilotCliHookInput | null {
     const parsed: unknown = JSON.parse(raw);
