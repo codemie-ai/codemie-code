@@ -7,6 +7,7 @@ const {
   getLastSignInAt,
   summarizeSpoolDelivery,
   getStoredAnalyticsCredentials,
+  withVerifiedOwner,
   forwarderIdentity,
   getPolicyState,
 } = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const {
   getLastSignInAt: vi.fn(),
   summarizeSpoolDelivery: vi.fn(),
   getStoredAnalyticsCredentials: vi.fn(),
+  withVerifiedOwner: vi.fn(),
   forwarderIdentity: vi.fn(),
   getPolicyState: vi.fn(),
 }));
@@ -36,6 +38,9 @@ vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js', 
 vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getStoredAnalyticsCredentials,
+}));
+vi.mock('@/providers/core/credential-owner.js', () => ({
+  withVerifiedOwner,
 }));
 vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js', () => ({
   forwarderIdentity,
@@ -80,6 +85,7 @@ describe('collectDeliveryHealth', () => {
     getLastSignInAt.mockResolvedValue(null);
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, classificationUnreachable: false });
     getStoredAnalyticsCredentials.mockResolvedValue({ credentials: { apiUrl: URL, email: 'user@example.com' }, url: URL });
+    withVerifiedOwner.mockImplementation(async (creds: unknown) => creds);
     forwarderIdentity.mockReturnValue({ api_identity: 'id', owner_hash: 'hash' });
     getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
   });
@@ -216,6 +222,21 @@ describe('collectDeliveryHealth', () => {
     const health = await collectDeliveryHealth(state, ok);
     expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
     expect(health).toMatchObject({ status: 'healthy' });
+  });
+
+  it('resolves identity from the owner-verified credential, not the raw stored one', async () => {
+    const stored = { apiUrl: URL, cookies: {} };
+    const verified = { apiUrl: URL, cookies: {}, email: 'owner@example.com' };
+    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: stored, url: URL });
+    withVerifiedOwner.mockResolvedValue(verified);
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 3, mismatchHeld: false, sendFailed: false, classificationUnreachable: true });
+
+    const health = await collectDeliveryHealth(state, ok);
+
+    expect(withVerifiedOwner).toHaveBeenCalledWith(stored);
+    expect(forwarderIdentity).toHaveBeenCalledWith(verified);
+    expect(health).toMatchObject({ status: 'unhealthy', reason: 'classification_unreachable' });
   });
 
   it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {

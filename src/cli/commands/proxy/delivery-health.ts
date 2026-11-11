@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { summarizeSpoolDelivery } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
 import { forwarderIdentity } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
@@ -38,11 +39,15 @@ const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
 
 /**
  * The backend capability for the active profile's namespace, read from the on-disk stored
- * credential — never the daemon's live one, never a network probe. `'evidence'` is also the
- * safe fallback whenever no NamespaceId can be resolved, so an unresolved identity can never
- * produce a false `classification_unreachable` (spec AC3). Never throws, for the same reason:
- * a credential-read failure here must not blank out the other signals `collectDeliveryHealth`
- * already computed.
+ * credential — never the daemon's live one. Run through `withVerifiedOwner`, the same owner
+ * lookup the daemon's own tick applies before it writes the policy cache (`otlp.plugin.ts`'s
+ * `tick`), so a login with no `codemie_access_token` claim (oauth2-proxy) resolves to the same
+ * namespace key the daemon actually cached under, instead of always falling back to `'evidence'`.
+ * `withVerifiedOwner` may probe the backend once and then cache the result on disk, bounded by
+ * its own timeout and failure cooldown. `'evidence'` is also the safe fallback whenever no
+ * NamespaceId can be resolved, so an unresolved identity can never produce a false
+ * `classification_unreachable` (spec AC3). Never throws, for the same reason: a credential-read
+ * failure here must not blank out the other signals `collectDeliveryHealth` already computed.
  */
 async function resolveCapability(state: DaemonState): Promise<Capability> {
   try {
@@ -51,7 +56,7 @@ async function resolveCapability(state: DaemonState): Promise<Capability> {
       baseUrl: state.targetUrl,
     });
     if (!stored) return 'evidence';
-    const identity = forwarderIdentity(stored.credentials);
+    const identity = forwarderIdentity(await withVerifiedOwner(stored.credentials));
     if (!identity) return 'evidence';
     const policy = await getPolicyState({ ...identity, profile: state.profile });
     return policy.capability;
