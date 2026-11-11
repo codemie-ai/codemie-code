@@ -10,11 +10,13 @@ import type { Capability } from './policy-cache.js';
 const SESSION_CONCURRENCY = 16;
 
 /**
- * Hold reasons that mean the session's local classification never completed because the backend
- * never answered. Deliberately excludes `publication_stopped`, which means the backend answered
- * and declined, not that it is unreachable.
+ * Hold reasons that mean the session's local classification never completed — either because the
+ * backend never answered (`classificationUnreachable`, capability `'unknown'`) or because it
+ * answered that it will never support classification for this session (`classificationUnsupported`,
+ * capability `'legacy'`). Deliberately excludes `publication_stopped`, which means the backend
+ * answered and declined, not that classification stalled.
  */
-const CLASSIFICATION_UNREACHABLE_REASONS = new Set(['publication_contract_unavailable', 'organization_encoding_unsupported']);
+const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable', 'organization_encoding_unsupported']);
 
 /** What the spool says about analytics delivery, aggregated over every session. Derived from existing files only. */
 export interface SpoolDeliverySummary {
@@ -26,6 +28,13 @@ export interface SpoolDeliverySummary {
   sendFailed: boolean;
   /** A session's classification never completed because the backend never answered (see spec AC1-AC3). */
   classificationUnreachable: boolean;
+  /**
+   * A session's classification will never complete because the backend answered that it does not
+   * support classification at all (an authenticated 404 on classification-policy, capability
+   * `'legacy'`). Unlike `classificationUnreachable`, this is not transient: the held data is
+   * eventually discarded once its retention window elapses.
+   */
+  classificationUnsupported: boolean;
 }
 
 async function summarizeSession(sessionId: string, capability: Capability): Promise<SpoolDeliverySummary> {
@@ -35,22 +44,38 @@ async function summarizeSession(sessionId: string, capability: Capability): Prom
     const { size, cursor } = spool.streams[stream];
     return sum + Math.max(0, size - cursor);
   }, 0);
-  if (!status) return { pendingBytes, mismatchHeld: false, sendFailed: false, classificationUnreachable: false };
+  if (!status) {
+    return { pendingBytes, mismatchHeld: false, sendFailed: false, classificationUnreachable: false, classificationUnsupported: false };
+  }
 
-  const mismatchHeld = pendingBytes > 0 && status.holds?.session?.reason === 'analytics_endpoint_mismatch';
-  const classificationUnreachable =
-    pendingBytes > 0 && capability === 'unknown' && CLASSIFICATION_UNREACHABLE_REASONS.has(status.holds?.session?.reason ?? '');
+  const holdReason = status.holds?.session?.reason ?? '';
+  const mismatchHeld = pendingBytes > 0 && holdReason === 'analytics_endpoint_mismatch';
+  const classificationUnreachable = pendingBytes > 0 && capability === 'unknown' && CLASSIFICATION_STALL_REASONS.has(holdReason);
+  const classificationUnsupported = pendingBytes > 0 && capability === 'legacy' && CLASSIFICATION_STALL_REASONS.has(holdReason);
   const live = await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
-  return { pendingBytes, mismatchHeld, sendFailed: live.some((rec) => rec !== undefined), classificationUnreachable };
+  return {
+    pendingBytes,
+    mismatchHeld,
+    sendFailed: live.some((rec) => rec !== undefined),
+    classificationUnreachable,
+    classificationUnsupported,
+  };
 }
 
 /**
  * Read-only roll-up of the OTLP spool's delivery state. Never throws: an unreadable spool yields the
  * empty summary, and a session whose status is unreadable counts its stream bytes as pending without flags.
- * `capability` defaults to `'evidence'` so a no-argument call never flags `classificationUnreachable`.
+ * `capability` defaults to `'evidence'` so a no-argument call never flags `classificationUnreachable` or
+ * `classificationUnsupported`.
  */
 export async function summarizeSpoolDelivery(capability: Capability = 'evidence'): Promise<SpoolDeliverySummary> {
-  const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false, sendFailed: false, classificationUnreachable: false };
+  const summary: SpoolDeliverySummary = {
+    pendingBytes: 0,
+    mismatchHeld: false,
+    sendFailed: false,
+    classificationUnreachable: false,
+    classificationUnsupported: false,
+  };
   try {
     const ids = await listSessionIds();
     for (let i = 0; i < ids.length; i += SESSION_CONCURRENCY) {
@@ -60,6 +85,7 @@ export async function summarizeSpoolDelivery(capability: Capability = 'evidence'
         summary.mismatchHeld ||= s.mismatchHeld;
         summary.sendFailed ||= s.sendFailed;
         summary.classificationUnreachable ||= s.classificationUnreachable;
+        summary.classificationUnsupported ||= s.classificationUnsupported;
       }
     }
   } catch (err) {

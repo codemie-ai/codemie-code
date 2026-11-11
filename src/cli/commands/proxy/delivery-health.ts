@@ -14,7 +14,8 @@ export type DeliveryReason =
   | 'auth_rejected'
   | 'identity_mismatch'
   | 'send_failed'
-  | 'classification_unreachable';
+  | 'classification_unreachable'
+  | 'classification_unsupported';
 
 export interface DeliveryHealth {
   status: 'healthy' | 'unhealthy' | 'unknown';
@@ -24,8 +25,10 @@ export interface DeliveryHealth {
 
 /**
  * Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile.
- * `identity_mismatch`, `send_failed` and `classification_unreachable` come from the spool, which is
- * shared by the whole machine, so their labels say so.
+ * `identity_mismatch`, `send_failed`, `classification_unreachable` and `classification_unsupported`
+ * come from the spool, which is shared by the whole machine, so their labels say so. Neither
+ * `classification_unreachable` nor `classification_unsupported` has a `run`: there is nothing the
+ * CLI can do locally — the first may clear on its own, the second needs the backend upgraded.
  */
 export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
   credentials_expired: { label: 'credentials expired', run: 'codemie profile login' },
@@ -33,6 +36,7 @@ export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: str
   identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
   send_failed: { label: 'sending to analytics failed on this machine' },
   classification_unreachable: { label: 'analytics backend has never answered for a pending session on this machine' },
+  classification_unsupported: { label: 'analytics backend does not support classification for a pending session on this machine; it will be discarded' },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
@@ -93,6 +97,9 @@ export async function collectDeliveryHealth(
       : spool.mismatchHeld ? 'identity_mismatch'
       : spool.sendFailed ? 'send_failed'
       : spool.classificationUnreachable ? 'classification_unreachable'
+      // Mutually exclusive with classificationUnreachable: capability is a single resolved value
+      // per call, so at most one of 'unknown' (unreachable) or 'legacy' (unsupported) is ever true.
+      : spool.classificationUnsupported ? 'classification_unsupported'
       : undefined;
 
     if (reason) {

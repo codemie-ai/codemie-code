@@ -211,6 +211,23 @@ describe('collectDeliveryHealth', () => {
     expect(summarizeSpoolDelivery).toHaveBeenCalledWith('unknown');
   });
 
+  it('reports classification_unsupported when the spool flags it and capability is legacy', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'legacy', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({
+      pendingBytes: 9,
+      mismatchHeld: false,
+      sendFailed: false,
+      classificationUnreachable: false,
+      classificationUnsupported: true,
+    });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unsupported',
+      pendingBytes: 9,
+    });
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('legacy');
+  });
+
   it('threads the resolved capability into summarizeSpoolDelivery', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
     summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
@@ -254,9 +271,26 @@ describe('collectDeliveryHealth', () => {
     expect(getPolicyState).not.toHaveBeenCalled();
   });
 
-  it('keeps send_failed ahead of classification_unreachable in precedence', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailed: true, classificationUnreachable: true });
+  it('keeps send_failed ahead of classification_unreachable and classification_unsupported in precedence', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({
+      pendingBytes: 1,
+      mismatchHeld: false,
+      sendFailed: true,
+      classificationUnreachable: true,
+      classificationUnsupported: true,
+    });
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
+  });
+
+  it('keeps classification_unreachable ahead of classification_unsupported in precedence', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({
+      pendingBytes: 1,
+      mismatchHeld: false,
+      sendFailed: false,
+      classificationUnreachable: true,
+      classificationUnsupported: true,
+    });
+    expect((await collectDeliveryHealth(state, ok)).reason).toBe('classification_unreachable');
   });
 
   it('still resolves normally when there is no stored analytics credential', async () => {
@@ -278,13 +312,14 @@ describe('collectDeliveryHealth', () => {
 });
 
 describe('DELIVERY_REASONS', () => {
-  it('labels every reason and gives a remedy to all but send_failed and classification_unreachable', () => {
+  it('labels every reason and gives a remedy to all but send_failed, classification_unreachable and classification_unsupported', () => {
     const codes: DeliveryReason[] = [
       'credentials_expired',
       'auth_rejected',
       'identity_mismatch',
       'send_failed',
       'classification_unreachable',
+      'classification_unsupported',
     ];
     expect(Object.keys(DELIVERY_REASONS).sort()).toEqual([...codes].sort());
     for (const code of codes) {
@@ -295,6 +330,7 @@ describe('DELIVERY_REASONS', () => {
     expect(DELIVERY_REASONS.identity_mismatch.run).toBe('codemie proxy restart');
     expect(DELIVERY_REASONS.send_failed.run).toBeUndefined();
     expect(DELIVERY_REASONS.classification_unreachable.run).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unsupported.run).toBeUndefined();
   });
 });
 
@@ -328,6 +364,11 @@ describe('formatDeliveryLines', () => {
     expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`]);
   });
 
+  it('prints no Run line for classification_unsupported', () => {
+    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'classification_unsupported', pendingBytes: 0 }));
+    expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.classification_unsupported.label})`]);
+  });
+
   it('prints no Run line for unknown', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
       'Delivery: unknown (restart the proxy to enable all checks)',
@@ -338,6 +379,7 @@ describe('formatDeliveryLines', () => {
     expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
     expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
     expect(DELIVERY_REASONS.classification_unreachable.label).toContain('on this machine');
+    expect(DELIVERY_REASONS.classification_unsupported.label).toContain('on this machine');
   });
 
   it('reports a stopped proxy for null', () => {
