@@ -3701,11 +3701,16 @@ describe('continued session (EPMCDME-16992)', () => {
     }
   });
 
-  describe('parent lookup is skipped when nothing can have been copied', () => {
+  describe('parent lookup is skipped only where it is costly and nothing can have been copied', () => {
     const START = '2026-11-10T16:20:00.000Z';
+    /** More siblings than the lookup scans: the lookup stays incomplete, which is the costly case. */
+    const crowdTheFolder = (): void => {
+      for (let i = 0; i < 201; i += 1) writeTranscript(`filler-${i}.jsonl`, []);
+    };
 
-    it('skips the sibling scan for a session whose lines are all newer than its own start', async () => {
+    it('skips the sibling scan for a session whose lines are all newer than its own start (crowded folder)', async () => {
       const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
       writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
       const path = writeTranscript('C.jsonl', [
         typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
@@ -3722,8 +3727,29 @@ describe('continued session (EPMCDME-16992)', () => {
       expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
     });
 
-    it('still looks for the parent when a line is older than the session', async () => {
+    it('still looks for the parent in an ordinary folder, even when no line is older than the session (X8)', async () => {
       const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      // A parent younger than a minute: its copies are stamped less than 60 s before the continuation's start.
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('p-u1', 'C', '2026-11-10T16:20:20.000Z'),
+        typedAssistant('p-a1', 'msg-p1', 'C', '2026-11-10T16:20:30.000Z'),
+        typedAssistant('p-a2', 'msg-p2', 'C', '2026-11-10T16:20:40.000Z'),
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: '2026-11-10T16:21:00.000Z' });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('still looks for the parent when a line is older than the session (crowded folder)', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
       writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
       const path = writeTranscript('C.jsonl', [
         ...copiedLines(),
@@ -3739,8 +3765,9 @@ describe('continued session (EPMCDME-16992)', () => {
       expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
     });
 
-    it('looks for the parent when the session has no saved start', async () => {
+    it('looks for the parent when the session has no saved start (crowded folder)', async () => {
       const { loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
       writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
       const path = writeTranscript('C.jsonl', [
         typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),

@@ -239,9 +239,8 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
   line is more than 60 s older than the session's own `sessionStartedAt`; every doubt (no saved start, an
   unreadable file, no timestamped line yet) answers "possible" and the lookup runs as before. So the D-1 cost
   (up to 200 siblings, repeated while the lookup is incomplete) now applies only to sessions that may hold copies.
-  *Risk:* a copy whose timestamps are within 60 s of the continuation's start is not recognised as a copy
-  candidate; a parent history that short has a negligible amount of work, and a lookup that is skipped wrongly
-  can only double count, never hide, own work.
+  *Superseded in the fifth pass:* the skip applied to every folder and double-counted the copies of a parent
+  younger than a minute (probe X8); it now applies only to folders with more than 200 transcripts.
 
 ### Accepted for now
 
@@ -302,10 +301,14 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
 
 ### Accepted for now (review, not blocking)
 
-- **Parents continued within about 60 s of their first line are missed by the copy guard (`mayHoldCopiedLines`).**
-  The guard needs one line older than the continuation's start by 60 s; a younger parent has almost no history
-  to double count. Narrowing the margin makes the guard take ordinary sessions for continuations (their first lines are
-  stamped seconds before the `SessionStart` hook on a slow start-up), i.e. more parent lookups. Left.
+- **Parents continued within about 60 s of their first line are missed, in a crowded project folder only.** The
+  copy guard (`mayHoldCopiedLines`, fourth pass CR-001) first skipped the parent lookup for every session with
+  no line older than its own start by 60 s. The live probe X8 showed that this double-counts the copies of a
+  parent younger than a minute (6 requests, 6036 tokens) in an ordinary folder, which the earlier build handled.
+  Fixed: the guard now applies only where the lookup is costly, a folder with more than 200 sibling transcripts
+  (`lookupIsCostly`), where the lookup never completes and repeats on every pass. In every other folder the
+  lookup runs as before (it completes after the first pass). *Residual:* in a crowded folder a parent younger than
+  a minute is still missed. Live: S18 (4 requests / 3091 tokens before the fix, 1 / 88 now); unit test X8.
 - **Lock failure at `SessionStart` drops the reopened flag (D-6), lookup under the lock (D-1/D-12), release after
   the grace when earlier records are pending (D-14, now also for `endedSizes`).** Unchanged, see above.
 - **Cross-session totals, window admission, class/origin rebinding, D1/D2 regression test.** Backend, see

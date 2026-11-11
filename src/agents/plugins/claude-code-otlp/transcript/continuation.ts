@@ -205,6 +205,23 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
   }
 }
 
+/**
+ * Whether the parent lookup for `transcriptPath` is costly: its folder holds more sibling transcripts than the
+ * scan covers, so the lookup stays incomplete and is repeated on every pass. Only then is it worth skipping
+ * (see {@link mayHoldCopiedLines}); in an ordinary folder the lookup is complete after the first pass and a
+ * skip would only risk missing a parent. A failure to count answers `false`: the lookup runs as usual.
+ */
+export async function lookupIsCostly(transcriptPath: string): Promise<boolean> {
+  if (!transcriptPath) return false;
+  try {
+    const own = basename(transcriptPath);
+    const names = (await readdir(dirname(transcriptPath))).filter((name) => name.endsWith('.jsonl') && name !== own);
+    return names.length > MAX_SIBLING_FILES;
+  } catch {
+    return false;
+  }
+}
+
 /** Bytes read from the start of the transcript to look at the first timestamps. */
 const HEAD_BYTES = 64 * 1024;
 
@@ -212,7 +229,8 @@ const HEAD_BYTES = 64 * 1024;
 const COPY_AGE_MARGIN_MS = 60 * 1000;
 
 /**
- * Whether the transcript can hold lines copied from a parent: some line in its first bytes is stamped
+ * Used only where the lookup is costly ({@link lookupIsCostly}). Whether the transcript can hold lines copied
+ * from a parent: some line in its first bytes is stamped
  * well before the session's own start (`sessionStartedAt`, the wall-clock of its `SessionStart`).
  * Copies keep the parent's timestamps and a parent history starts long before the continuation, so a
  * fresh session never has one. This only decides whether the (costly) parent lookup is worth doing;
