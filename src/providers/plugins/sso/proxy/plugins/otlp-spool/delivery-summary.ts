@@ -22,6 +22,13 @@ const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable'
  * disjoint data, so the caller runs them in parallel and reads `classificationStalled` against
  * whichever capability it resolved — `'unknown'` means `classification_unreachable`, `'legacy'`
  * means `classification_unsupported` (see `delivery-health.ts`'s `collectDeliveryHealth`).
+ *
+ * Known limitation (shared with `mismatchHeld`, not introduced by `classificationStalled`): the
+ * spool is one shared directory for the whole machine, and a session's own status file carries no
+ * `api_identity`/`owner_hash` of its own (see `session-status.ts`) — there is nothing to scope this
+ * roll-up to. Every flag here is read against whichever identity/capability is active right now.
+ * A session still pending from a profile the user has since switched away from is judged by the
+ * now-active profile's capability instead of its own, until it drains or is lost to retention.
  */
 export interface SpoolDeliverySummary {
   /** Sum of unsent bytes (size - cursor) across all spool streams of all sessions. */

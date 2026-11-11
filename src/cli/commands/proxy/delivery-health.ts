@@ -29,6 +29,11 @@ export interface DeliveryHealth {
  * come from the spool, which is shared by the whole machine, so their labels say so. Neither
  * `classification_unreachable` nor `classification_unsupported` has a `run`: there is nothing the
  * CLI can do locally — the first may clear on its own, the second needs the backend upgraded.
+ *
+ * Known limitation: `classification_unreachable`/`classification_unsupported` read the active
+ * profile's capability against every session in the shared spool (see `SpoolDeliverySummary`'s
+ * docstring) — a session still pending from a profile the user has since switched away from is
+ * judged by the wrong capability until it drains or is lost to retention.
  */
 export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
   credentials_expired: { label: 'credentials expired', run: 'codemie profile login' },
