@@ -401,7 +401,8 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
         expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
-    });
+      // Each fake-clock step waits one real timer tick, about 15 ms on Windows: these four starts take some 30 s there
+    }, 120_000);
   });
 
   it('finalizes a predecessor\'s active record before the first poll reopens it as a new stretch', async () => {
