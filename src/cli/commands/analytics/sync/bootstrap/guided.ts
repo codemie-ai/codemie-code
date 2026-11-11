@@ -264,6 +264,27 @@ async function discardStaleAnswers(state: BootstrapState, startStep: number, sta
  *   (default no) starts at step 1 on no. Yes jumps to step 5 and saves `skippedSetup`, so
  *   a later run can reuse the state without steps 1-4's answers.
  */
+/**
+ * Temporary compatibility shim: `checkReuse` (state-store.ts) now returns a step id
+ * (string), but `guided.ts` still gates every step numerically (1-8) — the full
+ * migration to the id-based model is Task 5's job. `state.targets` is always
+ * `{webhook:true,git:false}` on every path through this file (no UI yet chooses git),
+ * so `checkReuse` can only ever resume at one of these 8 ids; `'target'` is always
+ * pre-answered (state-store.ts's `isStepAnswered`) and `'git-repo'` never appears for a
+ * webhook-only selection. Task 5 deletes this table when it migrates `guided.ts` off
+ * the numeric model entirely.
+ */
+const RESUME_STEP_TO_NUMBER: Record<string, number> = {
+  channel: 1,
+  folder: 2,
+  timezone: 3,
+  flow: 4,
+  'trigger-url': 5,
+  external: 6,
+  lookback: 7,
+  developers: 8
+};
+
 async function resolveStartStep(deps: BootstrapDeps, state: BootstrapState): Promise<StartPoint> {
   if (state.webhookUrl === undefined) {
     const alreadyImported = await deps.prompt.confirm(
@@ -289,7 +310,7 @@ async function resolveStartStep(deps: BootstrapDeps, state: BootstrapState): Pro
     if (check.ok) {
       return { startStep: 8, state };
     }
-    startStep = check.resumeAt;
+    startStep = RESUME_STEP_TO_NUMBER[check.resumeAt] ?? 1;
   }
   return { startStep, state: await discardStaleAnswers(state, startStep, deps.statePath) };
 }
@@ -310,7 +331,7 @@ export async function runGuided(deps: BootstrapDeps): Promise<number> {
     deps.err(notice);
   }
 
-  const start = await resolveStartStep(deps, loaded ?? { version: 1 });
+  const start = await resolveStartStep(deps, loaded ?? { version: 2, targets: { webhook: true, git: false } });
   const { startStep } = start;
   let state = start.state;
   const save: SaveBootstrapState = async (patch) => {
