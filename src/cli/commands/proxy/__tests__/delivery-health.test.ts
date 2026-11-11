@@ -85,7 +85,7 @@ describe('collectDeliveryHealth', () => {
     vi.clearAllMocks();
     getAnalyticsAuthStatus.mockResolvedValue(null);
     getLastSignInAt.mockResolvedValue(null);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationUnreachable: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: false });
     getStoredAnalyticsCredentials.mockResolvedValue({ credentials: { apiUrl: URL, email: 'user@example.com' }, url: URL });
     withVerifiedOwner.mockImplementation(async (creds: unknown) => creds);
     forwarderIdentity.mockReturnValue({ api_identity: 'id', owner_hash: 'hash' });
@@ -245,42 +245,30 @@ describe('collectDeliveryHealth', () => {
     });
   });
 
-  it('reports classification_unreachable when the spool flags it and capability is unknown', async () => {
+  it('reports classification_unreachable when the spool is stalled and capability is unknown', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, classificationUnreachable: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, classificationStalled: true });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'classification_unreachable',
       pendingBytes: 7,
     });
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('unknown');
   });
 
-  it('reports classification_unsupported when the spool flags it and capability is legacy', async () => {
+  it('reports classification_unsupported when the spool is stalled and capability is legacy', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'legacy', usable: false, refreshDue: true });
-    summarizeSpoolDelivery.mockResolvedValue({
-      pendingBytes: 9,
-      mismatchHeld: false,
-      classificationUnreachable: false,
-      classificationUnsupported: true,
-    });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 9, mismatchHeld: false, classificationStalled: true });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'classification_unsupported',
       pendingBytes: 9,
     });
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('legacy');
   });
 
-  it('threads the resolved capability into summarizeSpoolDelivery', async () => {
+  it('reads classificationStalled against the resolved capability: evidence never flags either reason', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
-    summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
-      pendingBytes: 0,
-      mismatchHeld: false,
-      classificationUnreachable: capability !== 'evidence',
-    }));
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: true });
     const health = await collectDeliveryHealth(state, ok);
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
     expect(health).toMatchObject({ status: 'healthy' });
   });
 
@@ -290,7 +278,7 @@ describe('collectDeliveryHealth', () => {
     getStoredAnalyticsCredentials.mockResolvedValue({ credentials: stored, url: URL });
     withVerifiedOwner.mockResolvedValue(verified);
     getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 3, mismatchHeld: false, classificationUnreachable: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 3, mismatchHeld: false, classificationStalled: true });
 
     const health = await collectDeliveryHealth(state, ok);
 
@@ -301,54 +289,45 @@ describe('collectDeliveryHealth', () => {
 
   it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {
     forwarderIdentity.mockReturnValue(null);
-    // Mirrors the real spool's own capability check (capability === 'unknown'), so this only passes if 'evidence' was threaded through.
-    summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
-      pendingBytes: 7,
-      mismatchHeld: false,
-      classificationUnreachable: capability === 'unknown',
-    }));
+    // A stalled session alone is not enough: capability must fall back to 'evidence' when identity fails.
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, classificationStalled: true });
     const health = await collectDeliveryHealth(state, ok);
     expect(health.reason).not.toBe('classification_unreachable');
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+    expect(health.reason).not.toBe('classification_unsupported');
     expect(getPolicyState).not.toHaveBeenCalled();
   });
 
-  it('keeps send_failed ahead of classification_unreachable and classification_unsupported in precedence', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({
-      pendingBytes: 1,
-      mismatchHeld: false,
-      classificationUnreachable: true,
-      classificationUnsupported: true,
-      sendFailure: { nextAt: 2000 },
-    });
+  it('keeps send_failed ahead of classification_unreachable in precedence', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailure: { nextAt: 2000 }, classificationStalled: true });
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
   });
 
-  it('keeps classification_unreachable ahead of classification_unsupported in precedence', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({
-      pendingBytes: 1,
-      mismatchHeld: false,
-      classificationUnreachable: true,
-      classificationUnsupported: true,
-    });
-    expect((await collectDeliveryHealth(state, ok)).reason).toBe('classification_unreachable');
+  it('starts the spool scan without waiting for capability resolution to finish', async () => {
+    let resolveCreds!: (v: unknown) => void;
+    getStoredAnalyticsCredentials.mockImplementation(
+      () => new Promise((resolve) => { resolveCreds = resolve; })
+    );
+    const pending = collectDeliveryHealth(state, ok);
+    await Promise.resolve(); // flush the microtask queue so Promise.all's synchronous starts run
+    expect(summarizeSpoolDelivery).toHaveBeenCalledTimes(1);
+    resolveCreds(null);
+    await pending;
   });
 
   it('still resolves normally when there is no stored analytics credential', async () => {
     getStoredAnalyticsCredentials.mockResolvedValue(null);
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
   });
 
   it('falls back to evidence, instead of going unknown, when the credential lookup throws', async () => {
     getStoredAnalyticsCredentials.mockRejectedValue(new Error('boom'));
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, classificationUnreachable: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, classificationStalled: false });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'identity_mismatch',
       pendingBytes: 10,
     });
-    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
   });
 });
 
