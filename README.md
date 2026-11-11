@@ -542,7 +542,7 @@ codemie-pi --resume <session-id>              # open a specific session
 |---|---|
 | **Managed agent dir** | `~/.pi/agent` is copied once to `<project>/.pi/codemie/agent`; Pi runs against the copy via `PI_CODING_AGENT_DIR`. Your skills, prompts, and extensions carry over — your Pi home is never modified. |
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
-| **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
+| **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
 | **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 

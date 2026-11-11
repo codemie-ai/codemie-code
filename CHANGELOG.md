@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie-opencode` and `codemie-opencode-acp` now target OpenCode v2; OpenCode v1 is no longer supported (the built-in `codemie-code` agent is unaffected)
 - OpenCode lists Responses API models under the provider `codemie-openai` instead of `openai`. Anything that names `openai/<model>` — a resumed session, a script, an agent config, a favourite or a saved variant — must be pointed at `codemie-openai/<exact deployment id>` (for example `codemie-openai/gpt-6.1-terra-2026-10-26`). A resumed session reports the old model as unavailable until you pick the model again; its conversation is kept
 - `codemie-opencode --reasoning-effort` selects an OpenCode model variant and is clamped to the levels the model offers: `minimal`–`xhigh` for Responses API models, `low`–`high` for the others
+- `codemie-pi` uses Pi's built-in MCP support and no longer installs `pi-mcp-adapter`. Installs that still have the adapter keep built-in MCP disabled until it is removed (`pi remove npm:pi-mcp-adapter`)
+- `codemie-pi` takes a model's context window from the CodeMie model catalog when the catalog gives one
 
 ### Fixed
 
