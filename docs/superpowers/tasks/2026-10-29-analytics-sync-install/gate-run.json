@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16488_analytics-sync-install",
+  "head": "dcf49666a5372540a4af96a29300220413a453a2",
+  "runner": "npm",
+  "started_at": "2026-10-30T09:29:59Z",
+  "completed_at": "2026-10-30T09:41:24.548Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9245,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 32553,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11137,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 14715,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Guide documents build as tsc && tsc-alias && npm run copy-plugin; package.json build also runs bundle-statusline. Ran npm run build verbatim."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 122085,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 133781,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "Timeouts in tests/integration/cli-commands/doctor.test.ts, list.test.ts (beforeAll hook) and skills.test.ts (2 tests); none of these files are in the branch diff. No Auto-fix defined."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1775,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" - script scans only staged diff. Branch range scanned instead by ci-gitleaks-range."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 826,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 51006,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 261120,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "license, lint, build, unit (5302 passed) OK; failed at vitest --project cli: list.test.ts beforeAll timeout and skills.test.ts 'shows help for each subcommand' timeout."
+    },
+    {
+      "id": "ci-commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1035,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Mirrors ci.yml validate-commits job (17 commits). Guide gate commitlint:last only checks HEAD~1..HEAD; ran union."
+    },
+    {
+      "id": "ci-gitleaks-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1821,
+      "command": "git diff origin/main...HEAD | docker run --rm -i -v \"$PWD/.gitleaks.toml:/gitleaks.toml\" ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Local stand-in for ci.yml secrets-detection (gitleaks-action) over branch diff; output: no leaks found."
+    },
+    {
+      "id": "hook-lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Operates on staged files only; nothing staged. Its eslint and adjacent-vitest commands are covered by lint and unit gates."
+    },
+    {
+      "id": "hook-commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx --no -- commitlint --edit \"$1\"",
+      "exit_code": null,
+      "notes": "Needs a commit message file; branch commits covered by ci-commitlint-range."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view ... | npx commitlint",
+      "exit_code": null,
+      "notes": "No PR exists yet; CI validates PR title via commitlint once PR is opened."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Requires Windows runner; only CI can settle. Guide CRLF repro can approximate shebang-file issues."
+    }
+  ],
+  "failures": {
+    "integration": "\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯\n\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > blocks every subcommand on unauthenticated invocation (spec §7)\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:129:3\n    127|   });\n    128|\n    129|   it('blocks every subcommand on unauthenticated invocation (spec §7)'…\n       |   ^\n    130|     // Point credentials lookup at a brand-new URL never logged in to …\n    131|     // fallback global credentials in the user's keychain will not mat…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯\n\n\n Test Files  3 failed | 35 passed | 1 skipped (39)\n      Tests  2 failed | 270 passed | 18 skipped (290)\n   Start at  10:33:10\n   Duration  133.00s (transform 28.90s, setup 0ms, import 103.83s, tests 602.36s, environment 47ms)\n\n",
+    "ci": "- Checking Pi...\n- Checking Kimi Code...\n- Checking Kimi Code ACP...\n- Checking OpenWiki...\n- Checking GitHub Copilot CLI...\n- Checking Repository & Workflows...\n- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  2 failed | 36 passed | 1 skipped (39)\n      Tests  1 failed | 277 passed | 12 skipped (290)\n   Start at  10:38:39\n   Duration  118.24s (transform 19.08s, setup 0ms, import 79.79s, tests 465.09s, environment 18ms)\n\n"
+  }
+}

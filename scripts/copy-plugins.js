@@ -54,6 +54,11 @@ const copyConfigs = [
     name: 'Analytics report client app',
     src: join(rootDir, 'src/cli/commands/analytics/report/client'),
     dest: join(rootDir, 'dist/cli/commands/analytics/report/client')
+  },
+  {
+    name: 'Analytics sync bootstrap flow template',
+    src: join(rootDir, 'src/cli/commands/analytics/sync/bootstrap/flow-template'),
+    dest: join(rootDir, 'dist/cli/commands/analytics/sync/bootstrap/flow-template')
   }
 ];
 

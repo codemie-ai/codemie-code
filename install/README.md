@@ -126,6 +126,8 @@ Windows uses `-Mode auto` by default: npm global installation when global npm is
 
 The installer calls `npm.cmd` directly to avoid PowerShell resolving `npm` to `npm.ps1`.
 
+The `%LOCALAPPDATA%\CodeMie\bin\<command>.cmd` shims jump to the npm-generated `.cmd` without `call`, so `%` in an argument (for example `%20` in a repository URL) reaches the CLI as typed. Shims written by an older installer used `call`, which re-expanded `%`; re-run the installer to regenerate them. PowerShell still splits an unquoted-looking argument at `&` whenever it runs any `.cmd`, so pass URLs containing `&` in a form that has none (for example `codemie analytics sync install --webhook-b64`).
+
 Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell through `%*`. Use the PowerShell installer directly when passing arguments that contain spaces, such as `-InstallRoot "C:\My Folder"`.
 
 ## macOS/Linux Defaults
