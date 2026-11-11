@@ -74,7 +74,6 @@ jobs:
     uses: codemie-ai/ci-workflows/.github/workflows/reusable-publish-npm.yml@main
     with:
       artifact-name: npm-package
-      dist-tag: ${{ contains(needs.verify.outputs.version, '-rc') && 'rc' || 'latest' }}
 
   installers:
     name: Publish installers
