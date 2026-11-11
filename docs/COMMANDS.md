@@ -88,7 +88,7 @@ codemie proxy stop               # Stop the local proxy daemon
 codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
-codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
 codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
@@ -98,7 +98,7 @@ codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
-`codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+`codemie proxy connect --claude-desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
 
 ### VS Code BYOK custom endpoint
 
@@ -213,13 +213,13 @@ and routing coverage runs as part of `npm test`.
 
 ### Claude Desktop 3P
 
-#### `codemie proxy connect desktop`
+#### `codemie proxy connect --claude-desktop`
 
 Connect Claude Desktop 3P to the local CodeMie proxy.
 
 ```bash
-codemie proxy connect desktop
-codemie proxy connect desktop --profile codemie-new
+codemie proxy connect --claude-desktop
+codemie proxy connect --claude-desktop --profile codemie-new
 ```
 
 Behavior:
@@ -241,10 +241,28 @@ The warning is not a verdict. A managed source that sets only `disableAutoUpdate
 Recommended setup:
 
 ```bash
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 ```
 
-After the config is written, quit and reopen Claude Desktop.
+After the config is written, quit and reopen Claude Desktop. The older form `codemie proxy connect desktop` still works as a deprecated alias.
+
+**Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends every Cowork session to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. Three things stop a Cowork session from being sent:
+
+- `codemie proxy analytics disable`, or the session's folder under `codemie proxy analytics exclude` — the same switches as for Claude Code; the folder allowlist of `connect --claude-code-otlp` does not apply to Cowork;
+- no CodeMie project for the session's folder — `codemie proxy status` then shows `Last dropped: no_project`;
+- the daemon not running in Desktop mode — see the `Desktop:` line below.
+
+**The daemon stays in Desktop mode.** While Claude Desktop's applied config points at the local CodeMie gateway, `proxy connect` with any other target, `proxy start`, `proxy restart` and a hook's cold start all start the daemon with the `claude-desktop` identity. A daemon started anew asks for the port Claude Desktop points at; `proxy restart` of a running daemon keeps the port it holds. A daemon that runs as `codex-desktop` or `vscode-byok` is kept as it is, because those clients need their own request handling. After `codemie proxy disconnect --claude-desktop` the identity is derived from the connect targets again.
+
+**`codemie proxy status` with Claude Desktop connected** prints one more line after `Uptime`:
+
+| Line | Meaning |
+|---|---|
+| `Desktop: collecting` | The daemon runs in Desktop mode on the port Claude Desktop points at. |
+| `Desktop: NOT collecting — the proxy runs as <client>; codemie proxy connect --claude-desktop replaces it` | Another client's proxy is running; connecting Claude Desktop replaces it. |
+| `Desktop: NOT collecting — Claude Desktop points at port <a>, the proxy listens on <b>; run: codemie proxy connect --claude-desktop` | The port Claude Desktop points at was taken; the command re-writes Claude Desktop's config, then restart Claude Desktop. |
+
+Below the `Analytics:` lines (and the `Delivery:` lines of `codemie proxy analytics status`) a `Last dropped: <reason> (<stream>, <time>)` line names the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project). `--json` carries the same as `desktop` (`connected`, `collecting`, and, when not collecting, `reason` and `remedy`) and `analytics.latestDrop`.
 
 #### `codemie proxy inspect desktop`
 
@@ -265,11 +283,11 @@ At a high level, this shows:
 
 ```bash
 codemie profile status
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 codemie proxy status
 codemie proxy inspect desktop --limit 5
 codemie proxy stop
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 ```
 
 If Claude Desktop still appears connected to Anthropic subscription or another Gateway:
@@ -1835,6 +1853,8 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). It only undoes an `exclude`: it does not touch the `settings.json` allowlist and does not start tracking a project that is outside the Project-scope allowlist (the command tells you when that is the case). |
 | `codemie proxy analytics status [--json]` | When an OTLP connector (Claude Code, Copilot CLI or Copilot Chat) is connected, show a Delivery section first (`Delivery: healthy`, `unhealthy (<reason>)`, `unknown (...)` or `proxy not running`, plus `Pending:` when bytes are unsent and, only when unhealthy, a `Run:` remedy; the spool is shared by the whole machine, so `Pending:` and the identity-mismatch and sending-failed reasons cover every session on this machine, not only this proxy's), then (always) the connector state (hooks installed, or connected), the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. With `--json` the output keeps its shape and adds a `delivery` key (same object as `analytics` in `proxy status --json`; `null` when the daemon is stopped or no connector is connected). |
+
+Claude Desktop Cowork sessions follow `disable` / `enable` and `exclude` / `include` too (the session's folder is what is excluded), although no hook runs for them; the folder allowlist of `connect --claude-code-otlp` does not apply to them.
 
 A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
 

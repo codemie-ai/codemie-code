@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { getAnalyticsPlatformSource, getPlatformUrl } from '@/providers/core/codemie-auth-helpers.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
-import { summarizeSpoolDelivery } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
+import { summarizeSpoolDelivery, type LatestDrop } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
@@ -12,6 +12,8 @@ export interface DeliveryHealth {
   status: 'healthy' | 'unhealthy' | 'unknown';
   reason?: DeliveryReason;
   pendingBytes: number;
+  /** The newest drop the spool records; informational, it never changes `status`. */
+  latestDrop?: LatestDrop;
 }
 
 /**
@@ -55,10 +57,11 @@ export async function collectDeliveryHealth(
       : spool.sendFailed ? 'send_failed'
       : undefined;
 
+    const drop = spool.latestDrop ? { latestDrop: spool.latestDrop } : {};
     if (reason) {
-      return { status: 'unhealthy', reason, pendingBytes: spool.pendingBytes };
+      return { status: 'unhealthy', reason, pendingBytes: spool.pendingBytes, ...drop };
     }
-    return { status: reply?.credentials === 'ok' ? 'healthy' : 'unknown', pendingBytes: spool.pendingBytes };
+    return { status: reply?.credentials === 'ok' ? 'healthy' : 'unknown', pendingBytes: spool.pendingBytes, ...drop };
   } catch (error) {
     logger.debug('[delivery-health] Could not collect delivery health:', error);
     return UNKNOWN;
@@ -72,9 +75,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+/** The `Last dropped:` detail of the newest recorded drop, with the remedy of a session without a project. */
+export function formatDropLines(drop: LatestDrop | undefined): string[] {
+  if (!drop) return [];
+  const where = drop.stream ? `${drop.stream}, ` : '';
+  const lines = [`  Last dropped: ${drop.reason} (${where}${new Date(drop.at).toISOString()})`];
+  if (drop.reason === 'no_project') {
+    lines.push('  Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent');
+  }
+  return lines;
+}
+
 /**
- * The shared `Delivery:` headline with its indented `Pending:` and `Run:` details. `null` means the
- * proxy is not running, so there is nothing to detail.
+ * The shared `Delivery:` headline with its indented `Pending:`, `Run:` and `Last dropped:` details.
+ * `null` means the proxy is not running, so there is nothing to detail.
  */
 export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
   if (!health) {
@@ -99,5 +113,6 @@ export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
   if (run) {
     lines.push(`  Run: ${run}`);
   }
+  lines.push(...formatDropLines(health.latestDrop));
   return lines;
 }

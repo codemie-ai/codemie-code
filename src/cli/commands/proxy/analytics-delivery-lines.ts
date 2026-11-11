@@ -1,11 +1,12 @@
 import chalk from 'chalk';
 import type { DaemonState } from './daemon-manager.js';
 import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
-import { collectDeliveryHealth, DELIVERY_REASONS, type DeliveryHealth } from './delivery-health.js';
+import { collectDeliveryHealth, DELIVERY_REASONS, formatDropLines, type DeliveryHealth } from './delivery-health.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 
 /**
- * Analytics delivery health for `proxy status`, or null when no connector is connected.
+ * Analytics delivery health for `proxy status`, or null when no connector is connected (a connected
+ * Claude Desktop counts as one).
  * Leftover unsent spool bytes never make it visible: with nothing connected there is nothing to report.
  */
 export async function collectVisibleDeliveryHealth(
@@ -18,8 +19,15 @@ export async function collectVisibleDeliveryHealth(
   return collectDeliveryHealth(state, reply);
 }
 
-/** The `Analytics:` headline for `proxy status`, with an indented `Run:` tip when there is a remedy. */
+/**
+ * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip when there is a remedy,
+ * then the `Last dropped:` detail when the spool records a drop.
+ */
 export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
+  return [...analyticsHeadline(delivery), ...formatDropLines(delivery.latestDrop)];
+}
+
+function analyticsHeadline(delivery: DeliveryHealth): string[] {
   if (delivery.status === 'healthy') {
     return [`Analytics: ${chalk.green('healthy')}`];
   }

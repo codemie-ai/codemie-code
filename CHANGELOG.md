@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- Claude Desktop Cowork sessions now appear on the CLI Analytics tab (turns, tools, subagents, tokens, cost) once Claude Desktop is connected with `codemie proxy connect --claude-desktop`; sessions that ran while the proxy was stopped are sent when it runs again, up to 7 days back. `codemie proxy analytics disable` and `exclude` apply to them
+- `codemie proxy status` shows whether Claude Desktop sessions are being collected (`Desktop: collecting` / `NOT collecting` with the command that fixes it) and the latest analytics data that was not stored (`Last dropped: <reason>`); `codemie proxy analytics status` shows the latter too
+
 ### Changed
 
 - `codemie-opencode` and `codemie-opencode-acp` now target OpenCode v2; OpenCode v1 is no longer supported (the built-in `codemie-code` agent is unaffected)
@@ -14,6 +19,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- With Claude Desktop connected, connecting another client, `codemie proxy start`, `codemie proxy restart` or a Claude Code hook no longer restarts the proxy outside Desktop mode, which silently stopped the collection of Claude Desktop sessions
+- The route of a model request (`x-litellm-model-name`) is no longer lost from a streamed answer whose first event is split across network chunks, or from a compressed non-streaming answer, so the cost of such a request is priced by its route
+- An analytics session discarded for having no CodeMie project is now logged and shown by `codemie proxy status`
+- The turn count in a Claude Code session summary no longer includes the lines Claude Code writes itself (an interrupted request, the output of a local or `!` command, the `!` command itself) or automatic prompts (a finished background task, an agent's message), so `Turns` on the CLI Analytics tab is no longer raised by them. Sessions already sent are not recounted
 - OpenCode v2: choosing a model from the "CodeMie SSO (Responses API)" list no longer fails with `Invalid model name`; the list now holds only the models CodeMie serves, and `--model` starts on the requested model
 - OpenCode v2: sessions sync their metrics and conversations again, hooks (prompt, tool, stop) run, `--reasoning-effort` no longer aborts `--task` runs, and each `codemie-opencode` session runs its own OpenCode server instead of attaching to a background service that held another session's settings
 - OpenCode v2: session titles are generated with the profile's haiku-tier model when it is in the catalog

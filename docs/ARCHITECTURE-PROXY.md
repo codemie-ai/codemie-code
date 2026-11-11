@@ -254,7 +254,9 @@ Note: priorities 14-17 do request-_body_ normalization/sanitization, not header 
 
 - **Proxy Lifecycle**: `onProxyStart`, `onProxyStop`
 - **Full Request Bypass**: `handleRequest` — optional hook checked in priority order _before_ the standard pipeline; if a plugin returns `true`, it has fully handled the request (response written) and the entire onRequest → forward → onResponseHeaders → stream → onResponseComplete pipeline is skipped. Used for traffic that doesn't go to the configured `targetApiUrl` at all (e.g. MCP Auth's `/mcp_auth` and `/mcp_relay/...` routes to arbitrary MCP servers). The handling plugin owns all security guarantees (SSRF checks etc.) for its own traffic.
-- **Request Lifecycle**: `onRequest`, `onUpstreamResponse`, `onResponseHeaders`, `onResponseChunk`, `onResponseComplete`, `onError`
+- **Request Lifecycle**: `onRequest`, `onUpstreamResponse`, `onResponseHeaders`, `onResponseChunk`, `onResponseStreamEnd`, `onResponseComplete`, `onError`
+
+`onResponseChunk` may return `null` to hold a chunk back. `onResponseStreamEnd(context)` runs once the upstream stream has ended — also when it fails mid-stream — and before the downstream ends: an interceptor returns the bytes it still holds and the proxy writes them to the client, in priority order. It is skipped when the client has already disconnected. The routing header injector (`routing-header-injector.plugin.ts`) uses both: it holds the unfinished last line of a chunk until the first whole `data:` line of the stream, so a `message_start` event cut by a chunk boundary still gets the upstream's `x-litellm-*` / `x-codemie-routing-*` fields; a stream that carries a `content-encoding` is not held or rewritten. For a non-streaming JSON answer it decompresses a `br`, `gzip` or `deflate` body (up to 16 MiB), adds the fields and sends it on uncompressed; a body it cannot decode passes as received.
 
 `onUpstreamResponse(context, upstreamResponse, tools)` runs immediately after the upstream call and before header/streaming hooks. `tools` gives a plugin `readBody()` (buffer the full response), `retry()` (re-issue the same request, e.g. after stripping now-rejected state), and `fromBuffer()` (turn a buffered `Buffer` back into a stream-shaped `IncomingMessage`). Only the Copilot encrypted-content sanitizer uses this hook (see §6.8) — the Codex one instead watches `onResponseChunk` and flips a permanent `onRequest`-time flag; see §6.8 for why these two plugins differ.
 
@@ -297,6 +299,7 @@ Note: priorities 14-17 do request-_body_ normalization/sanitization, not header 
 │  ├─ onUpstreamResponse() hooks (optional buffer/retry)        │
 │  ├─ onResponseHeaders() hooks                                │
 │  ├─ Stream response with onResponseChunk() hooks             │
+│  ├─ onResponseStreamEnd() hooks (bytes still held)           │
 │  └─ onResponseComplete() hooks                               │
 └──────────────────────────────────────────────────────────────┘
                          │
@@ -383,8 +386,9 @@ Detailed Flow:
 
 4. Stream response chunks
    ├─ For each chunk from upstream:
-   │   ├─ Run onResponseChunk() hooks (optional transform)
+   │   ├─ Run onResponseChunk() hooks (optional transform; null holds the chunk back)
    │   └─ Write chunk to client immediately
+   ├─ Run onResponseStreamEnd() hooks (write the bytes an interceptor still holds)
    └─ End stream
 
 5. Response complete
@@ -733,6 +737,14 @@ When the proxy daemon is started in Desktop mode, the daemon also starts a local
 - Normalizes Desktop events into the existing Claude metrics/conversation processors
 - Syncs pending JSONL metrics and conversations through `SessionSyncer`
 - Sends session lifecycle metrics with client identity `claude-desktop`
+- Sends every Cowork session to CLI Analytics as Claude Code plugin events (below)
+
+**Cowork sessions in CLI Analytics.** A Cowork session keeps its Claude Code transcript beside `audit.jsonl`, in `<session dir>/.claude/projects/session/<cliSessionId>.jsonl`, with its subagent files under `<cliSessionId>/subagents/` — the inner transcript. `CoworkEventProducer` (`src/telemetry/runtime/cowork/`) is started by every poll of the runtime, never awaited and one run at a time, so it cannot delay the metrics sync or the daemon's stop. It reads the inner transcript of each Cowork session active in the last 7 days (`CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS`, at most 14) from its own cursor (`~/.codemie/analytics/state/<cliSessionId>.cowork.json`), whenever the daemon started: a session that ran while the daemon was down is read from its beginning. It appends plugin events to the OTLP spool's `hooks` stream, from where the existing tick and forwarder send them in legacy mode with the session's project:
+
+- `agent.usage.request`, `agent.subagent.usage` and `agent.session.summary` come from the Claude Code transcript orchestrator, called as the hook path calls it;
+- `agent.session.start`, `agent.prompt.submit`, `agent.tool.start` / `agent.tool.end` / `agent.tool.error`, `agent.subagent.start` / `agent.subagent.stop` and `agent.session.end` are built from the transcript lines (`cowork-events.ts`), each with a deterministic `event_id` `<type>:<session_id>:<key>`, so a lost cursor re-sends the same ids and the backend drops them. A session is ended once its last line is older than the inactivity timeout and ended again if it goes on.
+
+Every event carries `platform: claude-code`, the transcript's own `entrypoint` (`local-agent`) and version, the project the runtime resolves for the session and the repository (`Cowork` when the folder has none); none carries an email — the backend stamps the authenticated sender. Strings pass the hook path's secret masking and prompt cut. The producer honours `codemie proxy analytics disable` and the excluded folders, and ignores the folder allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER` (a Cowork folder is not a tracked project folder). It skips a session of the Code tab (`claude-code-sessions`, which runs the user's own Claude Code hooks), a session without an inner transcript, and a session whose metadata carries `otelConfig` (Desktop exports its own OTel for it). A session with no project is discarded at the tick, as any legacy session is.
 
 This path is intentionally separate from the hook-based `codemie-claude` flow. Claude Desktop does not expose CodeMie-managed lifecycle hooks, so ingestion is file-discovery driven rather than event-callback driven. The shared runtime is generic; client-specific logic lives behind a Desktop adapter (`src/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js`, wired into `src/telemetry/runtime/DesktopTelemetryRuntime.ts`) so future IDE or desktop clients can plug into the same sync pipeline. Started/stopped directly by `src/bin/proxy-daemon.ts` when `--telemetry-mode claude-desktop` is passed.
 
@@ -932,7 +944,7 @@ The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook event
 
 **Filtering is hook-side only.** The daemon has no allowlist logic because OTLP carries no `cwd`. The Claude Code OTLP plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`) reads the allowlist on every hook event. For an untracked project it returns early: no daemon start (`ensureOtlpProxy` is not called), no SSO check, no forward to the spool.
 
-**OTEL-only invariant.** The OTel environment is global, so untracked sessions still export OTEL data to the daemon, but they never receive hooks data. The completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data; an OTEL-only session gets `wait` and, once `waitTicks >= OTLP_SEND_MAX_ATTEMPTS` (limit resolved by `hooksOnlyWaitTicks()` in `otlp-spool/spool-config.ts`), `skip`. On `skip` the tick processor advances the OTEL cursors to EOF without sending. No code path may send OTEL-only data without first adding daemon-side project filtering.
+**OTEL-only invariant.** The OTel environment is global, so untracked sessions still export OTEL data to the daemon, but they never receive hooks data. The completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data; an OTEL-only session gets `wait` and, once `waitTicks >= OTLP_SEND_MAX_ATTEMPTS` (limit resolved by `hooksOnlyWaitTicks()` in `otlp-spool/spool-config.ts`), `skip`. On `skip` the tick processor advances the OTEL cursors to EOF without sending. No code path may send OTEL-only data without first adding daemon-side project filtering. A Claude Desktop Cowork session is not such a session: the Desktop daemon writes its plugin events into the `hooks` stream itself (§6.12.3), gated by the analytics switch and the excluded folders instead of the hook-time allowlist.
 
 **Who stamps what.** The hook process (`OtlpAgentAdapter`) stamps every event field: type, truncation, common, agent and context fields (identity, project, CLI version), `schema_version`, `event_id`, `timestamp`. The daemon spool (`otlp.plugin.ts`) only stores the line. The forwarder (`otlp-spool/forwarder.ts`) only forwards it: it owns `baseUrl` and the credentials, and reads nothing from an event except `type` to detect a session end. See [ARCHITECTURE-OTLP-PLUGIN.md](ARCHITECTURE-OTLP-PLUGIN.md). Restart the daemon after upgrading.
 
@@ -1156,7 +1168,12 @@ src/providers/plugins/sso/session/
    │   state's `startedAt` (Windows: the pid alone), or, failing that start check,
    │   when the shallow `/health` on the state's port answers with that port and
    │   the state's pid
-   ├─ Optionally start DesktopTelemetryRuntime (--telemetry-mode claude-desktop)
+   ├─ Optionally start DesktopTelemetryRuntime (--telemetry-mode claude-desktop),
+   │   which also runs the Cowork event producer (§6.12.3). While Claude Desktop's
+   │   applied config points at the local gateway with the local gateway key, every
+   │   spawn path (connect, start, restart, a hook's cold start) asks for this mode
+   │   and the gateway's port, except over a codex-desktop or vscode-byok daemon;
+   │   the restart of a running daemon keeps the port that daemon holds
    ├─ Start ProxyWatcher: deep-checks /health every 30s, restarts the proxy
    │   in-process on the SAME pinned port (up to 3 attempts) on failure,
    │   records health: 'unhealthy' in the state file if it gives up

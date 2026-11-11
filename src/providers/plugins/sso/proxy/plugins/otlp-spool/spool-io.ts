@@ -17,7 +17,7 @@ import {
   type StreamPolicy,
 } from './session-project.js';
 import { readOrCreateEpoch } from './epoch.js';
-import { warnConflictStarted, warnDiscardOnce } from './spool-warnings.js';
+import { warnConflictStarted, warnDiscardOnce, warnNoProjectDiscardOnce } from './spool-warnings.js';
 import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
 import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
 import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
@@ -176,7 +176,8 @@ export function forwarderIdentity(
 /**
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
- * it demands and persists the status once when anything changed.
+ * it demands and persists the status once when anything changed. A discard for want of a project is
+ * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is warned only.
  */
 export async function applyProjectPolicyLocked(
   sessionId: string,
@@ -201,10 +202,23 @@ export async function applyProjectPolicyLocked(
     hooksBytes = result.bytes;
     dirty ||= result.changed;
   }
+  let otelStream: SpoolStream | undefined;
   if (policy.otel.kind === 'discard') {
-    const result = await discardBacklogLocked(sessionId, status, [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]);
-    otelBytes = result.bytes;
-    dirty ||= result.changed;
+    for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
+      const result = await discardBacklogLocked(sessionId, status, [stream]);
+      otelBytes += result.bytes;
+      if (result.changed) otelStream ??= stream;
+      dirty ||= result.changed;
+    }
+  }
+  const noProjectLoss = policy.state === 'unbound' && hooksBytes + otelBytes > 0;
+  if (noProjectLoss) {
+    status.lastLoss = {
+      reason: 'no_project',
+      at: Date.now(),
+      bytes: hooksBytes + otelBytes,
+      stream: hooksBytes > 0 ? 'hooks' : otelStream,
+    };
   }
 
   if (dirty) {
@@ -217,6 +231,9 @@ export async function applyProjectPolicyLocked(
     );
     if (policy.state === 'conflict') {
       warnDiscardOnce(sessionId, { sessionId, reason: policy.reason ?? 'none', hooksBytes, otelBytes });
+    }
+    if (noProjectLoss) {
+      warnNoProjectDiscardOnce(sessionId, { sessionId, hooksBytes, otelBytes });
     }
   }
   return policy;

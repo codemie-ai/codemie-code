@@ -122,6 +122,9 @@ export interface ProxyInterceptor {
   /** Called during streaming (optional, for transform/inspection) */
   onResponseChunk?(context: ProxyContext, chunk: Buffer): Promise<Buffer | null>;
 
+  /** Bytes this interceptor still holds for the client when the upstream stream has ended */
+  onResponseStreamEnd?(context: ProxyContext): Promise<Buffer | null>;
+
   /** Called after response fully streamed */
   onResponseComplete?(context: ProxyContext, metadata: ResponseMetadata): Promise<void>;
 

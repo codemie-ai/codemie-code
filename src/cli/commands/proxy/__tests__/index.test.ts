@@ -53,6 +53,7 @@ vi.mock('../connectors/desktop.js', () => ({
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
+  readDesktopGateway: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../connectors/vscode.js', () => ({
@@ -84,6 +85,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
 }));
+
+// A test that connects Claude Desktop leaves the shared mock as it found it: not connected.
+afterEach(async () => {
+  const { readDesktopGateway } = await import('../connectors/desktop.js');
+  vi.mocked(readDesktopGateway).mockResolvedValue(null);
+});
 
 describe('proxy connect desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -512,6 +519,41 @@ describe('proxy start', () => {
     await createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
+  });
+
+  it('starts in Desktop mode on the gateway port while Claude Desktop is connected', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4005 });
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'default',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://127.0.0.1:4005',
+      profile: 'default',
+      port: 4005,
+      gatewayKey: 'local-key',
+      telemetryMode: 'claude-desktop',
+      startedAt: new Date().toISOString(),
+    });
+
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
+
+    expect(vi.mocked(spawnDaemon).mock.calls[0][0]).toMatchObject({
+      clientType: 'claude-desktop',
+      telemetryMode: 'claude-desktop',
+      port: 4005,
+    });
   });
 
   it.each([
@@ -1207,8 +1249,10 @@ describe('proxy status', () => {
       const { checkStatus } = await import('../daemon-manager.js');
       const { checkProxyHealth } = await import('../health-check.js');
       const { collectDeliveryHealth } = await import('../delivery-health.js');
+      const { readDesktopGateway } = await import('../connectors/desktop.js');
       vi.mocked(checkProxyHealth).mockClear();
       vi.mocked(collectDeliveryHealth).mockClear();
+      vi.mocked(readDesktopGateway).mockClear();
       vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
 
       expect(await runStatus(['status'])).toEqual(['Status: stopped']);
@@ -1216,6 +1260,84 @@ describe('proxy status', () => {
       expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
       expect(checkProxyHealth).not.toHaveBeenCalled();
       expect(collectDeliveryHealth).not.toHaveBeenCalled();
+      expect(readDesktopGateway).not.toHaveBeenCalled();
+    });
+
+    describe('Desktop line', () => {
+      const dropAt = Date.parse('2026-11-11T10:00:00.000Z');
+      const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: dropAt, local: false };
+
+      async function arrangeDesktop(gatewayPort: number, state: Record<string, unknown>): Promise<void> {
+        await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
+        const { checkStatus } = await import('../daemon-manager.js');
+        const { readDesktopGateway } = await import('../connectors/desktop.js');
+        const { collectDeliveryHealth } = await import('../delivery-health.js');
+        vi.mocked(checkStatus).mockResolvedValue({
+          running: true,
+          state: { ...analyticsState, ...state } as Awaited<ReturnType<typeof checkStatus>>['state'],
+        });
+        vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
+        vi.mocked(collectDeliveryHealth).mockResolvedValue(
+          { status: 'healthy', pendingBytes: 0, latestDrop } as Awaited<ReturnType<typeof collectDeliveryHealth>>
+        );
+      }
+
+      it('prints collecting, then the Analytics and Last dropped lines after Uptime', async () => {
+        await arrangeDesktop(4001, { clientType: 'claude-desktop', telemetryMode: 'claude-desktop' });
+
+        const lines = await runStatus(['status']);
+
+        const uptimeIndex = lines.findIndex((line) => line.startsWith('  Uptime:'));
+        expect(lines.slice(uptimeIndex + 1, uptimeIndex + 4)).toEqual([
+          '  Desktop: collecting',
+          `Analytics: ${chalk.green('healthy')}`,
+          '  Last dropped: cli_analytics_disabled (hooks, 2026-11-11T10:00:00.000Z)',
+        ]);
+      });
+
+      it('adds desktop and analytics.latestDrop to the JSON payload', async () => {
+        await arrangeDesktop(4001, { clientType: 'claude-desktop', telemetryMode: 'claude-desktop' });
+
+        const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
+
+        expect(payload.desktop).toEqual({ connected: true, collecting: true });
+        expect(payload.analytics.latestDrop).toEqual(latestDrop);
+      });
+
+      it('names the client type of a daemon that is not in Desktop mode', async () => {
+        await arrangeDesktop(4001, { clientType: 'codex-desktop' });
+
+        const lines = await runStatus(['status']);
+        const payload = (await runStatus(['status', '--json'])).at(-1) as string;
+
+        expect(lines).toContain(chalk.yellow(
+          '  Desktop: NOT collecting — the proxy runs as codex-desktop; codemie proxy connect --claude-desktop replaces it'
+        ));
+        expect(JSON.parse(payload).desktop).toEqual({
+          connected: true,
+          collecting: false,
+          reason: 'the proxy runs as codex-desktop',
+          remedy: 'codemie proxy connect --claude-desktop replaces it',
+        });
+      });
+
+      it('names both ports when Desktop points at another port than the daemon listens on', async () => {
+        await arrangeDesktop(4001, { clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4002, url: 'http://127.0.0.1:4002' });
+
+        const lines = await runStatus(['status']);
+        const payload = (await runStatus(['status', '--json'])).at(-1) as string;
+
+        expect(lines).toContain(chalk.yellow(
+          '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 4002; ' +
+          'run: codemie proxy connect --claude-desktop'
+        ));
+        expect(JSON.parse(payload).desktop).toEqual({
+          connected: true,
+          collecting: false,
+          reason: 'Claude Desktop points at port 4001, the proxy listens on 4002',
+          remedy: 'run: codemie proxy connect --claude-desktop',
+        });
+      });
     });
   });
 });
@@ -1490,6 +1612,109 @@ describe('proxy restart', () => {
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ clientType: 'claude-code-otlp' });
+  });
+
+  describe('while Claude Desktop is connected', () => {
+    const otlpState = { ...runningState, clientType: 'claude-code-otlp', telemetryMode: undefined };
+
+    async function connectDesktop(port: number): Promise<void> {
+      const { readDesktopGateway } = await import('../connectors/desktop.js');
+      vi.mocked(readDesktopGateway).mockResolvedValue({ port });
+    }
+
+    it('re-spawns a claude-code-otlp daemon in Desktop mode and records that identity', async () => {
+      const { daemon, command } = await setup({ running: true, state: otlpState as typeof runningState });
+      await connectDesktop(4001);
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+        clientType: 'claude-desktop',
+        telemetryMode: 'claude-desktop',
+        port: 4001,
+      });
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ port: 4001 }),
+        'work',
+        'claude-desktop'
+      );
+    });
+
+    it('re-spawns a running daemon in Desktop mode on its own port, not the gateway port', async () => {
+      const onOwnPort = { ...otlpState, port: 4002, url: 'http://127.0.0.1:4002' };
+      const { daemon, command } = await setup({ running: true, state: onOwnPort as typeof runningState }, 4002);
+      await connectDesktop(4001);
+      vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+        clientType: 'claude-desktop',
+        telemetryMode: 'claude-desktop',
+        port: 4002,
+      });
+      expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ port: 4002 }),
+        'work',
+        'claude-desktop'
+      );
+      expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:4002');
+    });
+
+    it('stops a Desktop-mode replacement that could not rebind the running daemon port', async () => {
+      const onOwnPort = { ...otlpState, port: 4002, url: 'http://127.0.0.1:4002' };
+      const { daemon, command } = await setup({ running: true, state: onOwnPort as typeof runningState }, 54321);
+      await connectDesktop(4001);
+
+      await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+      expect(daemon.stopDaemon).toHaveBeenCalledTimes(2);
+      expect(errorOutput().replace(/\s+/g, ' ')).toContain('codemie proxy start --port 4002');
+      expect(loggedOutput()).not.toContain('✓');
+    });
+
+    it('starts a stopped daemon in Desktop mode on the gateway port', async () => {
+      const { daemon, command } = await setup({ running: false, state: null }, 4005, 'default');
+      await connectDesktop(4005);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+        clientType: 'claude-desktop',
+        telemetryMode: 'claude-desktop',
+        port: 4005,
+      });
+      expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:4005');
+    });
+
+    it('keeps a vscode-byok daemon identity', async () => {
+      const byok = { ...runningState, clientType: 'vscode-byok', telemetryMode: undefined };
+      const { daemon, command } = await setup({ running: true, state: byok as typeof runningState });
+      await connectDesktop(4001);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      const options = vi.mocked(daemon.spawnDaemon).mock.calls[0][0];
+      expect(options).toMatchObject({ clientType: 'vscode-byok', port: 4001 });
+      expect(options.telemetryMode).toBeUndefined();
+    });
+
+    it('keeps a stopped-restart spawn that came up off the gateway port', async () => {
+      const { daemon, command } = await setup({ running: false, state: null }, 62000, 'default');
+      await connectDesktop(4005);
+
+      await command.parseAsync(['restart'], { from: 'user' });
+
+      expect(daemon.stopDaemon).not.toHaveBeenCalled();
+      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+        clientType: 'claude-desktop',
+        telemetryMode: 'claude-desktop',
+        port: 4005,
+        writeRecord: true,
+      });
+      expect(loggedOutput()).toContain('✓ Proxy restarted at http://127.0.0.1:62000');
+    });
   });
 
   describe('restart writes the connection record', () => {

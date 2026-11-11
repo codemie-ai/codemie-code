@@ -24,8 +24,11 @@ import {
   daemonMatchesRequest,
   printProxyError,
   connectTargets,
+  withDesktopIdentity,
   type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
+import { getEffectiveClientType } from './client-type.js';
+import { readDesktopGateway } from './connectors/desktop.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -123,6 +126,37 @@ function formatDaemonConflict(
   return details.join('\n');
 }
 
+interface DesktopCollection {
+  connected: true;
+  collecting: boolean;
+  reason?: string;
+  remedy?: string;
+}
+
+/** Whether the daemon collects what the connected Claude Desktop sends: Desktop mode, on the gateway's port. */
+function describeDesktopCollection(
+  state: NonNullable<Awaited<ReturnType<typeof readState>>>,
+  gatewayPort: number
+): DesktopCollection {
+  if (state.telemetryMode !== 'claude-desktop') {
+    return {
+      connected: true,
+      collecting: false,
+      reason: `the proxy runs as ${getEffectiveClientType(state)}`,
+      remedy: 'codemie proxy connect --claude-desktop replaces it',
+    };
+  }
+  if (gatewayPort !== state.port) {
+    return {
+      connected: true,
+      collecting: false,
+      reason: `Claude Desktop points at port ${gatewayPort}, the proxy listens on ${state.port}`,
+      remedy: 'run: codemie proxy connect --claude-desktop',
+    };
+  }
+  return { connected: true, collecting: true };
+}
+
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
   proxy
@@ -139,7 +173,9 @@ export function createProxyCommand(): Command {
     .option('--profile <name>', 'Profile whose credentials to use')
     .action(async (opts: ProxyStartOptions) => {
       try {
-        const requestedPort = parsePortOption(opts.port, DEFAULT_DAEMON_PORT);
+        // With Claude Desktop connected the daemon starts in Desktop mode, on the gateway's port unless --port names one.
+        const { identity, gatewayPort } = await withDesktopIdentity({});
+        const requestedPort = parsePortOption(opts.port, gatewayPort ?? DEFAULT_DAEMON_PORT);
         const config = await ConfigLoader.load(
           process.cwd(),
           opts.profile ? { name: opts.profile } : undefined
@@ -151,7 +187,7 @@ export function createProxyCommand(): Command {
           profile,
           port: requestedPort,
           project: config.codeMieProject,
-          clientType: 'codemie-daemon',
+          clientType: getEffectiveClientType(identity),
           provider: config.provider ?? 'ai-run-sso',
           targetUrl: config.baseUrl,
         };
@@ -171,6 +207,7 @@ export function createProxyCommand(): Command {
 
         const daemonState = await launchDaemon(config, profile, {
           port: requestedPort,
+          ...identity,
           projectBinding,
           writeRecord: await shouldWriteConnectionRecord(opts.profile),
         });
@@ -239,6 +276,8 @@ export function createProxyCommand(): Command {
         expectedPid: state.pid,
       });
       const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
+      const gateway = await readDesktopGateway();
+      const desktop = gateway ? describeDesktopCollection(state, gateway.port) : null;
 
       const otlp = await checkClaudeCodeOtlpEndpoint(state);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
@@ -267,6 +306,9 @@ export function createProxyCommand(): Command {
         }
         if (otlpMismatch) {
           payload.otlpEndpointMismatch = { configured: otlpMismatch.configured, expected: otlpMismatch.expected };
+        }
+        if (desktop) {
+          payload.desktop = desktop;
         }
         if (analytics) {
           payload.analytics = analytics;
@@ -308,6 +350,12 @@ export function createProxyCommand(): Command {
         console.log(`  Project: ${state.project}`);
       }
       console.log(`  Uptime:  ${uptime}`);
+
+      if (desktop) {
+        console.log(desktop.collecting
+          ? '  Desktop: collecting'
+          : chalk.yellow(`  Desktop: NOT collecting — ${desktop.reason}; ${desktop.remedy}`));
+      }
 
       if (analytics) {
         for (const line of formatAnalyticsLines(analytics)) {

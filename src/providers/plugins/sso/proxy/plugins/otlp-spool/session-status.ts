@@ -57,8 +57,11 @@ export interface SessionStatus {
    * stream hold tracks a head-of-line proof hold of that stream only. `since` survives restarts.
    */
   holds?: Partial<Record<HoldScope, Hold>>;
-  /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
-  lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string };
+  /**
+   * The latest recorded local loss: a hold that reached the retention bound and dropped its backlog, or
+   * the backlog of a session without a project (`no_project`, with the stream it names).
+   */
+  lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string; stream?: SpoolStream };
   /**
    * The latest hook-time stamp failure (no durable evidence record, nothing spooled). Its own single slot:
    * a stamp failure never overwrites `lastLoss` (a retention or delivery loss), and vice versa.
@@ -218,12 +221,13 @@ function parseLoss(raw: unknown): SessionStatus['lastLoss'] {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const { reason, at, bytes } = raw as Record<string, unknown>;
   if (!(LOSS_REASONS as readonly unknown[]).includes(reason) || toOffset(at) === 0) return undefined;
-  const detail = (raw as Record<string, unknown>)['detail'];
+  const { detail, stream } = raw as Record<string, unknown>;
   return {
     reason: reason as LossReason,
     at: toOffset(at),
     bytes: toOffset(bytes),
     ...(typeof detail === 'string' && detail ? { detail: detail.slice(0, MAX_DETAIL) } : {}),
+    ...((SPOOL_STREAMS as readonly unknown[]).includes(stream) ? { stream: stream as SpoolStream } : {}),
   };
 }
 

@@ -832,6 +832,50 @@ describe('DesktopTelemetryRuntime', () => {
     });
   });
 
+  describe('the Cowork producer', () => {
+    it('keeps the session loop, finalization and the poll timer when its run rejects', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, {
+        run: async () => { throw new Error('cowork failed'); }
+      });
+      startedRuntimes.push(runtime);
+
+      await runtime.start();
+      await (runtime as any).startupChain;
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+
+      expect((runtime as any).timer).toBeDefined();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1] }]);
+      expect(readRecord(sessionIdFor('ext-1')!)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+
+    it('keeps polling past a run that never resolves, starts no second run, and stops without waiting for it', async () => {
+      const runs: number[] = [];
+      openDesktopChat('ext-1', 2, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, {
+        run: (now: number) => {
+          runs.push(now);
+          return new Promise<void>(() => {});
+        }
+      });
+
+      await runtime.triggerPoll();
+      appendMessages('ext-1', 1);
+      await pollTicks(runtime, 1);
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await runtime.stop();
+
+      expect(runs).toEqual([T0]);
+      expect(sentDeltas).toEqual([
+        { externalSessionId: 'ext-1', historyIndices: [0, 1] },
+        { externalSessionId: 'ext-1', historyIndices: [2] }
+      ]);
+      expect(readRecord(sessionIdFor('ext-1')!)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+  });
+
   describe('a failure never stops the daemon', () => {
     it('resolves start() and keeps polling when the first poll fails', async () => {
       const adapter = createAdapter();

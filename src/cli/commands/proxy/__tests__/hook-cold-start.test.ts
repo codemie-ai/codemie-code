@@ -20,6 +20,10 @@ vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),
   spawnDetached: vi.fn(),
 }));
+vi.mock('../connectors/desktop.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
+  readDesktopGateway: vi.fn(async () => null),
+}));
 
 describe('ensureOtlpProxy reaching spawnDaemon', () => {
   let home: string;
@@ -91,5 +95,50 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
     expect(status).toHaveBeenCalledWith('Starting proxy (profile: work)...');
     const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8'));
     expect(record).toMatchObject({ version: 1, profile: 'work', clientType: AGENT });
+  });
+
+  it('starts in Desktop mode on the gateway port while Claude Desktop is connected, writing nothing to stdout or stderr', async () => {
+    const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { spawnDetached } = await import('@/utils/processes.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    const { logger } = await import('../../../../utils/logger.js');
+    for (const method of ['debug', 'status', 'warn', 'success', 'info'] as const) {
+      vi.spyOn(logger, method).mockImplementation(() => undefined);
+    }
+
+    vi.mocked(readDesktopGateway).mockResolvedValueOnce({ port: 4005 });
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('work');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://x.example.com/api',
+      codeMieUrl: 'https://x.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    let spawnArgs: string[] = [];
+    vi.mocked(spawnDetached).mockImplementation(((_command: string, args: string[]) => {
+      spawnArgs = args;
+      const arg = (name: string): string => args[args.indexOf(name) + 1];
+      writeFileSync(arg('--state-file'), JSON.stringify({
+        pid: process.pid,
+        port: Number(arg('--port')),
+        url: `http://127.0.0.1:${arg('--port')}`,
+        profile: arg('--profile'),
+        gatewayKey: arg('--gateway-key'),
+        clientType: arg('--client-type'),
+        telemetryMode: arg('--telemetry-mode'),
+        startedAt: new Date().toISOString(),
+      }), 'utf-8');
+    }) as unknown as typeof spawnDetached);
+
+    await ensureOtlpProxy(AGENT);
+
+    const arg = (name: string): string => spawnArgs[spawnArgs.indexOf(name) + 1];
+    expect([arg('--client-type'), arg('--telemetry-mode'), arg('--port')]).toEqual(['claude-desktop', 'claude-desktop', '4005']);
+    for (const spy of outputSpies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+    const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8'));
+    expect(record).toMatchObject({ profile: 'work', clientType: 'claude-desktop', telemetryMode: 'claude-desktop' });
   });
 });

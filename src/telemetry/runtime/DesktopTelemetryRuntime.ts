@@ -27,6 +27,8 @@ import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { ClaudeDesktopTelemetryAdapter } from '@/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js';
+import { CoworkEventProducer } from '@/telemetry/runtime/cowork/CoworkEventProducer.js';
 
 type Attribution = [string | undefined, string | undefined, string | undefined];
 
@@ -53,13 +55,20 @@ export class DesktopTelemetryRuntime {
   private startupChain?: Promise<void>;
   private stopped = false;
   private redeliveryPass?: Promise<void>;
+  /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
+  private readonly cowork?: Pick<CoworkEventProducer, 'run'>;
+  private coworkRun?: Promise<void>;
 
   constructor(
     private readonly adapter: LocalTelemetryAdapter,
-    private readonly config: DesktopTelemetryRuntimeConfig
+    private readonly config: DesktopTelemetryRuntimeConfig,
+    cowork?: Pick<CoworkEventProducer, 'run'>
   ) {
     this.metrics = new DesktopSessionMetrics(config, this.sessionStore);
     this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
+    this.cowork = cowork ?? (adapter instanceof ClaudeDesktopTelemetryAdapter
+      ? new CoworkEventProducer({ profile: config.profile, inactivityTimeoutMs: config.inactivityTimeoutMs })
+      : undefined);
   }
 
   /**
@@ -163,6 +172,7 @@ export class DesktopTelemetryRuntime {
         }
       }
 
+      this.startCoworkRunIfIdle(now);
       await this.finalizeInactive(now);
       this.startRedeliveryIfDue(now);
     } finally {
@@ -222,6 +232,22 @@ export class DesktopTelemetryRuntime {
           this.redeliveryPass = undefined;
         });
     }
+  }
+
+  /** Starts a Cowork producer run unless one is in flight or the runtime is stopping; not awaited, so a slow or failing run never holds the poll. */
+  private startCoworkRunIfIdle(now: number): void {
+    if (!this.cowork || this.coworkRun || this.stopped) return;
+    const cowork = this.cowork;
+    this.coworkRun = Promise.resolve()
+      .then(() => cowork.run(now))
+      .catch((error) => {
+        logger.warn('[desktop-telemetry] Cowork producer run failed; retried at the next poll', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.coworkRun = undefined;
+      });
   }
 
   private async pollSession(discovered: LocalTelemetryDiscoveredSession): Promise<void> {

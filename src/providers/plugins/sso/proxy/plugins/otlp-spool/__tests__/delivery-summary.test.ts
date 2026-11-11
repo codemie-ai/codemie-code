@@ -90,4 +90,22 @@ describe('summarizeSpoolDelivery', () => {
     await writeFile(statusFile('corrupt'), '{not json');
     expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 30, mismatchHeld: false, sendFailed: false });
   });
+
+  it('reports the newest drop across sessions: a local no_project loss after a backend discard', async () => {
+    await session('discarded', {}, (s) => {
+      s.lastDiscard = { reason: 'cli_analytics_disabled', stream: 'hooks', bytes: 10, at: 1_000 };
+    });
+    await session('no-project', {}, (s) => {
+      s.lastLoss = { reason: 'no_project', at: 2_000, bytes: 200, stream: 'hooks' };
+    });
+    expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason: 'no_project', stream: 'hooks', at: 2_000, local: true });
+  });
+
+  it('reports a retention-bound loss newer than every discard, without a stream', async () => {
+    await session('mixed', {}, (s) => {
+      s.lastDiscard = { reason: 'project_context_required', stream: 'hooks', bytes: 10, at: 1_000 };
+      s.lastLoss = { reason: 'delivery_failed', at: 3_000, bytes: 50 };
+    });
+    expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason: 'delivery_failed', at: 3_000, local: true });
+  });
 });

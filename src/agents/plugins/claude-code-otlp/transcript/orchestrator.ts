@@ -66,6 +66,7 @@ import {
   collectCompactions,
   collectEditLineStats,
   countTurns,
+  isGenuineUserTurn,
   latestTitle,
   type Compaction,
   type SignalLine,
@@ -320,19 +321,6 @@ function findSkillInvocation(parsed: TranscriptLine): string {
     }
   }
   return '';
-}
-
-/**
- * Whether `parsed` is a genuine new user turn (a real prompt, not a line carrying only
- * `tool_result` blocks) — the same criteria `session-signals.ts`'s `countTurns` uses.
- */
-function isGenuineUserTurn(parsed: TranscriptLine): boolean {
-  if (parsed.type !== 'user' || parsed.isMeta || parsed.isSidechain || parsed.isCompactSummary) {
-    return false;
-  }
-  const content = parsed.message?.content;
-  if (typeof content === 'string') return true;
-  return Array.isArray(content) && content.some((block) => (block as { type?: unknown } | null)?.type === 'text');
 }
 
 /**
