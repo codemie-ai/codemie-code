@@ -23,10 +23,11 @@
  *
  * A session-shaped 401, as decided by `isSessionRejection401` (session-rejection.ts), takes the same
  * path as the redirect: superseded cookies are replayed once, otherwise the marker is written, one
- * detached sign-in is started and the synthetic 401 is returned. That predicate is status-only by
- * assumption (see its header), so a 401 with another cause would also match. The loop guard bounds
- * that: when this interceptor acts on a 401 it records a hash of the rejected cookies (never the
- * values). A later 401 is passed through untouched, its body unread, only when a sign-in has
+ * detached sign-in is started and the synthetic 401 is returned. The predicate looks at the body
+ * (see its header), so a 401 with another cause (a LiteLLM error relayed by the LLM proxy) is
+ * passed through with its body intact and starts no sign-in. The loop guard bounds the rest: when
+ * this interceptor acts on a 401 it records a hash of the rejected cookies (never the values). A
+ * later session-shaped 401 is passed through, its body unchanged, only when a sign-in has
  * completed since then (`getLastSignInAt`) AND the stored cookies still hash the same: that sign-in
  * returned the very credentials the server rejected, so they were not the cause. Without a
  * completed sign-in the 401 is acted on again, so a user who ignored the browser tab still
@@ -101,8 +102,24 @@ function isOauthRedirect(response: IncomingMessage): boolean {
   );
 }
 
-function isRejection(response: IncomingMessage): boolean {
-  return isOauthRedirect(response) || isSessionRejection401(response);
+/**
+ * What an upstream response means to this interceptor. A 401 is read to tell a rejected session from
+ * another 401, so its stream is spent: `body` holds it and `response` is a replacement to pass on.
+ */
+interface Assessment {
+  rejected: boolean;
+  /** The response to return when nothing is done about it: the original, or a rebuilt 401. */
+  response: IncomingMessage;
+  /** The 401 body when it was read, otherwise undefined. */
+  body?: Buffer;
+}
+
+async function assess(response: IncomingMessage, tools: UpstreamResponseTools): Promise<Assessment> {
+  if (isOauthRedirect(response)) return { rejected: true, response };
+  if (response.statusCode !== 401) return { rejected: false, response };
+  const body = await tools.readBody(response);
+  const rejected = isSessionRejection401(response, body);
+  return { rejected, response: rejected ? response : tools.fromBuffer(response, body), body };
 }
 
 /** One-way hash of a Cookie header, so the loop guard never keeps credential values. */
@@ -158,22 +175,26 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     response: IncomingMessage,
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage> {
-    if (!isRejection(response)) return response;
+    let seen = await assess(response, tools);
+    if (!seen.rejected) return seen.response;
     if (isOauthRedirect(response)) this.rejected401 = null;
 
     const freshCookies = await supersedingCookieHeader(context.headers['cookie'], this.credentialRefresher);
     if (freshCookies !== null) {
       logger.debug(`[${this.name}] request carried superseded credentials; not treating the rejection as an expiry`);
-      try {
-        await tools.readBody(response); // keep-alive socket: the rejected body must be consumed
-      } catch (error) {
-        logger.debug(`[${this.name}] draining the rejected response body failed`, error);
+      if (seen.body === undefined) {
+        try {
+          await tools.readBody(response); // keep-alive socket: the rejected body must be consumed
+        } catch (error) {
+          logger.debug(`[${this.name}] draining the rejected response body failed`, error);
+        }
       }
       const replayed = await this.replayWithFreshCookies(context, tools, freshCookies);
       if (!replayed) {
         return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
       }
-      if (!isRejection(replayed)) return replayed;
+      seen = await assess(replayed, tools);
+      if (!seen.rejected) return seen.response;
       if (isOauthRedirect(replayed)) this.rejected401 = null;
       // The fresh credentials were rejected too, so the session really is gone: handle the replayed
       // rejection as an expiry below. The replay is never repeated.
@@ -184,7 +205,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     if (!isRedirect) {
       if (await this.suppressedByLoopGuard()) {
         logger.debug(`[${this.name}] 401 repeated after a sign-in returned the same credentials; passing it through`);
-        return response; // untouched, body unread
+        return tools.fromBuffer(response, seen.body ?? Buffer.alloc(0)); // the body was read to classify it; hand it back whole
       }
       this.rejected401 = { fingerprint: fingerprintOf(context.headers['cookie'] ?? ''), recordedAt: Date.now() };
     }
@@ -193,7 +214,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     let failedStep: string | undefined;
     try {
       failedStep = 'readBody';
-      await tools.readBody(response); // drain the rejected body; its content is discarded
+      if (seen.body === undefined) await tools.readBody(response); // drain the rejected body; its content is discarded
       failedStep = 'markAnalyticsAuthInvalid';
       await markAnalyticsAuthInvalid(
         isRedirect

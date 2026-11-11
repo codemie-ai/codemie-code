@@ -49,6 +49,17 @@ function createProxyContext(cookie?: string, requestBody: Buffer | null = null):
   };
 }
 
+/** The backend's own session rejection (ExtendedHTTPException, "Authentication failed"). */
+const SESSION_REJECTION_BODY = Buffer.from(
+  JSON.stringify({ error: { message: 'Authentication failed', details: 'No valid authentication credentials were provided with this request.', help: null } }),
+  'utf-8'
+);
+/** A LiteLLM 401 relayed by the LLM proxy while the SSO session is valid. */
+const LITELLM_401_BODY = Buffer.from(
+  JSON.stringify({ error: { message: 'Authentication Error, Invalid proxy server token passed', type: 'auth_error', code: '401' } }),
+  'utf-8'
+);
+
 function response(statusCode: number, headers: Record<string, string> = {}): IncomingMessage {
   const stream = Readable.from([]) as IncomingMessage;
   stream.statusCode = statusCode;
@@ -63,7 +74,7 @@ function createTools(): UpstreamResponseTools & {
   fromBuffer: ReturnType<typeof vi.fn<[IncomingMessage, Buffer], IncomingMessage>>;
 } {
   return {
-    readBody: vi.fn(async () => Buffer.from('', 'utf-8')),
+    readBody: vi.fn(async () => SESSION_REJECTION_BODY),
     retry: vi.fn(async () => response(200)),
     fromBuffer: vi.fn((_upstream, body: Buffer) => {
       const synthetic = Readable.from([]) as IncomingMessage;
@@ -615,6 +626,35 @@ describe('SSOSessionExpiryPlugin', () => {
       expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
     });
 
+    it('passes a 401 whose body is not the backend session rejection through with its body, and starts no sign-in', async () => {
+      const interceptor = await interceptorWithStore({ cookies: { session: 'same' } });
+      const tools = createTools();
+      tools.readBody.mockResolvedValue(LITELLM_401_BODY);
+      const original = response(401, UNAUTHORIZED);
+
+      const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), original, tools);
+
+      expect(tools.fromBuffer).toHaveBeenCalledWith(original, LITELLM_401_BODY);
+      expect((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toBe(LITELLM_401_BODY);
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('passes a replayed 401 that is not a session rejection through and starts no sign-in', async () => {
+      const interceptor = await interceptorWithStore({ cookies: { session: 'new' } });
+      const tools = createTools();
+      const replayed = response(401, UNAUTHORIZED);
+      tools.retry.mockResolvedValueOnce(replayed);
+      tools.readBody.mockResolvedValueOnce(SESSION_REJECTION_BODY).mockResolvedValueOnce(LITELLM_401_BODY);
+
+      const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'old' }), response(401, UNAUTHORIZED), tools);
+
+      expect(tools.fromBuffer).toHaveBeenCalledWith(replayed, LITELLM_401_BODY);
+      expect((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toBe(LITELLM_401_BODY);
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
     it('passes a 403 through untouched and starts no sign-in', async () => {
       const interceptor = await interceptorWithStore({ cookies: { session: 'same' } });
       const tools = createTools();
@@ -640,9 +680,8 @@ describe('SSOSessionExpiryPlugin', () => {
         const original = response(401, UNAUTHORIZED);
         const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), original, tools);
 
-        expect(result).toBe(original);
-        expect(tools.readBody).not.toHaveBeenCalled();
-        expect(tools.fromBuffer).not.toHaveBeenCalled();
+        expect(result.statusCode).toBe(200); // the stub rebuilds a response; the real one keeps the 401
+        expect(tools.fromBuffer).toHaveBeenCalledWith(original, SESSION_REJECTION_BODY);
         expect(tools.retry).not.toHaveBeenCalled();
         expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
         expect(startDetachedSsoLogin).not.toHaveBeenCalled();
