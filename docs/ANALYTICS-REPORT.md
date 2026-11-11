@@ -397,3 +397,210 @@ codemie analytics otel --file <path> [options]
 ```
 
 All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.
+
+---
+
+## Scheduled delivery (`analytics sync`)
+
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
+`codemie analytics sync install|status|run|uninstall` registers and runs a daily per-user
+OS job that POSTs the same priced JSON report `codemie analytics --export json` builds to
+the team's webhook — one way, nothing comes back. It takes over the developer side of the
+standalone collector, so a developer no longer clones, updates or runs a separate tool.
+It never reads any `ANALYTICS_*` environment variable; the settings file and CLI flags are
+the only source of configuration.
+
+For team leads setting up the Power Automate flow for the first time, see `codemie analytics
+sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
+
+### Commands
+
+```bash
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+### `install` options
+
+```
+codemie analytics sync install [options]
+
+  --webhook <url>             The team's https webhook URL that receives the daily report
+  --webhook-b64 <value>       The same URL encoded as base64url, as printed by `sync bootstrap` (instead of --webhook)
+  --git-repo <url>            URL of a team git repository to push the daily report into
+  --git-branch <name>         Branch to push to (default: the repository's default branch)
+  --git-path <dir>            Repo-relative directory the report is pushed under (default: the repository root)
+  --format <json>             Report export format for every configured target (default and only accepted value: json)
+  --at <HH:MM>                Daily run time, 24-hour local time (default: 03:00)
+  --lookback-days <n>         Session window looked back on each run, 1-30 (default: 7)
+  --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: never)
+```
+
+`--webhook-b64` exists so the command `bootstrap` prints survives every shell: a raw trigger
+URL's `&` and `%XX` runs break in PowerShell through a `.cmd` shim and in cmd.exe. It decodes
+to exactly the `--webhook` value and is validated the same way; giving both is an error.
+
+At least one of `--webhook`/`--webhook-b64`/`--git-repo` is required; both may be given together, in which
+case every run delivers to each configured target independently. `--git-repo` must not
+embed `user:token@`/`user:pass@` credentials — no token is ever requested or stored;
+pushing authenticates with the developer's own git setup (SSH key, credential helper, …).
+`--git-path` must be a posix-relative path that does not escape the repository (no leading
+`/`, no `..`, no Windows path).
+
+Validation runs before anything is written or registered: a missing/non-`https:`/invalid
+`--webhook`, an invalid/credential-bearing `--git-repo`, an empty `--git-branch`, an
+escaping `--git-path`, a malformed `--at`, an out-of-range `--lookback-days`, or an
+unrecognized `--include-external`/`--format` value fails with a message naming the bad
+option — before the scheduler or filesystem are ever touched. `--lookback-days` is written
+to settings only when given, so the default (7 days) keeps following CLI updates for an
+install that never set it.
+
+Install resolves the reporting email (saved CLI config, then `git config --global user.email`; in a
+terminal with neither it prompts and saves the answer; without a terminal it fails with
+instructions and registers nothing), runs the per-platform preflight, and — when
+`--git-repo` is configured — performs a prompt-free test push of a placeholder file into the
+caller's own slug folder in that repository, proving push access *before* anything else is
+touched. A failed test push prints the likely cause (an auth problem, an untrusted SSH host
+key, an unreachable remote, a missing or protected branch, …) plus the redacted git error, removes the
+working copy, and registers nothing: no job is unregistered, no settings are written, no job
+is registered. Only once the test push (if any) succeeds does install remove any existing
+job with the same identity (the collector's or a previous CLI install's), write the settings
+file, and register the new job. If registration fails after the settings were written, the
+settings file is deleted and install exits non-zero — nothing half-installed is left behind.
+
+On success it prints the run time, the lookback (marked "default" when `--lookback-days`
+was omitted), the include-external policy, the webhook host only (the signature is always
+masked), the git repository (redacted), branch and path when configured, the resolved
+email, and a hint to try `sync run` and `sync status`. Running `install` again replaces the
+existing job and settings rather than duplicating them, and never touches the last-sent
+marker(s).
+
+### Git delivery target
+
+Git runs never prompt: every `git` call sets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`
+and ssh `BatchMode=yes`, so an unattended daily run can never hang on a credential or host-key
+prompt. An unknown SSH host key fails the run instead of prompting — run `ssh -T <host>` once
+on this machine to trust it, then retry. Credentials come from the developer's own git setup
+(SSH key, credential helper, …); no token is ever requested or stored, and a `--git-repo` URL
+embedding `user:token@`/`user:pass@` credentials is rejected at install time.
+
+Each report is pushed to `<git-path>/<lowercased email slug>/codemie-analytics-<slug>-<UTC
+date>.report.json` in the configured repository (repo root when `--git-path` is unset) —
+each developer writes only inside their own slug folder, so concurrent pushes from different
+developers never conflict on content. `codemie analytics sync install`'s test push proves
+access to that same folder with a small placeholder file before anything is registered.
+
+### Per-platform job
+
+| Platform | Job | Catch-up |
+|---|---|---|
+| macOS | `~/Library/LaunchAgents/com.epam.codemie.analytics-sync.plist` — a launchd `LaunchAgent` (`StartCalendarInterval` from `--at`, `RunAtLoad=false`) | launchd re-runs a missed `StartCalendarInterval` fire once the Mac wakes |
+| Linux | `~/.config/systemd/user/codemie-analytics-sync.{service,timer}` — a systemd user timer (`Type=oneshot`, `OnCalendar=*-*-* HH:MM:00`, `Persistent=true`, `RandomizedDelaySec=300`) | `Persistent=true` fires the missed run once the user session is next active; install also runs `loginctl enable-linger $USER` so the timer fires even while the user is logged out |
+| Windows | Task Scheduler task `CodeMie Analytics Sync` (UTF-16LE+BOM XML, `StartWhenAvailable`, `IgnoreNew`, runs as the logged-in user at `InteractiveToken`/`LeastPrivilege`, runs on battery, `ExecutionTimeLimit PT30M`) | `StartWhenAvailable` fires the missed run once the machine is next on |
+
+Installing replaces an existing job with the same identity: macOS `launchctl bootout` then
+`bootstrap gui/<uid>`; Linux `systemctl --user daemon-reload` then `enable --now`; Windows
+`schtasks /Delete /F` then `/Create /XML`. A Linux machine without a reachable
+`systemctl --user` (e.g. a non-interactive SSH session with no user D-Bus), or any other
+unsupported platform, fails install before anything is written. If `loginctl enable-linger`
+fails, the job is still registered and the failure is only a warning in the install summary.
+
+The job always invokes `<node> <realpath of the CLI entry script> analytics sync run
+--scheduled` — the absolute `process.execPath` and the realpath of the running entry
+script, so an npm bin shim resolves to the real script (no `.cmd` shim on Windows).
+`--scheduled` is hidden from `--help`; a manual `codemie analytics sync run` never passes
+it. When the CLI starts with it, `bin/codemie.js` skips the update check/prompt and the
+"what's new" notice and runs pending migrations silently, since the job has no terminal and
+no user to notify.
+
+### `run`
+
+Exports the window since the last successful send (never narrower than the lookback) as
+the priced JSON report and POSTs it to the webhook in the collector's message shape, with
+the attachment name `codemie-analytics-<lowercased email slug>-<UTC date>.report.json`
+(the email slug is lowercased for sync only — the interactive `--export` naming is
+unchanged). Existing downstream Power Automate flows and harvesting keep working
+unchanged. The marker moves to the run's start time only after the webhook returns a 2xx.
+No sessions in the window sends nothing and leaves the marker untouched. The export has the
+same 70 MB ceiling as `--export json`; an export larger than that, a failed/unreachable
+webhook, or missing settings/identity are all logged and failed without moving the marker,
+so the next run covers the same sessions. There is no retry — the rolling window self-heals
+on the next scheduled run. `run` with nothing installed fails with the install command and
+sends nothing.
+
+Each run appends exactly one line to the run log, with the webhook signature always
+redacted:
+
+```
+<ISO> ok sent <name> <bytes>
+<ISO> skip <reason>
+<ISO> fail <setup|export|send> <redacted detail>
+```
+
+`setup` covers missing/invalid settings and identity errors; `export` covers a report-build
+failure or the 70 MB ceiling (the detail carries the size); `send` covers any other webhook
+delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
+
+### `status`
+
+Shows whether the OS job is actually registered and enabled (not just whether settings
+exist), the run time, lookback, include-external policy, the webhook host (signature
+masked), the last run's time and outcome parsed from the log (`sent`/`skipped`/`failed`
+with its reason, or "never"), and the time of the last successful send (the marker, or
+"never"). Nothing installed reports "not installed" with the install command and exits 0.
+Settings present but the job missing or disabled outside the CLI reports "disabled" and
+tells the developer to run install again.
+
+### `uninstall`
+
+Removes the OS job and the settings file holding the webhook. The last-sent marker and the
+run log are kept, so a later re-install does not re-send or duplicate what was already
+delivered. Running `uninstall` again (or on a machine where nothing is installed) reports
+"nothing to remove" and exits 0.
+
+### Taking over the standalone collector
+
+Developers who already ran the standalone collector's install command have the same job
+identities and `~/.codemie` state files; running `codemie analytics sync install` takes
+over cleanly: the collector's job is unregistered before the CLI's job is registered, and
+the existing last-sent marker is kept exactly as-is, so the next run neither re-sends
+already-delivered sessions nor leaves a gap. Exactly one delivery is made at the next
+scheduled time. The install summary says the collector's clone folder,
+`~/.codemie/codemie-onboarding`, can now be deleted — nothing in the CLI touches or
+requires that folder.
+
+### State
+
+All paths resolve via `getCodemiePath()` under `~/.codemie`:
+
+| What | Path |
+|---|---|
+| Settings (webhook, git target, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
+| Last-sent marker (webhook) | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
+| Last-sent marker (git) | `analytics-last-sent-git` (ISO timestamp; tracked independently of the webhook marker) |
+| Git working copy | `analytics-sync-repo` (one shared shallow clone of the configured `--git-repo`, refreshed/re-cloned each run; removed and re-cloned if its remote no longer matches the settings, or by install when a test push fails) |
+| Run log | `logs/analytics-sync.log` (log directory mode `700`, log file mode `600`) |
+| macOS launchd stdout/stderr | `logs/analytics-sync.launchd.log` (kept apart from the run log so each run writes its outcome line once) |
+
+There are no `ANALYTICS_*` environment-variable overrides for any of this. The webhook URL
+and git repository URL live only in the `600` settings file, never in `CredentialStore` —
+the unattended job must read them without an OS keychain prompt (see the exception in
+`.ai-run/guides/security/security-practices.md`). Every printed or logged string that may
+contain a URL is redacted (signature stripped for the webhook, userinfo stripped for git)
+before it is ever shown.

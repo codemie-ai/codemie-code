@@ -1,0 +1,83 @@
+{
+  "schema": "1.0",
+  "details": {
+    "displayName": "CodeMie analytics delivery",
+    "description": "Files each CodeMie analytics export posted to its webhook into a SharePoint folder and logs it in a Teams channel's monthly thread.",
+    "createdTime": "2026-09-28T00:00:00Z",
+    "packageTelemetryId": "9c1da97b-5fd5-4886-800a-ddcc06f3a454",
+    "creator": "N/A",
+    "sourceEnvironment": ""
+  },
+  "resources": {
+    "3806f7f4-f5aa-4ecc-a271-e0171d1ae740": {
+      "type": "Microsoft.Flow/flows",
+      "suggestedCreationType": "New",
+      "creationType": "Existing, New, Update",
+      "details": {
+        "displayName": "CodeMie analytics delivery (webhook)"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Root",
+      "dependsOn": [
+        "88a80d73-ecf5-4e3f-b69f-af81b4825434",
+        "30e1721a-e20a-4c64-b117-7a562e2e7c67",
+        "d07d6232-e103-4e55-98c8-7451996d5818",
+        "ac972f14-0bd3-44c5-ba13-bcac0c4664fc"
+      ]
+    },
+    "88a80d73-ecf5-4e3f-b69f-af81b4825434": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+      "name": "shared_sharepointonline",
+      "type": "Microsoft.PowerApps/apis",
+      "suggestedCreationType": "Existing",
+      "details": {
+        "displayName": "SharePoint",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4913/sharepointonline/icon.png"
+      },
+      "configurableBy": "System",
+      "hierarchy": "Child",
+      "dependsOn": []
+    },
+    "30e1721a-e20a-4c64-b117-7a562e2e7c67": {
+      "type": "Microsoft.PowerApps/apis/connections",
+      "suggestedCreationType": "Existing",
+      "creationType": "Existing",
+      "details": {
+        "displayName": "SharePoint",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1827/1.0.1827.4913/sharepointonline/icon.png"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Child",
+      "dependsOn": [
+        "88a80d73-ecf5-4e3f-b69f-af81b4825434"
+      ]
+    },
+    "d07d6232-e103-4e55-98c8-7451996d5818": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_teams",
+      "name": "shared_teams",
+      "type": "Microsoft.PowerApps/apis",
+      "suggestedCreationType": "Existing",
+      "details": {
+        "displayName": "Microsoft Teams",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1829/1.0.1829.5052/teams/icon.png"
+      },
+      "configurableBy": "System",
+      "hierarchy": "Child",
+      "dependsOn": []
+    },
+    "ac972f14-0bd3-44c5-ba13-bcac0c4664fc": {
+      "type": "Microsoft.PowerApps/apis/connections",
+      "suggestedCreationType": "Existing",
+      "creationType": "Existing",
+      "details": {
+        "displayName": "Microsoft Teams",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1829/1.0.1829.5052/teams/icon.png"
+      },
+      "configurableBy": "User",
+      "hierarchy": "Child",
+      "dependsOn": [
+        "d07d6232-e103-4e55-98c8-7451996d5818"
+      ]
+    }
+  }
+}

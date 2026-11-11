@@ -786,6 +786,122 @@ codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
 
+### Team lead setup (`analytics sync bootstrap`)
+
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
+```bash
+# Lead: guided wizard to connect Teams/SharePoint and print install command
+codemie analytics sync bootstrap
+
+# Non-interactive mode (no TTY needed; test-send before printing install command)
+codemie analytics sync bootstrap --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
+codemie analytics sync bootstrap --webhook <url> --lookback-days 14 --include-external always
+
+# Same, with the trigger URL base64url-encoded (Windows: see below)
+codemie analytics sync bootstrap --webhook-b64 <value>
+```
+
+`bootstrap` connects a Teams channel and SharePoint folder to a Power Automate flow, then
+prints the `codemie analytics sync install` command for developers. Installs nothing on the
+lead's machine.
+
+**Guided mode** (TTY, no `--webhook`): 8-step wizard — Teams channel, SharePoint folder, time
+zone, import flow, trigger URL, external sessions policy, lookback, print command. Answers
+save after each step, so interrupts resume with saved defaults. Re-run shows masked settings
+and offers quick reuse or restart.
+
+**Non-interactive mode** (`--webhook`): no prompts, no TTY; validates options, test-sends a
+check file, prints command on success; fails with reason on any validation or network error.
+
+**Lead-to-developer workflow:** (1) Lead runs `bootstrap`. (2) Lead gets a printed install
+command containing the trigger signature. (3) Lead shares **only that command with developers
+— do not post to shared logs or tickets**; signature is a secret. (4) Each developer runs the
+command to register their daily job.
+
+**Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
+CLI), `--include-external <windows|always|never>` (default: never).
+
+**Windows and `--webhook`:** when `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
+trigger URL at `&` and cmd.exe expands its `%…%` runs, so `--webhook "<url>"` arrives broken.
+Use the guided mode (the URL is pasted into a prompt, not the command line), or pass
+`--webhook-b64` with the URL encoded as base64url — it behaves exactly like `--webhook`, and
+giving both is an error. In PowerShell:
+
+```powershell
+$url = '<trigger URL>'
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($url)).TrimEnd('=').Replace('+','-').Replace('/','_')
+codemie analytics sync bootstrap --webhook-b64 $b64
+```
+
+**Output:** Install command to stdout; everything else to stderr. The webhook is printed as
+`--webhook-b64 <value>` — the trigger URL encoded as base64url (`A-Z a-z 0-9 - _` only), so the
+command runs unchanged in bash/zsh, PowerShell (including through a `codemie.cmd` shim, which
+would otherwise split a raw URL at `&`) and cmd.exe (which would otherwise expand `%…%` runs in
+it). The value is not encryption: it still carries the trigger signature — **treat the whole
+line as secret**.
+
+**Minimum CLI version:** after the command, bootstrap prints the lead's own CLI version as the minimum developers need ("Developers need CodeMie CLI <version> or newer…"). Anyone on an older version, or who sees "unknown command", runs `codemie self-update`.
+
+**State:** Lead's answers saved in `~/.codemie/analytics-sync-bootstrap.json` (mode 600) for
+resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
+
+### Scheduled delivery (`analytics sync`)
+
+```bash
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+`sync` is a one-way daily job: it sends this machine's analytics reports to the team's
+webhook on a schedule, nothing comes back. `install` registers a per-user OS job (launchd
+on macOS, a systemd user timer on Linux, Task Scheduler on Windows) that runs
+`analytics sync run --scheduled` once a day at `--at` (default `03:00` local) and catches
+up a run missed while the machine was asleep or off — on Linux it also runs while the user
+is logged out, via `loginctl enable-linger`.
+
+**`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
+same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
+`03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
+`--include-external <windows|always|never>` (default `never`). Install prints the run
+time, lookback, policy, the webhook host (signature masked), the email the reports will
+carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
+replaces the existing job and settings rather than duplicating them, and keeps the
+last-sent marker.
+
+**Taking over the standalone collector.** If the standalone collector's daily job is
+already registered, `install` removes it before registering the CLI's job and keeps the
+collector's last-sent marker, so the next run neither re-sends nor leaves a gap. The
+output says the collector's clone folder, `~/.codemie/codemie-onboarding`, can be deleted.
+
+**State** (under `~/.codemie`, via `getCodemiePath()`): settings at `analytics-sync.json`
+(mode `600`), the last-sent marker at `analytics-last-sent`, and the run log at
+`logs/analytics-sync.log`.
+
+**`status`** reports enabled/disabled (whether the OS job is actually registered), the run
+time, lookback, policy, the webhook host, the last run's time and outcome (parsed from the
+log), and the last successful send (the marker) — or "not installed"/"never" where nothing
+has run yet. **`uninstall`** removes the OS job and the settings file; the last-sent marker
+and the run log are kept.
+
+See [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync) for the
+full per-platform scheduler detail, the run log line format, and the delivery contract.
+
 ## Log Management Commands
 
 View, filter, and manage debug logs and agent sessions.

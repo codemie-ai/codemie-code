@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../dist/utils/logger.js';
+import { isScheduledSyncRun } from '../dist/utils/scheduled-run.js';
 import { isMachineOutputInvocation } from '../dist/utils/machine-output.js';
 
 // Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
@@ -28,6 +29,13 @@ if (isHookProcess) {
   logger.setConsoleStream(null);
 }
 
+// The daily OS scheduler job for `analytics sync run` invokes this script
+// unattended (no TTY, no user to prompt or notify). Detect that invocation
+// so migrations run silently and the update check / what's-new notice are
+// skipped. A manual `codemie analytics sync run` (no --scheduled) keeps
+// today's normal interactive startup.
+const isScheduledRun = isScheduledSyncRun(process.argv);
+
 // A `--json` invocation: its stdout is the command's answer and a script parses it, so
 // start-up chatter (migration progress, update prompts, what's-new) stays off it. Unlike a
 // hook, the console stream is left alone: the command itself still prints to stdout.
@@ -42,7 +50,8 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 try {
   if (await MigrationRunner.hasPending()) {
     const migrationResult = await MigrationRunner.runPending({
-      silent: isHookProcess || isMachineOutput  // Show migration messages to user, except in a hook or for --json output
+      // Show migration messages to user, except in a hook, an unattended run or for --json output
+      silent: isHookProcess || isScheduledRun || isMachineOutput
     });
     // A silent run prints no failure line, and the logger writes errors to the console only in
     // debug mode, so a --json caller would never learn that a migration failed (it retries on
@@ -62,9 +71,10 @@ try {
 
 // Check for CLI updates (silent by default, configurable via CODEMIE_AUTO_UPDATE)
 // Skip in test environments to avoid timeouts and network calls during testing
+// Skip for the unattended scheduled analytics sync job (no user to notify)
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment && !isHookProcess && !isMachineOutput) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -78,7 +88,8 @@ if (!isTestEnvironment && !isHookProcess && !isMachineOutput) {
 // invocations with their own output contract (--version/-V/--task/--help);
 // a hook process (`hook`, `sound`) or a `--json` invocation never reaches it. A
 // skipped notice writes no marker, so it shows on the next run in a terminal.
-if (!isTestEnvironment && !isHookProcess && !isMachineOutput) {
+// Also skipped for the unattended scheduled analytics sync job.
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
   try {
     const { readFileSync } = await import('node:fs');
     const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');
