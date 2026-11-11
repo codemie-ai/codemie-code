@@ -39,6 +39,7 @@ import {
   isReopenedIdle,
   loadParseState,
   saveParseState,
+  withParseStateLock,
   type TranscriptParseState,
   type OpenUsageRequest,
 } from './parse-state.js';
@@ -538,16 +539,16 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
   return seen;
 }
 
-/** Complete lookups that found no parent before a session is taken to have none (EPMCDME-16992). */
+/** Lookups that found no parent before a session is taken to have none (EPMCDME-16992). */
 const MAX_PARENT_LOOKUPS = 3;
 
 /**
  * The uuids a continued session copied from its parent transcript (EPMCDME-16992), kept in `state`.
- * A found parent is final. A complete lookup that found nothing is repeated on the next passes (at
+ * A found parent is final. A lookup that found nothing, complete or not, is repeated on the next passes (at
  * most {@link MAX_PARENT_LOOKUPS} of them), because the parent's `continued-in` record may not be
- * flushed yet on the first pass. An incomplete lookup (unreadable directory or sibling, more
- * candidates than the scan covers) is never final: it is repeated on every pass until it completes,
- * so a session is not taken to have no parent just because the scan could not finish.
+ * flushed yet on the first pass and an incomplete scan (unreadable directory or sibling, more
+ * candidates than the scan covers, the time budget) may succeed on a later one. After that the session is
+ * taken to have no parent, so the scan, which runs under the parse-state lock, cannot repeat for good.
  * Lines already reported before a late find stay reported, but every later event and the summary
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  *
@@ -578,8 +579,9 @@ async function ensureInherited(
       state.inheritedUuids = uuids;
       if (found.agentIds.length > 0) state.inheritedAgentIds = found.agentIds;
       state.inheritedResolved = true;
-    } else if (uuids || (!found && (await lookupIsCostly(transcriptPath)))) {
-      // A complete miss counts; so does an incomplete scan of a crowded folder, which would otherwise repeat on every pass.
+    } else {
+      // Every attempt that ended without a parent counts, complete or not: an incomplete scan (a crowded folder, an
+      // entry that cannot be read, the time budget) would otherwise repeat on every pass, under the lock, for good.
       const previous = Number.isFinite(state.inheritedLookups) ? (state.inheritedLookups as number) : 0;
       state.inheritedLookups = previous + 1;
       if (state.inheritedLookups >= MAX_PARENT_LOOKUPS) state.inheritedResolved = true;
@@ -709,14 +711,21 @@ async function deriveMainEvents(
   // Same for a continuation: until it has work of its own, a synthetic placeholder or a local command
   // is all it holds, and reporting that would show the session as active.
   if (inherited.size > 0 && ownActivity) state.continuationActive = true;
-  if (inherited.size > 0 && !state.continuationActive) return [];
+  const holdsOnlyCopies = inherited.size > 0 && !state.continuationActive;
+  const summarises = trigger === 'Stop' || trigger === 'SessionEnd';
+  if (holdsOnlyCopies && !summarises) return [];
 
-  for (const key of touchedKeys) {
-    const request = state.openRequests[key];
-    // usageRequestKey isolates API-error rows even when request id and resolved model match a
-    // normal request, so suppressing one cannot hide that normal request from downstream.
-    if (!request.isApiError) {
-      events.push(buildUsageRequestEvent(sessionId, request));
+  // A continuation whose parent was found only now has nothing new in this pass, yet its work may have been read
+  // (and reported) by an earlier pass that did not know the parent: the summary below decides from the whole
+  // transcript, so it must still be reached. Requests of this pass are not reported while only copies are held.
+  if (!holdsOnlyCopies) {
+    for (const key of touchedKeys) {
+      const request = state.openRequests[key];
+      // usageRequestKey isolates API-error rows even when request id and resolved model match a
+      // normal request, so suppressing one cannot hide that normal request from downstream.
+      if (!request.isApiError) {
+        events.push(buildUsageRequestEvent(sessionId, request));
+      }
     }
   }
 
@@ -731,6 +740,7 @@ async function deriveMainEvents(
     // A continued session with no work of its own has nothing to summarise: the figures would
     // otherwise be the parent's, stamped with the parent's timestamps.
     if (inherited.size > 0 && !hasOwnLines) return events;
+    if (inherited.size > 0) state.continuationActive = true; // the transcript holds work of its own
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -863,6 +873,37 @@ export async function openSessionStartPass(
     logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
     return { ...EMPTY_PASS, sessionEnvFields, gitHeadStart };
+  }
+}
+
+/**
+ * Whether the session was reopened without a prompt and has done nothing since. Hooks that need no pass of
+ * their own (`Notification`, `InstructionsLoaded`, ...) stay silent for it, like the lifecycle ones
+ * (EPMCDME-16993). Read without the lock: a stale answer is wrong for one hook at most. A state that cannot be
+ * read is a fresh one, which is not idle.
+ */
+export async function isSessionReopenedIdle(sessionId: string): Promise<boolean> {
+  return isReopenedIdle(await loadParseState(sessionId));
+}
+
+/**
+ * A prompt is activity of the reopened session: from here its passthrough hooks (a permission `Notification`
+ * in the middle of the turn) must go out, without waiting for the first `Stop` pass to read its lines. Never
+ * throws: a failed lock leaves the state as it was, and the `Stop` pass sets the same flag later.
+ */
+export async function markReopenedActive(sessionId: string): Promise<void> {
+  try {
+    // Every prompt of every session passes here: only a reopened session that is still idle needs the lock.
+    if (!isReopenedIdle(await loadParseState(sessionId))) return;
+    await withParseStateLock(sessionId, async () => {
+      const state = await loadParseState(sessionId);
+      if (!isReopenedIdle(state)) return;
+      state.reopenActive = true;
+      await saveParseState(sessionId, state);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] could not mark the reopened session active', ...sanitizeLogArgs({ sessionId, err: msg }));
   }
 }
 

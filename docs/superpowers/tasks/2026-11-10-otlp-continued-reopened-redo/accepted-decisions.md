@@ -359,3 +359,43 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
 
 `tsc`, `eslint --max-warnings=0`, vitest for `claude-code-otlp` and the proxy (85 files, 1816 tests), live matrix
 19/19, real pairs 4/4. S19 was run against the previous build and fails there.
+
+## Seventh pass: review round main-4 (CR-001..CR-007)
+
+### Fixed
+
+- **CR-001, passthrough hooks on an idle reopen (reverses D-5).** `Notification`, `InstructionsLoaded`,
+  `PermissionRequest` and every other hook without a pass of its own went out at hook time, also for a session
+  reopened without a prompt. They are now dropped while the reopen is idle (`isSessionReopenedIdle`, read without
+  the lock). A prompt marks the reopen active at once (`markReopenedActive`, under the lock, only for a reopened
+  idle session), so a permission `Notification` in the middle of the turn is not dropped while waiting for the first
+  `Stop` pass. *Risk:* a passthrough hook of a reopen that is working but whose prompt hook failed is dropped until
+  the first `Stop` pass reads its lines; this affects `agent.notification`-like events only, not usage.
+  Live: S20 (fails on the previous build), S21 (a Notification after a prompt still goes out). *Not changed:* when
+  the parse-state lock fails, the raw `Stop`/`SessionEnd`/`SessionStart(resume)` still go out (D-6).
+- **CR-005, a late-found parent suppressed the summary.** A pass that found the parent but read no new lines
+  returned before the summary, so a continuation whose work was read by an earlier pass never got one. The summary
+  is now reached for `Stop`/`SessionEnd` and decided from the whole transcript (`hasOwnLines`); requests of a pass
+  that holds only copies are still not reported. Unit test fails without the change.
+- **CR-003, no budget on the parent lookup.** The lookup has a 5 s budget (`LOOKUP_BUDGET_MS`, checked between files
+  and every 4096 lines of a whole-file read). Every lookup that ends without a parent now counts toward the cap of
+  3 (`inheritedLookups`), complete or not, so an entry that can never be read (a directory named `x.jsonl`) or a
+  slow disk cannot repeat the scan under the lock on every pass. *Risk:* three failed attempts in a row make the
+  session count as having no parent, so a parent that is only briefly unreadable is missed (D-2 behaviour).
+- **CR-002, tests.** Added: the full state round-trip (all new fields), passthrough hooks on an idle reopen and
+  their release by a prompt, `isSessionReopenedIdle`/`markReopenedActive` on real state, a late-found parent, the
+  lookup budget and the retry cap. Stale lines in `docs/ARCHITECTURE-OTLP-PLUGIN.md` corrected.
+
+### Accepted, not changed
+
+- **CR-004 (copies reported when the parent is not found):** same as D-2. Waiting for the parent would hold the
+  first report of every continuation; retracting needs a backend change.
+- **CR-007 (the 60-minute expiry can drop usage):** same as D-14 and the sixth-pass gap. The common case (a killed
+  run with unsent bytes) is protected by `endedSizes`; the rest needs a status write on every spool tick.
+- **CR-006 (OTel startup records against real Claude Code):** not a code change. A real `claude --resume` closed
+  with `/exit` and with Ctrl+C sent 0 records; the Preview scenario of comment 16079046 is re-run after merge.
+
+### Verification
+
+`tsc`, `eslint --max-warnings=0`, vitest for `claude-code-otlp` and the proxy (85 files, 1829 tests), live matrix
+21/21, real pairs 4/4.

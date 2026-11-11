@@ -42,6 +42,8 @@ import {
   openSessionEnvCheckPass,
   openSubagentPass,
   openSessionEndPass,
+  isSessionReopenedIdle,
+  markReopenedActive,
   type MainTranscriptTrigger,
   type SubagentFile,
 } from '../orchestrator.js';
@@ -3701,6 +3703,27 @@ describe('continued session (EPMCDME-16992)', () => {
     }
   });
 
+  it('still sends the summary of a continuation whose parent is found by a later pass than the one that read its work', async () => {
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+    ]);
+    const first = await openMainTranscriptPass('C', path, 'Stop'); // no parent on disk yet: the work is read here
+    await first.finalize(true);
+    expect(first.events.some((e) => e.type === 'agent.usage.request' && e.message_id === 'msg-c1')).toBe(true);
+
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const second = await openMainTranscriptPass('C', path, 'Stop'); // finds the parent, reads nothing new
+    await second.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    const summary = [...second.events, ...end.events].find((e) => e.type === 'agent.session.summary');
+    expect(summary).toMatchObject({ started_at: '2026-11-10T16:21:00.000Z' });
+    expect([...second.events, ...end.events].filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+  });
+
   it('does not report a subagent transcript copied from the parent, only the continuation own', async () => {
     writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
     const copied = [usageLine({ uuid: 'sa-1', messageId: 'msg-sa1', outputTokens: 40 })];
@@ -3803,6 +3826,21 @@ describe('continued session (EPMCDME-16992)', () => {
 
       expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
     });
+  });
+
+  it('stops repeating a parent lookup that cannot complete (an entry that cannot be read) after three passes', async () => {
+    const { loadParseState } = await import('../parse-state.js');
+    mkdirSync(join(transcriptDir, 'odd.jsonl')); // a directory named like a transcript: never readable as one
+    const path = writeTranscript('C.jsonl', [typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z')]);
+
+    const resolvedAfter: (boolean | undefined)[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+      resolvedAfter.push((await loadParseState('C')).inheritedResolved);
+    }
+
+    expect(resolvedAfter.map((v) => v === true)).toEqual([false, false, true, true]);
   });
 
   it('Preview case of EPMCDME-16992: a continuation opened and closed without a prompt reports nothing and starts nowhere', async () => {
@@ -3961,6 +3999,33 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
 
     expect(reopen.reopened).toBe(true);
     expect(second.sessionStartedAt).toBe(first.sessionStartedAt);
+  });
+
+  it('reports a reopened session as idle until a prompt marks it active, and never a fresh or running one', async () => {
+    const sessionId = 'session-reopen-idle-flag';
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false); // no saved state
+    await startSession(sessionId, 'startup');
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false); // started, not reopened
+
+    await startSession(sessionId, 'resume');
+    expect(await isSessionReopenedIdle(sessionId)).toBe(true);
+
+    await markReopenedActive(sessionId);
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false);
+    const state = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+    expect(state).toMatchObject({ reopened: true, reopenActive: true });
+  });
+
+  it('leaves the state of a session that was never reopened untouched when a prompt marks activity', async () => {
+    const sessionId = 'session-prompt-not-reopened';
+    await startSession(sessionId, 'startup');
+    const statePath = join(codemieHome, 'analytics', 'state', `${sessionId}.json`);
+    const before = readFileSync(statePath, 'utf-8');
+
+    await markReopenedActive(sessionId);
+    await markReopenedActive('session-without-state');
+
+    expect(readFileSync(statePath, 'utf-8')).toBe(before);
   });
 
   it('does not flag a first start, even with source resume', async () => {

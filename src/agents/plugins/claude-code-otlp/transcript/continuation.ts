@@ -32,6 +32,13 @@ const TAIL_BYTES = 256 * 1024;
 const SHALLOW_SCAN_LIMIT = 2000;
 const SHALLOW_TAIL_BYTES = 16 * 1024;
 
+/**
+ * Time the whole lookup may take. It runs while the session's parse-state lock is held (other hooks of the session
+ * wait for it), and a folder of large transcripts can take long to read. An overrun makes the scan incomplete, which
+ * the caller counts like any other incomplete scan (see `ensureInherited`), so it is retried a few times, not forever.
+ */
+const LOOKUP_BUDGET_MS = 5000;
+
 /** Most `stat` calls in flight at once, so a large project directory cannot exhaust file handles. */
 const STAT_BATCH = 32;
 
@@ -97,12 +104,21 @@ function tailNamesSession(tail: string, sessionId: string): boolean {
   return false;
 }
 
+/** The lookup ran out of its time budget; the scan is incomplete. */
+class LookupBudgetError extends Error {
+  constructor() {
+    super('parent lookup budget exhausted');
+  }
+}
+
 /** Whether the file at `path` holds a `continued-in` record naming `sessionId`; streamed, so size does not matter. */
-async function fileNamesSession(path: string, sessionId: string): Promise<boolean> {
+async function fileNamesSession(path: string, sessionId: string, deadline: number = Infinity): Promise<boolean> {
   const stream = createReadStream(path, { encoding: 'utf-8' });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let seen = 0;
   try {
     for await (const line of lines) {
+      if ((seen += 1) % 4096 === 0 && Date.now() > deadline) throw new LookupBudgetError();
       if (!line.includes('continued-in') || !line.includes(sessionId)) continue;
       try {
         const record = JSON.parse(line) as TranscriptRecord;
@@ -184,19 +200,26 @@ async function readInherited(parentPath: string): Promise<Inherited> {
  * `null` when it could not be completed (unreadable directory or sibling, more candidates than
  * the scan covers). Never throws.
  *
- * Known limit: more than {@link MAX_SIBLING_FILES} siblings stay "incomplete" and are retried on
- * every pass; a parent outside the newest ones is not found.
+ * The whole lookup has a time budget ({@link LOOKUP_BUDGET_MS}); running out of it is an incomplete scan.
+ * Known limit: more than {@link MAX_SIBLING_FILES} siblings stay "incomplete" (the ones beyond only get a short
+ * tail look, up to {@link SHALLOW_SCAN_LIMIT}); a parent outside those is not found.
  */
 export async function resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null> {
   return (await resolveInherited(transcriptPath, sessionId))?.uuids ?? null;
 }
 
 /** {@link resolveInheritedUuids} plus the parent's subagent ids. `null` when the scan could not be completed. */
-export async function resolveInherited(transcriptPath: string, sessionId: string): Promise<Inherited | null> {
+export async function resolveInherited(
+  transcriptPath: string,
+  sessionId: string,
+  budgetMs: number = LOOKUP_BUDGET_MS
+): Promise<Inherited | null> {
   // dirname('') is '.', which would scan the process working directory.
   if (!transcriptPath || !sessionId) return null;
   const directory = dirname(transcriptPath);
   const own = basename(transcriptPath);
+  const deadline = Date.now() + budgetMs;
+  const overBudget = (): boolean => Date.now() > deadline;
   try {
     const names = (await readdir(directory)).filter((name) => name.endsWith('.jsonl') && name !== own);
     const siblings = await statSiblings(directory, names);
@@ -211,6 +234,10 @@ export async function resolveInherited(transcriptPath: string, sessionId: string
     // Pass 1: the tail of every sibling, which finds the usual parent at a fraction of the cost.
     const tailMissed: SiblingFile[] = [];
     for (const file of scanned) {
+      if (overBudget()) {
+        complete = false;
+        break;
+      }
       const path = join(directory, file.name);
       try {
         if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readInherited(path);
@@ -222,6 +249,10 @@ export async function resolveInherited(transcriptPath: string, sessionId: string
     }
     // Pass 1b: the siblings beyond the newest ones, a short tail each (cheap, so many more are covered).
     for (const file of candidates.slice(MAX_SIBLING_FILES, SHALLOW_SCAN_LIMIT).filter((f) => !f.unknown)) {
+      if (overBudget()) {
+        complete = false;
+        break;
+      }
       const path = join(directory, file.name);
       try {
         if (tailNamesSession(await readTail(path, file.size, SHALLOW_TAIL_BYTES), sessionId)) return await readInherited(path);
@@ -231,11 +262,16 @@ export async function resolveInherited(transcriptPath: string, sessionId: string
     }
     // Pass 2: the larger siblings whose tail did not hold the record, read whole.
     for (const file of tailMissed) {
+      if (overBudget()) {
+        complete = false;
+        break;
+      }
       const path = join(directory, file.name);
       try {
-        if (await fileNamesSession(path, sessionId)) return await readInherited(path);
-      } catch {
+        if (await fileNamesSession(path, sessionId, deadline)) return await readInherited(path);
+      } catch (error) {
         complete = false;
+        if (error instanceof LookupBudgetError) break;
       }
     }
     if (!complete) {

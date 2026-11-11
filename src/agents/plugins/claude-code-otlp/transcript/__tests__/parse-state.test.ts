@@ -275,23 +275,35 @@ describe('continuation and reopen fields', () => {
     expect(state.inheritedResolved).toBeUndefined();
     expect(state.reopened).toBeUndefined();
     expect(state.reopenActive).toBeUndefined();
+    expect(state.inheritedAgentIds).toBeUndefined();
+    expect(state.inheritedLookups).toBeUndefined();
+    expect(state.reopenedAt).toBeUndefined();
+    expect(state.continuationActive).toBeUndefined();
   });
 
   it('round-trips the fields through save and load', async () => {
     const state: TranscriptParseState = {
       ...createParseState(),
       inheritedUuids: ['u1', 'u2'],
+      inheritedAgentIds: ['a1', 'a2'],
       inheritedResolved: true,
+      inheritedLookups: 2,
       reopened: true,
       reopenActive: false,
+      reopenedAt: 1_762_800_000_000,
+      continuationActive: true,
     };
 
     await saveParseState('new-session', state);
     const loaded = await loadParseState('new-session');
 
     expect(loaded.inheritedUuids).toEqual(['u1', 'u2']);
+    expect(loaded.inheritedAgentIds).toEqual(['a1', 'a2']);
     expect(loaded.inheritedResolved).toBe(true);
+    expect(loaded.inheritedLookups).toBe(2);
     expect(loaded.reopened).toBe(true);
     expect(loaded.reopenActive).toBe(false);
+    expect(loaded.reopenedAt).toBe(1_762_800_000_000);
+    expect(loaded.continuationActive).toBe(true);
   });
 });

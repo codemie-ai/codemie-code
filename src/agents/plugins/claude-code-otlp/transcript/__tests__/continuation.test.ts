@@ -152,6 +152,24 @@ describe('resolveInherited', () => {
   });
 });
 
+describe('resolveInherited — time budget', () => {
+  it('is incomplete (null), not "no parent", once the budget is spent, and complete again with time', async () => {
+    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), continuedIn('P', 'C')].join('\n') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInherited(join(dir, 'C.jsonl'), 'C', -1)).toBeNull();
+    expect((await resolveInherited(join(dir, 'C.jsonl'), 'C'))?.uuids).toEqual(['u1']);
+  });
+
+  it('does not take a spent budget for a missing parent when the folder holds none either', async () => {
+    writeFileSync(join(dir, 'other.jsonl'), msg('o1', 'other') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInherited(join(dir, 'C.jsonl'), 'C', -1)).toBeNull();
+    expect(await resolveInherited(join(dir, 'C.jsonl'), 'C')).toEqual({ uuids: [], agentIds: [] });
+  });
+});
+
 describe('lookupIsCostly', () => {
   it('is false for an ordinary folder and for a missing one', async () => {
     writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');

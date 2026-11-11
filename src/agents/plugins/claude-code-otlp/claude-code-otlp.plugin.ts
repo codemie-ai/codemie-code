@@ -52,6 +52,8 @@ import {
   openMainTranscriptPass,
   openPostCompactPass,
   openSessionEnvCheckPass,
+  isSessionReopenedIdle,
+  markReopenedActive,
   openSessionStartPass,
   openSubagentPass,
   openSessionEndPass,
@@ -375,6 +377,11 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       return await this.onConfigChange(hookInput);
     }
 
+    // Every other hook (`Notification`, `InstructionsLoaded`, ...) is sent as it came, except for a session that was
+    // reopened without a prompt and has done nothing since: opening it must not change its analytics (EPMCDME-16993).
+    if (await isSessionReopenedIdle(hookInput.session_id)) {
+      return { decision: 'forward', payload: [] };
+    }
     return { decision: 'forward', payload: [hookInput] };
   }
 
@@ -695,6 +702,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
+      await markReopenedActive(hookInput.session_id); // a prompt is the reopened session's own activity
       // Derived fields read the raw prompt (the base class truncates `prompt` to 200 chars later).
       // `prompt` itself is cleaned of pasted-content tags.
       const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';

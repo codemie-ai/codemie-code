@@ -57,6 +57,8 @@ const resolveClientVersionMock = vi.fn();
 const openMainTranscriptPassMock = vi.fn();
 const openPostCompactPassMock = vi.fn();
 const openSessionStartPassMock = vi.fn();
+const isSessionReopenedIdleMock = vi.fn(async (): Promise<boolean> => false);
+const markReopenedActiveMock = vi.fn(async (): Promise<void> => undefined);
 const openSessionEnvCheckPassMock = vi.fn();
 const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
@@ -89,6 +91,8 @@ vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: openMainTranscriptPassMock,
   openPostCompactPass: openPostCompactPassMock,
   openSessionStartPass: openSessionStartPassMock,
+  isSessionReopenedIdle: isSessionReopenedIdleMock,
+  markReopenedActive: markReopenedActiveMock,
   openSessionEnvCheckPass: openSessionEnvCheckPassMock,
   openSubagentPass: openSubagentPassMock,
   openSessionEndPass: openSessionEndPassMock,
@@ -360,6 +364,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     openPostCompactPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockReset();
     openSessionStartPassMock.mockResolvedValue(emptyPass());
+    isSessionReopenedIdleMock.mockReset();
+    isSessionReopenedIdleMock.mockResolvedValue(false);
+    markReopenedActiveMock.mockReset();
+    markReopenedActiveMock.mockResolvedValue(undefined);
     openSessionEnvCheckPassMock.mockReset();
     openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockReset();
@@ -420,6 +428,31 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       }
     }
   );
+
+  describe('passthrough hooks of a session reopened without a prompt (EPMCDME-16993)', () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const send = async (name: string, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> => {
+      await plugin.processOtlpEvent(JSON.stringify(hookEvent({ hook_event_name: name, ...extra })), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      return forwardedEvents();
+    };
+
+    it.each(['Notification', 'InstructionsLoaded', 'PermissionRequest'])('drops %s while the reopen is idle', async (name) => {
+      isSessionReopenedIdleMock.mockResolvedValue(true);
+      expect(await send(name)).toEqual([]);
+    });
+
+    it.each(['Notification', 'InstructionsLoaded', 'PermissionRequest'])('still sends %s otherwise', async (name) => {
+      const sent = await send(name);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ hook_event_name: name });
+    });
+
+    it('marks the reopen active on a prompt, so the hooks of its turn are not dropped', async () => {
+      vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: true } as never);
+      await send('UserPromptSubmit', { prompt: 'hello' });
+      expect(markReopenedActiveMock).toHaveBeenCalledWith('sid-1');
+    });
+  });
 
   describe('Notification drops and sensitive-file reads', () => {
     it('drops the message and title of a Notification', async () => {
