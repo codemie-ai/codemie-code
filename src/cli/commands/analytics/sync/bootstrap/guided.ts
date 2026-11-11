@@ -25,7 +25,8 @@
 
 import { errorMessage } from '../redact.js';
 import { FLOW_PACKAGE_FILENAME, resolveFlowTemplateDir, writeFlowPackage } from './flow-package.js';
-import { runStepsFiveThroughEight } from './guided-late-steps.js';
+import { testGitCheck } from './git-step.js';
+import { runStepsFiveThroughEight, testSendLoop } from './guided-late-steps.js';
 import { askValidated } from './guided-support.js';
 import type { SaveBootstrapState } from './guided-support.js';
 import { BootstrapInputError, cleanPaste, parseChannelLink, parseFolderUrl, validateFolderPath, validateSiteUrl } from './links.js';
@@ -33,7 +34,7 @@ import type { ChannelLink, FolderLink } from './links.js';
 import { checkReuse, loadBootstrapState, saveBootstrapState, summarizeState } from './state-store.js';
 import type { BootstrapState } from './state-store.js';
 import { stepHeading, stepsFor } from './step-model.js';
-import type { StepDescriptor, TargetSelection } from './step-model.js';
+import type { StepDescriptor, TargetKind, TargetSelection } from './step-model.js';
 import { DEFAULT_TIME_ZONE, resolveTimeZone } from './timezones.js';
 import type { BootstrapDeps, BootstrapPrompter } from './types.js';
 
@@ -53,8 +54,8 @@ const TARGET_CHOICES: { value: TargetChoice; name: string }[] = [
 ];
 
 /**
- * The "Delivery target" step, asked only on a fresh run (a saved run already has
- * `targets`). Its heading's "of M" depends on the answer itself — the filtered list is not
+ * The "Delivery target" step, asked on a fresh run and on a saved run's "Change targets".
+ * Its heading's "of M" depends on the answer itself — the filtered list is not
  * known until the lead picks — so, unlike every other step, it asks first and prints its
  * heading afterwards, computed from the chosen selection, as a one-line confirmation.
  */
@@ -265,10 +266,14 @@ async function step4ImportFlow(deps: BootstrapDeps, state: BootstrapState, save:
   await save({ flowImported: true });
 }
 
-/** Where `runGuided` starts: the id of the first step to run, and the state to run it on. */
+/** Where `runGuided` starts: the id of the first step to run, and the state to run it on.
+ * `onlyTarget`, set by "Change targets" when it adds a target, limits the run to that
+ * target's own steps (then Developers): the other target's and the shared steps' saved
+ * answers are kept as they are. */
 interface StartPoint {
   startId: string;
   state: BootstrapState;
+  onlyTarget?: TargetKind;
 }
 
 /** Whether `id` is in `steps` at or after position `from` (a step absent from `steps` —
@@ -346,20 +351,112 @@ async function resolveFreshStart(deps: BootstrapDeps): Promise<StartPoint> {
   return { startId: 'trigger-url', state: skipped };
 }
 
-/** Whether the lead wants to reuse the saved settings just summarized. Kept as its own call
- * so the choice can grow beyond yes/no without touching {@link resolveStartStep}. */
-async function askReuse(deps: BootstrapDeps): Promise<boolean> {
-  return deps.prompt.confirm('Reuse them?', true);
+/** What to do with a saved setup, in menu order. */
+type SavedSetupChoice = 'reuse' | 'change' | 'restart';
+const SAVED_SETUP_CHOICES: { value: SavedSetupChoice; name: string }[] = [
+  { value: 'reuse', name: 'Reuse them: re-check each delivery target, then print the install command' },
+  { value: 'change', name: 'Change targets: keep these answers, add or turn off a delivery target' },
+  { value: 'restart', name: 'Start over: go through the steps again, with these answers as defaults' }
+];
+
+/** The resume point for re-running from `startId`, after {@link discardStaleAnswers}. */
+async function resumeAt(deps: BootstrapDeps, state: BootstrapState, startId: string): Promise<StartPoint> {
+  return { startId, state: await discardStaleAnswers(state, startId, deps.statePath) };
+}
+
+/**
+ * "Reuse": `checkReuse` first (presence plus the saved values' own rules, including
+ * `install`'s git URL rule); not ok resumes at its `resumeAt`. Ok then re-checks every chosen
+ * target live — the webhook via {@link testSendLoop}, then git via {@link testGitCheck} —
+ * saving each passed/skipped outcome, so the install command is printed only once every
+ * check has passed or been skipped (D12). "Enter a different URL" resumes at the Trigger URL
+ * step; "Enter different repository details" at the Git repository step. A target that is
+ * off is never re-checked.
+ */
+async function resolveReuse(deps: BootstrapDeps, loaded: BootstrapState): Promise<StartPoint> {
+  const check = checkReuse(loaded);
+  if (!check.ok) {
+    return resumeAt(deps, loaded, check.resumeAt);
+  }
+
+  let state = loaded;
+  if (state.targets.webhook && state.webhookUrl !== undefined) {
+    const outcome = await testSendLoop(deps, state.webhookUrl);
+    if (outcome === 'retry-url') {
+      return resumeAt(deps, state, 'trigger-url');
+    }
+    state = { ...state, webhookTest: outcome };
+    await saveBootstrapState(state, deps.statePath);
+  }
+  if (state.targets.git && state.gitRepoUrl !== undefined) {
+    const git = {
+      repoUrl: state.gitRepoUrl,
+      ...(state.gitBranch !== undefined && { branch: state.gitBranch }),
+      ...(state.gitPath !== undefined && { path: state.gitPath })
+    };
+    const outcome = await testGitCheck(deps, git, undefined);
+    if (outcome === 'retry') {
+      return resumeAt(deps, state, 'git-repo');
+    }
+    state = { ...state, gitTest: outcome };
+    await saveBootstrapState(state, deps.statePath);
+  }
+  return { startId: 'developers', state };
+}
+
+/** The first step of `kind`'s own steps in `steps`. */
+function firstStepOf(steps: readonly StepDescriptor[], kind: TargetKind): string | undefined {
+  return steps.find((step) => step.targets !== 'always' && step.targets.includes(kind))?.id;
+}
+
+/**
+ * "Change targets" (D3; AC18-AC20): re-asks the target choice and saves the new selection,
+ * keeping every saved field — an off target's included, for a later re-enable. Turning a
+ * target off only drops it from printing and from Reuse checks.
+ *
+ * The targets kept from before are re-checked with `checkReuse` (no live check), so a saved
+ * value that no longer validates — a credential-bearing git URL above all — never reaches
+ * the print; that resumes at the earlier of its `resumeAt` and the added target's first step.
+ * Otherwise a newly added target runs only its own steps (`onlyTarget`), and a pure removal
+ * goes straight to the Developers step.
+ */
+async function resolveChangeTargets(deps: BootstrapDeps, loaded: BootstrapState): Promise<StartPoint> {
+  const targets = await stepTarget(deps);
+  const changed: BootstrapState = { ...loaded, targets };
+  await saveBootstrapState(changed, deps.statePath);
+
+  const steps = stepsFor(targets);
+  const added: TargetKind | undefined =
+    targets.webhook && !loaded.targets.webhook ? 'webhook' : targets.git && !loaded.targets.git ? 'git' : undefined;
+  const addedStart = added === undefined ? undefined : firstStepOf(steps, added);
+
+  const kept: TargetSelection = {
+    webhook: loaded.targets.webhook && targets.webhook,
+    git: loaded.targets.git && targets.git
+  };
+  const check = checkReuse({ ...changed, targets: kept });
+  if (!check.ok) {
+    const candidates = [check.resumeAt, addedStart].filter((id): id is string => id !== undefined);
+    const startId = steps.find((step) => candidates.includes(step.id))?.id ?? check.resumeAt;
+    return resumeAt(deps, changed, startId);
+  }
+
+  if (added !== undefined && addedStart !== undefined) {
+    return { startId: addedStart, state: changed, onlyTarget: added };
+  }
+  return { startId: 'developers', state: changed };
 }
 
 /**
  * The start logic (spec.md "Start logic"):
  * - Nothing saved: {@link resolveFreshStart}.
- * - A saved state (whichever targets it has) shows a masked summary and offers reuse.
- *   Accepting re-checks it with `checkReuse`: ok jumps straight to the Developers step; not
- *   ok resumes at `resumeAt`. Declining restarts at the filtered list's first step after the
- *   target choice — the saved `targets` are kept, never re-asked — with the saved answers
- *   offered back. Either way, {@link discardStaleAnswers} drops what the re-run makes stale.
+ * - A saved state (whichever targets it has) shows a masked summary and offers Reuse /
+ *   Change targets / Start over (AC15, AC21):
+ *   - Reuse: {@link resolveReuse}.
+ *   - Change targets: {@link resolveChangeTargets}.
+ *   - Start over: restarts at the filtered list's first step after the target choice — the
+ *     saved `targets` are kept, never re-asked — with the saved answers offered back, after
+ *     {@link discardStaleAnswers} drops what the re-run makes stale.
  */
 async function resolveStartStep(deps: BootstrapDeps, loaded: BootstrapState | null): Promise<StartPoint> {
   if (loaded === null) {
@@ -371,21 +468,21 @@ async function resolveStartStep(deps: BootstrapDeps, loaded: BootstrapState | nu
     deps.err(`  ${line}`);
   }
 
-  let startId = stepsFor(loaded.targets)[1].id;
-  if (await askReuse(deps)) {
-    const check = checkReuse(loaded);
-    if (check.ok) {
-      return { startId: 'developers', state: loaded };
-    }
-    startId = check.resumeAt;
+  const choice = await deps.prompt.select('What would you like to do with them?', SAVED_SETUP_CHOICES, 'reuse');
+  if (choice === 'reuse') {
+    return resolveReuse(deps, loaded);
   }
-  return { startId, state: await discardStaleAnswers(loaded, startId, deps.statePath) };
+  if (choice === 'change') {
+    return resolveChangeTargets(deps, loaded);
+  }
+  return resumeAt(deps, loaded, stepsFor(loaded.targets)[1].id);
 }
 
 /**
  * The guided wizard: {@link resolveStartStep}, then the webhook setup steps (Teams channel,
  * SharePoint folder, Time zone, Import the flow) that are in the filtered list at or after
- * the start step, then the rest via {@link runStepsFiveThroughEight}.
+ * the start step (only the added target's own steps, then Developers, when the start point
+ * carries `onlyTarget`), then the rest via {@link runStepsFiveThroughEight}.
  *
  * `resolveFlowTemplateDir()` is checked before any step runs whenever the Import the flow
  * step will run (it depends on the template), so a missing template directory fails fast
@@ -409,7 +506,16 @@ export async function runGuided(deps: BootstrapDeps): Promise<number> {
 
   const shown = stepsFor(state.targets);
   const from = shown.findIndex((step) => step.id === start.startId);
-  const runs = (id: string): boolean => isAtOrAfter(shown, from, id);
+  const { onlyTarget } = start;
+  const remaining = shown
+    .slice(from)
+    .filter(
+      (step) =>
+        onlyTarget === undefined ||
+        step.id === 'developers' ||
+        (step.targets !== 'always' && step.targets.includes(onlyTarget))
+    );
+  const runs = (id: string): boolean => remaining.some((step) => step.id === id);
 
   if (runs('flow')) {
     try {
@@ -433,5 +539,5 @@ export async function runGuided(deps: BootstrapDeps): Promise<number> {
     await step4ImportFlow(deps, state, save);
   }
 
-  return runStepsFiveThroughEight(deps, state, save, shown.slice(from));
+  return runStepsFiveThroughEight(deps, state, save, remaining);
 }

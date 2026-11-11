@@ -56,7 +56,7 @@ async function askTriggerUrl(deps: BootstrapDeps): Promise<string> {
  * offers Try again (loops, re-sending) / Enter a different URL (returns `'retry-url'`, so
  * the caller asks for a new URL) / Skip the test (returns `'skipped'`).
  */
-async function testSendLoop(deps: BootstrapDeps, url: string): Promise<'passed' | 'skipped' | 'retry-url'> {
+export async function testSendLoop(deps: BootstrapDeps, url: string): Promise<'passed' | 'skipped' | 'retry-url'> {
   for (;;) {
     deps.err('Sending test file…');
     const report = setupCheckReport(deps.now());

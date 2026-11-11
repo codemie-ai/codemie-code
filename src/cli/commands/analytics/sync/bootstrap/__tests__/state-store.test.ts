@@ -310,6 +310,30 @@ describe('checkReuse', () => {
       });
     }
   );
+
+  it("resumes at 'git-repo' when the saved gitRepoUrl starts with '-' (install's shared git URL rule)", () => {
+    expect(checkReuse({ ...GIT_COMPLETE_STATE, gitRepoUrl: '--upload-pack=touch /tmp/x' })).toEqual({
+      ok: false,
+      resumeAt: 'git-repo'
+    });
+  });
+
+  it("resumes at 'git-repo' on a both-targets state whose git URL embeds an scp-style user:password", () => {
+    expect(
+      checkReuse({
+        ...COMPLETE_STATE,
+        ...GIT_COMPLETE_STATE,
+        targets: { webhook: true, git: true },
+        gitRepoUrl: 'user:secret@github.com:example/repo.git'
+      })
+    ).toEqual({ ok: false, resumeAt: 'git-repo' });
+  });
+
+  it('ignores an off webhook target: a broken saved webhookUrl does not block a git-only reuse', () => {
+    expect(
+      checkReuse({ ...GIT_COMPLETE_STATE, webhookUrl: 'https://example.invalid/no-sig', webhookTest: 'passed' })
+    ).toEqual({ ok: true, options: expect.anything() });
+  });
 });
 
 describe('toInstallCommandOptions', () => {
@@ -354,6 +378,12 @@ describe('toInstallCommandOptions', () => {
     expect(options).not.toHaveProperty('gitBranch');
     expect(options).not.toHaveProperty('gitPath');
   });
+
+  it('omits webhook when targets.webhook is false, even if webhookUrl is still saved', () => {
+    const options = toInstallCommandOptions({ ...GIT_COMPLETE_STATE, webhookUrl: FAKE_TRIGGER_URL });
+    expect(options).not.toHaveProperty('webhook');
+    expect(options.gitRepo).toBe(GIT_COMPLETE_STATE.gitRepoUrl);
+  });
 });
 
 describe('summarizeState', () => {
@@ -365,5 +395,39 @@ describe('summarizeState', () => {
   it('shows the webhook test result', () => {
     const lines = summarizeState(COMPLETE_STATE);
     expect(lines.some((line) => line.includes('passed'))).toBe(true);
+  });
+
+  it('names the delivery targets, showing an off target as off', () => {
+    expect(summarizeState(COMPLETE_STATE)).toContain('Delivery targets: webhook on, git off');
+    expect(summarizeState(GIT_COMPLETE_STATE)).toContain('Delivery targets: webhook off, git on');
+    expect(summarizeState({ ...COMPLETE_STATE, ...GIT_COMPLETE_STATE, targets: { webhook: true, git: true } })).toContain(
+      'Delivery targets: webhook on, git on'
+    );
+  });
+
+  it('masks the git repository URL to its host and shows branch, folder and test result', () => {
+    const lines = summarizeState({ ...GIT_COMPLETE_STATE, gitRepoUrl: 'https://tok@github.com/example/secret-repo.git' });
+    const text = lines.join('\n');
+    expect(lines).toContain('Git repository: github.com/… (path hidden)');
+    expect(text).not.toContain('secret-repo');
+    expect(text).not.toContain('tok');
+    expect(lines).toContain('Git branch: main');
+    expect(lines).toContain('Git folder: exports');
+    expect(lines).toContain('Git test: passed');
+  });
+
+  it('masks an scp-style git repository URL to its host, never its user:password', () => {
+    const lines = summarizeState({ ...GIT_COMPLETE_STATE, gitRepoUrl: 'user:secret@github.com:example/repo.git' });
+    expect(lines).toContain('Git repository: github.com/… (path hidden)');
+    expect(lines.join('\n')).not.toContain('secret');
+  });
+
+  it('omits the details of an off target, while still naming it as off', () => {
+    const webhookOff = summarizeState({ ...COMPLETE_STATE, ...GIT_COMPLETE_STATE, targets: { webhook: false, git: true } });
+    expect(webhookOff.join('\n')).not.toMatch(/Trigger URL|Teams channel|Webhook test/);
+    expect(webhookOff).toContain('Delivery targets: webhook off, git on');
+
+    const gitOff = summarizeState({ ...GIT_COMPLETE_STATE, ...COMPLETE_STATE, targets: { webhook: true, git: false } });
+    expect(gitOff.join('\n')).not.toMatch(/Git repository|Git branch|Git test/);
   });
 });

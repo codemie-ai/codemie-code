@@ -17,13 +17,12 @@
 import { readFile } from 'fs/promises';
 
 import { getCodemiePath } from '@/utils/paths.js';
-import { SyncConfigError } from '@/utils/errors.js';
-
-import { validateIncludeExternal, validateLookbackDays } from '../config-store.js';
+import { validateGitRepoUrl, validateIncludeExternal, validateLookbackDays } from '../config-store.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { InstallCommandOptions } from '../install-command.js';
 import type { IncludeExternalPolicy } from '../types.js';
 import { webhookHost } from '../format.js';
+import { redactSecrets } from '../redact.js';
 import { writePrivateJson } from '../private-file.js';
 
 import { stepsFor, type TargetSelection } from './step-model.js';
@@ -85,29 +84,6 @@ interface BootstrapStateV1 {
 /** The target `targets` defaults to when an old v1 file (no `targets` field) is loaded —
  * v1 only ever supported the webhook flow. */
 const V1_DEFAULT_TARGETS: TargetSelection = { webhook: true, git: false };
-
-/** Whether `rawUrl` embeds credentials in its userinfo. On an `http(s)://` URL any userinfo
- * counts — `https://<token>@host/r` is the common personal-access-token form. On an
- * `ssh://` or scp-style URL (`git@host:org/r.git`, which has no `://`) a bare username is
- * the normal ssh login and is allowed; only `user:pass@` is flagged.
- *
- * This mirrors config-store.ts's private `hasEmbeddedCredentials` exactly — that function is
- * not exported yet. Task 3 exports `validateGitRepoUrl`/`validateGitSettings` from
- * config-store.ts for the full git re-check (ref format, option-injection guard, etc.); once
- * it does, `checkReuse` switches to the shared validator and this local copy goes away. */
-function hasEmbeddedGitCredentials(rawUrl: string): boolean {
-  const match = /^(?:([a-zA-Z][a-zA-Z0-9+.-]*):\/\/)?([^@/]+)@/.exec(rawUrl);
-  if (match === null) {
-    return false;
-  }
-
-  const scheme = match[1]?.toLowerCase();
-  if (scheme === 'http' || scheme === 'https') {
-    return true;
-  }
-
-  return match[2].includes(':');
-}
 
 /** Whether `checkReuse` found the saved state fit to reuse. `ok: true` carries the install
  * options built from it (jump straight to printing the install command); `ok: false`
@@ -251,10 +227,8 @@ export function firstUnansweredStep(state: BootstrapState): string {
 
 /** Re-validators for the steps whose "present" field can still turn out invalid once
  * resumed into — a step with no entry here is only checked for presence, by
- * `firstUnansweredStep`. `'git-repo'`'s check is a narrow embedded-credentials check only
- * ({@link hasEmbeddedGitCredentials}); Task 3 replaces it with the full
- * `validateGitRepoUrl`/`validateGitSettings` re-check once those are exported from
- * config-store.ts. */
+ * `firstUnansweredStep`. `'git-repo'` re-runs `install`'s own `validateGitRepoUrl`, so a
+ * saved repository URL embedding credentials (or starting with `-`) is never reused. */
 const REVALIDATORS: Partial<Record<string, (state: BootstrapState) => void>> = {
   'trigger-url': (state) => {
     if (state.webhookUrl !== undefined) {
@@ -262,9 +236,7 @@ const REVALIDATORS: Partial<Record<string, (state: BootstrapState) => void>> = {
     }
   },
   'git-repo': (state) => {
-    if (state.gitRepoUrl !== undefined && hasEmbeddedGitCredentials(state.gitRepoUrl)) {
-      throw new SyncConfigError('Saved git repository URL embeds credentials.');
-    }
+    validateGitRepoUrl(state.gitRepoUrl);
   },
   external: (state) => {
     if (state.includeExternal !== undefined) {
@@ -326,12 +298,14 @@ export function checkReuse(state: BootstrapState): ReuseCheck {
  * `includeExternal` (defaulted the same way `validateIncludeExternal` defaults a missing
  * `--include-external`), sets `lookbackDays` only when it is a fixed number (a saved
  * `'default'`, like an absent value, means "let the installed default track CLI
- * updates"), emits `gitRepo`/`gitBranch`/`gitPath` only when `targets.git` is true, and
+ * updates"), emits `webhook` only when `targets.webhook` is true and
+ * `gitRepo`/`gitBranch`/`gitPath` only when `targets.git` is true — an off target's fields
+ * stay saved for a later re-enable but are never printed — and
  * never sets `at` — bootstrap never schedules on the lead's machine.
  */
 export function toInstallCommandOptions(state: BootstrapState): InstallCommandOptions {
   return {
-    ...(state.webhookUrl !== undefined && { webhook: state.webhookUrl }),
+    ...(state.targets.webhook && state.webhookUrl !== undefined && { webhook: state.webhookUrl }),
     ...(state.targets.git && state.gitRepoUrl !== undefined && { gitRepo: state.gitRepoUrl }),
     ...(state.targets.git && state.gitBranch !== undefined && { gitBranch: state.gitBranch }),
     ...(state.targets.git && state.gitPath !== undefined && { gitPath: state.gitPath }),
@@ -340,30 +314,70 @@ export function toInstallCommandOptions(state: BootstrapState): InstallCommandOp
   };
 }
 
-/** Human-readable lines summarizing `state` for the "already have saved answers" prompt.
- * The webhook is masked to its host (never its `sig` query value); the last test result,
- * when known, is shown as-is. */
-export function summarizeState(state: BootstrapState): string[] {
-  const lines: string[] = [];
+/** The host of a git repository URL — `https://`/`ssh://` via `URL` (userinfo dropped), or
+ * the host of an scp-style `[user[:pass]@]host:path` (anything without `://`, which `URL`
+ * would misread as a `user:` scheme) — the same host-only masking {@link
+ * webhookHost} applies to the webhook, falling back to the redacted value when neither
+ * form parses. */
+function gitRepoHost(gitRepoUrl: string): string {
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(gitRepoUrl)) {
+    try {
+      return new URL(gitRepoUrl).host;
+    } catch {
+      return redactSecrets(gitRepoUrl);
+    }
+  }
+  const scp = /^(?:[^@/]+@)?([^:/@]+):/.exec(gitRepoUrl);
+  return scp !== null ? scp[1] : redactSecrets(gitRepoUrl);
+}
 
-  if (state.channelName !== undefined) {
-    lines.push(`Teams channel: ${state.channelName}`);
+/** Human-readable lines summarizing `state` for the saved-setup prompt: which delivery
+ * targets are on and which are off, then the details of each target that is on. The
+ * webhook is masked to its host (never its `sig` query value) and the git repository to
+ * its host (never its path or any userinfo); the last test result, when known, is shown
+ * as-is. An off target's saved details are not shown. */
+export function summarizeState(state: BootstrapState): string[] {
+  const onOff = (on: boolean): string => (on ? 'on' : 'off');
+  const lines: string[] = [
+    `Delivery targets: webhook ${onOff(state.targets.webhook)}, git ${onOff(state.targets.git)}`
+  ];
+
+  if (state.targets.webhook) {
+    if (state.channelName !== undefined) {
+      lines.push(`Teams channel: ${state.channelName}`);
+    }
+    if (state.siteUrl !== undefined && state.folderPath !== undefined) {
+      lines.push(`SharePoint folder: ${state.siteUrl} / ${state.folderPath}`);
+    }
+    if (state.timeZone !== undefined) {
+      lines.push(`Time zone: ${state.timeZone}`);
+    }
+    if (state.flowImported === true || state.skippedSetup === true) {
+      lines.push('Flow: imported');
+    }
+    if (state.webhookUrl !== undefined) {
+      lines.push(`Trigger URL: https://${webhookHost(state.webhookUrl)}/… (signature hidden)`);
+    }
+    if (state.webhookTest !== undefined) {
+      lines.push(`Webhook test: ${state.webhookTest}`);
+    }
   }
-  if (state.siteUrl !== undefined && state.folderPath !== undefined) {
-    lines.push(`SharePoint folder: ${state.siteUrl} / ${state.folderPath}`);
+
+  if (state.targets.git) {
+    if (state.gitRepoUrl !== undefined) {
+      lines.push(`Git repository: ${gitRepoHost(state.gitRepoUrl)}/… (path hidden)`);
+    }
+    if (state.gitBranch !== undefined) {
+      lines.push(`Git branch: ${state.gitBranch}`);
+    }
+    if (state.gitPath !== undefined) {
+      lines.push(`Git folder: ${state.gitPath}`);
+    }
+    if (state.gitTest !== undefined) {
+      lines.push(`Git test: ${state.gitTest}`);
+    }
   }
-  if (state.timeZone !== undefined) {
-    lines.push(`Time zone: ${state.timeZone}`);
-  }
-  if (state.flowImported === true || state.skippedSetup === true) {
-    lines.push('Flow: imported');
-  }
-  if (state.webhookUrl !== undefined) {
-    lines.push(`Trigger URL: https://${webhookHost(state.webhookUrl)}/… (signature hidden)`);
-  }
-  if (state.webhookTest !== undefined) {
-    lines.push(`Webhook test: ${state.webhookTest}`);
-  }
+
   if (state.includeExternal !== undefined) {
     lines.push(`External sessions: ${state.includeExternal}`);
   }
