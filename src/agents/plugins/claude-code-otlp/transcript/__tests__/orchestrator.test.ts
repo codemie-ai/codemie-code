@@ -3701,6 +3701,30 @@ describe('continued session (EPMCDME-16992)', () => {
     }
   });
 
+  it('does not report a subagent transcript copied from the parent, only the continuation own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const copied = [usageLine({ uuid: 'sa-1', messageId: 'msg-sa1', outputTokens: 40 })];
+    writeSubagentFixture('P', 'copied', copied);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+    ]);
+    writeSubagentFixture('C', 'copied', copied);
+    writeSubagentFixture('C', 'own', [usageLine({ uuid: 'sb-1', messageId: 'msg-sb1', outputTokens: 50 })]);
+
+    const main = await openMainTranscriptPass('C', path, 'Stop');
+    await main.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    const subagents = [...main.events, ...end.events].filter((e) => e.type === 'agent.subagent.usage');
+    expect(subagents.map((e) => e.agent_id)).toEqual(['own']);
+    const requests = [...main.events, ...end.events].filter((e) => e.type === 'agent.usage.request').map((e) => e.message_id);
+    expect(requests).not.toContain('msg-sa1');
+    expect(requests).toContain('msg-sb1');
+  });
+
   describe('parent lookup is skipped only where it is costly and nothing can have been copied', () => {
     const START = '2026-11-10T16:20:00.000Z';
     /** More siblings than the lookup scans: the lookup stays incomplete, which is the costly case. */

@@ -24,6 +24,14 @@ const MAX_SIBLING_FILES = 200;
  */
 const TAIL_BYTES = 256 * 1024;
 
+/**
+ * Siblings beyond the {@link MAX_SIBLING_FILES} newest that still get a cheap look: the last
+ * {@link SHALLOW_TAIL_BYTES} of each (the `continued-in` record is usually the last record of the parent).
+ * They are never read whole, so a folder with more of them stays "incomplete".
+ */
+const SHALLOW_SCAN_LIMIT = 2000;
+const SHALLOW_TAIL_BYTES = 16 * 1024;
+
 /** Most `stat` calls in flight at once, so a large project directory cannot exhaust file handles. */
 const STAT_BATCH = 32;
 
@@ -61,10 +69,10 @@ async function statSiblings(directory: string, names: string[]): Promise<Sibling
 }
 
 /** The last {@link TAIL_BYTES} of `path` (the whole file when smaller). May start mid-line. */
-async function readTail(path: string, size: number): Promise<string> {
+async function readTail(path: string, size: number, tailBytes: number = TAIL_BYTES): Promise<string> {
   const handle = await open(path, 'r');
   try {
-    const length = Math.min(size, TAIL_BYTES);
+    const length = Math.min(size, tailBytes);
     const buffer = Buffer.alloc(length);
     const { bytesRead } = await handle.read(buffer, 0, length, size - length);
     return buffer.toString('utf-8', 0, bytesRead);
@@ -141,6 +149,30 @@ async function readUuids(path: string): Promise<string[]> {
   return uuids;
 }
 
+/** What a continued session inherited from its parent. */
+export interface Inherited {
+  /** `uuid` of every line of the parent's transcript. */
+  uuids: string[];
+  /** Ids of the parent's subagent transcripts: a copy of one in the continuation is not its own work. */
+  agentIds: string[];
+}
+
+/** Ids of the subagent transcripts that sit next to the parent transcript at `parentPath`. Never throws. */
+async function readAgentIds(parentPath: string): Promise<string[]> {
+  try {
+    const dir = join(dirname(parentPath), basename(parentPath, '.jsonl'), 'subagents');
+    return (await readdir(dir))
+      .filter((name) => name.startsWith('agent-') && name.endsWith('.jsonl'))
+      .map((name) => name.replace(/^agent-/, '').replace(/\.jsonl$/, ''));
+  } catch {
+    return [];
+  }
+}
+
+async function readInherited(parentPath: string): Promise<Inherited> {
+  return { uuids: await readUuids(parentPath), agentIds: await readAgentIds(parentPath) };
+}
+
 /**
  * The uuids of the lines `sessionId` inherited from the session it was continued from.
  *
@@ -156,6 +188,11 @@ async function readUuids(path: string): Promise<string[]> {
  * every pass; a parent outside the newest ones is not found.
  */
 export async function resolveInheritedUuids(transcriptPath: string, sessionId: string): Promise<string[] | null> {
+  return (await resolveInherited(transcriptPath, sessionId))?.uuids ?? null;
+}
+
+/** {@link resolveInheritedUuids} plus the parent's subagent ids. `null` when the scan could not be completed. */
+export async function resolveInherited(transcriptPath: string, sessionId: string): Promise<Inherited | null> {
   // dirname('') is '.', which would scan the process working directory.
   if (!transcriptPath || !sessionId) return null;
   const directory = dirname(transcriptPath);
@@ -176,18 +213,27 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
     for (const file of scanned) {
       const path = join(directory, file.name);
       try {
-        if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readUuids(path);
+        if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readInherited(path);
         // A file that fits in the tail window was read whole: nothing more to find in it.
         if (file.size > TAIL_BYTES) tailMissed.push(file);
       } catch {
         complete = false;
       }
     }
+    // Pass 1b: the siblings beyond the newest ones, a short tail each (cheap, so many more are covered).
+    for (const file of candidates.slice(MAX_SIBLING_FILES, SHALLOW_SCAN_LIMIT).filter((f) => !f.unknown)) {
+      const path = join(directory, file.name);
+      try {
+        if (tailNamesSession(await readTail(path, file.size, SHALLOW_TAIL_BYTES), sessionId)) return await readInherited(path);
+      } catch {
+        // Unreadable: the scan is incomplete anyway (more siblings than the full scan covers).
+      }
+    }
     // Pass 2: the larger siblings whose tail did not hold the record, read whole.
     for (const file of tailMissed) {
       const path = join(directory, file.name);
       try {
-        if (await fileNamesSession(path, sessionId)) return await readUuids(path);
+        if (await fileNamesSession(path, sessionId)) return await readInherited(path);
       } catch {
         complete = false;
       }
@@ -196,7 +242,7 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
       logger.debug('[claude-code-otlp] parent lookup of a continued session was incomplete', { sessionId });
       return null;
     }
-    return [];
+    return { uuids: [], agentIds: [] };
   } catch (error) {
     logger.debug('[claude-code-otlp] could not look up the parent of a continued session', {
       error: error instanceof Error ? error.message : String(error),
@@ -225,8 +271,12 @@ export async function lookupIsCostly(transcriptPath: string): Promise<boolean> {
 /** Bytes read from the start of the transcript to look at the first timestamps. */
 const HEAD_BYTES = 64 * 1024;
 
-/** A copy is at least this much older than the continuation's own start, so a smaller gap is not one. */
-const COPY_AGE_MARGIN_MS = 60 * 1000;
+/**
+ * A copy is at least this much older than the continuation's own start, so a smaller gap is not one. An ordinary
+ * session's first lines are stamped a few seconds before its `SessionStart` hook runs; a slower start-up only costs
+ * a lookup that was not needed, while a margin that is too wide misses the copies of a young parent.
+ */
+const COPY_AGE_MARGIN_MS = 15 * 1000;
 
 /**
  * Used only where the lookup is costly ({@link lookupIsCostly}). Whether the transcript can hold lines copied

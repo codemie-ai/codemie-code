@@ -313,3 +313,49 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
   the grace when earlier records are pending (D-14, now also for `endedSizes`).** Unchanged, see above.
 - **Cross-session totals, window admission, class/origin rebinding, D1/D2 regression test.** Backend, see
   `backend-handoff.md`.
+
+## Sixth pass: the remaining gaps (2026-11-11)
+
+### Fixed
+
+- **Parent lookup in a crowded folder (earlier D-1, review CR-003).** The lookup read a 256 KB tail of the 200
+  newest siblings only, so in a folder with more than 200 transcripts a parent older than those was never found
+  and the lookup repeated on every pass. Now a second step reads a 16 KB tail (`SHALLOW_TAIL_BYTES`) of the
+  siblings 201..2000 (`SHALLOW_SCAN_LIMIT`) before the whole-file fallback. The `continued-in` record sits at the
+  end of the parent, so 16 KB finds it in the normal case. An incomplete scan of a crowded folder now counts as a
+  pass toward the 3-pass cap (`inheritedLookups`), so it stops repeating. *Residual:* a folder with more than 2000
+  siblings, or a parent whose record has more than 16 KB after it and that is older than the 200 newest, is still
+  not found (the whole-file step still covers only the 200 newest). Unit: `resolveInherited` tests; the parent
+  older than the 200 newest is found.
+- **Copied subagent transcripts (earlier D-4, review CR-004).** Reversed: it had never been seen on the 4 real
+  pairs, but the cost of being wrong is double counting, and the fix is small. When the parent is found, its
+  `<parent>/subagents/agent-*.jsonl` ids are saved (`inheritedAgentIds`); a subagent file with the same id in the
+  continuation is not reported (`deriveSubagentEvents` returns nothing for it). The continuation's own subagents
+  are unaffected. *Risk:* an id clash between a parent subagent and a genuinely new one in the continuation
+  cannot happen (ids are random). Live: S19 fails on the previous build (reports `copied` and `own`), passes now.
+- **Young parent in a crowded folder.** The copy-guard margin (`COPY_AGE_MARGIN_MS`) went from 60 s to 15 s, so a
+  parent only half a minute old is now caught in a crowded folder as well. Margin kept above the few seconds the
+  hook runs after the first lines. Unit test: a parent 30 s older is detected; 10 s older is not.
+
+### Not fixed, on purpose (rare, and a fix could bring problems)
+
+- **D-7: a hook slower than the 15 s settle time.** Records of an idle reopen that arrive before a slow
+  `SessionStart(resume)` hook marked the session go out. *Rare:* the hook takes 1-3 s in practice (the live runs
+  S14 with a slowed hook are held). *Why not fixed:* it needs either a marker the hook writes before Claude Code
+  starts (not possible, the hook runs after) or a longer hold, which delays the records of every session that has
+  just started by that much.
+- **D-2: a late parent record.** If the `continued-in` record is not on disk at the first hook pass, the copies
+  of that pass are reported and are not taken back. *Rare:* never seen on the real pairs (the record is written
+  before the child is opened). *Why not fixed:* taking back reported data needs a backend change, and a rule on
+  the CLI that holds all lines of a new session until the parent is known would delay every session and could hide
+  real work if the parent never shows up.
+- **A killed session with unsent bytes, resumed idle and left for 60 minutes.** Its unsent bytes have no recorded
+  end size (`endedSizes` is written only at a `SessionEnd`), so the 60-minute expiry may drop them together with
+  the startup records of the reopen. *Rare:* it needs a kill, an undelivered backlog, a prompt-less resume and
+  60 idle minutes. *Why not fixed:* closing it needs a status write on every spool tick, which adds disk writes for
+  all sessions and a new place for the status lock to contend.
+
+### Verification
+
+`tsc`, `eslint --max-warnings=0`, vitest for `claude-code-otlp` and the proxy (85 files, 1816 tests), live matrix
+19/19, real pairs 4/4. S19 was run against the previous build and fails there.

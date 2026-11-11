@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mayHoldCopiedLines, resolveInheritedUuids } from '../continuation.js';
+import { lookupIsCostly, mayHoldCopiedLines, resolveInherited, resolveInheritedUuids } from '../continuation.js';
 
 // Records every read stream the module opens, so a test can check none is left open.
 const openedStreams = vi.hoisted(() => [] as { destroyed: boolean }[]);
@@ -119,6 +119,49 @@ describe('resolveInheritedUuids — uncounted parent lines', () => {
   });
 });
 
+describe('resolveInherited', () => {
+  it('also returns the ids of the parent subagent transcripts', async () => {
+    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), continuedIn('P', 'C')].join('\n') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+    mkdirSync(join(dir, 'P', 'subagents'), { recursive: true });
+    writeFileSync(join(dir, 'P', 'subagents', 'agent-aaa.jsonl'), '');
+    writeFileSync(join(dir, 'P', 'subagents', 'agent-bbb.jsonl'), '');
+    writeFileSync(join(dir, 'P', 'subagents', 'agent-bbb.meta.json'), '{}');
+
+    const found = await resolveInherited(join(dir, 'C.jsonl'), 'C');
+    expect(found?.uuids).toEqual(['u1']);
+    expect([...(found?.agentIds ?? [])].sort()).toEqual(['aaa', 'bbb']);
+  });
+
+  it('finds a parent that is older than the 200 newest siblings, by the end of its transcript', async () => {
+    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), msg('u2', 'P'), continuedIn('P', 'C')].join('\n') + '\n');
+    const old = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    utimesSync(join(dir, 'P.jsonl'), old, old);
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+    for (let i = 0; i < 250; i += 1) writeFileSync(join(dir, `other-${i}.jsonl`), msg(`o${i}`, `other-${i}`) + '\n');
+
+    expect(await lookupIsCostly(join(dir, 'C.jsonl'))).toBe(true);
+    expect((await resolveInherited(join(dir, 'C.jsonl'), 'C'))?.uuids).toEqual(['u1', 'u2']);
+  });
+
+  it('is still incomplete (null) in a crowded folder when no parent is found', async () => {
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+    for (let i = 0; i < 250; i += 1) writeFileSync(join(dir, `other-${i}.jsonl`), msg(`o${i}`, `other-${i}`) + '\n');
+
+    expect(await resolveInherited(join(dir, 'C.jsonl'), 'C')).toBeNull();
+  });
+});
+
+describe('lookupIsCostly', () => {
+  it('is false for an ordinary folder and for a missing one', async () => {
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+    writeFileSync(join(dir, 'P.jsonl'), msg('u1', 'P') + '\n');
+    expect(await lookupIsCostly(join(dir, 'C.jsonl'))).toBe(false);
+    expect(await lookupIsCostly(join(dir, 'nope', 'C.jsonl'))).toBe(false);
+    expect(await lookupIsCostly('')).toBe(false);
+  });
+});
+
 describe('mayHoldCopiedLines', () => {
   const START = '2026-11-10T16:20:00.000Z';
   const line = (timestamp: string): string => JSON.stringify({ type: 'user', uuid: 'x', timestamp });
@@ -138,6 +181,10 @@ describe('mayHoldCopiedLines', () => {
 
   it('allows a line stamped a few seconds before the start (the hook runs after the first lines)', async () => {
     expect(await mayHoldCopiedLines(write(line('2026-11-10T16:19:50.000Z')), START)).toBe(false);
+  });
+
+  it('catches the copies of a parent only half a minute old', async () => {
+    expect(await mayHoldCopiedLines(write(line('2026-11-10T16:19:30.000Z')), START)).toBe(true);
   });
 
   it.each([

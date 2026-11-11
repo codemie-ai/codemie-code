@@ -70,6 +70,8 @@ export interface TranscriptParseState {
   /** `uuid`s of the lines a continued session copied from its parent transcript (found through the
    *  parent's `continued-in` record); never counted or summarised. Absent = none known. */
   inheritedUuids?: string[];
+  /** Ids of the parent's subagent transcripts; a copy of one in this session is not its own work. */
+  inheritedAgentIds?: string[];
   /** The parent lookup is final (a parent was found, or the retries were used up), so it is not repeated. */
   inheritedResolved?: boolean;
   /** Parent lookups that found nothing (or did not complete) so far; bounds the retries. */

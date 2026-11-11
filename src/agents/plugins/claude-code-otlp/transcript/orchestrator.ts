@@ -32,7 +32,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
-import { lookupIsCostly, mayHoldCopiedLines, resolveInheritedUuids } from './continuation.js';
+import { lookupIsCostly, mayHoldCopiedLines, resolveInherited } from './continuation.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   acquireParseStateLock,
@@ -572,11 +572,14 @@ async function ensureInherited(
     state.inheritedResolved = true;
   }
   if (!state.inheritedResolved) {
-    const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
-    if (uuids && uuids.length > 0) {
+    const found = await resolveInherited(transcriptPath, sessionId);
+    const uuids = found?.uuids;
+    if (found && uuids && uuids.length > 0) {
       state.inheritedUuids = uuids;
+      if (found.agentIds.length > 0) state.inheritedAgentIds = found.agentIds;
       state.inheritedResolved = true;
-    } else if (uuids) {
+    } else if (uuids || (!found && (await lookupIsCostly(transcriptPath)))) {
+      // A complete miss counts; so does an incomplete scan of a crowded folder, which would otherwise repeat on every pass.
       const previous = Number.isFinite(state.inheritedLookups) ? (state.inheritedLookups as number) : 0;
       state.inheritedLookups = previous + 1;
       if (state.inheritedLookups >= MAX_PARENT_LOOKUPS) state.inheritedResolved = true;
@@ -1432,6 +1435,8 @@ async function deriveSubagentEvents(
   sessionId: string,
   subagentFile: SubagentFile
 ): Promise<Record<string, unknown>[]> {
+  // A subagent transcript copied from the parent is not this session's own work.
+  if (state.inheritedAgentIds?.includes(subagentFile.agentId)) return [];
   const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
   const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
 
