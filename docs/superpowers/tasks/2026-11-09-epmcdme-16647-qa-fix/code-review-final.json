@@ -1,0 +1,190 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-002 and CR-003 verified fixed by the targeted check round. CR-001 remains disposed as out-of-scope (pre-existing unrelated file, disposed before this round ran)."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-002 and CR-003 are real defects in the new code and go back for a fix-up. CR-001 is disposed as out-of-scope (pre-existing unrelated dirty file, not part of this diff)."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-002 and CR-003 verified fixed by the targeted check round. CR-001 remains disposed as out-of-scope (pre-existing unrelated file, disposed before this round ran)."
+    }
+  ],
+  "reviewed_head": "3156261b3471e55e63b0aa363e09f6a47a819588",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Targeted re-check at reviewed_head d97742c: CR-002 (unbounded pre-spawn await) and CR-003 (hardcoded 'claude-code-otlp' clientType) are resolved — ensureOtlpProxy is now bounded by withTimeout(PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS=3000ms) and is called with this.metadata.name under an explicit this: BaseAgentAdapter signature. CR-001 (personal identity leak in .codemie/codemie-cli.config.json) remains unresolved: activeProfile/profile name were changed to 'default' and the profile name plus workspace.codeMieProject are still 'dzmitry_halai@epam.com' rather than reverted to 'epm-cdme'. No new findings were raised; decision stays request-changes pending CR-001.",
+  "confidence": "high",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "security",
+    "breaking-change"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": ".codemie/codemie-cli.config.json",
+      "line": 3,
+      "title": "Working tree leaks personal identity into shared config",
+      "problem": "activeProfile, profile key/name and codeMieProject were changed from 'epm-cdme' to the developer's personal identity 'dzmitry_halai@epam.com', unrelated to the EPMCDME-16647 OTLP fix.",
+      "impact": "Commits a developer's personal identity into a shared tracked config file and silently reassigns the default profile for anyone who pulls it, repeating an incident already reverted once (68fd2e4).",
+      "recommendation": "Revert .codemie/codemie-cli.config.json to restore the 'epm-cdme' profile, key, name and codeMieProject; exclude local profile switches from this changeset.",
+      "status": "wont-fix",
+      "check_notes": "activeProfile now 'default' (not restored to 'epm-cdme'); profile name and workspace.codeMieProject are still 'dzmitry_halai@epam.com', not 'epm-cdme'.",
+      "disposition": {
+        "rationale": "Out-of-scope: this is a pre-existing unrelated dirty-tree file (.codemie/codemie-cli.config.json) the user already decided to leave in place (\"proceed dirty\") at Stage 0, not a change introduced by this task's diff. No fix from this implementer.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.plugin.ts",
+      "line": 587,
+      "title": "Pre-spawn OTLP refresh has no timeout guard",
+      "problem": "The new pre-spawn `ensureOtlpProxy('claude-code-otlp')` call in beforeRun (lines 587-596) is awaited with no timeout, unlike the backgroundable SessionStart hook path it supplements; its internals can run SSO credential checks and spawn/health-check a daemon.",
+      "impact": "A slow SSO or daemon health check now stalls the synchronous pre-spawn path of every already-connected Claude/claude-acp launch indefinitely, where the same logic previously only ran in the backgroundable hook after the session had already started.",
+      "recommendation": "Bound the pre-spawn call with a timeout (e.g. Promise.race against a short deadline) so a slow credential/daemon check degrades to relying on the existing hook-time rewrite instead of stalling the launch.",
+      "status": "resolved",
+      "check_notes": "beforeRun now wraps ensureOtlpProxy in withTimeout(..., PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS=3000, ...); a timeout rejects into the existing catch/logger.warn non-blocking path.",
+      "fix": {
+        "change": "Wrapped the pre-spawn ensureOtlpProxy() call in claude.plugin.ts beforeRun with a 3s Promise.race timeout (withTimeout helper); a timeout is caught by the existing non-blocking catch block.",
+        "test": "src/agents/plugins/claude/__tests__/claude.plugin.otlp-preflight.test.ts > 'does not stall the launch when the refresh never settles'"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.plugin.ts",
+      "line": 589,
+      "title": "Hardcoded OTLP clientType mislabels claude-acp",
+      "problem": "beforeRun passes the literal string 'claude-code-otlp' (the OTLP hook adapter's own name) as the agentName/clientType argument to ensureOtlpProxy, instead of this.metadata.name ('claude' or 'claude-acp'); claude-acp.plugin.ts inherits this same beforeRun via its metadata spread.",
+      "impact": "When ensureOtlpProxy cold-starts without an existing clientType on the connection record, the daemon/connection record is tagged with clientType 'claude-code-otlp' instead of the real launching client, mislabeling analytics/telemetry attribution for claude-acp sessions in particular.",
+      "recommendation": "Pass this.metadata.name instead of the literal 'claude-code-otlp' to ensureOtlpProxy.",
+      "status": "resolved",
+      "check_notes": "beforeRun is now typed `this: BaseAgentAdapter` and calls ensureOtlpProxy(this.metadata.name) instead of the literal 'claude-code-otlp'; new tests assert 'claude' and 'claude-acp' attribution.",
+      "fix": {
+        "change": "Replaced the hardcoded 'claude-code-otlp' clientType argument to ensureOtlpProxy() with this.metadata.name (typed via `this: BaseAgentAdapter` on beforeRun), so claude-acp launches attribute correctly instead of inheriting claude's literal.",
+        "test": "src/agents/plugins/claude/__tests__/claude.plugin.otlp-preflight.test.ts > 'refreshes the OTLP endpoint before spawn when already connected' and > 'attributes a claude-acp launch as claude-acp, not claude-code-otlp or claude'"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: endpoint rewrite happens pre-spawn, before Claude Code's process starts",
+      "status": "pass",
+      "notes": "beforeRun calls ensureOtlpProxy before `return env;`; covered by claude.plugin.otlp-preflight.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: an unconnected launch never starts/touches the proxy daemon",
+      "status": "pass",
+      "notes": "gated by isClaudeCodeOtlpConnected() returning false when not CodeMie-owned; covered by test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: a pre-spawn refresh failure never blocks or fails the launch",
+      "status": "pass",
+      "notes": "try/catch around ensureOtlpProxy with logger.warn only; covered by test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: existing SessionStart hook-time rewrite still runs for native launches/mid-session respawns",
+      "status": "pass",
+      "notes": "diff does not touch otlp-cold-start.ts's SessionStart path"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: native (unmanaged) claude launches unchanged",
+      "status": "pass",
+      "notes": "new call sits only inside the managed-launch beforeRun lifecycle hook"
+    },
+    {
+      "kind": "spec",
+      "item": "Approach: export isClaudeCodeOtlpConnected() using the existing ownership check",
+      "status": "pass",
+      "notes": "implemented as (await readOwnedOtlpEnv()) !== null"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no direct OTEL_EXPORTER_OTLP_* env injection into the spawned child",
+      "status": "pass",
+      "notes": "diff only calls ensureOtlpProxy; no direct env assignment added"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no new standing/background infrastructure for native launches",
+      "status": "pass",
+      "notes": "no new background process, timer or watchdog introduced"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no generic cross-adapter pre-spawn mechanism on BaseAgentAdapter",
+      "status": "pass",
+      "notes": "change confined to claude.plugin.ts's beforeRun; BaseAgentAdapter.ts untouched"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: ensureOtlpProxy/refreshClaudeCodeOtlpEndpoint contract unchanged",
+      "status": "pass",
+      "notes": "claude-code-otlp-endpoint.ts diff only adds the new exported helper"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Review range is entirely uncommitted working-tree edits (diff_base equals HEAD); nothing to check against Conventional Commits format."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "async/await, explicit return types, interfaces, JSDoc, logger.warn+sanitizeLogArgs, .js-suffixed imports all followed; no skip/only/console.log/TODO in the new test files."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "No security-patterns.md guide and no security ArtifactRef present to adjudicate against; a concrete issue was found anyway and reported as a blocking finding (CR-001)."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "The edge-case and acceptance lenses and the standards audit all ran cleanly with no coverage gap; acceptance found every AC/approach/non-goal satisfied, but the standards audit flagged a critical, task-unrelated identity leak in .codemie/codemie-cli.config.json (CR-001, repeats a previously reverted incident), and the edge-case lens surfaced two real defects in the new pre-spawn OTLP block: a hardcoded clientType mislabeling claude-acp sessions (CR-003) and an unbounded await that can stall every connected launch (CR-002). One edge-case candidate (the un-try/catch'd isClaudeCodeOtlpConnected call) was dismissed as noise since its only callee already swallows all errors internally; nothing was deferred and no item needs a human decision.",
+    "confidence": "high",
+    "risk_flags": [
+      "security",
+      "breaking-change"
+    ]
+  }
+}

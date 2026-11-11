@@ -140,7 +140,8 @@ export class ConfigLoader {
    */
   static async load(
     workingDir: string = process.cwd(),
-    cliOverrides?: Partial<CodeMieConfigOptions>
+    cliOverrides?: Partial<CodeMieConfigOptions>,
+    envDir: string = workingDir
   ): Promise<CodeMieConfigOptions> {
     // 5. Built-in defaults (lowest priority)
     const config: CodeMieConfigOptions = {
@@ -193,7 +194,7 @@ export class ConfigLoader {
     Object.assign(config, this.removeUndefined(resolution.workspace));
 
     // 2. Environment variables (load .env first if in project)
-    const envPath = path.join(workingDir, '.env');
+    const envPath = path.join(envDir, '.env');
     try {
       await fs.access(envPath);
       dotenv.config({ path: envPath });

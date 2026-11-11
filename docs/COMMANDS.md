@@ -1338,7 +1338,7 @@ codemie self-update
 export CODEMIE_AUTO_UPDATE=false
 ```
 
-**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect on the next command execution.
+**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect once the `codemie` first on your PATH is the updated install; `codemie self-update` warns when an older install shadows it.
 
 ### `codemie doctor`
 
