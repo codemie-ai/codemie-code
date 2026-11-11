@@ -416,3 +416,21 @@ updated yet. This change repairs and backfills nothing.
 
 Pair with the backend list (`residual-risks.md`, "Rollout and old data", O1 to O7). Say so in the Jira comment when
 closing, so these are read as known limits and not as unfinished work.
+
+## Eighth pass: minor points of the PR reviewer (comment of 2026-11-11)
+
+Fixed: a spool file created again after the sweep is scanned from its start (`scannedTo` is dropped when the file is
+shorter than the offset); the `reopenWorkAt` read-back has a test; the "a minute" texts say 15 s and the architecture
+doc describes the inherited set and the 200-sibling limit as the code does.
+
+Not changed, accepted:
+
+- **One cursor per stream (startup records of an earlier idle reopen go out with a later working one):** fixing it
+  needs per-record filtering in the hold, a redesign with a high regression risk. Nothing is lost; the records carry
+  the earlier time and the backend ignores lifecycle records for the end time.
+- **Late parent: `api_calls` and branch counts of the summary still hold the first pass's copies:** same family as
+  D-2 and CR-004; a fix could undercount real work. Rare (late parent record).
+- **"Bytes after `endedAt`" rule holds without a work check:** applies only to a session that has an end and was not
+  marked as reopened; the cost is a wait for a 15 s pause in the writes, nothing is lost.
+- **Copied subagent skipped before its offset is set:** a per-hook cost only, no effect on the figures; not
+  confirmed as a re-read of the file head.

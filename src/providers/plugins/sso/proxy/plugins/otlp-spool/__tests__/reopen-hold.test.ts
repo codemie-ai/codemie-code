@@ -230,6 +230,17 @@ describe('holdForIdleReopen', () => {
       expect(await holdForIdleReopen('d3')).toBe(true);
     });
 
+    it('scans a spool file that was created again after the sweep from its start, not from the old offset', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('n1', { reopened: true });
+      const path = writeSpool('n1', '.otel_logs.ndjson', startup + startup);
+      expect(await holdForIdleReopen('n1')).toBe(true); // everything in it was scanned, no work
+
+      rmSync(path);
+      writeSpool('n1', '.otel_logs.ndjson', work); // shorter than the old offset, work at its very start
+      expect(await holdForIdleReopen('n1')).toBe(false);
+    });
+
     it('does not take the words in some other record for work', async () => {
       const { holdForIdleReopen } = await import('../reopen-hold.js');
       writeState('w7', { reopened: true });

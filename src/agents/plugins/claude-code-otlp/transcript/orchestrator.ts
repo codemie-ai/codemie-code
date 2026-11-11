@@ -553,10 +553,10 @@ const MAX_PARENT_LOOKUPS = 3;
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  *
  * In a project directory with more than 200 transcripts the scan stays incomplete and would repeat on every
- * pass; there, a transcript with no line older than the session's own start (by a minute) is taken for one with
+ * pass; there, a transcript with no line older than the session's own start (by 15 seconds) is taken for one with
  * no copies and skips it. Elsewhere the scan always runs: it is complete after the first pass, so a skip would
  * save nothing and could miss the parent of a young one.
- * Known limits: a continuation in such a directory whose parent is younger than a minute is not detected, and a
+ * Known limits: a continuation in such a directory whose parent is younger than 15 seconds is not detected, and a
  * first pass that runs before the parent's record is on disk reports the copied lines.
  */
 async function ensureInherited(

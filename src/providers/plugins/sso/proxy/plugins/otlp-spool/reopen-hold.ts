@@ -164,7 +164,10 @@ async function seesOwnWork(
     if (!WORK_STREAMS.includes(stream)) continue;
     const key = `${sessionId}:${stream}`;
     // Bytes before the size at the last SessionEnd belong to the run that ended, not to this reopen.
-    const from = Math.max(scannedTo.get(key) ?? 0, cursors?.[stream] ?? 0, endedSizes?.[stream] ?? 0);
+    // A file shorter than the offset already scanned is a new file (the sweep deleted the old spool files and a
+    // resume created them again): scan it from its start.
+    const scanned = scannedTo.get(key) ?? 0;
+    const from = Math.max(size < scanned ? 0 : scanned, cursors?.[stream] ?? 0, endedSizes?.[stream] ?? 0);
     const { found, next } = await scanChunk(streamFile(sessionId, stream), stream === 'logsJson', from, size);
     if (found) {
       remember(workSeenAt, sessionId, now);

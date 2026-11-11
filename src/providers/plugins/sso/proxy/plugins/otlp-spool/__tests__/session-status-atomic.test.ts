@@ -41,3 +41,14 @@ it('a partial failed status update retains the durable pre-send checkpoint and o
   expect(await readStatus('session')).toMatchObject({ sendCheckpoint: true, sendMode: 'evidence', cursors: original.cursors });
   expect((await readdir(io.root)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
 });
+
+it('reads the reopen release time back from the status file, and drops a value that is not a positive number', async () => {
+  const { createStatus, readStatus, writeStatus } = await import('../session-status.js');
+  await writeStatus('released', { ...createStatus(), reopenWorkAt: 1_700_000_000_000 });
+  await writeStatus('invalid', { ...createStatus(), reopenWorkAt: -5 });
+  await writeStatus('absent', createStatus());
+
+  expect((await readStatus('released'))?.reopenWorkAt).toBe(1_700_000_000_000);
+  expect((await readStatus('invalid'))?.reopenWorkAt).toBeUndefined();
+  expect((await readStatus('absent'))?.reopenWorkAt).toBeUndefined();
+});
