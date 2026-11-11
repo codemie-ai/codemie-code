@@ -50,8 +50,7 @@ describe('summarizeSpoolDelivery', () => {
       pendingBytes: 0,
       mismatchHeld: false,
       sendFailed: false,
-      classificationUnreachable: false,
-      classificationUnsupported: false,
+      classificationStalled: false,
     });
   });
 
@@ -62,8 +61,7 @@ describe('summarizeSpoolDelivery', () => {
       pendingBytes: 60 + 50 + 30,
       mismatchHeld: false,
       sendFailed: false,
-      classificationUnreachable: false,
-      classificationUnsupported: false,
+      classificationStalled: false,
     });
   });
 
@@ -82,8 +80,7 @@ describe('summarizeSpoolDelivery', () => {
       pendingBytes: 10,
       mismatchHeld: false,
       sendFailed: false,
-      classificationUnreachable: false,
-      classificationUnsupported: false,
+      classificationStalled: false,
     });
   });
 
@@ -110,68 +107,36 @@ describe('summarizeSpoolDelivery', () => {
       pendingBytes: 30,
       mismatchHeld: false,
       sendFailed: false,
-      classificationUnreachable: false,
-      classificationUnsupported: false,
+      classificationStalled: false,
     });
   });
 
-  it('flags classification_unreachable when held on a qualifying reason with an unknown capability', async () => {
+  it('flags classificationStalled when held on a qualifying reason with pending data', async () => {
     await session('stalled', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
     });
-    expect((await summarizeSpoolDelivery('unknown')).classificationUnreachable).toBe(true);
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(true);
   });
 
-  it('does not flag classification_unreachable when capability is evidence', async () => {
-    await session('stalled-evidence', { hooks: 10 }, (s) => {
-      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
-    });
-    expect((await summarizeSpoolDelivery('evidence')).classificationUnreachable).toBe(false);
-  });
-
-  it('flags classification_unreachable for organization_encoding_unsupported too', async () => {
+  it('flags classificationStalled for organization_encoding_unsupported too', async () => {
     await session('stalled-encoding', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
     });
-    expect((await summarizeSpoolDelivery('unknown')).classificationUnreachable).toBe(true);
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(true);
   });
 
-  it('does not flag classification_unreachable for organization_encoding_unsupported when capability is evidence', async () => {
-    await session('stalled-encoding-evidence', { hooks: 10 }, (s) => {
-      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
-    });
-    expect((await summarizeSpoolDelivery('evidence')).classificationUnreachable).toBe(false);
-  });
-
-  it('flags classification_unsupported instead of classification_unreachable when capability is legacy', async () => {
-    await session('stalled-legacy', { hooks: 10 }, (s) => {
-      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
-    });
-    const summary = await summarizeSpoolDelivery('legacy');
-    expect(summary.classificationUnreachable).toBe(false);
-    expect(summary.classificationUnsupported).toBe(true);
-  });
-
-  it('does not flag classification_unsupported when capability is evidence or unknown', async () => {
-    await session('stalled-legacy-evidence', { hooks: 10 }, (s) => {
-      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
-    });
-    expect((await summarizeSpoolDelivery('evidence')).classificationUnsupported).toBe(false);
-    expect((await summarizeSpoolDelivery('unknown')).classificationUnsupported).toBe(false);
-  });
-
-  it('flags classification_unsupported for organization_encoding_unsupported too', async () => {
-    await session('stalled-legacy-encoding', { hooks: 10 }, (s) => {
-      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
-    });
-    expect((await summarizeSpoolDelivery('legacy')).classificationUnsupported).toBe(true);
-  });
-
-  it('never flags classification_unreachable or classification_unsupported for publication_stopped', async () => {
+  it('never flags classificationStalled for publication_stopped', async () => {
     await session('stopped', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'publication_stopped', since: 1 } };
     });
-    expect((await summarizeSpoolDelivery('unknown')).classificationUnreachable).toBe(false);
-    expect((await summarizeSpoolDelivery('legacy')).classificationUnsupported).toBe(false);
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
+  });
+
+  it('does not flag classificationStalled on a qualifying reason without pending bytes', async () => {
+    await session('stalled-sent', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
+      s.cursors.hooks = 10;
+    });
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
   });
 });

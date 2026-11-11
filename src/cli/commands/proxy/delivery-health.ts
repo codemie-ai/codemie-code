@@ -85,21 +85,22 @@ export async function collectDeliveryHealth(
       {},
       { provider: state.provider, baseUrl: state.targetUrl }
     );
-    const [marker, capability] = await Promise.all([
+    // The spool scan touches different data than capability resolution (credential read, possibly
+    // an owner-verification probe), so all three run concurrently instead of the scan waiting on it.
+    const [marker, capability, spool] = await Promise.all([
       applicableAuthMarker(source, [state.targetUrl, state.syncApiUrl, getPlatformUrl(source)]),
       resolveCapability(state),
+      summarizeSpoolDelivery(),
     ]);
-    const spool = await summarizeSpoolDelivery(capability);
 
     const reason: DeliveryReason | undefined =
       reply?.credentials === 'stale' ? 'credentials_expired'
       : marker ? 'auth_rejected'
       : spool.mismatchHeld ? 'identity_mismatch'
       : spool.sendFailed ? 'send_failed'
-      : spool.classificationUnreachable ? 'classification_unreachable'
-      // Mutually exclusive with classificationUnreachable: capability is a single resolved value
-      // per call, so at most one of 'unknown' (unreachable) or 'legacy' (unsupported) is ever true.
-      : spool.classificationUnsupported ? 'classification_unsupported'
+      // Capability is a single resolved value, so at most one of these two ever applies.
+      : spool.classificationStalled && capability === 'unknown' ? 'classification_unreachable'
+      : spool.classificationStalled && capability === 'legacy' ? 'classification_unsupported'
       : undefined;
 
     if (reason) {
