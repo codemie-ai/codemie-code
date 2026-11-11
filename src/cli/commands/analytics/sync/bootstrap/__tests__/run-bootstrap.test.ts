@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { SyncDeliveryError } from '@/utils/errors.js';
+import { SyncDeliveryError, SyncGitError, SyncIdentityMissingError } from '@/utils/errors.js';
 
 import type { BootstrapDeps } from '../types.js';
 
@@ -25,6 +25,37 @@ const runGuidedMock = vi.fn();
 vi.mock('../guided.js', () => ({
   runGuided: (...a: unknown[]) => runGuidedMock(...a),
 }));
+
+const FAKE_TMP_DIR = '/tmp/codemie-sync-bootstrap-fake';
+const mkdtempMock = vi.hoisted(() => vi.fn());
+const rmMock = vi.hoisted(() => vi.fn());
+vi.mock('fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+  return { ...actual, mkdtemp: mkdtempMock, rm: rmMock };
+});
+
+const testPushMock = vi.hoisted(() => vi.fn());
+const gitTargetCtorMock = vi.hoisted(() => vi.fn());
+vi.mock('../../targets/git-target.js', () => ({
+  GitTarget: class {
+    constructor(...args: unknown[]) {
+      gitTargetCtorMock(...args);
+    }
+    testPush = testPushMock;
+  },
+}));
+
+const createGitRunnerMock = vi.hoisted(() => vi.fn(() => vi.fn()));
+vi.mock('../../targets/git-client.js', async () => {
+  const actual = await vi.importActual<typeof import('../../targets/git-client.js')>('../../targets/git-client.js');
+  return { ...actual, createGitRunner: createGitRunnerMock };
+});
+
+const resolveSyncIdentityMock = vi.hoisted(() => vi.fn());
+vi.mock('../../identity.js', async () => {
+  const actual = await vi.importActual<typeof import('../../identity.js')>('../../identity.js');
+  return { ...actual, resolveSyncIdentity: resolveSyncIdentityMock };
+});
 
 const createPromptModuleMock = vi.fn();
 vi.mock('inquirer', () => ({
@@ -327,5 +358,181 @@ describe('setupCheckReport', () => {
       sentAt: now.toISOString(),
       note: expect.any(String),
     });
+  });
+});
+
+
+describe('runBootstrap — git target (non-interactive)', () => {
+  const GIT_URL = 'git@example.com:team/analytics.git';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mkdtempMock.mockResolvedValue(FAKE_TMP_DIR);
+    rmMock.mockResolvedValue(undefined);
+    testPushMock.mockResolvedValue(undefined);
+    resolveSyncIdentityMock.mockResolvedValue('lead@example.com');
+  });
+
+  it('--git-repo alone asks nothing, test-pushes into a temp copy, prints a git-only command (AC12)', async () => {
+    const deps = createDeps({ isTTY: false });
+
+    const exit = await runBootstrap({ gitRepo: GIT_URL, gitBranch: 'main', gitPath: 'reports' }, deps);
+
+    expect(exit).toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(testPushMock).toHaveBeenCalledTimes(1);
+    expect(gitTargetCtorMock.mock.calls[0]?.[0]).toEqual({ repoUrl: GIT_URL, branch: 'main', path: 'reports' });
+    expect(gitTargetCtorMock.mock.calls[0]?.[3]).toBe(FAKE_TMP_DIR);
+    expect(rmMock).toHaveBeenCalledWith(FAKE_TMP_DIR, { recursive: true, force: true });
+    expect(deps.prompt.input).not.toHaveBeenCalled();
+    expect(deps.prompt.select).not.toHaveBeenCalled();
+    expect(deps.out).toHaveBeenCalledTimes(1);
+    const command = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(command).toContain(`--git-repo "${GIT_URL}"`);
+    expect(command).toContain('--git-branch "main"');
+    expect(command).toContain('--git-path "reports"');
+    expect(command).not.toContain('--webhook');
+    expect(errLines(deps).some((l) => /own SSH key or credential helper/.test(l))).toBe(true);
+  });
+
+  it('webhook + git both pass: one command with both targets, exit 0', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).toBe(0);
+    expect(deps.send).toHaveBeenCalledTimes(1);
+    expect(testPushMock).toHaveBeenCalledTimes(1);
+    const command = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(command).toContain('--webhook-b64');
+    expect(command).toContain(`--git-repo "${GIT_URL}"`);
+  });
+
+  it('webhook-only output carries no git note', async () => {
+    const deps = createDeps();
+
+    await runBootstrap({ webhook: VALID_WEBHOOK }, deps);
+
+    expect(errLines(deps).some((l) => /credential helper/.test(l))).toBe(false);
+    expect(testPushMock).not.toHaveBeenCalled();
+  });
+
+  it('runs both checks concurrently: both started before either resolves (AC13)', async () => {
+    let resolveSend: () => void = () => undefined;
+    let resolvePush: () => void = () => undefined;
+    const send = vi.fn(() => new Promise<void>((r) => { resolveSend = r; }));
+    testPushMock.mockImplementation(() => new Promise<void>((r) => { resolvePush = r; }));
+    const deps = createDeps({ send });
+
+    const pending = runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(testPushMock).toHaveBeenCalledTimes(1);
+    });
+    expect(deps.out).not.toHaveBeenCalled();
+
+    resolveSend();
+    resolvePush();
+    expect(await pending).toBe(0);
+  });
+
+  it('a failing git target is named, the webhook signature stays masked, exit is non-zero, no command', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    testPushMock.mockRejectedValue(
+      new SyncGitError(`fatal: unable to access '${GIT_URL}': Could not resolve host`, 'unreachable')
+    );
+    const deps = createDeps({ send });
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.out).not.toHaveBeenCalled();
+    const lines = errLines(deps);
+    expect(lines.some((l) => /git/i.test(l) && /failed/i.test(l))).toBe(true);
+    expect(lines.some((l) => l.includes(GIT_URL))).toBe(false);
+    expect(lines.some((l) => l.includes('FAKESIG'))).toBe(false);
+    expect(rmMock).toHaveBeenCalledWith(FAKE_TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('a failing webhook alongside a passing git target still fails, naming the webhook, masking the sig', async () => {
+    const send = vi.fn().mockRejectedValue(new SyncDeliveryError(`POST ${VALID_WEBHOOK} failed`, 403));
+    const deps = createDeps({ send });
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(testPushMock).toHaveBeenCalledTimes(1);
+    const lines = errLines(deps);
+    expect(lines.some((l) => /test send failed/i.test(l))).toBe(true);
+    expect(lines.some((l) => l.includes('FAKESIG'))).toBe(false);
+  });
+
+  it('both targets failing reports both', async () => {
+    const send = vi.fn().mockRejectedValue(new Error('boom-webhook'));
+    testPushMock.mockRejectedValue(new SyncGitError('boom-git', 'auth'));
+    const deps = createDeps({ send });
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    const lines = errLines(deps);
+    expect(lines.some((l) => l.includes('boom-webhook'))).toBe(true);
+    expect(lines.some((l) => l.includes('boom-git'))).toBe(true);
+  });
+
+  it('a credential-bearing --git-repo fails before any network call, with no command and no URL echoed (D5/D15)', async () => {
+    const deps = createDeps({ isTTY: false });
+
+    const exit = await runBootstrap(
+      { webhook: VALID_WEBHOOK, gitRepo: 'https://secrettoken123@github.com/team/repo.git' },
+      deps
+    );
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(testPushMock).not.toHaveBeenCalled();
+    expect(deps.out).not.toHaveBeenCalled();
+    const lines = errLines(deps);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.some((l) => l.includes('secrettoken123'))).toBe(false);
+  });
+
+  it('an invalid --git-branch fails before any network call', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL, gitBranch: '--upload-pack=x' }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(testPushMock).not.toHaveBeenCalled();
+    expect(deps.out).not.toHaveBeenCalled();
+  });
+
+  it('a missing git email fails closed, naming the problem, with no network call and no prompt', async () => {
+    resolveSyncIdentityMock.mockRejectedValue(new SyncIdentityMissingError());
+    const deps = createDeps({ isTTY: true });
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(testPushMock).not.toHaveBeenCalled();
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(deps.prompt.input).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => /email/i.test(l))).toBe(true);
+  });
+
+  it('with no TTY and no target flag, the message names --webhook, --webhook-b64 and --git-repo (AC14)', async () => {
+    const deps = createDeps({ isTTY: false });
+
+    const exit = await runBootstrap({}, deps);
+
+    expect(exit).not.toBe(0);
+    const text = errLines(deps).join('\n');
+    expect(text).toContain('--webhook');
+    expect(text).toContain('--webhook-b64');
+    expect(text).toContain('--git-repo');
+    expect(runGuidedMock).not.toHaveBeenCalled();
   });
 });

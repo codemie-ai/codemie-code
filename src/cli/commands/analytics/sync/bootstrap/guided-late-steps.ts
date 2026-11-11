@@ -30,7 +30,7 @@ import type { BootstrapDeps } from './types.js';
 
 /** Printed after the install command whenever the git target is included: the install
  * command carries no git credential, so each developer's push access is their own. */
-const GIT_ACCESS_NOTE = "Push access comes from each developer's own SSH key or credential helper, verified by install.";
+export const GIT_ACCESS_NOTE = "Push access comes from each developer's own SSH key or credential helper, verified by install.";
 
 /**
  * The Trigger URL step's prompt: {@link cleanPaste} then {@link validateTriggerUrl} in
