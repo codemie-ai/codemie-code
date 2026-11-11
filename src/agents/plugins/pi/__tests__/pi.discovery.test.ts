@@ -301,6 +301,33 @@ describe('discoverSessions — unscoped listing', () => {
     }
   });
 
+  // @case cli-analytics-report-oh-my_TC_002
+  it('reads oh-my-pi transcripts preceded by two or more leading title records', async () => {
+    const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
+    const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
+    const restoreHome = redirectHomeDir(home);
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(here);
+    try {
+      const dir = join(home, '.omp', 'agent', 'sessions', '-omp-project');
+      mkdirSync(dir, { recursive: true });
+      const header = { type: 'session', version: 3, id: 'omp-2', timestamp: new Date().toISOString(), cwd: '/omp/repo' };
+      const title = { type: 'title', v: 1, title: 'Fix things', updatedAt: new Date().toISOString(), pad: '    ' };
+      writeFileSync(
+        join(dir, 'double-titled.jsonl'),
+        `${JSON.stringify(title)}\n${JSON.stringify(title)}\n${JSON.stringify(header)}\n`
+      );
+
+      const found = await new PiSessionAdapter(PiPluginMetadata).discoverSessions({});
+
+      expect(found.map((s) => [s.sessionId, s.agentName])).toEqual([['omp-2', 'omp']]);
+    } finally {
+      cwdSpy.mockRestore();
+      restoreHome();
+      rmSync(here, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('attributes each root to its own agent when Pi and oh-my-pi transcripts coexist', async () => {
     const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
     const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
