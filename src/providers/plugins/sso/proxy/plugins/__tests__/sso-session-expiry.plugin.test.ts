@@ -706,6 +706,30 @@ describe('SSOSessionExpiryPlugin', () => {
         expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
       });
 
+      it('recovers from an identical 401 long after the sign-in: the guard only covers the retry that follows it', async () => {
+        const interceptor = await interceptorWithStore({ cookies: { session: 'same' } });
+        await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), response(401, UNAUTHORIZED), createTools());
+        vi.clearAllMocks();
+        vi.mocked(startDetachedSsoLogin).mockResolvedValue('started');
+        vi.mocked(getLastSignInAt).mockResolvedValue(Date.now() + 1_000);
+
+        // suppressed right after the sign-in, passed through without a sign-in
+        await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), response(401, UNAUTHORIZED), createTools());
+        expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+
+        // 48 hours later, same cookies, no new sign-in: a new rejection, acted on
+        vi.useFakeTimers({ now: Date.now() + 48 * 3_600_000, toFake: ['Date'] });
+        try {
+          const original = response(401, UNAUTHORIZED);
+          const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), original, createTools());
+          expect(result).not.toBe(original);
+          expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+          expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       it('does not suppress a 401 once the stored cookies changed, even after a completed sign-in', async () => {
         const store = { cookies: { session: 'same' } };
         const interceptor = await interceptorWithStore(store);

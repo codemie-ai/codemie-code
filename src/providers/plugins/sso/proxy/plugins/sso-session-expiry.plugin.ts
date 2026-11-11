@@ -27,7 +27,8 @@
  * (see its header), so a 401 with another cause (a LiteLLM error relayed by the LLM proxy) is
  * passed through with its body intact and starts no sign-in. The loop guard bounds the rest: when
  * this interceptor acts on a 401 it records a hash of the rejected cookies (never the values). A
- * later session-shaped 401 is passed through, its body unchanged, only when a sign-in has
+ * later session-shaped 401 is passed through, its body unchanged, only within two minutes of a
+ * sign-in that has
  * completed since then (`getLastSignInAt`) AND the stored cookies still hash the same: that sign-in
  * returned the very credentials the server rejected, so they were not the cause. Without a
  * completed sign-in the 401 is acted on again, so a user who ignored the browser tab still
@@ -70,6 +71,11 @@ import type { SSOCredentials } from '@/providers/core/types.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
+/**
+ * How long after a completed sign-in the loop guard may pass a repeated 401 through. It covers the
+ * retry that follows the sign-in; a 401 long after it is a new rejection and must recover again.
+ */
+const LOOP_GUARD_WINDOW_MS = 120_000;
 const RENEWED_MESSAGE =
   'CodeMie SSO session was just renewed; this request used the previous credentials. Please re-send your prompt.';
 
@@ -254,7 +260,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       return false;
     }
     const signedInAt = await getLastSignInAt({ codeMieUrl: this.targetApiUrl });
-    return signedInAt !== null && signedInAt > guard.recordedAt;
+    return signedInAt !== null && signedInAt > guard.recordedAt && Date.now() - signedInAt < LOOP_GUARD_WINDOW_MS;
   }
 
   /** The Cookie header the store holds now, or null when it cannot be read or is empty. */
