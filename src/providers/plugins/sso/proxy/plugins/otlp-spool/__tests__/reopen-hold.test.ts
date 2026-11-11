@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const advanceCursorMock = vi.fn(async () => undefined);
-const readStatusMock = vi.fn(async () => null as { endedAt?: number; reopenWorkAt?: number; cursors?: Record<string, number>; delivery?: Record<string, unknown> } | null);
+const readStatusMock = vi.fn(async () => null as { endedAt?: number; lastEndedAt?: number; endedSizes?: Record<string, number>; reopenWorkAt?: number; cursors?: Record<string, number>; delivery?: Record<string, unknown> } | null);
 const updateStatusMock = vi.fn(async (_id: string, mutate: (status: Record<string, unknown>) => void) => mutate({}));
 vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, readStatus: readStatusMock, updateStatus: updateStatusMock }));
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -371,6 +371,150 @@ describe('holdForIdleReopen', () => {
       writeSpool('r4', '.otel_logs.ndjson', '{"a":1}\n', 1000);
 
       expect(await holdForIdleReopen('r4')).toBe(false);
+    });
+  });
+
+  describe('a reopen that worked and is resumed again without a prompt', () => {
+    const exportOf = (names: string[]): string =>
+      JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: names.map((name) => ({ body: { stringValue: `claude_code.${name}` }, attributes: [{ key: 'event.name', value: { stringValue: name } }] })) }] }] }) + '\n';
+    const startup = exportOf(['hook_registered', 'plugin_loaded']);
+    const work = exportOf(['api_request']);
+    const ago = (ms: number): number => Date.now() - ms;
+
+    it('keeps the startup records of the second resume back while the hook has not re-armed the hold', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('x1', { reopened: true, reopenActive: true, reopenedAt: ago(600_000) });
+      readStatusMock.mockResolvedValue({ lastEndedAt: ago(60_000), reopenWorkAt: ago(300_000), endedSizes: { logsJson: 0 } });
+      writeSpool('x1', '.otel_logs.ndjson', startup);
+
+      expect(await holdForIdleReopen('x1')).toBe(true);
+    });
+
+    it('lets it go at once when the resumed session works', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('x2', { reopened: true, reopenActive: true, reopenedAt: ago(600_000) });
+      readStatusMock.mockResolvedValue({ lastEndedAt: ago(60_000), reopenWorkAt: ago(300_000) });
+      writeSpool('x2', '.otel_logs.ndjson', startup + work);
+
+      expect(await holdForIdleReopen('x2')).toBe(false);
+      expect(updateStatusMock).toHaveBeenCalled();
+    });
+
+    it('does not take work from before that end for work of the resume', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('x3', { reopened: true, reopenActive: true, reopenedAt: ago(600_000) });
+      readStatusMock.mockResolvedValue({ lastEndedAt: ago(60_000), endedSizes: { logsJson: Buffer.byteLength(work) } });
+      writeSpool('x3', '.otel_logs.ndjson', work + startup);
+
+      expect(await holdForIdleReopen('x3')).toBe(true);
+    });
+
+    it.each([
+      ['no end was recorded', { reopenWorkAt: 1 }, 1000],
+      ['the bytes are older than the settle time', { lastEndedAt: Date.now() - 600_000 }, 60_000],
+      ['the bytes were written before that end', { lastEndedAt: Date.now() + 5_000 }, 1000],
+      ['the session worked after that end', { lastEndedAt: Date.now() - 60_000, reopenWorkAt: Date.now() - 30_000 }, 1000],
+    ])('does not hold when %s', async (_name, status, age) => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('x4', { reopened: true, reopenActive: true, reopenedAt: ago(600_000) });
+      readStatusMock.mockResolvedValue(status);
+      writeSpool('x4', '.otel_logs.ndjson', startup, age);
+
+      expect(await holdForIdleReopen('x4')).toBe(false);
+    });
+  });
+
+  describe('records of the run that ended which were never sent', () => {
+    const exportOf = (names: string[]): string =>
+      JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: names.map((name) => ({ body: { stringValue: `claude_code.${name}` }, attributes: [{ key: 'event.name', value: { stringValue: name } }] })) }] }] }) + '\n';
+    const earlier = exportOf(['api_request']) + exportOf(['tool_result']);
+    const startup = exportOf(['hook_registered', 'plugin_loaded']);
+    const old = 61 * 60 * 1000;
+
+    it('are not dropped with the reopen startup records: the hold is let go after the grace', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('u1', { reopened: true });
+      readStatusMock.mockResolvedValue({ cursors: { logsJson: 0 }, endedSizes: { logsJson: Buffer.byteLength(earlier) } });
+      writeSpool('u1', '.otel_logs.ndjson', earlier + startup, old);
+
+      expect(await holdForIdleReopen('u1')).toBe(false);
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+    });
+
+    it('their own work records do not release the hold of an idle reopen before the grace', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('u2', { reopened: true });
+      readStatusMock.mockResolvedValue({ cursors: { logsJson: 0 }, endedSizes: { logsJson: Buffer.byteLength(earlier) } });
+      writeSpool('u2', '.otel_logs.ndjson', earlier + startup, 1000);
+
+      expect(await holdForIdleReopen('u2')).toBe(true);
+    });
+
+    it('once they are sent, only the reopen bytes are dropped', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('u3', { reopened: true });
+      readStatusMock.mockResolvedValue({ cursors: { logsJson: Buffer.byteLength(earlier) }, endedSizes: { logsJson: Buffer.byteLength(earlier) } });
+      writeSpool('u3', '.otel_logs.ndjson', earlier + startup, old);
+
+      expect(await holdForIdleReopen('u3')).toBe(true);
+      expect(advanceCursorMock).toHaveBeenCalledWith('u3', 'logsJson', Buffer.byteLength(earlier + startup), expect.objectContaining({ reason: 'idle_reopen_expired' }));
+    });
+  });
+
+  describe('a session that was killed (no SessionEnd) and is resumed', () => {
+    const exportOf = (names: string[]): string =>
+      JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: names.map((name) => ({ body: { stringValue: `claude_code.${name}` }, attributes: [{ key: 'event.name', value: { stringValue: name } }] })) }] }] }) + '\n';
+    const startup = exportOf(['hook_registered', 'plugin_loaded']);
+    // The spool file is born "now" in a test, which the swept-spool rule would take for a resume. Looking 16 s ahead
+    // (past the settle time since its birth) with bytes written 6 s from now leaves only the quiet-hooks rule.
+    const BORN_AGO = 16_000;
+    const clock = (): number => Date.now() + BORN_AGO;
+    function killedState(sessionId: string, quietMs: number): void {
+      writeState(sessionId, { sessionStartedAt: '2026-11-01T10:00:00.000Z' });
+      const when = new Date(Date.now() - quietMs);
+      utimesSync(join(home, 'analytics', 'state', `${sessionId}.json`), when, when);
+    }
+
+    it('keeps back the bytes that appear after a long quiet in the hooks', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      killedState('k1', 30 * 60 * 1000);
+      readStatusMock.mockResolvedValue({});
+      writeSpool('k1', '.otel_logs.ndjson', startup, -6000);
+
+      expect(await holdForIdleReopen('k1', clock())).toBe(true);
+    });
+
+    it('lets go of an ordinary session that goes on with a model request, and stays let go', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      killedState('k2', 30 * 60 * 1000);
+      readStatusMock.mockResolvedValue({});
+      writeSpool('k2', '.otel_logs.ndjson', startup + exportOf(['api_request']), -6000);
+      const now = clock();
+
+      expect(await holdForIdleReopen('k2', now)).toBe(false);
+      expect(await holdForIdleReopen('k2', now)).toBe(false);
+    });
+
+    it.each([
+      ['the hooks were active a moment ago', 20_000, -6000],
+      ['the bytes are older than the settle time', 30 * 60 * 1000, 60_000],
+    ])('does not hold when %s', async (_name, quietMs, age) => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      killedState('k3', quietMs);
+      readStatusMock.mockResolvedValue({});
+      writeSpool('k3', '.otel_logs.ndjson', startup, age);
+
+      expect(await holdForIdleReopen('k3', clock())).toBe(false);
+    });
+
+    it('holds nothing for a session without a saved start or without a saved state', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      readStatusMock.mockResolvedValue({});
+      writeSpool('k4', '.otel_logs.ndjson', startup, 1000);
+      expect(await holdForIdleReopen('k4')).toBe(false);
+      writeState('k5', {});
+      writeSpool('k5', '.otel_logs.ndjson', startup, 1000);
+      expect(await holdForIdleReopen('k5')).toBe(false);
     });
   });
 });

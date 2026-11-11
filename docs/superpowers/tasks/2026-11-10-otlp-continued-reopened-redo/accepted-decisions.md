@@ -264,3 +264,49 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
   *Regression / data-loss if fixed:* dropping subagent lines by uuid or by path can hide real subagent work of
   the continuation (data loss); it needs the real layout first. To confirm: inspect a real continued session
   that used subagents.
+
+## Fifth pass: review round of 2026-11-11 (main-3, CR-001..CR-003)
+
+### Fixed
+
+- **CR-001 (second or later resume of a reopen that worked).** The hold returned "nothing to hold" for any reopened
+  session whose state said "active", so on a second resume the startup records of Claude Code could go out before
+  the `SessionStart(resume)` hook put the state back to idle. `endedAt` could not be used (it is set once, at the
+  first end). The status now keeps `lastEndedAt` (every forwarded `SessionEnd`) and the hold applies the settle
+  time to bytes written after it, unless a model request or tool result is among them or the session worked after
+  that end. Live: S15 (7 records leaked before, 0 now).
+  *Residual:* `lastEndedAt` is the time the `SessionEnd` was forwarded, not the time it happened; a resume
+  that begins before that forward is not seen (same as `endedAt`). A hook slower than the settle time still
+  lets records through (D-7).
+- **CR-003 (unsent bytes of the run that ended were held, then dropped).** The status keeps the size of each OTel
+  spool file at the last forwarded `SessionEnd` (`endedSizes`). (1) The scan for work starts after that size, so
+  unsent work records of the earlier run no longer release the hold of an idle reopen. (2) At expiry, a stream whose
+  cursor is still behind that size is not cut: the hold is let go with one warn, like a pending retry, and the
+  forwarder takes its normal course. *Cost:* in that corner the startup records of the idle reopen go out together
+  with the earlier ones (the 16993 symptom after 60 min of idle, only for a session with an unsent backlog);
+  the alternative was to lose the backlog. *Not covered:* a session that was killed with no `SessionEnd` has no
+  `endedSizes`; if it also had unsent bytes and is then resumed idle for 60 min, they are still dropped with the
+  startup records. Not seen in practice; closing it needs a size recorded on every tick (a status write per
+  tick per session). *Not live-tested:* the expiry needs the daemon's 60 min grace set to seconds, and the live
+  suite shares one daemon; covered by unit tests with real spool files.
+- **CR-002 (killed session resumed, no `SessionEnd`).** A best-effort rule, kept narrow: for a session that is not
+  marked reopened, has no `endedAt`, whose parse state is older than the quiet gap (2 min, `OTLP_RESUME_QUIET_MINUTES`)
+  compared with the last spool write, bytes written within the settle time are kept back unless a model request or
+  tool result is among them. Live: S16 (7 records leaked before, 0 now); S17 shows a session that goes on with
+  work after a long quiet is not held (exactly its 2 records go out with no hook pass).
+  *Risk and cost:* it is a heuristic. A live session whose hooks were silent for 2+ minutes (a long turn) and
+  that writes only non-work records (e.g. periodic metrics) has them delayed up to the settle time (15 s), then
+  sent; nothing is dropped and nothing is delayed once a model request or tool result appears. It does not fire
+  without a saved start, a saved state, or for sessions of other agents. *Residual:* a resume within 2 min of the
+  last hook pass is not recognised; a hook slower than the settle time lets records through (D-7).
+
+### Accepted for now (review, not blocking)
+
+- **Parents continued within about 60 s of their first line are missed by the copy guard (`mayHoldCopiedLines`).**
+  The guard needs one line older than the continuation's start by 60 s; a younger parent has almost no history
+  to double count. Narrowing the margin makes the guard take ordinary sessions for continuations (their first lines are
+  stamped seconds before the `SessionStart` hook on a slow start-up), i.e. more parent lookups. Left.
+- **Lock failure at `SessionStart` drops the reopened flag (D-6), lookup under the lock (D-1/D-12), release after
+  the grace when earlier records are pending (D-14, now also for `endedSizes`).** Unchanged, see above.
+- **Cross-session totals, window admission, class/origin rebinding, D1/D2 regression test.** Backend, see
+  `backend-handoff.md`.

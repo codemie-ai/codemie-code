@@ -4,7 +4,7 @@ import { isReopenedIdle, loadParseState } from '@/agents/plugins/claude-code-otl
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { advanceCursor, readStatus, updateStatus } from './session-status.js';
-import { abandonedSessionGraceMs, reopenSettleMs } from './spool-config.js';
+import { abandonedSessionGraceMs, reopenSettleMs, resumeQuietGapMs } from './spool-config.js';
 import { OTEL_JSON_STREAMS, OTEL_STREAMS, streamFile, type SpoolStream } from './spool-paths.js';
 
 /**
@@ -23,6 +23,14 @@ import { OTEL_JSON_STREAMS, OTEL_STREAMS, streamFile, type SpoolStream } from '.
  * result) shows up in its own log stream, without waiting for a `Stop`: otherwise a session killed before
  * any hook pass would lose everything it did. A record counts only by its exact event name
  * (`api_request` / `tool_result`), never by the words appearing somewhere in a payload.
+ *
+ * Three startup races are closed the same way (bytes just written, kept back for the settle time unless real
+ * work shows up in them), for the moment before the `SessionStart(resume)` hook has marked the session:
+ * a first resume of an ended session (bytes after `endedAt`), a second or later resume of a reopen that worked
+ * (bytes after `lastEndedAt`), and a session that was killed with no end at all (the hooks were silent for longer
+ * than the quiet gap while the spool just got bytes). Bytes before the sizes recorded at the last `SessionEnd`
+ * (`endedSizes`) belong to the run that ended: they never count as this reopen's work, and a reopen that expires
+ * with such bytes still unsent is let go instead of dropped.
  *
  * The parse state is written by the hook process; it is read here without its lock. A stale read
  * can only delay a release by one tick or, in the first moments of an open, let the earliest
@@ -149,12 +157,14 @@ async function seesOwnWork(
   sessionId: string,
   files: readonly { stream: SpoolStream; size: number }[],
   cursors: Partial<Record<SpoolStream, number>> | undefined,
+  endedSizes: Partial<Record<SpoolStream, number>> | undefined,
   now: number
 ): Promise<boolean> {
   for (const { stream, size } of files) {
     if (!WORK_STREAMS.includes(stream)) continue;
     const key = `${sessionId}:${stream}`;
-    const from = Math.max(scannedTo.get(key) ?? 0, cursors?.[stream] ?? 0);
+    // Bytes before the size at the last SessionEnd belong to the run that ended, not to this reopen.
+    const from = Math.max(scannedTo.get(key) ?? 0, cursors?.[stream] ?? 0, endedSizes?.[stream] ?? 0);
     const { found, next } = await scanChunk(streamFile(sessionId, stream), stream === 'logsJson', from, size);
     if (found) {
       remember(workSeenAt, sessionId, now);
@@ -184,12 +194,15 @@ async function holdsWorkAnywhere(
   return false;
 }
 
-/** Whether the OTel streams of `sessionId` must stay unsent this tick. */
-export async function holdForIdleReopen(sessionId: string, now: number = Date.now()): Promise<boolean> {
-  const state = await loadParseState(sessionId);
-  if (state.reopened === true && !isReopenedIdle(state)) return false; // reopened and working: nothing to hold
+interface SpoolFile {
+  stream: SpoolStream;
+  size: number;
+  modifiedAt: number;
+  bornAt: number;
+}
 
-  const files: { stream: SpoolStream; size: number; modifiedAt: number; bornAt: number }[] = [];
+async function otelFiles(sessionId: string): Promise<SpoolFile[]> {
+  const files: SpoolFile[] = [];
   for (const stream of OTEL_SPOOL_STREAMS) {
     try {
       const info = await stat(streamFile(sessionId, stream));
@@ -198,7 +211,39 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
       // No file for this stream.
     }
   }
-  const lastWrite = files.length > 0 ? Math.max(...files.map((entry) => entry.modifiedAt)) : 0;
+  return files;
+}
+
+const lastWriteOf = (files: readonly SpoolFile[]): number => (files.length > 0 ? Math.max(...files.map((entry) => entry.modifiedAt)) : 0);
+
+/**
+ * A reopen that already worked is ended again and resumed again without a prompt: the startup records of
+ * that second resume can reach the spool before its `SessionStart(resume)` hook has put the state back to
+ * idle. They are bytes written after the last forwarded `SessionEnd`; keep them back for the settle time,
+ * unless real work shows up in them (a resumed session that goes on to work must not be delayed).
+ */
+async function holdResumeRace(sessionId: string, now: number): Promise<boolean> {
+  const status = await readStatus(sessionId);
+  const endedAt = status?.lastEndedAt;
+  if (endedAt === undefined) return false;
+  const files = await otelFiles(sessionId);
+  const lastWrite = lastWriteOf(files);
+  if (files.length === 0 || now - lastWrite >= reopenSettleMs() || lastWrite <= endedAt) return false;
+  if (Math.max(workSeenAt.get(sessionId) ?? 0, status?.reopenWorkAt ?? 0) >= endedAt) return false; // worked since that end
+  if (await seesOwnWork(sessionId, files, status?.cursors, status?.endedSizes, now)) {
+    await noteWorkSeen(sessionId, now);
+    return false;
+  }
+  return true;
+}
+
+/** Whether the OTel streams of `sessionId` must stay unsent this tick. */
+export async function holdForIdleReopen(sessionId: string, now: number = Date.now()): Promise<boolean> {
+  const state = await loadParseState(sessionId);
+  if (state.reopened === true && !isReopenedIdle(state)) return holdResumeRace(sessionId, now); // reopened and working
+
+  const files = await otelFiles(sessionId);
+  const lastWrite = lastWriteOf(files);
 
   if (!isReopenedIdle(state)) {
     // Not marked as a reopen (yet). Records of a reopen's startup can reach the spool before its hook has
@@ -206,12 +251,20 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
     // bytes written after the session ended, or (the status was swept, days later) a spool file that was
     // created just now for a session whose saved state is much older than the file.
     if (files.length === 0 || now - lastWrite >= reopenSettleMs()) return false;
-    const endedAt = (await readStatus(sessionId))?.endedAt;
+    const status = await readStatus(sessionId);
+    const endedAt = status?.endedAt;
     if (endedAt !== undefined) return lastWrite > endedAt;
     if (state.sessionStartedAt === undefined) return false;
-    const bornAt = Math.min(...files.map((entry) => entry.bornAt));
     const stateAt = await modifiedAt(getCodemiePath('analytics', 'state', `${sessionId}.json`));
-    return bornAt > 0 && stateAt > 0 && now - bornAt < reopenSettleMs() && bornAt - stateAt > reopenSettleMs();
+    if (stateAt <= 0) return false;
+    const bornAt = Math.min(...files.map((entry) => entry.bornAt));
+    if (bornAt > 0 && now - bornAt < reopenSettleMs() && bornAt - stateAt > reopenSettleMs()) return true;
+    // No end was ever recorded (killed, terminal closed) and the status is still there: the hooks were silent for
+    // longer than the quiet gap while the spool just got bytes. A resume looks like this, and so does the first
+    // prompt after a long pause; the latter shows a model request or tool result at once and is let go.
+    if (lastWrite - stateAt <= resumeQuietGapMs()) return false;
+    if ((workSeenAt.get(sessionId) ?? 0) >= stateAt) return false;
+    return !(await seesOwnWork(sessionId, files, status?.cursors, status?.endedSizes, now));
   }
 
   if (files.length === 0) return true;
@@ -221,7 +274,7 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
   // hook passes save in between.
   const seenAt = Math.max(workSeenAt.get(sessionId) ?? 0, status?.reopenWorkAt ?? 0);
   if (seenAt > 0 && seenAt >= (state.reopenedAt ?? 0)) return false;
-  if (await seesOwnWork(sessionId, files, status?.cursors, now)) {
+  if (await seesOwnWork(sessionId, files, status?.cursors, status?.endedSizes, now)) {
     await noteWorkSeen(sessionId, now);
     return false;
   }
@@ -235,12 +288,16 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
   // Records of this session that were already waiting for a retry before the reopen cannot be told from the
   // startup records behind them (one cursor per stream). Dropping neither is possible, so after the grace the
   // hold is let go and the forwarder takes its normal course: the earlier records are not lost or left stuck.
-  const pendingRetry = files.filter(({ stream }) => status?.delivery?.[stream]).map(({ stream }) => stream);
+  // The same goes for bytes of the run that ended which were never sent (daemon down, credentials stale): the
+  // size recorded at that SessionEnd is ahead of the cursor.
+  const pendingRetry = files
+    .filter(({ stream }) => status?.delivery?.[stream] || (status?.endedSizes?.[stream] ?? 0) > (status?.cursors?.[stream] ?? 0))
+    .map(({ stream }) => stream);
   if (pendingRetry.length > 0) {
     if (!retryReleaseLogged.has(sessionId)) {
       if (retryReleaseLogged.size >= MEMO_LIMIT) retryReleaseLogged.clear();
       retryReleaseLogged.add(sessionId);
-      logger.warn('[otlp-forwarder] idle reopened session has records waiting for a retry: hold released after the grace', ...sanitizeLogArgs({ sessionId, streams: pendingRetry }));
+      logger.warn('[otlp-forwarder] idle reopened session has earlier records still unsent: hold released after the grace', ...sanitizeLogArgs({ sessionId, streams: pendingRetry }));
     }
     return false;
   }

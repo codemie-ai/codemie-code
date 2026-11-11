@@ -111,6 +111,14 @@ export function reopenSettleMs(): number {
 }
 
 /**
+ * A spool that was quiet for this long and then gets new bytes may be a session that was killed (no
+ * `SessionEnd`) and resumed: its OTEL records are kept back for the settle time, like those of an ended one.
+ */
+export function resumeQuietGapMs(): number {
+  return envMinutesMs('OTLP_RESUME_QUIET_MINUTES', 2);
+}
+
+/**
  * Inactivity period after which a session that never reported `SessionEnd` is
  * considered abandoned and its drained spool may be deleted. Measured from the
  * latest spool-file write, never from session creation or cursor updates.
