@@ -497,7 +497,7 @@ A level outside an agent's supported range is **clamped to the nearest supported
 |-------|------------------|------------------|-----------------------|
 | `codemie-claude` | `--effort <level>` | low, medium, high, xhigh, max | `minimal` → `low` |
 | `codemie-codex` | `--config model_reasoning_effort=<level>` | minimal, low, medium, high, xhigh | `max` → `xhigh` |
-| `codemie-opencode` | `--variant <level>` | minimal … max (provider-specific) | passed through |
+| `codemie-opencode` | model variant (`provider/model#<level>`) | Responses API models: minimal, low, medium, high, xhigh; other models: low, medium, high | clamped to the model's list (`max` → `xhigh` or `high`, `minimal` → `low`) |
 | `codemie-gemini` | — (not supported) | — | flag ignored, warns on stderr |
 
 ```bash
