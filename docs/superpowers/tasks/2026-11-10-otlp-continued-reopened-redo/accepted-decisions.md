@@ -213,3 +213,54 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
 - **Project attribution, "duration ends at the last original activity", the Postgres regression test and the
   backend fixes of comment 16077824.** Outside this repository (backend/UI). On the CLI side an idle reopen
   now sends nothing, so those figures cannot move because of it. Needs the Preview check after merge.
+
+## Fourth pass: review round of 2026-11-11 (CR-001..CR-006)
+
+### Fixed
+
+- **CR-006 / D-14 (a pending delivery blocked the spool for good).** When the idle-reopen grace (60 min) has
+  passed and a stream still has an earlier delivery waiting for a retry, the hold is now released (one warn per
+  session) instead of returning "hold" with nothing dropped. The cursor cannot tell the earlier records from the
+  startup records behind them, so neither is dropped: the forwarder takes its normal course and the earlier
+  records are delivered. *Cost:* the startup records of that idle reopen go out with them (the 16993 symptom,
+  but only for a session that had a failed delivery and stayed idle for more than an hour).
+- **CR-005 / D-14 (the "work seen" memo lived in daemon memory only).** The release is also kept on the session
+  status (`reopenWorkAt`, validated in `normalizeStatus`) and is valid while it is not older than the parse
+  state's `reopenedAt`, so a daemon restart or an evicted memo entry no longer makes a working session look idle.
+  The expiry drop is logged at warn, and only when bytes were really dropped. *By design:* a session that exports
+  only metrics or traces is not working in the sense of 16993 (no model request, no tool result), so it still
+  expires unsent. *Residual:* if the status file cannot be written, the memory entry still holds until a restart.
+- **CR-002 (a parent line with an uncounted uuid passed for the child's own first line).** The parent's uuid
+  list now holds every line's uuid except `continued-in` records, not only the counted ones, so a copy of any
+  parent line is told as a copy. *Risk:* none seen; a larger set of uuids can only hide more copies, and a fresh
+  uuid cannot collide.
+- **CR-001 (parent lookup for every session).** `ensureInherited` skips the parent lookup when the transcript
+  cannot hold copies: `mayHoldCopiedLines` looks at the first 64 KB and answers "possible" if any timestamped
+  line is more than 60 s older than the session's own `sessionStartedAt`; every doubt (no saved start, an
+  unreadable file, no timestamped line yet) answers "possible" and the lookup runs as before. So the D-1 cost
+  (up to 200 siblings, repeated while the lookup is incomplete) now applies only to sessions that may hold copies.
+  *Risk:* a copy whose timestamps are within 60 s of the continuation's start is not recognised as a copy
+  candidate; a parent history that short has a negligible amount of work, and a lookup that is skipped wrongly
+  can only double count, never hide, own work.
+
+### Accepted for now
+
+- **CR-003: the parent lookup can give up (3 misses, more than 200 transcripts, a late `continued-in` record).
+  Same as D-1, D-2, D-12.**
+  *Reason:* fixing it means scanning more files on the hook path of every ordinary session, or waiting for a
+  record that Claude Code writes at an unknown time, and lines already reported are never retracted.
+  *Risk if left:* a continuation in a project folder with more than 200 transcripts, or whose parent gets its
+  `continued-in` record after the first pass, can still report the parent's copies once (the 16992 double
+  counting). Not seen in the 4 real pairs. CR-001 above makes the lookup cheaper for sessions with no copies,
+  which lowers the pressure but does not change the limit.
+  *Regression / data-loss if fixed:* a wider lookup adds file reads to every hook, can pick a wrong parent
+  (then real work is dropped as "inherited": data loss), and retracting reported lines needs a backend change.
+- **CR-004: copied subagent transcripts are not filtered (D-4).**
+  *Reason:* the architecture doc states this limit; the review points to the 16992 evidence parent, which has two
+  subagent transcripts, but no pair checked so far shows a continuation that copied them, so a rule would be
+  built without an example.
+  *Risk if left:* if Claude Code copies the subagent transcripts into the continuation, agents and subagent
+  usage of the parent can be counted again (partial 16992 AC1/AC3 for those lines).
+  *Regression / data-loss if fixed:* dropping subagent lines by uuid or by path can hide real subagent work of
+  the continuation (data loss); it needs the real layout first. To confirm: inspect a real continued session
+  that used subagents.

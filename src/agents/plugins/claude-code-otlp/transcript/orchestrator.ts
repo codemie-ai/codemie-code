@@ -32,7 +32,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
-import { resolveInheritedUuids } from './continuation.js';
+import { mayHoldCopiedLines, resolveInheritedUuids } from './continuation.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   acquireParseStateLock,
@@ -551,14 +551,19 @@ const MAX_PARENT_LOOKUPS = 3;
  * Lines already reported before a late find stay reported, but every later event and the summary
  * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
  *
- * Known limits: a project directory with more than 200 transcripts is scanned again on every pass,
- * and a first pass that runs before the parent's record is on disk reports the copied lines.
+ * A transcript with no line older than the session's own start cannot hold copies and skips the scan.
+ * Known limits: a continuation in a project directory with more than 200 transcripts is scanned again on
+ * every pass, and a first pass that runs before the parent's record is on disk reports the copied lines.
  */
 async function ensureInherited(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string
 ): Promise<ReadonlySet<string>> {
+  if (!state.inheritedResolved && !(await mayHoldCopiedLines(transcriptPath, state.sessionStartedAt))) {
+    // No line is older than the session itself, so nothing was copied: the sibling scan would only cost time.
+    state.inheritedResolved = true;
+  }
   if (!state.inheritedResolved) {
     const uuids = await resolveInheritedUuids(transcriptPath, sessionId);
     if (uuids && uuids.length > 0) {

@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const advanceCursorMock = vi.fn(async () => undefined);
-const readStatusMock = vi.fn(async () => null as { endedAt?: number; cursors?: Record<string, number>; delivery?: Record<string, unknown> } | null);
-vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, readStatus: readStatusMock }));
+const readStatusMock = vi.fn(async () => null as { endedAt?: number; reopenWorkAt?: number; cursors?: Record<string, number>; delivery?: Record<string, unknown> } | null);
+const updateStatusMock = vi.fn(async (_id: string, mutate: (status: Record<string, unknown>) => void) => mutate({}));
+vi.mock('../session-status.js', () => ({ advanceCursor: advanceCursorMock, readStatus: readStatusMock, updateStatus: updateStatusMock }));
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 let home: string;
@@ -28,6 +29,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'reopen-hold-'));
   process.env.CODEMIE_HOME = home;
   advanceCursorMock.mockClear();
+  updateStatusMock.mockClear();
   readStatusMock.mockReset();
   readStatusMock.mockResolvedValue(null);
 });
@@ -85,14 +87,23 @@ describe('holdForIdleReopen', () => {
     expect(advanceCursorMock).toHaveBeenCalledWith('s6', 'logsJson', 8, expect.anything());
   });
 
-  it('does not let go of earlier records that still wait for a retry', async () => {
+  it('lets the hold go after the grace when earlier records still wait for a retry, dropping nothing', async () => {
     const { holdForIdleReopen } = await import('../reopen-hold.js');
     writeState('s7', { reopened: true });
     readStatusMock.mockResolvedValue({ delivery: { logsJson: { cursor: 0, end: 8 } } });
     writeSpool('s7', '.otel_logs.ndjson', '{"a":1}\n', 61 * 60 * 1000);
 
-    expect(await holdForIdleReopen('s7')).toBe(true);
+    expect(await holdForIdleReopen('s7')).toBe(false);
     expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('still holds a pending retry until the grace has passed', async () => {
+    const { holdForIdleReopen } = await import('../reopen-hold.js');
+    writeState('s7b', { reopened: true });
+    readStatusMock.mockResolvedValue({ delivery: { logsJson: { cursor: 0, end: 8 } } });
+    writeSpool('s7b', '.otel_logs.ndjson', '{"a":1}\n', 10 * 60 * 1000);
+
+    expect(await holdForIdleReopen('s7b')).toBe(true);
   });
 
   it('has nothing to give up when the cursor already covers the whole lines', async () => {
@@ -185,6 +196,38 @@ describe('holdForIdleReopen', () => {
       writeState('w6', { reopened: true, reopenedAt: Date.now() + 1000 }); // second resume, nothing done yet
       appendFileSync(path, startup);
       expect(await holdForIdleReopen('w6')).toBe(true);
+    });
+
+    it('records the release on the status, so it survives a daemon restart', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('d1', { reopened: true });
+      writeSpool('d1', '.otel_logs.ndjson', startup + work);
+
+      expect(await holdForIdleReopen('d1')).toBe(false);
+      expect(updateStatusMock).toHaveBeenCalledWith('d1', expect.any(Function));
+      const status: Record<string, unknown> = {};
+      await updateStatusMock.mock.calls[0][1](status);
+      expect(typeof status['reopenWorkAt']).toBe('number');
+    });
+
+    it('stays released from the status alone (memory lost), as long as it is not older than the reopen', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      const reopenedAt = Date.now() - 60_000;
+      writeState('d2', { reopened: true, reopenedAt });
+      writeSpool('d2', '.otel_logs.ndjson', startup);
+      readStatusMock.mockResolvedValue({ reopenWorkAt: reopenedAt + 5000 });
+
+      expect(await holdForIdleReopen('d2')).toBe(false);
+    });
+
+    it('holds again when the status release belongs to an earlier reopen', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      const reopenedAt = Date.now() - 60_000;
+      writeState('d3', { reopened: true, reopenedAt });
+      writeSpool('d3', '.otel_logs.ndjson', startup);
+      readStatusMock.mockResolvedValue({ reopenWorkAt: reopenedAt - 5000 });
+
+      expect(await holdForIdleReopen('d3')).toBe(true);
     });
 
     it('does not take the words in some other record for work', async () => {

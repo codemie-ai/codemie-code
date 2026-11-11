@@ -3701,6 +3701,59 @@ describe('continued session (EPMCDME-16992)', () => {
     }
   });
 
+  describe('parent lookup is skipped when nothing can have been copied', () => {
+    const START = '2026-11-10T16:20:00.000Z';
+
+    it('skips the sibling scan for a session whose lines are all newer than its own start', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: START });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      const state = await loadParseState('C');
+      expect(state.inheritedResolved).toBe(true);
+      expect(state.inheritedUuids ?? []).toEqual([]);
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('still looks for the parent when a line is older than the session', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        ...copiedLines(),
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: START });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('looks for the parent when the session has no saved start', async () => {
+      const { loadParseState } = await import('../parse-state.js');
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+    });
+  });
+
   it('Preview case of EPMCDME-16992: a continuation opened and closed without a prompt reports nothing and starts nowhere', async () => {
     // Copies with uuid-less queue lines before and after them, then what opening and /exit leave behind.
     writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);

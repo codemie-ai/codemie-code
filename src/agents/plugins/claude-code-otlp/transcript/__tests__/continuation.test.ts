@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveInheritedUuids } from '../continuation.js';
+import { mayHoldCopiedLines, resolveInheritedUuids } from '../continuation.js';
 
 // Records every read stream the module opens, so a test can check none is left open.
 const openedStreams = vi.hoisted(() => [] as { destroyed: boolean }[]);
@@ -106,5 +106,49 @@ describe('resolveInheritedUuids', () => {
     writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
 
     expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toBeNull();
+  });
+});
+
+describe('resolveInheritedUuids — uncounted parent lines', () => {
+  it('also returns the uuid of a parent line the parent did not count, so its copy is told as a copy', async () => {
+    const uncounted = JSON.stringify({ type: 'attachment', uuid: 'u-att', sessionId: 'P', message: { content: [] } });
+    writeFileSync(join(dir, 'P.jsonl'), [msg('u1', 'P'), uncounted, continuedIn('P', 'C')].join('\n') + '\n');
+    writeFileSync(join(dir, 'C.jsonl'), msg('u1', 'C') + '\n');
+
+    expect(await resolveInheritedUuids(join(dir, 'C.jsonl'), 'C')).toEqual(['u1', 'u-att']);
+  });
+});
+
+describe('mayHoldCopiedLines', () => {
+  const START = '2026-11-10T16:20:00.000Z';
+  const line = (timestamp: string): string => JSON.stringify({ type: 'user', uuid: 'x', timestamp });
+  const write = (...lines: string[]): string => {
+    const path = join(dir, 'T.jsonl');
+    writeFileSync(path, lines.join('\n') + '\n');
+    return path;
+  };
+
+  it('is false when every line is newer than the session start', async () => {
+    expect(await mayHoldCopiedLines(write(line('2026-11-10T16:21:00.000Z'), line('2026-11-10T16:22:00.000Z')), START)).toBe(false);
+  });
+
+  it('is true when a line is older than the start by more than the margin', async () => {
+    expect(await mayHoldCopiedLines(write(line('2026-11-01T17:44:00.000Z'), line('2026-11-10T16:22:00.000Z')), START)).toBe(true);
+  });
+
+  it('allows a line stamped a few seconds before the start (the hook runs after the first lines)', async () => {
+    expect(await mayHoldCopiedLines(write(line('2026-11-10T16:19:50.000Z')), START)).toBe(false);
+  });
+
+  it.each([
+    ['no saved start', undefined],
+    ['an unparsable start', 'not a date'],
+  ])('is true with %s', async (_name, start) => {
+    expect(await mayHoldCopiedLines(write(line('2026-11-10T16:21:00.000Z')), start)).toBe(true);
+  });
+
+  it('is true when the file is missing or holds no timestamped line yet', async () => {
+    expect(await mayHoldCopiedLines(join(dir, 'missing.jsonl'), START)).toBe(true);
+    expect(await mayHoldCopiedLines(write(JSON.stringify({ type: 'queue-operation' })), START)).toBe(true);
   });
 });

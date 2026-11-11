@@ -4,14 +4,13 @@
  * When Claude Code continues session P into a new session C, P's transcript gets a
  * `{ type: 'continued-in', continuedInSessionId: C }` record and C's transcript starts with P's
  * lines copied (same `uuid`, `sessionId` rewritten to C). The copies are not C's own work, so the
- * uuids of P's counted lines are resolved here and excluded from C's usage events and summary.
+ * uuids of P's lines are resolved here and excluded from C's usage events and summary.
  */
 
 import { createReadStream } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { isCountedTranscriptLine } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { logger } from '@/utils/logger.js';
 
 /** Most recently modified sibling transcripts inspected for a parent. */
@@ -113,8 +112,12 @@ async function fileNamesSession(path: string, sessionId: string): Promise<boolea
   }
 }
 
-/** The counted uuids of the parent transcript at `path`, streamed so its size does not matter. */
-async function readCountedUuids(path: string): Promise<string[]> {
+/**
+ * Every uuid of the parent transcript at `path`, streamed so its size does not matter. Not only the
+ * counted lines: a copied line with a uuid that the parent did not count must still be told as a copy,
+ * or it would pass for the continuation's own first line.
+ */
+async function readUuids(path: string): Promise<string[]> {
   const uuids: string[] = [];
   const stream = createReadStream(path, { encoding: 'utf-8' });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -127,7 +130,7 @@ async function readCountedUuids(path: string): Promise<string[]> {
       } catch {
         continue;
       }
-      if (record.type !== 'continued-in' && typeof record.uuid === 'string' && isCountedTranscriptLine(record)) {
+      if (record.type !== 'continued-in' && typeof record.uuid === 'string') {
         uuids.push(record.uuid);
       }
     }
@@ -144,7 +147,7 @@ async function readCountedUuids(path: string): Promise<string[]> {
  * Looks at the tail of the sibling `*.jsonl` transcripts of `transcriptPath` (newest first, capped)
  * for a `continued-in` record naming `sessionId`; when no tail holds it, streams the siblings whole
  * (a parent worked on again after it was continued has the record further back). The parent found
- * is then streamed for its counted uuids. File times are never used to rule a sibling out (copies
+ * is then streamed for its uuids. File times are never used to rule a sibling out (copies
  * and restores reset them). Resolves `[]` when the scan was complete and there is no parent,
  * `null` when it could not be completed (unreadable directory or sibling, more candidates than
  * the scan covers). Never throws.
@@ -173,7 +176,7 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
     for (const file of scanned) {
       const path = join(directory, file.name);
       try {
-        if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readCountedUuids(path);
+        if (tailNamesSession(await readTail(path, file.size), sessionId)) return await readUuids(path);
         // A file that fits in the tail window was read whole: nothing more to find in it.
         if (file.size > TAIL_BYTES) tailMissed.push(file);
       } catch {
@@ -184,7 +187,7 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
     for (const file of tailMissed) {
       const path = join(directory, file.name);
       try {
-        if (await fileNamesSession(path, sessionId)) return await readCountedUuids(path);
+        if (await fileNamesSession(path, sessionId)) return await readUuids(path);
       } catch {
         complete = false;
       }
@@ -199,5 +202,50 @@ export async function resolveInheritedUuids(transcriptPath: string, sessionId: s
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
+  }
+}
+
+/** Bytes read from the start of the transcript to look at the first timestamps. */
+const HEAD_BYTES = 64 * 1024;
+
+/** A copy is at least this much older than the continuation's own start, so a smaller gap is not one. */
+const COPY_AGE_MARGIN_MS = 60 * 1000;
+
+/**
+ * Whether the transcript can hold lines copied from a parent: some line in its first bytes is stamped
+ * well before the session's own start (`sessionStartedAt`, the wall-clock of its `SessionStart`).
+ * Copies keep the parent's timestamps and a parent history starts long before the continuation, so a
+ * fresh session never has one. This only decides whether the (costly) parent lookup is worth doing;
+ * every doubt answers `true`: no saved start, an unreadable file, no timestamped line yet.
+ */
+export async function mayHoldCopiedLines(transcriptPath: string, sessionStartedAt: string | undefined): Promise<boolean> {
+  const startedAt = Date.parse(sessionStartedAt ?? '');
+  if (!Number.isFinite(startedAt)) return true;
+  let handle;
+  try {
+    handle = await open(transcriptPath, 'r');
+    const buffer = Buffer.alloc(HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, HEAD_BYTES, 0);
+    const lines = buffer.subarray(0, bytesRead).toString('utf-8').split('\n');
+    lines.pop(); // the last piece is a partial line (or empty)
+    let sawTimestamp = false;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let record: { timestamp?: unknown };
+      try {
+        record = JSON.parse(line) as { timestamp?: unknown };
+      } catch {
+        continue;
+      }
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+      if (!Number.isFinite(at)) continue;
+      sawTimestamp = true;
+      if (at < startedAt - COPY_AGE_MARGIN_MS) return true;
+    }
+    return !sawTimestamp;
+  } catch {
+    return true;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }

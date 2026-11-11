@@ -44,6 +44,11 @@ export interface SessionStatus {
    * for any bytes that are still pending or appended afterwards.
    */
   endedAt?: number;
+  /**
+   * When the proxy saw a reopened (resumed) session do real work, before any hook pass said so. Lets the
+   * hold of the session's startup records stay released across a daemon restart (see reopen-hold.ts).
+   */
+  reopenWorkAt?: number;
   /** Project bound to the session: first usable name seen on a hook, original spelling, set once. */
   project?: string;
   /** Distinct project names seen once the session became ambiguous. Sticky: nothing is sent. */
@@ -303,6 +308,10 @@ function normalizeStatus(raw: unknown): SessionStatus {
   const endedAt = toOffset(source['endedAt']);
   if (endedAt > 0) {
     status.endedAt = endedAt;
+  }
+  const reopenWorkAt = toOffset(source['reopenWorkAt']);
+  if (reopenWorkAt > 0) {
+    status.reopenWorkAt = reopenWorkAt;
   }
   const project = source['project'];
   if (typeof project === 'string' && isSendableProjectName(project)) {

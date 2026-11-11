@@ -3,7 +3,7 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { isReopenedIdle, loadParseState } from '@/agents/plugins/claude-code-otlp/transcript/parse-state.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { advanceCursor, readStatus } from './session-status.js';
+import { advanceCursor, readStatus, updateStatus } from './session-status.js';
 import { abandonedSessionGraceMs, reopenSettleMs } from './spool-config.js';
 import { OTEL_JSON_STREAMS, OTEL_STREAMS, streamFile, type SpoolStream } from './spool-paths.js';
 
@@ -47,6 +47,8 @@ const MEMO_LIMIT = 1000;
  */
 const workSeenAt = new Map<string, number>();
 const scannedTo = new Map<string, number>();
+/** Sessions whose release for a pending retry was already logged (once per session). */
+const retryReleaseLogged = new Set<string>();
 
 function remember(map: Map<string, number>, key: string, value: number): void {
   map.delete(key);
@@ -55,6 +57,18 @@ function remember(map: Map<string, number>, key: string, value: number): void {
     const oldest = map.keys().next();
     if (oldest.done) break;
     map.delete(oldest.value);
+  }
+}
+
+/** Remember that the session was seen working, in memory and (when it has a status) on disk. */
+async function noteWorkSeen(sessionId: string, now: number): Promise<void> {
+  remember(workSeenAt, sessionId, now);
+  try {
+    await updateStatus(sessionId, (status) => {
+      status.reopenWorkAt = now;
+    });
+  } catch {
+    // The memory entry still holds until the daemon restarts.
   }
 }
 
@@ -205,28 +219,45 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
   // The session works (its own model requests or tool results are in the spool): release what was held.
   // The release stands until the next reopen marks the state again (`reopenedAt`), whatever else the
   // hook passes save in between.
-  const seenAt = workSeenAt.get(sessionId);
-  if (seenAt !== undefined && seenAt >= (state.reopenedAt ?? 0)) return false;
-  if (await seesOwnWork(sessionId, files, status?.cursors, now)) return false;
+  const seenAt = Math.max(workSeenAt.get(sessionId) ?? 0, status?.reopenWorkAt ?? 0);
+  if (seenAt > 0 && seenAt >= (state.reopenedAt ?? 0)) return false;
+  if (await seesOwnWork(sessionId, files, status?.cursors, now)) {
+    await noteWorkSeen(sessionId, now);
+    return false;
+  }
   // Still being written: the session is open, keep waiting for its activity.
   if (now - lastWrite < abandonedSessionGraceMs()) return true;
   // About to give up: make sure no work is hiding in bytes the ticks have not reached yet.
   if (await holdsWorkAnywhere(sessionId, files, status?.cursors)) {
-    remember(workSeenAt, sessionId, now);
+    await noteWorkSeen(sessionId, now);
+    return false;
+  }
+  // Records of this session that were already waiting for a retry before the reopen cannot be told from the
+  // startup records behind them (one cursor per stream). Dropping neither is possible, so after the grace the
+  // hold is let go and the forwarder takes its normal course: the earlier records are not lost or left stuck.
+  const pendingRetry = files.filter(({ stream }) => status?.delivery?.[stream]).map(({ stream }) => stream);
+  if (pendingRetry.length > 0) {
+    if (!retryReleaseLogged.has(sessionId)) {
+      if (retryReleaseLogged.size >= MEMO_LIMIT) retryReleaseLogged.clear();
+      retryReleaseLogged.add(sessionId);
+      logger.warn('[otlp-forwarder] idle reopened session has records waiting for a retry: hold released after the grace', ...sanitizeLogArgs({ sessionId, streams: pendingRetry }));
+    }
     return false;
   }
 
-  // Let go only of what this reopen left unsent: a stream whose earlier records still wait for a retry (a
-  // delivery range from before the reopen) keeps them. NDJSON streams are cut at the last whole line;
-  // protobuf streams at their end (a newline byte can occur inside a message, and nothing is written now).
+  // Let go only of what this reopen left unsent. NDJSON streams are cut at the last whole line; protobuf
+  // streams at their end (a newline byte can occur inside a message, and nothing is written now).
+  let dropped = 0;
   for (const { stream, size } of files) {
-    if (status?.delivery?.[stream]) continue;
     const json = (OTEL_JSON_STREAMS as readonly SpoolStream[]).includes(stream);
     const cut = json ? await lastNewlineOffset(streamFile(sessionId, stream), size) : size;
     if (cut <= (status?.cursors?.[stream] ?? 0)) continue;
     await advanceCursor(sessionId, stream, cut, { reason: 'idle_reopen_expired', stream, bytes: cut, at: now });
+    dropped += cut - (status?.cursors?.[stream] ?? 0);
   }
-  logger.debug('[otlp-forwarder] idle reopened session: held otel records dropped unsent', ...sanitizeLogArgs({ sessionId }));
+  if (dropped > 0) {
+    logger.warn('[otlp-forwarder] idle reopened session: held otel records dropped unsent', ...sanitizeLogArgs({ sessionId, bytes: dropped }));
+  }
   return true;
 }
 
