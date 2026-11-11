@@ -9,7 +9,13 @@ import { getCodemiePath } from '@/utils/paths.js';
 import {
   deleteSyncSettings,
   getSyncSettingsPath,
+  hasAnyTarget,
+  hasEmbeddedCredentials,
   loadSyncSettings,
+  validateGitBranch,
+  validateGitPath,
+  validateGitRepoUrl,
+  validateGitSettings,
   validateInstallOptions,
   writeSyncSettings
 } from '../config-store.js';
@@ -23,6 +29,159 @@ const FAKE_TRIGGER_URL = 'https://example.invalid/triggers/invoke?api-version=1&
 describe('getSyncSettingsPath', () => {
   it('points at the collector-compatible analytics-sync.json under the CodeMie home', () => {
     expect(getSyncSettingsPath()).toBe(getCodemiePath('analytics-sync.json'));
+  });
+});
+
+describe('hasEmbeddedCredentials', () => {
+  it('returns false for a URL without credentials', () => {
+    expect(hasEmbeddedCredentials('https://github.com/org/repo.git')).toBe(false);
+    expect(hasEmbeddedCredentials('git@github.com:org/repo.git')).toBe(false);
+  });
+
+  it('returns true for an https URL with embedded credentials', () => {
+    expect(hasEmbeddedCredentials('https://token@github.com/org/repo.git')).toBe(true);
+    expect(hasEmbeddedCredentials('https://user:pass@github.com/org/repo.git')).toBe(true);
+  });
+
+  it('returns false for an ssh:// URL with username only', () => {
+    expect(hasEmbeddedCredentials('ssh://git@github.com/org/repo.git')).toBe(false);
+  });
+
+  it('returns true for an ssh:// URL with username and password', () => {
+    expect(hasEmbeddedCredentials('ssh://user:pass@github.com/org/repo.git')).toBe(true);
+  });
+
+  it('returns false for scp-style SSH with username only', () => {
+    expect(hasEmbeddedCredentials('git@github.com:org/repo.git')).toBe(false);
+  });
+
+  it('returns true for scp-style SSH with username and password', () => {
+    expect(hasEmbeddedCredentials('user:pass@github.com:org/repo.git')).toBe(true);
+  });
+});
+
+describe('validateGitRepoUrl', () => {
+  it('returns undefined for undefined or blank input', () => {
+    expect(validateGitRepoUrl(undefined)).toBe(undefined);
+    expect(validateGitRepoUrl('')).toBe(undefined);
+    expect(validateGitRepoUrl('  ')).toBe(undefined);
+  });
+
+  it('returns the valid repo URL as-is', () => {
+    const url = 'https://github.com/org/repo.git';
+    expect(validateGitRepoUrl(url)).toBe(url);
+  });
+
+  it('rejects a URL starting with a dash', () => {
+    expect(() => validateGitRepoUrl('--option=value')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a URL with embedded credentials without echoing it', () => {
+    const url = 'https://token@github.com/org/repo.git';
+    expect(() => validateGitRepoUrl(url)).toThrow(SyncConfigError);
+    expect(() => validateGitRepoUrl(url)).not.toThrow(/token/);
+  });
+});
+
+describe('validateGitBranch', () => {
+  it('returns undefined for undefined input', () => {
+    expect(validateGitBranch(undefined)).toBe(undefined);
+  });
+
+  it('returns a trimmed valid branch name', () => {
+    expect(validateGitBranch('  main  ')).toBe('main');
+  });
+
+  it('rejects an empty string', () => {
+    expect(() => validateGitBranch('')).toThrow(SyncConfigError);
+  });
+
+  it('rejects an invalid branch name', () => {
+    expect(() => validateGitBranch('--option')).toThrow(SyncConfigError);
+    expect(() => validateGitBranch('has space')).toThrow(SyncConfigError);
+    expect(() => validateGitBranch('.git')).toThrow(SyncConfigError);
+  });
+});
+
+describe('validateGitPath', () => {
+  it('returns undefined for undefined, blank, or root-pointing input', () => {
+    expect(validateGitPath(undefined)).toBe(undefined);
+    expect(validateGitPath('')).toBe(undefined);
+    expect(validateGitPath('.')).toBe(undefined);
+    expect(validateGitPath('./')).toBe(undefined);
+  });
+
+  it('returns a normalized posix-relative path', () => {
+    expect(validateGitPath('reports/analytics')).toBe('reports/analytics');
+    expect(validateGitPath('./reports/analytics/')).toBe('reports/analytics');
+  });
+
+  it('rejects an absolute path', () => {
+    expect(() => validateGitPath('/absolute')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a Windows path', () => {
+    expect(() => validateGitPath('C:\\Users\\path')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a path escaping the repo', () => {
+    expect(() => validateGitPath('../outside')).toThrow(SyncConfigError);
+  });
+
+  it('rejects a path inside .git', () => {
+    expect(() => validateGitPath('.git/hooks')).toThrow(SyncConfigError);
+  });
+});
+
+describe('validateGitSettings', () => {
+  it('returns undefined when no git repo URL is given', () => {
+    expect(validateGitSettings({})).toBe(undefined);
+    expect(validateGitSettings({ gitRepo: undefined })).toBe(undefined);
+  });
+
+  it('returns GitSettings with repoUrl only', () => {
+    const result = validateGitSettings({ gitRepo: FAKE_GIT_REPO });
+    expect(result).toEqual({ repoUrl: FAKE_GIT_REPO });
+  });
+
+  it('returns GitSettings with repoUrl, branch, and path', () => {
+    const result = validateGitSettings({
+      gitRepo: FAKE_GIT_REPO,
+      gitBranch: '  develop  ',
+      gitPath: './src/'
+    });
+    expect(result).toEqual({
+      repoUrl: FAKE_GIT_REPO,
+      branch: 'develop',
+      path: 'src'
+    });
+  });
+
+  it('excludes optional branch and path when they are undefined', () => {
+    const result = validateGitSettings({
+      gitRepo: FAKE_GIT_REPO,
+      gitBranch: undefined,
+      gitPath: undefined
+    });
+    expect(result).toEqual({ repoUrl: FAKE_GIT_REPO });
+  });
+});
+
+describe('hasAnyTarget', () => {
+  it('returns true when webhookUrl is defined', () => {
+    expect(hasAnyTarget(FAKE_URL, undefined)).toBe(true);
+  });
+
+  it('returns true when git is defined', () => {
+    expect(hasAnyTarget(undefined, { repoUrl: FAKE_GIT_REPO })).toBe(true);
+  });
+
+  it('returns true when both webhookUrl and git are defined', () => {
+    expect(hasAnyTarget(FAKE_URL, { repoUrl: FAKE_GIT_REPO })).toBe(true);
+  });
+
+  it('returns false when neither is defined', () => {
+    expect(hasAnyTarget(undefined, undefined)).toBe(false);
   });
 });
 
