@@ -1,0 +1,107 @@
+- Loading configuration...
+✔ Connected to CodeMie
+**EPMCDME-16992**
+
+**Summary:** [CLI Analytics] A continued Claude Code session re-reports its parent's copied history: cost, tokens, tool calls, agents and turns are counted twice
+
+**Status:** In Progress
+
+**Links:**
+- Relates to EPMCDME-16993: [CLI Analytics] Opening an old Claude Code session without a prompt rewrites its analytics: duration grows by days, the session moves into the opening day and is reclassified (Bug, Major, In Progress) — https://jiraeu.epam.com/browse/EPMCDME-16993
+
+The description also mentions EPMCDME-16537, EPMCDME-16774 and EPMCDME-16993 under "Related (not duplicates)", but only EPMCDME-16993 is an actual issue link.
+
+**Attachments:**
+1. cli-analytics-8ac53605-session-detail.jpg (id 6497755, 75 kB, author Auto EPMD-EDP AIAssistant, created 2026-11-07T21:54:19.629+0000)
+2. evidence-continued-session-copied-history.md (id 6497753, 4238 bytes, author Auto EPMD-EDP AIAssistant, created 2026-11-07T20:24:36.927+0000)
+3. plan.md (id 6499880, 12240 bytes, author Auto EPMD-EDP AIAssistant, created 2026-11-09T15:48:43.050+0000)
+
+**Description (raw, verbatim):**
+
+```text
+h3. Environment
+* Production https://codemie.lab.epam.com, backend 2.65.3
+* CodeMie CLI 0.16.6 (claude-code-otlp plugin), Claude Code on macOS, project epm-cdme-cp
+* Checked 2026-11-07 ~20:00 UTC (API) and ~21:30 UTC (UI), read-only, with the reporter's own sessions
+
+h3. Sessions
+* Parent P: 8ac27927-7e9b-4f6f-b5f4-f5df494d7aeb (started 2026-11-01T17:44:35Z)
+* Continuation C (reported): 8ac53605-1c95-4576-87c9-d77d73ce5cbc. P's transcript records {{continued-in}} -> C at 2026-11-01T19:43:28.390Z.
+
+h3. Steps to reproduce
+# With CodeMie CLI 0.16.6 analytics connected (claude-code-otlp), work in a Claude Code session P: several prompts, API requests and tool calls.
+# Let Claude Code continue P into a new session C (P's transcript gets a {{continued-in}} record naming C; C's transcript starts with P's lines copied: same uuid, message.id, requestId and timestamps, sessionId rewritten to C).
+# End C without new model work.
+# Open Analytics > CLI Analytics, set Users = yourself and Start/End date = the whole day of P's work (here the UTC day 2026-11-01; in a UTC+1 browser 11/01/2026 01:00 - 11/02/2026 00:59).
+# Check Sessions > C (session detail) and the Overview, Cost, Users and Repositories tabs.
+
+h3. Actual result
+* C's own work is one {{<synthetic>}} assistant message with 0 tokens, 0 tool calls, 0 prompts (3 own transcript lines; 528 of 531 lines are copies of P).
+* Production shows for C: cost $7.4552357 (cache read $3.8158945), input 216, output 67,209, cache read 17,344,975, cache create 245,431, 108 api_request events (all 2026-11-01 17:45:33Z..19:36:12Z), tool calls 111 with "No outcomes observed", agents 2, turns 2, start 2026-11-01T17:44:35.647Z (P's first line).
+* 109 of C's 110 usage-bearing messages have message ids that are also in P. P itself is counted correctly in Production (its tokens equal P main transcript + its two subagent transcripts exactly), so every value shown for C is a second copy.
+* Aggregates for the reporter's 2026-11-01 UTC day: Overview/Cost total $69.2968 and 135,014,744 tokens instead of $61.8415 and 117,356,913 (+$7.4552, +12.1%); Users/Repositories turns 21 instead of 19.
+* Session detail says 111 tool calls and 2 agents while the aggregate tabs show 0 tool calls and no agent subtypes for C (they use hook-counted calls; the detail uses the summary).
+
+h3. Expected result
+* A continued session reports only its own requests, tokens, cost, tool calls, agents and turns; lines inherited from the parent are not re-reported (here: $0, 0 tokens, 0 tool calls, 0 agents, 0 turns for C).
+* C's start is its own start (2026-11-01T19:43:28Z; the CLI itself recorded sessionStartedAt 19:43:50.857Z), not the parent's.
+* User, project and repository totals count each model request once.
+
+h3. Technical root cause
+* codemie-code v0.16.6 {{src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts}} reads transcript lines after the persisted mainOffset; a new session id starts at offset 0, so C's first Stop/SessionEnd pass reads P's copied lines.
+* {{transcript/usage-request.ts}} derives an agent.usage.request for each copied request, and {{transcript/session-summary.ts}} / {{session-signals.ts}} (countTurns, tool and agent counts) build agent.session.summary from all lines. No code handles Claude Code's {{continued-in}} continuation or skips lines whose uuid/message.id belong to another session.
+* {{claude-code-otlp.event-id.ts}}: usage event ids are content keys of payloads carrying C's session id, and the backend groups requests per session, so the copies are stored as C's own rows.
+* Backend start = least(started_at, activity_started_at) then takes the copied first timestamp.
+
+h3. Impact
+* Financial correctness: API-equivalent cost and tokens of continued work are counted twice in user, project and repository totals. Here +$7.46 (+12.1%) on one day.
+* Session detail shows another session's tool calls, agents and turns.
+* Permanent once ingested.
+
+h3. Evidence
+* Attached evidence-continued-session-copied-history.md: per-metric own vs copied vs Production table, catalog prices and calculation, aggregate deltas, code path. Contains ids, timestamps and counts only; no conversation content.
+* Attached cli-analytics-8ac53605-session-detail.jpg: Production UI session detail of C (see comment of 2026-11-07).
+
+h3. Related (not duplicates)
+* EPMCDME-16537: codemie-claude --resume/--continue re-sends legacy metric records (claude.metrics-processor.ts, same JSONL appended). There tokens and cost are not doubled; here a new session id with copied history doubles cost and tokens through the claude-code-otlp transcript path.
+* EPMCDME-16774: delivery by a later launch uses that launch's repository headers (legacy /v1/metrics path).
+* EPMCDME-16993: the same session C was later reopened without a prompt, which moved it into 2026-11-07 reports.
+```
+
+**Comments (2 total, all returned):**
+
+**Comment 1**
+- id: 16070594
+- author: Auto_EPMD-EDP_AIAssistant@epam.com (Auto EPMD-EDP AIAssistant)
+- created: 2026-11-07T21:54:19.572+0000
+- body (raw, verbatim):
+
+```text
+h3. Production UI verification (2026-11-07 ~21:30 UTC, backend 2.65.3, browser UTC+1)
+Analytics > CLI Analytics, Users = reporter, read-only. UI values equal the API responses.
+
+||Where||Value shown for C (8ac53605)||Comment||
+|Session detail: Cost / Cache-read|$7.46 / $3.82|P's copied requests|
+|Session detail: Input / Output / Cache read / Cache create / Total|216 / 67.2K / 17.3M / 245.4K / 17.7M|P's copied requests|
+|Session detail: Turns / Tool calls / Agents / Skills|2 / 111 ("No outcomes observed") / 2 / 0|P's prompts, tool uses and Agent calls|
+|Session detail: Started|Nov 01, 18:44 (= P's start 17:44:35Z)|C was created 19:43:28Z|
+|Session detail: Token & cost growth|108 request points rising to $7.46|P's request timeline|
+|Session detail / Tools & Models: Most Used Tools, Agent subtypes|No data available|no hook-counted tool calls in C|
+|Overview / Users / Repositories: Tool calls|0|detail says 111|
+|Whole day 2026-11-01 UTC (API /v1/analytics/cli-analytics/overview, the endpoint the Overview tab calls): Sessions / total cost|4 / $69.30|includes C's $7.46; expected $61.84|
+
+Attached cli-analytics-8ac53605-session-detail.jpg (session detail of C).
+
+Note: the dollar amounts in the original description were lost when the ticket was created (the "$" values were removed by shell expansion, e.g. "cost .4552357", "here: /bin/zsh"). The description was corrected on 2026-11-07; no figures changed.
+```
+
+**Comment 2**
+- id: 16079089
+- author: Dzmitry_Lopukh@epam.com (Dzmitry Lopukh)
+- created: 2026-11-10T16:53:40.799+0000
+- body (raw, verbatim):
+
+```text
+h3. Verification: partially fixed (copied history is no longer re-reported; Started is still the parent's)
+
+*Environment:* Preview ([https://codemie-preview.lab.epam.com|https://codemie-preview.lab.epam.com/]), session detail read from /v1/analytics/cli-analytics/sessions/\{id}

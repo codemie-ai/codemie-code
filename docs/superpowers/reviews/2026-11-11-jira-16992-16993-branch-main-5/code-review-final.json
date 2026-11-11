@@ -1,0 +1,104 @@
+{
+  "decision": "approve",
+  "rationale": "All three lenses ran on branch vs latest main (1a9221ef, 17 files, +2824/-31; process artifacts under docs/superpowers/tasks excluded; lenses read the diff from a file, not inline). No new blocking defect survived triage. The AC1/AC3 (16992) and classification (16993) rows are 'partial' only for residuals the owner already accepted in accepted-decisions.md (D-1, D-2, D-12, D-7, D-14, sixth/seventh-pass notes), which declares itself an acceptance artifact; it was applied during triage and was NOT given to the acceptance lens, so strict AC-partial rule would give request-changes on those residuals alone. Hence confidence low: a human should confirm that acceptance. Triage count: ~30 lens concerns dismissed (accepted limits, below the floor, or refuted against source: no code after the hold in forwardSession, usage is not consumed while idle, provider->agent-plugin import has precedent in copilot-usage-enrichment.ts), 0 deferred. Backend-only criteria (reader.py, rollups.py, session_binding.py, live PostgreSQL regression test) are out of this repo.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "16992 AC1: a continued session reports only its own requests, tokens, cost, tool calls, agents and turns",
+      "status": "partial",
+      "notes": "Implemented: continuation.ts resolveInherited + orchestrator.ts ensureInherited/deriveMainEvents skip copied uuids, holdsOnlyCopies guard, inheritedAgentIds skips copied subagents. Residual (owner-accepted D-1/D-2/D-12): parent not found after 3 lookups, beyond 2000 siblings, in another folder, or record flushed after the first pass -> copies reported once."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16992 AC2: the continuation's start is its own start, not the parent's",
+      "status": "pass",
+      "notes": "buildFullAccumulator drops copies by uuid and positionally; tests assert started_at = first own line and no summary for copy-only/synthetic/local-command continuations."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16992 AC3: user/project/repository totals count each model request once",
+      "status": "partial",
+      "notes": "CLI side: no usage event for copied uuids when the parent is found. Same accepted residual as AC1; backend aggregation is not in this repo."
+    },
+    {
+      "kind": "spec",
+      "item": "16992 Expected: lines inherited from the parent are not re-reported ($0, 0 tokens, 0 tool calls, 0 agents, 0 turns)",
+      "status": "partial",
+      "notes": "Same evidence and accepted residual as AC1."
+    },
+    {
+      "kind": "spec",
+      "item": "16992 root cause: no handling of continued-in / lines whose uuid belongs to another session",
+      "status": "pass",
+      "notes": "transcript/continuation.ts implements continued-in handling; parse-state.ts persists inheritedUuids/inheritedAgentIds/inheritedResolved/inheritedLookups/continuationActive."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16993 Expected: opening/resuming a session without a prompt, model request or tool call does not change its analytics (hook path)",
+      "status": "pass",
+      "notes": "SessionStart(resume) with a saved start flags the reopen; start/env/Stop/SessionEnd/PreCompact/StopFailure/passthrough hooks are inert while idle; UserPromptSubmit marks the reopen active."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16993 comment 16079046: Claude Code's own OTel startup records stamped at the reopen must not extend duration",
+      "status": "pass",
+      "notes": "otlp-spool/reopen-hold.ts holdForIdleReopen called in forwarder.ts before the OTel streams; released on api_request/tool_result by exact name; dropped only after the abandoned grace. Not run against real Claude Code startup records (accepted D-8); unit tests cover the cases."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16993 Expected: duration ends at the last real activity; session reported only for its real day",
+      "status": "pass",
+      "notes": "CLI sends nothing for an idle reopen; reader/rollup window logic is backend-only."
+    },
+    {
+      "kind": "story-ac",
+      "item": "16993 Expected: classification and project attribution stay those of the work that was done",
+      "status": "partial",
+      "notes": "An idle reopen sends nothing, so it cannot bind the class. A reopen that goes on to work is rebound by the backend (session_binding.py, backend repo); documented as a known limit."
+    },
+    {
+      "kind": "spec",
+      "item": "16993 per reader rule an old session resumed with no new activity stays excluded from the window",
+      "status": "na",
+      "notes": "Window rule lives in backend reader.py; CLI-side precondition (no reopen-stamped events) is met."
+    },
+    {
+      "kind": "spec",
+      "item": "16993 regression test: live PostgreSQL test of a D1 session getting only session.start/env/end/git.snapshot on D2",
+      "status": "na",
+      "notes": "Backend repo test; CLI unit tests were added for the idle-reopen hook, state and forwarder behaviour."
+    },
+    {
+      "kind": "spec",
+      "item": "16993 root cause: reopened session's lifecycle hooks stamped at open time reach the backend",
+      "status": "pass",
+      "notes": "Suppressed for source=resume when the start was already recorded; SessionEnd returns an empty payload so agent.git.snapshot is also not emitted while idle."
+    },
+    {
+      "kind": "spec",
+      "item": "Reopen suppression must not lose later real activity",
+      "status": "pass",
+      "notes": "Held reopen is released at the first own activity; env baseline, deferred subagents and compaction cursors stay uncommitted until then; held OTel records forwarded unchanged once the session works."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "18 commits on the branch: all Conventional Commits with allowed types and scopes (analytics/tests), subjects <= 99 chars, no body line > 300."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "No added any/console.log/require/__dirname/child_process in non-test source (grep on added lines); .js import extensions kept. reopen-hold.ts imports claude-code-otlp parse-state from the provider layer: forwarder is meant to be agent-agnostic, but copilot-usage-enrichment.ts already imports agents/plugins, so there is precedent; not blocking. Stale comment in ensureInherited says 'a minute' while COPY_AGE_MARGIN_MS is 15 s (below the floor)."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Logging in reopen-hold.ts goes through sanitizeLogArgs; paths via getCodemiePath/streamFile; no secrets or credential handling added; spool/transcript content is only pattern-matched, never logged."
+    }
+  ],
+  "findings": []
+}

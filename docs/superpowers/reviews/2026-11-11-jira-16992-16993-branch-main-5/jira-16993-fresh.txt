@@ -1,0 +1,88 @@
+- Loading configuration...
+✔ Connected to CodeMie
+**EPMCDME-16993** (read-only, no changes made)
+
+**Summary:**
+[CLI Analytics] Opening an old Claude Code session without a prompt rewrites its analytics: duration grows by days, the session moves into the opening day and is reclassified
+
+**Status:** In Progress
+
+**Links:**
+- Relates to EPMCDME-16496: [CLI Analytics] Sessions without token usage are missing from CLI Analytics, so GitHub Copilot Chat sessions never appear (status: In Progress)
+- Relates to EPMCDME-16992: [CLI Analytics] A continued Claude Code session re-reports its parent's copied history: cost, tokens, tool calls, agents and turns are counted twice (status: In Progress)
+
+The description also mentions EPMCDME-16847, EPMCDME-16774 and EPMCDME-16992 as "Related (not duplicates)", but only the two links above exist as issue links.
+
+**Attachments (3):**
+1. id 6497666, cli-analytics-nov7-window-overview.jpg, 45 kB, author Auto_EPMD-EDP_AIAssistant@epam.com, created 2026-11-07T21:57:20.195+0000
+   https://jiraeu.epam.com/secure/attachment/6497666/cli-analytics-nov7-window-overview.jpg
+2. id 6497754, evidence-reopen-without-prompt.md, 4 kB, author Auto_EPMD-EDP_AIAssistant@epam.com, created 2026-11-07T20:26:43.494+0000
+   https://jiraeu.epam.com/secure/attachment/6497754/evidence-reopen-without-prompt.md
+3. id 6499881, plan.md, 12 kB, author Auto_EPMD-EDP_AIAssistant@epam.com, created 2026-11-09T15:48:59.142+0000
+   https://jiraeu.epam.com/secure/attachment/6499881/plan.md
+
+**Full raw description** (Jira wiki markup, verbatim from `fields.description`):
+
+```
+h3. Environment
+* Production https://codemie.lab.epam.com, backend 2.65.3
+* CodeMie CLI 0.16.6 (claude-code-otlp plugin), Claude Code on macOS (UTC+1)
+* Checked 2026-11-07 ~20:00 UTC (API) and ~21:30 UTC (UI), read-only, with the reporter's own sessions
+
+h3. Session
+* 8ac53605-1c95-4576-87c9-d77d73ce5cbc (repository epm-cdme/hyperfactory/control-plane, branch EPMCDME-16428). All model work happened on 2026-11-01, last transcript write 2026-11-01T19:46:29Z.
+* On 2026-11-07 the reporter only opened/viewed the session and sent no prompt. Local evidence: a Claude Code process opened it at 18:17:46Z (CLI evidence record created 18:17:46.494Z, launch_mode native, routed_via_codemie false), two hook posts at 18:17:46Z and 18:17:48Z, parse state saved 18:17:48Z. The transcript was not modified: no prompt, no model request, no tool call.
+* The same happened to three more of the reporter's old sessions within 43 s; each now ends at the open: 8ac27927-7e9b-4f6f-b5f4-f5df494d7aeb (18:17:50.967Z), 9d0bf1c0-d446-457c-994c-d54732be8627 (18:17:30Z), d0fb4149-61de-4142-b621-4c1831183481 (18:18:13.659Z).
+
+h3. Steps to reproduce
+# With CodeMie CLI 0.16.6 analytics connected (claude-code-otlp), finish a Claude Code session S with some work on day D1.
+# Several days later (D2), open S again in Claude Code (resume) and exit without sending a prompt.
+# Open Analytics > CLI Analytics, set Users = yourself and Start/End date = a short window on D2 around the open (here 11/07/2026 19:00 - 19:30 in a UTC+1 browser = 18:00-18:30Z).
+# Check Overview, Cost, Users, Activity, Sessions and the session detail of S.
+# Repeat with the whole D1 day (here the UTC day 2026-11-01) and with S's displayed start minute.
+
+h3. Actual result
+* Usage and cost are unchanged (108 api_request events, all 2026-11-01; $7.4552357): the open added no consumption.
+* Duration is 520,392,765 ms = 6d 0h 33m (start 2026-11-01T17:44:35.647Z to end 2026-11-07T18:17:48.412Z) with active time 625 ms.
+* The session is now listed for D2: Overview/Cost for 2026-11-07 18:00-18:30Z show 1 session, $7.4552357, 17,657,831 tokens, 2 turns and Dead sessions 1, all consumed on 2026-11-01. Users shows Last active Nov 07 19:17 (the open). Activity places the session on Sunday 17:00 (its 2026-11-01 UTC start), outside the selected window. The Overview "Net lines over time" chart is empty (see comment: it plots net lines, not cost).
+* The session is also still listed for the whole D1 day (2026-11-01, via its D1 usage rows), so its $7.46 is reported in both the D1 and the D2 day views. It is not listed for its displayed start minute (2026-11-01 17:44:00-17:44:59Z).
+* Classification is unknown / legacy_project, bound by the D2 open (native launch, not routed via CodeMie). The D1 work ran through the CodeMie SSO proxy (CLI wrapper session record: provider ai-run-sso), i.e. CodeMie-routed.
+
+h3. Expected result
+* Opening or resuming a session without a prompt, model request or tool call does not change its analytics: duration ends at the last real activity on D1, the session is reported only for D1, and its classification and project attribution stay those of the work that was done.
+* Per the reader's own rule (reader.py _active_in_window): an old session resumed with no new activity in the window stays excluded from that window.
+
+h3. Technical root cause
+* The CLI sends the reopened session's lifecycle hooks as hook events stamped at the open time. Backend vocabulary.DIMENSION_HOOK_TYPES includes agent.session.start/stop/end; the rollup sets session_dims.started_at = min(ts) and last_event_at = GREATEST(last_event_at, max(ts)) of these types (postgres/rollups.py).
+* postgres/reader.py _activity_range: end = greatest(last_event_at, ended_at), so duration runs to the open.
+* postgres/reader.py _SESSION_ADMITTED_IN_WINDOW: (started_at in window AND has_any_activity) OR active_in_window. has_any_activity has no day bound. This session's first dimension hook is the open, so started_at lies on D2 and the whole session, with its D1 cost, is admitted to D2.
+* KPI tiles are session-scoped: get_cost_kpis / get_session_model_costs sum every cost_daily row of the admitted sessions with no day filter, so all D1 usage lands in the D2 tiles.
+* The first accepted evidence request binds subscription class and origin from that request's headers (session_binding.py / cli_analytics_project_gate.py), so the open's launch context decides the class of past work.
+* The delivered spool lines are no longer on disk, so the exact hook types are inferred: only a dimension hook type moves last_event_at, and the CLI evidence record is created by the SessionStart pass.
+
+h3. Impact
+* Duration is overstated by days for any session that is reopened later; Sessions list, Session Detail and duration-based reports are affected.
+* Day/period reports show old consumption on the day a session was merely opened, in addition to its own day, so adding up daily views counts the cost twice.
+* Subscription class and project origin of past work can change on a later open (here CodeMie-routed work reads as unknown).
+
+h3. Evidence
+* Attached evidence-reopen-without-prompt.md: timeline of the open, Production values, window queries, code path. Ids, timestamps and counts only; no conversation content.
+* Attached cli-analytics-nov7-window-overview.jpg: Production UI Overview for the D2 window (see comment of 2026-11-07).
+
+h3. Related (not duplicates)
+* EPMCDME-16847: Claude Desktop duration extended by housekeeping OTel records (retention_sweep, metric exports, minutes). Here the session lifecycle hooks of a later open extend it by days and also change window membership and classification.
+* EPMCDME-16774: a later launch delivers an old session under its own repository headers (legacy /v1/metrics path).
+* EPMCDME-16992: same session also re-reports its parent's copied history.
+```
+
+**Comments (3, verbatim raw bodies, in order):**
+
+**Comment 1**
+- id: 16070695
+- author: Auto_EPMD-EDP_AIAssistant@epam.com
+- created: 2026-11-07T21:57:20.198+0000
+- body:
+```
+h3. UI verification and root cause of "the 2026-11-07 KPI includes $7.46 but the trend chart does not" (2026-11-07 ~21:30 UTC, Production 2.65.3)
+
+*UI check.*
