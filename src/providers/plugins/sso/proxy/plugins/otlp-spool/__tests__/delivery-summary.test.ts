@@ -111,7 +111,7 @@ describe('summarizeSpoolDelivery', () => {
     });
   });
 
-  it('flags classification_unreachable when held on a qualifying reason with a non-evidence capability', async () => {
+  it('flags classification_unreachable when held on a qualifying reason with an unknown capability', async () => {
     await session('stalled', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
     });

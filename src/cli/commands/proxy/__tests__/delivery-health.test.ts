@@ -194,7 +194,7 @@ describe('collectDeliveryHealth', () => {
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
   });
 
-  it('reports classification_unreachable when the spool flags it and capability is not evidence', async () => {
+  it('reports classification_unreachable when the spool flags it and capability is unknown', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: false, classificationUnreachable: true });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
@@ -202,6 +202,7 @@ describe('collectDeliveryHealth', () => {
       reason: 'classification_unreachable',
       pendingBytes: 7,
     });
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('unknown');
   });
 
   it('threads the resolved capability into summarizeSpoolDelivery', async () => {
@@ -219,16 +220,17 @@ describe('collectDeliveryHealth', () => {
 
   it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {
     forwarderIdentity.mockReturnValue(null);
-    // Mirrors the real spool's own capability check, so this only passes if 'evidence' was threaded through.
+    // Mirrors the real spool's own capability check (capability === 'unknown'), so this only passes if 'evidence' was threaded through.
     summarizeSpoolDelivery.mockImplementation(async (capability: string) => ({
       pendingBytes: 7,
       mismatchHeld: false,
       sendFailed: false,
-      classificationUnreachable: capability !== 'evidence',
+      classificationUnreachable: capability === 'unknown',
     }));
     const health = await collectDeliveryHealth(state, ok);
     expect(health.reason).not.toBe('classification_unreachable');
     expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+    expect(getPolicyState).not.toHaveBeenCalled();
   });
 
   it('keeps send_failed ahead of classification_unreachable in precedence', async () => {
@@ -239,6 +241,17 @@ describe('collectDeliveryHealth', () => {
   it('still resolves normally when there is no stored analytics credential', async () => {
     getStoredAnalyticsCredentials.mockResolvedValue(null);
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
+    expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
+  });
+
+  it('falls back to evidence, instead of going unknown, when the credential lookup throws', async () => {
+    getStoredAnalyticsCredentials.mockRejectedValue(new Error('boom'));
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, sendFailed: false, classificationUnreachable: false });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'identity_mismatch',
+      pendingBytes: 10,
+    });
     expect(summarizeSpoolDelivery).toHaveBeenCalledWith('evidence');
   });
 });
@@ -303,6 +316,7 @@ describe('formatDeliveryLines', () => {
   it('says the spool-derived reasons cover the whole machine', () => {
     expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
     expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
+    expect(DELIVERY_REASONS.classification_unreachable.label).toContain('on this machine');
   });
 
   it('reports a stopped proxy for null', () => {

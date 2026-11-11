@@ -23,15 +23,15 @@ export interface DeliveryHealth {
 
 /**
  * Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile.
- * `identity_mismatch` and `send_failed` come from the spool, which is shared by the whole machine,
- * so their labels say so.
+ * `identity_mismatch`, `send_failed` and `classification_unreachable` come from the spool, which is
+ * shared by the whole machine, so their labels say so.
  */
 export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
   credentials_expired: { label: 'credentials expired', run: 'codemie profile login' },
   auth_rejected: { label: 'analytics auth rejected', run: 'codemie profile login' },
   identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
   send_failed: { label: 'sending to analytics failed on this machine' },
-  classification_unreachable: { label: 'analytics backend has never answered for this session' },
+  classification_unreachable: { label: 'analytics backend has never answered for a pending session on this machine' },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
@@ -40,18 +40,25 @@ const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
  * The backend capability for the active profile's namespace, read from the on-disk stored
  * credential — never the daemon's live one, never a network probe. `'evidence'` is also the
  * safe fallback whenever no NamespaceId can be resolved, so an unresolved identity can never
- * produce a false `classification_unreachable` (spec AC3).
+ * produce a false `classification_unreachable` (spec AC3). Never throws, for the same reason:
+ * a credential-read failure here must not blank out the other signals `collectDeliveryHealth`
+ * already computed.
  */
 async function resolveCapability(state: DaemonState): Promise<Capability> {
-  const stored = await getStoredAnalyticsCredentials(state.syncCodeMieUrl, {}, {
-    provider: state.provider,
-    baseUrl: state.targetUrl,
-  });
-  if (!stored) return 'evidence';
-  const identity = forwarderIdentity(stored.credentials);
-  if (!identity) return 'evidence';
-  const policy = await getPolicyState({ ...identity, profile: state.profile });
-  return policy.capability;
+  try {
+    const stored = await getStoredAnalyticsCredentials(state.syncCodeMieUrl, {}, {
+      provider: state.provider,
+      baseUrl: state.targetUrl,
+    });
+    if (!stored) return 'evidence';
+    const identity = forwarderIdentity(stored.credentials);
+    if (!identity) return 'evidence';
+    const policy = await getPolicyState({ ...identity, profile: state.profile });
+    return policy.capability;
+  } catch (error) {
+    logger.debug('[delivery-health] Could not resolve analytics capability:', error);
+    return 'evidence';
+  }
 }
 
 /**
