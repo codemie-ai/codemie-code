@@ -399,3 +399,20 @@ rebased onto `origin/main` (01f46cf3, after #775) and local `main` brought up to
 
 `tsc`, `eslint --max-warnings=0`, vitest for `claude-code-otlp` and the proxy (85 files, 1829 tests), live matrix
 21/21, real pairs 4/4.
+
+## Rollout and old data (decision of 2026-11-11: documented, no action)
+
+None of these is a defect of the CLI change. They come from data stored before it and from clients that have not
+updated yet. This change repairs and backfills nothing.
+
+- **Clients on 0.16.6 and below:** they keep re-reporting a continued session's copied history (16992) and keep
+  sending lifecycle records and a session summary on a prompt-less reopen (16993). It stops as users update.
+- **Rows already stored:** the polluted sessions (for example 8ac53605) and the copied history already stored in both
+  the parent and the continuation stay as they are. A repair UPDATE or a cross-session dedup is a backend data task
+  and a separate ticket.
+- **Class and origin binding** set by an old client after an idle reopen is not rewritten.
+- **Multi-day sessions** still show their full total in each window they appear in (accepted backend semantics).
+- **Not testable here:** the real-record check of comment 16079046 is re-run on Preview after merge (CR-006).
+
+Pair with the backend list (`residual-risks.md`, "Rollout and old data", O1 to O7). Say so in the Jira comment when
+closing, so these are read as known limits and not as unfinished work.
