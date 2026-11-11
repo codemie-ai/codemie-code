@@ -217,68 +217,35 @@ export const PiPluginMetadata: AgentMetadata = {
   },
 
   /**
-   * MCP is not part of Pi core — Pi ships without it deliberately ("It intentionally
-   * does not include built-in MCP", Pi's `docs/usage.md`). It arrives through the
-   * `pi-mcp-adapter` package, which CodeMie installs for every managed Pi
-   * (`REQUIRED_PI_PACKAGES` in `pi.packages.ts`), so under CodeMie the adapter is
-   * effectively core and its servers are worth counting.
-   *
-   * The adapter merges six files, lowest precedence first: `~/.config/mcp/mcp.json`,
-   * `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`,
-   * `<cwd>/.mcp.json`, `<cwd>/.pi/mcp.json`. Three scopes cannot hold six files, so the
-   * two project files map directly and the four global ones become ordered candidates —
-   * and note `readMCPFromSource` takes the first candidate that *parses*, it never
-   * merges.
+   * Pi's built-in MCP support reads exactly two files (Pi's `docs/mcp.md`): the global
+   * `<agentDir>/mcp.json` and, once the project is trusted, `<cwd>/.pi/mcp.json`.
    *
    * `user` names the redirected agent dir, and deliberately **not** the user's own
    * `~/.pi/agent/mcp.json`. `beforeRun` always sets `PI_CODING_AGENT_DIR` to
-   * `<cwd>/.pi/codemie/agent` and the adapter resolves `<agentDir>/mcp.json` through that
-   * variable, so under CodeMie the home file is never one of the adapter's six sources.
-   * Listing it would report servers this Pi does not load: `preparePiAgentDir` copies once
-   * and returns early forever after, so a project whose copy predates the user's MCP setup
-   * never acquires an `mcp.json` — a permanent state, not a first-run one — while the home
-   * file keeps growing, because a bare `pi` writes precisely there. Worse, because
-   * `readMCPFromSource` returns on the first candidate that *parses*, that phantom would
-   * also hide `~/.agents/*` and `~/.config/mcp`, which the adapter genuinely does merge.
-   * (This is the opposite call from `extensionsConfig.global` above, which avoids the copy
-   * because CodeMie injects its own extension into it. Nothing injects MCP servers, so
-   * here the copy is simply the truth.)
-   *
-   * The invariant that buys: every server reported is one this run actually loads.
+   * `<cwd>/.pi/codemie/agent`, so under CodeMie the home file is never read. Listing it
+   * would report servers this Pi does not load: `preparePiAgentDir` copies once and returns
+   * early forever after, so a project whose copy predates the user's MCP setup never
+   * acquires an `mcp.json`, while the home file keeps growing because a bare `pi` writes
+   * there. (This is the opposite call from `extensionsConfig.global` above, which avoids
+   * the copy because CodeMie injects its own extension into it. Nothing injects MCP
+   * servers, so here the copy is simply the truth.)
    *
    * Knowingly an approximation otherwise:
    * - Under-counts the first run in a project, which reports zero user servers because the
    *   copy is made in `beforeRun`, after `onSessionStart` has already sent the metric.
-   *   Self-healing from the second run on.
-   * - Over-counts a server named in two scopes. The adapter merges those into one live
-   *   server; `totalServers` sums the scopes, while `serverNames` stays deduplicated.
-   * - Under-counts every global file after the first that parses, the legacy
-   *   `mcp-servers` alias key, and any config written as true JSONC — the adapter strips
-   *   comments before parsing, `readJsonFile` does not.
-   * - Under-counts host-config imports (`hostConfigDiscovery: "on"`, or a per-file
-   *   `"imports"` array), which pull servers from Claude/Codex/Cursor/VS Code files.
-   *   Following a key into other files with other key names is beyond `navigateJsonPath`.
-   *   Both mechanisms are opt-in and default off.
-   *
-   * Every one of those failures is silent: a wrong path and a genuinely MCP-less machine
-   * are indistinguishable in the summary.
+   * - Over-counts a server named in both files. Pi lets the project entry replace the
+   *   global one; `totalServers` sums the scopes, while `serverNames` stays deduplicated.
+   * - Counts the project file even when the project is untrusted and Pi skips it, and
+   *   counts servers set to `enabled: false`.
+   * - Misses servers registered at runtime by extensions (`pi.registerMcpServer`).
    */
   mcpConfig: {
     local: {
       path: '.pi/mcp.json',
       jsonPath: 'mcpServers',
     },
-    project: {
-      path: '.mcp.json',
-      jsonPath: 'mcpServers',
-    },
     user: {
-      path: [
-        '.pi/codemie/agent/mcp.json',
-        '~/.agents/mcp/mcp.json',
-        '~/.agents/mcp.json',
-        '~/.config/mcp/mcp.json',
-      ],
+      path: '.pi/codemie/agent/mcp.json',
       jsonPath: 'mcpServers',
     },
   },
