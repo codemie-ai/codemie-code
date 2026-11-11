@@ -918,7 +918,9 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
   });
 
   it('an unqueued record (no CodeMie host): returns at the deadline', async () => {
-    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here
+    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here. The wait itself
+    // polls with real fs calls (not fake-timed); once the fake clock reaches the deadline the hold lets those real
+    // reads/writes finish for free, so their latency does not get counted as elapsed time.
     const unqueued = record({ status: 'completed', codemieUrl: undefined });
     saveWithHeldMetricsLock(unqueued);
     let startedAt = 0;
@@ -928,7 +930,7 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
       startedAt = Date.now();
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: pipeline() }).done;
       doneAt = Date.now();
-    });
+    }, { while: () => startedAt !== 0 && Date.now() >= startedAt + 10_000, maxRealMs: 2_000 });
 
     expect(doneAt - startedAt).toBeLessThan(10_500);
     expectStillLive(unqueued.sessionId);
