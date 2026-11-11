@@ -818,6 +818,24 @@ describe('runGuided — delivery target selection', () => {
     );
   });
 
+  it('saves the target choice right away: an interrupt after a git-only choice leaves it on disk (AC23)', async () => {
+    const prompt = createScriptedPrompt({ select: ['git'] });
+
+    await expect(runGuided(createDeps(prompt))).rejects.toThrow(/ran out of input/);
+
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved).toEqual({ version: 2, targets: { webhook: false, git: true } });
+  });
+
+  it('saves the target choice right away on a webhook run answered "not imported" (AC23)', async () => {
+    const prompt = createScriptedPrompt({ select: ['both'], confirm: [false] });
+
+    await expect(runGuided(createDeps(prompt))).rejects.toThrow(/ran out of input/);
+
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved).toEqual({ version: 2, targets: { webhook: true, git: true } });
+  });
+
   it('a fresh git-only run asks the target, then only git-repo/external/lookback/developers, as "Step N of 5"', async () => {
     const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['git', 'windows', 'default'] });
     const deps = createDeps(prompt);
@@ -1219,6 +1237,20 @@ describe('runGuided — saved setup: Reuse / Change targets / Start over', () =>
     const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(outLine).toContain('--git-repo');
     expect([...errLines(deps), outLine].join('\n')).not.toContain('tok@');
+  });
+
+  it('Change targets, adding git over a retained credential-bearing git URL, never offers it as a prompt default (CR-003)', async () => {
+    await saveBootstrapState({ ...COMPLETE_STATE, gitRepoUrl: 'https://tok@github.com/contoso/analytics.git' }, statePath);
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['change', 'both'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    const gitPrompt = (prompt.input as ReturnType<typeof vi.fn>).mock.calls.find(([message]: [string]) =>
+      message.startsWith('Git repository URL')
+    );
+    expect(gitPrompt?.[1]).toBeUndefined();
+    expect((deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toContain('tok@');
   });
 
   it('Change targets, adding git to a saved webhook-only setup, asks only git questions and prints both targets (AC19)', async () => {

@@ -523,6 +523,71 @@ describe('runBootstrap — git target (non-interactive)', () => {
     expect(errLines(deps).some((l) => /email/i.test(l))).toBe(true);
   });
 
+  it('a blank --git-repo fails with a clean exit, no command, never throwing (CR-006)', async () => {
+    const deps = createDeps();
+
+    await expect(runBootstrap({ gitRepo: '   ' }, deps)).resolves.toBe(1);
+
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => l.includes('--git-repo'))).toBe(true);
+  });
+
+  it('a blank --git-repo alongside --webhook fails instead of silently dropping git (CR-006)', async () => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: '' }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(deps.out).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['--git-branch', { gitBranch: 'main' }],
+    ['--git-path', { gitPath: 'reports' }]
+  ])('%s without --git-repo fails closed, even with --webhook (CR-009)', async (_flag, extra) => {
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, ...extra }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => l.includes('--git-repo'))).toBe(true);
+  });
+
+  it('--git-branch alone with a TTY does not start the guided wizard (CR-009)', async () => {
+    const deps = createDeps({ isTTY: true });
+
+    const exit = await runBootstrap({ gitBranch: 'main' }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(runGuidedMock).not.toHaveBeenCalled();
+  });
+
+  it('prints the cleanup line when the webhook test file was delivered but git failed (CR-008)', async () => {
+    testPushMock.mockRejectedValue(new SyncGitError('boom-git', 'auth'));
+    const deps = createDeps();
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(deps.send).toHaveBeenCalledTimes(1);
+    expect(deps.out).not.toHaveBeenCalled();
+    expect(errLines(deps).some((l) => /delete the test file/i.test(l))).toBe(true);
+  });
+
+  it('does not print the cleanup line when the webhook send itself failed (CR-008)', async () => {
+    const send = vi.fn().mockRejectedValue(new SyncDeliveryError('nope', 403));
+    const deps = createDeps({ send });
+
+    const exit = await runBootstrap({ webhook: VALID_WEBHOOK, gitRepo: GIT_URL }, deps);
+
+    expect(exit).not.toBe(0);
+    expect(errLines(deps).some((l) => /delete the test file/i.test(l))).toBe(false);
+  });
+
   it('with no TTY and no target flag, the message names --webhook, --webhook-b64 and --git-repo (AC14)', async () => {
     const deps = createDeps({ isTTY: false });
 

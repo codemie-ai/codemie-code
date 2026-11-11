@@ -90,16 +90,18 @@ function createSyncCommand(): Command {
   return sync;
 }
 
-/** `codemie analytics sync bootstrap` — the team lead's one-time setup: connect a Teams
- * channel and SharePoint folder to a Power Automate flow, then print the `sync install`
- * command for the team's developers. Installs nothing on the lead's own machine. With
+/** `codemie analytics sync bootstrap` — the team lead's one-time setup: choose where the
+ * team's reports go (a Teams webhook, a git repository, or both), connect a Teams channel and
+ * SharePoint folder to a Power Automate flow for the webhook, test-push to the repository for
+ * git, then print the `sync install` command for the team's developers. Installs nothing on
+ * the lead's own machine. With
  * `--webhook` and/or `--git-repo`, runs non-interactively (no prompts, no TTY required); without it and with a
  * TTY, runs the guided wizard. Dynamic-imports the runner so loading `codemie analytics`
  * never pulls in the guided wizard's prompter or the webhook client. */
 function createSyncBootstrapCommand(): Command {
   return new Command('bootstrap')
     .description(
-      'Lead: connect a Teams channel and SharePoint folder, then print the install command for your team (installs nothing on this machine)'
+      'Lead: choose where your team delivers reports (Teams webhook, git repository, or both), set it up, then print the install command for your team (installs nothing on this machine)'
     )
     .option(
       '--webhook <url>',

@@ -133,66 +133,88 @@ async function testGitPush(git: GitSettings, email: string): Promise<void> {
   }
 }
 
-/**
- * Non-interactive mode (spec.md "Non-interactive mode"), for `--webhook`/`--webhook-b64`
- * and/or `--git-repo`. Validates every option first — webhook, git, lookback, policy — and
- * resolves the git report email, with no network call before all of them pass; each failure
- * names its own flag. Then runs the webhook test send ({@link setupCheckReport} through
- * `deps.send`) and the git temp-copy test push concurrently via `Promise.allSettled`, each
- * with its own timeout, so the wait is the slower target alone. On any failure it names the
- * failed target(s) on `deps.err`, prints no command and returns 1. On all-pass it prints the
- * check lines to `deps.err`, then the install command to `deps.out`, then (git only) the
- * developer access note and {@link updateHint} to `deps.err`, and returns 0. Never reads or
- * writes `deps.statePath`.
- */
-async function runNonInteractive(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
-  let webhookUrl: string | undefined;
-  let git: GitSettings | undefined;
-  let lookbackDays: number | undefined;
-  let includeExternal: ReturnType<typeof validateIncludeExternal>;
-  let email: string | undefined;
-  try {
-    if (opts.webhook !== undefined || opts.webhookB64 !== undefined) {
-      webhookUrl = validateTriggerUrl(resolveWebhookOption(opts), 'option');
-    }
-    git = validateGitSettings({ gitRepo: opts.gitRepo, gitBranch: opts.gitBranch, gitPath: opts.gitPath });
-    lookbackDays = validateLookbackDays(opts.lookbackDays);
-    includeExternal = validateIncludeExternal(opts.includeExternal);
-    if (git !== undefined) {
-      email = await resolveSyncIdentity(realIdentityDeps);
-    }
-  } catch (err) {
-    deps.err(errorMessage(err));
-    return 1;
-  }
+/** Every non-interactive option, validated and ready to check and print. */
+interface NonInteractiveSettings {
+  webhookUrl?: string;
+  git?: GitSettings;
+  /** The git report email, resolved only when `git` is set. */
+  email?: string;
+  lookbackDays?: number;
+  includeExternal: ReturnType<typeof validateIncludeExternal>;
+}
 
-  const report = setupCheckReport(deps.now());
-  const checks: Promise<void>[] = [];
-  const onFail: Array<(err: unknown) => void> = [];
+/** Validates every option — webhook, git, lookback, policy — and resolves the git report
+ * email, with no network call before all of them pass. Throws the first failure, which names
+ * its own flag. */
+async function validateNonInteractive(opts: BootstrapOptions): Promise<NonInteractiveSettings> {
+  const webhookUrl =
+    opts.webhook !== undefined || opts.webhookB64 !== undefined
+      ? validateTriggerUrl(resolveWebhookOption(opts), 'option')
+      : undefined;
+  const git = validateGitSettings({ gitRepo: opts.gitRepo, gitBranch: opts.gitBranch, gitPath: opts.gitPath });
+  if (opts.gitRepo !== undefined && git === undefined) {
+    throw new SyncConfigError('--git-repo is empty: pass the repository URL.');
+  }
+  const lookbackDays = validateLookbackDays(opts.lookbackDays);
+  const includeExternal = validateIncludeExternal(opts.includeExternal);
+  const email = git !== undefined ? await resolveSyncIdentity(realIdentityDeps) : undefined;
+  return {
+    ...(webhookUrl !== undefined && { webhookUrl }),
+    ...(git !== undefined && { git }),
+    ...(email !== undefined && { email }),
+    ...(lookbackDays !== undefined && { lookbackDays }),
+    includeExternal
+  };
+}
+
+/** Runs the webhook test send and the git temp-copy test push concurrently via
+ * `Promise.allSettled` (each with its own timeout, so the wait is the slower target alone),
+ * printing each failure on `deps.err`. `webhookSent` is true when the test file was
+ * delivered, whatever the git target did. */
+async function runChecks(
+  deps: BootstrapDeps,
+  settings: NonInteractiveSettings,
+  report: SyncReport
+): Promise<{ failed: boolean; webhookSent: boolean }> {
+  const checks: Array<{ run: Promise<void>; onFail: (err: unknown) => void; isWebhook: boolean }> = [];
+  const { webhookUrl, git, email } = settings;
   if (webhookUrl !== undefined) {
-    const url = webhookUrl;
-    checks.push(deps.send(url, report));
-    onFail.push((err) => printSendFailure(deps, err));
+    checks.push({
+      run: deps.send(webhookUrl, report),
+      onFail: (err) => printSendFailure(deps, err),
+      isWebhook: true
+    });
   }
   if (git !== undefined && email !== undefined) {
-    const settings = git;
-    const identity = email;
-    checks.push(testGitPush(settings, identity));
-    onFail.push((err) => printGitFailure(deps, settings, err));
+    checks.push({
+      run: testGitPush(git, email),
+      onFail: (err) => printGitFailure(deps, git, err),
+      isWebhook: false
+    });
   }
 
-  const results = await Promise.allSettled(checks);
+  const results = await Promise.allSettled(checks.map((check) => check.run));
   let failed = false;
+  let webhookSent = false;
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
       failed = true;
-      onFail[index]?.(result.reason);
+      checks[index]?.onFail(result.reason);
+    } else if (checks[index]?.isWebhook === true) {
+      webhookSent = true;
     }
   });
-  if (failed) {
-    return 1;
-  }
+  return { failed, webhookSent };
+}
 
+/** All checks passed: the check lines to `deps.err`, the install command to `deps.out`, then
+ * (git only) the developer access note and {@link updateHint} to `deps.err`. */
+async function printNonInteractiveResult(
+  deps: BootstrapDeps,
+  settings: NonInteractiveSettings,
+  report: SyncReport
+): Promise<void> {
+  const { webhookUrl, git, lookbackDays, includeExternal } = settings;
   if (webhookUrl !== undefined) {
     deps.err(checkLine(report));
     deps.err(CLEANUP_LINE);
@@ -217,6 +239,36 @@ async function runNonInteractive(opts: BootstrapOptions, deps: BootstrapDeps): P
     deps.err(GIT_ACCESS_NOTE);
   }
   deps.err(updateHint(await deps.cliVersion()));
+}
+
+/**
+ * Non-interactive mode (spec.md "Non-interactive mode"), for `--webhook`/`--webhook-b64`
+ * and/or `--git-repo`. Validates every option first ({@link validateNonInteractive}), then
+ * runs the webhook test send and the git test push concurrently ({@link runChecks}). On any
+ * failure it names the failed target(s) on `deps.err`, prints no command and returns 1 (plus
+ * the cleanup line when the webhook test file was delivered anyway). On all-pass it prints
+ * the result ({@link printNonInteractiveResult}) and returns 0. Never reads or writes
+ * `deps.statePath`.
+ */
+async function runNonInteractive(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
+  let settings: NonInteractiveSettings;
+  try {
+    settings = await validateNonInteractive(opts);
+  } catch (err) {
+    deps.err(errorMessage(err));
+    return 1;
+  }
+
+  const report = setupCheckReport(deps.now());
+  const { failed, webhookSent } = await runChecks(deps, settings, report);
+  if (failed) {
+    if (webhookSent) {
+      deps.err(CLEANUP_LINE);
+    }
+    return 1;
+  }
+
+  await printNonInteractiveResult(deps, settings, report);
   return 0;
 }
 
@@ -232,6 +284,12 @@ async function runGuidedSafely(deps: BootstrapDeps): Promise<number> {
 }
 
 export async function runBootstrap(opts: BootstrapOptions, deps: BootstrapDeps): Promise<number> {
+  const hasGitRepo = opts.gitRepo !== undefined && opts.gitRepo.trim() !== '';
+  if (!hasGitRepo && (opts.gitBranch !== undefined || opts.gitPath !== undefined)) {
+    deps.err('--git-branch and --git-path need --git-repo.');
+    return 1;
+  }
+
   if (givesAnyTarget(opts)) {
     return runNonInteractive(opts, deps);
   }

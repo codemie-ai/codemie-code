@@ -17,7 +17,14 @@
 import { readFile } from 'fs/promises';
 
 import { getCodemiePath } from '@/utils/paths.js';
-import { validateGitRepoUrl, validateIncludeExternal, validateLookbackDays } from '../config-store.js';
+import {
+  validateGitBranch,
+  validateGitPath,
+  validateGitRepoUrl,
+  validateIncludeExternal,
+  validateLookbackDays
+} from '../config-store.js';
+import { SyncConfigError } from '@/utils/errors.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { InstallCommandOptions } from '../install-command.js';
 import type { IncludeExternalPolicy } from '../types.js';
@@ -97,7 +104,8 @@ export function getBootstrapStatePath(): string {
 
 /** `value` is a `BootstrapStateV1` or `BootstrapState` if it is a non-null, non-array object
  * carrying `version: 1` (no further check — v1 never had a `targets` field) or `version: 2`
- * with a `targets` object. No deeper per-field check: downstream functions
+ * with a `targets` object naming at least one delivery target (both flags booleans, one
+ * true). No deeper per-field check: downstream functions
  * (`firstUnansweredStep`, `checkReuse`) already treat every other field as optional and
  * re-validate the ones that matter, so a field of the wrong type behaves the same as a
  * missing one. */
@@ -113,7 +121,11 @@ function isBootstrapStateShape(value: unknown): value is BootstrapStateV1 | Boot
 
   if (version === 2) {
     const targets = (value as { targets?: unknown }).targets;
-    return typeof targets === 'object' && targets !== null && !Array.isArray(targets);
+    if (typeof targets !== 'object' || targets === null || Array.isArray(targets)) {
+      return false;
+    }
+    const { webhook, git } = targets as { webhook?: unknown; git?: unknown };
+    return typeof webhook === 'boolean' && typeof git === 'boolean' && (webhook || git);
   }
 
   return false;
@@ -236,7 +248,11 @@ const REVALIDATORS: Partial<Record<string, (state: BootstrapState) => void>> = {
     }
   },
   'git-repo': (state) => {
-    validateGitRepoUrl(state.gitRepoUrl);
+    if (validateGitRepoUrl(state.gitRepoUrl) === undefined) {
+      throw new SyncConfigError('The saved git repository URL is blank.');
+    }
+    validateGitBranch(state.gitBranch);
+    validateGitPath(state.gitPath);
   },
   external: (state) => {
     if (state.includeExternal !== undefined) {

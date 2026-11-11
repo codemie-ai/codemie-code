@@ -97,6 +97,19 @@ describe('loadBootstrapState / saveBootstrapState', () => {
     expect(result.notice).toContain(path);
   });
 
+  it.each([
+    ['empty targets', {}],
+    ['both targets off', { webhook: false, git: false }],
+    ['non-boolean flags', { webhook: 'yes', git: 1 }],
+    ['one flag missing', { webhook: true }]
+  ])('returns { state: null } and a notice when a v2 file has %s', async (_label, targets) => {
+    await writeFile(path, JSON.stringify({ version: 2, targets }), 'utf-8');
+
+    const result = await loadBootstrapState(path);
+    expect(result.state).toBeNull();
+    expect(result.notice).toContain(path);
+  });
+
   it('returns { state: null } and a notice naming the path when the file cannot be read', async () => {
     // Windows chmod only toggles the read-only attribute (blocks writes, not reads), so
     // 0o000 never produces EACCES on a read there — unlike POSIX, where it reliably does.
@@ -327,6 +340,14 @@ describe('checkReuse', () => {
         gitRepoUrl: 'user:secret@github.com:example/repo.git'
       })
     ).toEqual({ ok: false, resumeAt: 'git-repo' });
+  });
+
+  it.each([
+    ['a blank git URL', { gitRepoUrl: '   ' }],
+    ['an option-like git branch', { gitBranch: '--upload-pack=x' }],
+    ['an escaping git path', { gitPath: '../outside' }]
+  ])("resumes at 'git-repo' on a complete git-only state with %s", (_label, patch) => {
+    expect(checkReuse({ ...GIT_COMPLETE_STATE, ...patch })).toEqual({ ok: false, resumeAt: 'git-repo' });
   });
 
   it('ignores an off webhook target: a broken saved webhookUrl does not block a git-only reuse', () => {

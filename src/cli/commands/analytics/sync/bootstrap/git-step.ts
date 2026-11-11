@@ -45,9 +45,23 @@ export interface GitDetailsSaved {
 
 export type GitDetails = GitSettings;
 
+/** `value` as a prompt default only when it passes `validate` and is not blank: a saved
+ * value that fails (a hand-edited, credential-bearing URL above all) is never shown. */
+function safeDefault(value: string | undefined, validate: (raw: string) => unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return validate(value) === undefined ? undefined : value;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Prompts for the git repo URL (required, retried on an invalid/credential-bearing value),
- * then branch and path (each optional — blank leaves them `undefined`).
+ * then branch and path (each optional — blank leaves them `undefined`). A saved answer that
+ * no longer validates is not offered back as a default.
  */
 export async function askGitDetails(deps: BootstrapDeps, saved?: GitDetailsSaved): Promise<GitDetails> {
   const repoUrl = await askValidated(
@@ -60,21 +74,21 @@ export async function askGitDetails(deps: BootstrapDeps, saved?: GitDetailsSaved
       }
       return value;
     },
-    saved?.repoUrl
+    safeDefault(saved?.repoUrl, validateGitRepoUrl)
   );
 
   const branch = await askValidated(
     deps,
     "Branch (leave blank for the repository's default)",
     (raw) => (raw.trim() === '' ? undefined : validateGitBranch(raw)),
-    saved?.branch
+    safeDefault(saved?.branch, validateGitBranch)
   );
 
   const path = await askValidated(
     deps,
     'Path within the repository (leave blank for the repository root)',
     (raw) => validateGitPath(raw),
-    saved?.path
+    safeDefault(saved?.path, validateGitPath)
   );
 
   return {
