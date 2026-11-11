@@ -185,12 +185,15 @@ async function waitFor(condition: () => boolean): Promise<void> {
   throw new Error('condition not met');
 }
 
-type FetchOutcome = 'refused' | '503' | 'timeout';
+type FetchOutcome = 'refused' | '503' | '429' | 'blocked' | 'not-success' | 'ok' | 'timeout';
+
+const jsonAnswer = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /**
  * The end metric goes through the real metrics client (three tries); `fetch` meets each try with the next
- * outcome, the last one repeating: refused before the connection opened, an HTTP 503, or no answer until the
- * request's own timeout aborts it.
+ * outcome, the last one repeating: refused before the connection opened, a JSON 503 or 429, a WAF's HTML 403 block
+ * page, a 200 reporting `success: false`, a 200 accepting it, or no answer until the request's own timeout aborts it.
  */
 function endMetricMeets(...outcomes: FetchOutcome[]): void {
   mockSendSessionEnd.mockImplementation(function (this: { real: { sendSessionEnd: (...args: unknown[]) => Promise<unknown> } }, ...args: unknown[]) {
@@ -202,8 +205,12 @@ function endMetricMeets(...outcomes: FetchOutcome[]): void {
     if (outcome === 'refused') {
       throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
     }
-    if (outcome === '503') {
-      return new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    if (outcome === '503') return jsonAnswer(503, { message: 'unavailable' });
+    if (outcome === '429') return jsonAnswer(429, { message: 'too many requests' });
+    if (outcome === 'not-success') return jsonAnswer(200, { success: false, message: 'rejected' });
+    if (outcome === 'ok') return jsonAnswer(200, { success: true, message: 'ok' });
+    if (outcome === 'blocked') {
+      return new Response('<html><body>403 Forbidden</body></html>', { status: 403, headers: { 'content-type': 'text/html' } });
     }
     return new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')));
@@ -211,13 +218,13 @@ function endMetricMeets(...outcomes: FetchOutcome[]): void {
   });
 }
 
-/** One daemon start and stop, the client's backoff and request timeouts run on the fake clock from the current fake time. */
-async function startAndStopOnFakeClock(): Promise<void> {
+/** Runs `work` with the client's backoff and request timeouts on the fake clock from the current fake time. */
+async function onDaemonClock(work: () => Promise<void>): Promise<void> {
   const realSetTimeout = setTimeout;
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'], now: Date.now() });
   try {
     let finished = false;
-    const run = startRuntime().then(runtime => runtime.stop()).finally(() => { finished = true; });
+    const run = work().finally(() => { finished = true; });
     for (let step = 0; !finished && step < 2000; step++) {
       await vi.advanceTimersByTimeAsync(25);
       await new Promise(resolve => realSetTimeout(resolve, 1));
@@ -226,6 +233,11 @@ async function startAndStopOnFakeClock(): Promise<void> {
   } finally {
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
   }
+}
+
+/** One daemon start and stop on the fake clock (see {@link onDaemonClock}). */
+async function startAndStopOnFakeClock(): Promise<void> {
+  await onDaemonClock(() => startRuntime().then(runtime => runtime.stop()));
 }
 
 describe('DesktopTelemetryRuntime start-up pass', () => {
@@ -255,7 +267,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
     else process.env.CODEMIE_HOME = previousCodemieHome;
   });
 
-  describe('a delivery whose request never left spends no attempt', () => {
+  describe('a delivery whose request no server served spends no attempt', () => {
     const undelivered = (fields: Partial<Session> = {}) => writeRecord('ext-1', {
       status: 'completed',
       reason: 'desktop-inactive-timeout',
@@ -275,14 +287,96 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
-    it('an end metric answered with an HTTP error spends the attempt', async () => {
+    it('an end metric answered 503 gives the attempt back and keeps the record live', async () => {
       const sessionId = undelivered();
       endMetricMeets('503');
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('an end metric answered 503, then timed out on its retry, spends the attempt', async () => {
+      const sessionId = undelivered();
+      endMetricMeets('503', 'timeout');
+
+      await startAndStopOnFakeClock();
+
+      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+    });
+
+    it('an end metric answered 429 with a JSON body gives the attempt back', async () => {
+      const sessionId = undelivered();
+      endMetricMeets('429');
+
+      await startAndStopOnFakeClock();
+
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+    });
+
+    it('an end metric answered 200 with success false spends the attempt', async () => {
+      const sessionId = undelivered();
+      endMetricMeets('not-success');
+
+      await startAndStopOnFakeClock();
+
+      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+    });
+
+    it('a record at 2 attempts stays at 2 through three starts under a 503: never renamed, never dropped', async () => {
+      const sessionId = undelivered({ deliveryAttempts: 2 });
+      endMetricMeets('503');
+
+      for (let start = 0; start < 3; start++) await startAndStopOnFakeClock();
+
+      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('starts under a 403 HTML block page spend no attempt, never rename the record and mark no credentials invalid', async () => {
+      const sessionId = undelivered();
+      endMetricMeets('blocked');
+
+      for (let start = 0; start < 4; start++) {
+        await startAndStopOnFakeClock();
+        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      }
+      expect(existsSync(join(codemieHome, 'analytics-auth-status.json'))).toBe(false);
+    });
+
+    it('an outage answering 503 through an inactivity finalize and 4 starts spends nothing; the first start under a working server delivers once', async () => {
+      endMetricMeets('503');
+      desktopActivity('ext-1', T0);
+      const runtime = await startRuntime();
+      const sessionId = readdirSync(sessionsDir()).find(name => name.endsWith('.json'))!.replace(/\.json$/, '');
+      vi.setSystemTime(T0 + config.inactivityTimeoutMs + 1);
+      await onDaemonClock(() => runtime.triggerPoll());
+      await runtime.stop();
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+      for (let start = 0; start < 4; start++) {
+        await startAndStopOnFakeClock();
+        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      }
+
+      endMetricMeets('ok');
+      const fetchSpy = vi.mocked(globalThis.fetch);
+      fetchSpy.mockClear();
+      await startAndStopOnFakeClock();
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(readRecord(sessionId)!.endMetricSentAt).toBeTypeOf('number');
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+
+      fetchSpy.mockClear();
+      await startAndStopOnFakeClock();
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it('a try that timed out spends the attempt though its retries were refused', async () => {
@@ -297,7 +391,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
     it('after two counted failures, starts under a refused connection stay at 2 and never rename it', async () => {
       const sessionId = undelivered();
-      endMetricMeets('503');
+      endMetricMeets('timeout');
       for (let start = 0; start < 2; start++) await startAndStopOnFakeClock();
       expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
 

@@ -26,8 +26,8 @@ import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js'
 
 /**
  * A 2xx HTML page where JSON was expected: fetch follows the redirect of an expired session, so the SSO login page
- * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failure
- * counted by its status, not rejected credentials.
+ * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failing
+ * server's answer, not rejected credentials.
  */
 function isLoginPage(response: Response): boolean {
   return response.headers.get('content-type')?.includes('text/html') === true && response.ok;
@@ -168,7 +168,6 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               body: JSON.stringify(payload),
               signal: request.signal
             });
-            request.noteOutcome();
             body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
           } catch (error) {
             request.noteOutcome(error);
@@ -180,6 +179,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
 
           if (isLoginPage(response)) {
             const message = `API answered ${response.status} with an HTML page (an SSO login page) instead of JSON`;
+            request.noteAnswer(response.status, false, false);
             await rejectCredentials(bounds.abortSignal, message);
             logger.error(`[ConversationApiClient] ${message}`);
             return { success: false, message };
@@ -188,12 +188,15 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           if (!response.ok) {
             const errorText = body as string;
             let errorData;
+            let bodyIsJson = true;
 
             try {
               errorData = JSON.parse(errorText);
             } catch {
+              bodyIsJson = false;
               errorData = { message: errorText };
             }
+            request.noteAnswer(response.status, bodyIsJson, false);
 
             const apiMessage = errorData?.error?.message
               || errorData?.message
@@ -219,6 +222,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           }
 
           // Success
+          request.noteAnswer(response.status, true, true);
           const data = body as {
             conversation_id: string;
             new_messages: number;
@@ -324,12 +328,11 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           body: JSON.stringify(metadata),
           signal: request.signal
         });
-        request.noteOutcome();
         if (!response.ok) {
           errorText = await response.text();
         }
       } catch (error) {
-        request.noteOutcome(error);
+        // The delivery ignores this request's failure, so it notes no outcome and never changes what the attempt costs
         const stopReason = request.stopReason();
         throw stopReason ? new SyncStoppedError(stopReason) : error;
       } finally {

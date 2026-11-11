@@ -93,7 +93,7 @@ export class DesktopSessionDelivery {
    * metric — then the `completed_*` rename once delivered; the caller holds the reconcile lock. Without
    * usable credentials (no stored cookies, or the analytics auth marked invalid) the record is saved, its flush
    * processed locally, nothing sent, and it waits for a re-login. A counted attempt saves the record with `deliveryAttempts` + 1 before any send and
-   * gives it back when the server rejected the credentials or no request of it reached the server; past {@link MAX_ATTEMPTS} the record is renamed
+   * gives it back as {@link settleAttempt} rules (rejected credentials, or a request of it that never left or was answered by a failing server — the latter while the record is within the evidence retention — with none of its requests ending in a counted failure); past {@link MAX_ATTEMPTS} the record is renamed
    * without sending. A failed send is logged, never thrown: the record stays `{id}.json`.
    */
   private async deliverLocked(record: Session, options: { countAttempt: boolean; flush: boolean }): Promise<void> {
@@ -106,7 +106,7 @@ export class DesktopSessionDelivery {
       }
       return;
     }
-    // Never aborted: it only tags this attempt's requests, so the API clients can note a credential rejection and whether a request reached the server
+    // Never aborted: it only tags this attempt's requests, so the API clients can note a credential rejection and what became of each request
     const signal = new AbortController().signal;
     if (options.countAttempt) {
       const attempts = record.deliveryAttempts ?? 0;
