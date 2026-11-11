@@ -21,7 +21,8 @@ import type {
 } from '../../core/types.js';
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
-import { CodeMieSSO, effectiveExpiresAt } from './sso.auth.js';
+import { CodeMieSSO } from './sso.auth.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 import { SSOModelProxy } from './sso.models.js';
 import { fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';

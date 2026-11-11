@@ -2,18 +2,19 @@
  * SSO Session Expiry Detector
  * Priority: 11 (directly after SSOAuthPlugin/JWTAuthPlugin)
  *
- * SOLID: Single responsibility = detect the oauth2-proxy session-expiry
- * redirect (302/303 to /oauth2/start) and replace the relayed response
- * with a parseable 401, kicking off PR #624's existing re-auth plumbing,
- * instead of letting the downstream agent write a `<synthetic>` turn.
+ * SOLID: Single responsibility = detect a rejected oauth2-proxy session — the
+ * session-expiry redirect (302/303 to /oauth2/start) or the backend's own
+ * "Authentication failed" 401 — and replace the relayed response with a
+ * parseable 401, kicking off PR #624's existing re-auth plumbing, instead of
+ * letting the downstream agent write a `<synthetic>` turn.
  *
- * Acts on the redirect signature alone — a server-side session revoke
+ * Acts on the server's rejection alone — a server-side session revoke
  * (e.g. signing out of all sessions, or an admin-forced revoke) does not
- * change the local JWT's own `exp` claim, so requiring the local
- * credential to also look expired would miss the primary real-world
- * trigger for this bug (confirmed by live reproduction on 2026-10-16).
- * Nothing else has ever been observed to produce this exact redirect, so
- * no secondary confirming signal is needed before acting on it.
+ * change the local JWT's own `exp` claim, and a cookie-only credential has no
+ * local expiry at all, so requiring the local credential to also look expired
+ * would miss the primary real-world trigger for this bug (confirmed by live
+ * reproduction on 2026-10-16). No secondary confirming signal is needed
+ * before acting on either rejection.
  *
  * A redirect on a request that was sent with credentials a finished sign-in has since replaced is not
  * an expiry: the request is replayed once with the stored cookies and that response is returned. If
@@ -37,8 +38,8 @@
  * the lock and cooldown). A 403 is never acted on.
  *
  * KNOWN GAP: an HTML 200 rejection still bypasses this plugin (it is handled on the metrics path —
- * see metrics-api-client.ts). The metrics (401/403/HTML) and OTLP forwarder (401/403) classifiers
- * do not call `isSessionRejection401` yet; it is placed so they can.
+ * see metrics-api-client.ts). The metrics client (401, HTML) and the OTLP forwarder (401, 403, 302)
+ * classifiers do not call `isSessionRejection401` yet; it is placed so they can.
  *
  * KNOWN GAP: the synthetic 401 body below is always Anthropic-shaped (`{type, error: {type,
  * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see

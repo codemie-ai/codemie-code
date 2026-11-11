@@ -11,7 +11,7 @@ import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { SSOModelProxy } from './sso.models.js';
-import { effectiveExpiresAt } from './sso.auth.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 import { getPlatformUrl, getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
 
 /**

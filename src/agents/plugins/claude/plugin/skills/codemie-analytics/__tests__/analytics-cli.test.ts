@@ -46,7 +46,10 @@ describe('analytics-cli resolveAuth expiry', () => {
   }
 
   it('ignores past expiresAt for cookie-only credentials', () => {
-    expect(run({ _oauth2_proxy: 'x' })).not.toContain('SSO credentials expired');
+    const out = run({ _oauth2_proxy: 'x' });
+    expect(out).not.toContain('SSO credentials expired');
+    expect(out).not.toContain('No CodeMie credentials found');
+    expect(out).toContain('fetch failed'); // the credential was accepted and the script reached the (unreachable) API
   });
 
   it('reports expiry when codemie_access_token cookie is present', () => {

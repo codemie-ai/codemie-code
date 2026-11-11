@@ -730,6 +730,32 @@ describe('SSOSessionExpiryPlugin', () => {
         }
       });
 
+      it.each([
+        ['returns nothing', async () => null],
+        ['returns an empty cookie jar', async () => ({ cookies: {} })],
+        ['cannot be read', async () => { throw new Error('keychain locked'); }],
+      ])('never suppresses a 401 when the credential store %s', async (_label, readStore) => {
+        let reading: () => Promise<{ cookies: Record<string, string> } | null> = async () => ({ cookies: { session: 'same' } });
+        const interceptor = await plugin.createInterceptor(
+          createPluginContext(
+            { cookies: { session: 'same' }, apiUrl: TARGET_API_URL },
+            { refreshNow: () => reading() }
+          )
+        );
+        await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), response(401, UNAUTHORIZED), createTools());
+        vi.clearAllMocks();
+        vi.mocked(startDetachedSsoLogin).mockResolvedValue('started');
+        vi.mocked(getLastSignInAt).mockResolvedValue(Date.now() + 1_000);
+        reading = readStore;
+
+        const original = response(401, UNAUTHORIZED);
+        const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), original, createTools());
+
+        expect(result).not.toBe(original);
+        expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+        expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+      });
+
       it('does not suppress a 401 once the stored cookies changed, even after a completed sign-in', async () => {
         const store = { cookies: { session: 'same' } };
         const interceptor = await interceptorWithStore(store);

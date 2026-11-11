@@ -5,8 +5,6 @@ const mockSetBaseUrl = vi.fn();
 const mockListModels = vi.fn();
 
 vi.mock('../sso.auth.js', () => ({
-  effectiveExpiresAt: (c: { cookies?: Record<string, string>; expiresAt?: number }) =>
-    c.cookies?.codemie_access_token ? c.expiresAt : undefined,
   CodeMieSSO: class {
     getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
   },

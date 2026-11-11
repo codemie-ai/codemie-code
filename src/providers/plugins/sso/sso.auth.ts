@@ -16,6 +16,7 @@ import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.j
 import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 
 function escapeHtml(str: string): string {
   return str
@@ -63,17 +64,7 @@ export function deriveExpiresAt(cookies: Record<string, string>): number | undef
   return undefined;
 }
 
-/**
- * Expiry that may be enforced locally: the stored expiresAt counts only when a
- * codemie_access_token is present. Cookie-only credentials (including legacy
- * ones with a synthetic 24h expiresAt) never expire locally.
- */
-export function effectiveExpiresAt(credentials: {
-  cookies: Record<string, string>;
-  expiresAt?: number;
-}): number | undefined {
-  return credentials.cookies?.codemie_access_token ? credentials.expiresAt : undefined;
-}
+export { effectiveExpiresAt };
 
 /**
  * CodeMie SSO Authentication
