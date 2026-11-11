@@ -46,19 +46,19 @@ describe('summarizeSpoolDelivery', () => {
 
   it('reports nothing for an empty or missing spool', async () => {
     await rm(spoolRoot(), { recursive: true, force: true });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationUnreachable: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationUnreachable: false, classificationUnsupported: false });
   });
 
   it('marks the summary incomplete when the spool root exists but cannot be listed', async () => {
     await rm(spoolRoot(), { recursive: true, force: true });
     await writeFile(spoolRoot(), 'not a directory');
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationUnreachable: false, incomplete: true });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationUnreachable: false, classificationUnsupported: false, incomplete: true });
   });
 
   it('sums unsent bytes across streams and sessions', async () => {
     await session('a', { hooks: 100, logs: 50 }, (s) => { s.cursors.hooks = 40; });
     await session('b', { metricsJson: 30 });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 60 + 50 + 30, mismatchHeld: false, classificationUnreachable: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 60 + 50 + 30, mismatchHeld: false, classificationUnreachable: false, classificationUnsupported: false });
   });
 
   it('flags a mismatch hold only while the session has pending data', async () => {
@@ -72,7 +72,7 @@ describe('summarizeSpoolDelivery', () => {
 
   it('ignores every other hold reason', async () => {
     await session('other', { hooks: 10 }, (s) => { s.holds = { session: { reason: 'stamp_pending', since: 1 } }; });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 10, mismatchHeld: false, classificationUnreachable: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 10, mismatchHeld: false, classificationUnreachable: false, classificationUnsupported: false });
   });
 
   it('reports a live delivery-failure record with its retry time and detail', async () => {
@@ -112,6 +112,7 @@ describe('summarizeSpoolDelivery', () => {
       pendingBytes: 30,
       mismatchHeld: false,
       classificationUnreachable: false,
+      classificationUnsupported: false,
     });
   });
 
@@ -143,18 +144,36 @@ describe('summarizeSpoolDelivery', () => {
     expect((await summarizeSpoolDelivery('evidence')).classificationUnreachable).toBe(false);
   });
 
-  it('does not flag classification_unreachable when capability is legacy (backend was reachable)', async () => {
+  it('flags classification_unsupported instead of classification_unreachable when capability is legacy', async () => {
     await session('stalled-legacy', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
     });
-    expect((await summarizeSpoolDelivery('legacy')).classificationUnreachable).toBe(false);
+    const summary = await summarizeSpoolDelivery('legacy');
+    expect(summary.classificationUnreachable).toBe(false);
+    expect(summary.classificationUnsupported).toBe(true);
   });
 
-  it('never flags classification_unreachable for publication_stopped', async () => {
+  it('does not flag classification_unsupported when capability is evidence or unknown', async () => {
+    await session('stalled-legacy-evidence', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery('evidence')).classificationUnsupported).toBe(false);
+    expect((await summarizeSpoolDelivery('unknown')).classificationUnsupported).toBe(false);
+  });
+
+  it('flags classification_unsupported for organization_encoding_unsupported too', async () => {
+    await session('stalled-legacy-encoding', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery('legacy')).classificationUnsupported).toBe(true);
+  });
+
+  it('never flags classification_unreachable or classification_unsupported for publication_stopped', async () => {
     await session('stopped', { hooks: 10 }, (s) => {
       s.holds = { session: { reason: 'publication_stopped', since: 1 } };
     });
     expect((await summarizeSpoolDelivery('unknown')).classificationUnreachable).toBe(false);
+    expect((await summarizeSpoolDelivery('legacy')).classificationUnsupported).toBe(false);
   });
 
   it('reports the newest drop across sessions: a local no_project loss after a backend discard', async () => {
