@@ -110,6 +110,20 @@ export interface TranscriptPass {
 const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
 
 /**
+ * What a pass that failed (the lock wait timed out, the derivation threw) falls back to. The caller then forwards the
+ * raw hook event, which for a session reopened without a prompt would stamp the reopen time on it (EPMCDME-16993): such
+ * a session stays silent here too, as after a pass that succeeded. Read without the lock; a state that cannot be read
+ * is not idle, so the hook is forwarded as before.
+ */
+async function failedPass<T extends TranscriptPass>(sessionId: string, empty: T): Promise<T> {
+  try {
+    return (await isSessionReopenedIdle(sessionId)) ? { ...empty, suppressLifecycle: true } : empty;
+  } catch {
+    return empty;
+  }
+}
+
+/**
  * Maximum time `openPostCompactPass` waits lock-free for `compact_boundary` lines to land.
  * `PostCompact` fires before Claude Code has necessarily flushed that line to disk — observed lag
  * ranges from under a second up to ~9s, since Claude Code appears to buffer the whole
@@ -1226,7 +1240,7 @@ export async function openMainTranscriptPass(
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_PASS;
+    return failedPass(sessionId, EMPTY_PASS);
   }
 }
 
@@ -1663,6 +1677,6 @@ export async function openSessionEndPass(
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionEnd pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_SESSION_END_PASS;
+    return failedPass(sessionId, EMPTY_SESSION_END_PASS);
   }
 }

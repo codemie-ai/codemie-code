@@ -241,6 +241,28 @@ describe('holdForIdleReopen', () => {
       expect(await holdForIdleReopen('n1')).toBe(false);
     });
 
+    it('releases the records of a session that is not marked as a reopen yet but works after its SessionEnd', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('ended1', { sessionStartedAt: '2026-11-01T10:00:00.000Z' });
+      readStatusMock.mockResolvedValue({ endedAt: Date.now() - 60_000 });
+      writeSpool('ended1', '.otel_logs.ndjson', startup + work);
+
+      expect(await holdForIdleReopen('ended1')).toBe(false);
+    });
+
+    it('holds startup records after a SessionEnd of a session not marked yet, and stays released once it worked', async () => {
+      const { holdForIdleReopen } = await import('../reopen-hold.js');
+      writeState('ended2', { sessionStartedAt: '2026-11-01T10:00:00.000Z' });
+      readStatusMock.mockResolvedValue({ endedAt: Date.now() - 60_000 });
+      const path = writeSpool('ended2', '.otel_logs.ndjson', startup);
+      expect(await holdForIdleReopen('ended2')).toBe(true);
+
+      appendFileSync(path, work);
+      expect(await holdForIdleReopen('ended2')).toBe(false);
+      appendFileSync(path, exportOf(['hook_execution_complete'])); // no work in this chunk: no hold again
+      expect(await holdForIdleReopen('ended2')).toBe(false);
+    });
+
     it('does not take the words in some other record for work', async () => {
       const { holdForIdleReopen } = await import('../reopen-hold.js');
       writeState('w7', { reopened: true });

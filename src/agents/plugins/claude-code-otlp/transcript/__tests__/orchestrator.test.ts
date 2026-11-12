@@ -35,6 +35,19 @@ vi.mock('../../event-fields/session-env-fields.js', () => ({
   sessionEnvFieldsEqual: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
 }));
 
+// Lets a test make the per-session lock wait time out, as it does when a sibling hook holds the lock too long.
+const lockWait = vi.hoisted(() => ({ timeOut: false }));
+vi.mock('../parse-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../parse-state.js')>();
+  return {
+    ...actual,
+    acquireParseStateLock: async (sessionId: string) => {
+      if (lockWait.timeOut) throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
+      return actual.acquireParseStateLock(sessionId);
+    },
+  };
+});
+
 import {
   openMainTranscriptPass,
   openPostCompactPass,
@@ -4065,6 +4078,31 @@ describe('reopened session without activity (EPMCDME-16993)', () => {
     const end = await openSessionEndPass(sessionId, path, '/repo');
     await end.finalize(true);
     expect(end.suppressLifecycle).toBe(false);
+  });
+
+  it('keeps a reopened idle session silent when the lock wait times out, and still forwards the hook of one that is not idle', async () => {
+    const idleId = 'session-reopen-lock-timeout';
+    const path = writeTranscript(`${idleId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(idleId, 'startup');
+    await mainEvents(idleId, path, 'Stop');
+    await startSession(idleId, 'resume');
+
+    lockWait.timeOut = true;
+    try {
+      const idle = await openMainTranscriptPass(idleId, path, 'Stop');
+      const idleEnd = await openSessionEndPass(idleId, path, '/repo');
+      expect(idle.suppressLifecycle).toBe(true);
+      expect(idle.events).toEqual([]);
+      expect(idleEnd.suppressLifecycle).toBe(true);
+
+      const ordinary = await openMainTranscriptPass('session-ordinary-lock-timeout', path, 'Stop');
+      expect(ordinary.suppressLifecycle).toBeFalsy();
+    } finally {
+      lockWait.timeOut = false;
+    }
   });
 
   it('keeps forwarding Stop for a new session that has no lines yet', async () => {

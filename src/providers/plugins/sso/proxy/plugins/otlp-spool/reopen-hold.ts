@@ -256,7 +256,17 @@ export async function holdForIdleReopen(sessionId: string, now: number = Date.no
     if (files.length === 0 || now - lastWrite >= reopenSettleMs()) return false;
     const status = await readStatus(sessionId);
     const endedAt = status?.endedAt;
-    if (endedAt !== undefined) return lastWrite > endedAt;
+    if (endedAt !== undefined) {
+      if (lastWrite <= endedAt) return false;
+      // Held only until the session shows work of its own (like a resume that was marked): a session that goes on
+      // to work must not wait for a pause in its writes, and one that was seen working stays released.
+      if (Math.max(workSeenAt.get(sessionId) ?? 0, status?.reopenWorkAt ?? 0) >= endedAt) return false;
+      if (await seesOwnWork(sessionId, files, status?.cursors, status?.endedSizes, now)) {
+        await noteWorkSeen(sessionId, now);
+        return false;
+      }
+      return true;
+    }
     if (state.sessionStartedAt === undefined) return false;
     const stateAt = await modifiedAt(getCodemiePath('analytics', 'state', `${sessionId}.json`));
     if (stateAt <= 0) return false;
