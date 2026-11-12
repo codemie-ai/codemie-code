@@ -33,9 +33,12 @@ const SHALLOW_SCAN_LIMIT = 2000;
 const SHALLOW_TAIL_BYTES = 16 * 1024;
 
 /**
- * Time the whole lookup may take. It runs while the session's parse-state lock is held (other hooks of the session
- * wait for it), and a folder of large transcripts can take long to read. An overrun makes the scan incomplete, which
- * the caller counts like any other incomplete scan (see `ensureInherited`), so it is retried a few times, not forever.
+ * Time the search for the parent among the siblings may take. It runs while the session's parse-state lock is held
+ * (other hooks of the session wait for it), and a folder of large transcripts can take long to read. An overrun makes
+ * the scan incomplete, which the caller counts like any other incomplete scan (see `ensureInherited`), so it is
+ * retried a few times, not forever. Reading the uuids of the parent once it is found is not under this budget: it is
+ * streamed in full (a deadline there would leave a found but large parent unresolved, with its copies reported), so
+ * it takes time in proportion to the parent's size.
  */
 const LOOKUP_BUDGET_MS = 5000;
 
@@ -200,7 +203,8 @@ async function readInherited(parentPath: string): Promise<Inherited> {
  * `null` when it could not be completed (unreadable directory or sibling, more candidates than
  * the scan covers). Never throws.
  *
- * The whole lookup has a time budget ({@link LOOKUP_BUDGET_MS}); running out of it is an incomplete scan.
+ * The search among the siblings has a time budget ({@link LOOKUP_BUDGET_MS}); running out of it is an incomplete scan.
+ * The found parent is then streamed in full, outside that budget.
  * Known limit: more than {@link MAX_SIBLING_FILES} siblings stay "incomplete" (the ones beyond only get a short
  * tail look, up to {@link SHALLOW_SCAN_LIMIT}); a parent outside those is not found.
  */

@@ -1,2 +1,0 @@
-{"ts":"2026-11-10T19:36:13Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"Fix CR-001/002/004, document CR-003 (Recommended)","source":"hitl","confidence":"high"},"escalated":false,"prior_context":{"phase":5,"prior_orchestrator_verdict":"code-review-final.json"}}
-{"ts":"2026-11-10T19:36:13Z","gate_id":"code-review.check","mode":"hitl","verdict":{"decision":"approve","source":"subagent","confidence":"medium"},"escalated":false,"prior_context":{"phase":5,"prior_orchestrator_verdict":"code-review-check.json"}}

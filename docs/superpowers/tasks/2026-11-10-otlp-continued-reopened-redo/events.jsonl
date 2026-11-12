@@ -1,4 +1,0 @@
-{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"skipped"}
-{"schema":1,"ts":"2026-11-10T19:28:42Z","event":"code_review.final_recorded","phase":5,"actor":"code-review-orchestrator","summary":"request-changes, confidence low: CR-001 fixed in tree, CR-002 patch, CR-003/CR-004 decision_needed"}
-{"schema":1,"ts":"2026-11-10T19:36:13Z","event":"code_review.check_recorded","phase":5,"actor":"code-review-orchestrator","summary":"approve, medium: CR-001/002/004 resolved, CR-003 superseded by D-10"}
-{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"skipped"}
