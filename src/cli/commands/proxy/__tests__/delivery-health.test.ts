@@ -248,4 +248,10 @@ describe('formatDeliveryLines', () => {
   it('reports a stopped proxy for null', () => {
     expect(strip(formatDeliveryLines(null))).toEqual(['Delivery: proxy not running']);
   });
+
+  it('prints a drop time outside the date range as the stored number', () => {
+    const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: 9e15, local: false } as const;
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop })))
+      .toContain('  Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
+  });
 });

@@ -20,10 +20,12 @@ export interface CoworkCursor {
   events: CoworkEventState;
 }
 
+/** The cursor of a session that was never read. */
 export function emptyCoworkCursor(): CoworkCursor {
   return { offsets: {}, fingerprints: {}, lastEndedAt: '', events: emptyCoworkEventState() };
 }
 
+/** The file a session's cursor is kept in. */
 export function coworkCursorPath(cliSessionId: string): string {
   return getCodemiePath('analytics', 'state', `${cliSessionId}.cowork.json`);
 }

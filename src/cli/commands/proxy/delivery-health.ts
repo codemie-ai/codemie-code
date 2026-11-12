@@ -79,7 +79,10 @@ function formatBytes(bytes: number): string {
 export function formatDropLines(drop: LatestDrop | undefined): string[] {
   if (!drop) return [];
   const where = drop.stream ? `${drop.stream}, ` : '';
-  const lines = [`  Last dropped: ${drop.reason} (${where}${new Date(drop.at).toISOString()})`];
+  // The time is read from a status file: one outside the date range is printed as stored, not thrown on.
+  const at = new Date(drop.at);
+  const when = Number.isNaN(at.getTime()) ? String(drop.at) : at.toISOString();
+  const lines = [`  Last dropped: ${drop.reason} (${where}${when})`];
   if (drop.reason === 'no_project') {
     lines.push('  Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent');
   }

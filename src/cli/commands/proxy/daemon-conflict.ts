@@ -1,5 +1,6 @@
 import type { readState } from './daemon-manager.js';
 
+/** The text `proxy start` fails with when a daemon with other settings is already running. */
 export function formatDaemonConflict(
   state: NonNullable<Awaited<ReturnType<typeof readState>>>
 ): string {
