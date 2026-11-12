@@ -100,6 +100,8 @@ codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 
 `codemie proxy connect --claude-desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
 
+**Model list.** The connector writes no model list into the Desktop config. Desktop asks the daemon's `GET /v1/models` on every start, and the daemon answers from the CodeMie catalog of the profile's project: one Opus, one Sonnet and one Haiku (the newest the project allows), plus every router that routes only to Claude models, each under its CodeMie name. After the project's Models tab changes, quit and reopen Claude Desktop; `connect` does not need to run again. The daemon must be running when Desktop starts, otherwise the picker stays empty until Desktop retries.
+
 ### VS Code BYOK custom endpoint
 
 Configure VS Code Stable with the currently selected SSO-backed CodeMie profile:

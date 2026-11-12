@@ -11,8 +11,14 @@ import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
+import {
+  PREFERRED_CLAUDE_MODELS,
+  selectDesktopClaudeModels,
+  toDesktopModels,
+  type DesktopCatalogEntry,
+  type DesktopModel,
+} from '@/providers/plugins/sso/sso.desktop-models.js';
 import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
-import { resolveTenantModelId } from './model-name-resolver.js';
 import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
@@ -23,12 +29,6 @@ const INFERENCE_KEYS = [
   'inferenceGatewayApiKey',
   'inferenceGatewayAuthScheme',
 ] as const;
-
-interface InferenceModelEntry {
-  name: string;
-  /** Display name Claude Desktop shows in the model picker instead of the raw ID. */
-  labelOverride?: string;
-}
 
 export interface ManagedMcpServerEntry {
   name: string;
@@ -46,38 +46,12 @@ interface ModelsListResponse {
   data?: Array<{ id?: string }>;
 }
 
-interface CodeMieLlmModel {
-  id?: string;
-  base_name?: string;
-  deployment_name?: string;
-}
-
-/**
- * Curated list of Claude models we expose by default.
- *
- * Each entry is matched against the gateway's `/v1/models` response either as
- * an exact ID or as `<entry>-<YYYYMMDD>` (the dated variant). The actual
- * resolved ID is what gets written to the Desktop config so the gateway
- * receives a model name it has registered.
- *
- * Opus, Sonnet, and Haiku entries are listed in descending preference
- * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
- * {@link selectDesktopClaudeModels} collapses each family to the single
- * highest-priority ID the gateway actually serves, so Desktop never shows more
- * than one Opus, Sonnet, or Haiku (matching the latest cloud Desktop lineup).
- */
-export const PREFERRED_CLAUDE_MODELS = [
-  'claude-opus-5-5',
-  'claude-opus-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-opus-4-6',
-  'claude-sonnet-5-5',
-  'claude-sonnet-5',
-  'claude-sonnet-4-6',
-  'claude-haiku-5-5',
-  'claude-haiku-4-5',
-] as const;
+export {
+  PREFERRED_CLAUDE_MODELS,
+  selectDesktopClaudeModels,
+  selectPreferredClaudeModels,
+  type DesktopModel,
+} from '@/providers/plugins/sso/sso.desktop-models.js';
 
 export const DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS = ['*'] as const;
 
@@ -86,9 +60,8 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 
 /**
  * Fetch the model list from the gateway's SSO-backed `/v1/llm_models?include_all=true`
- * endpoint and return the IDs of usable Claude-family models. When both canonical
- * and `-vertex` registrations exist, canonical IDs are preferred. When only vertex
- * registrations exist, those IDs are returned so vertex-only tenants can connect.
+ * endpoint and return the usable Claude-family models with their CodeMie names (see
+ * {@link toDesktopModels}).
  *
  * When `project` is set it is sent as `project_id`, so the backend narrows the list
  * to the models that project allows (the project's Models tab).
@@ -97,7 +70,7 @@ export async function fetchClaudeModels(
   proxyUrl: string,
   gatewayKey: string,
   project: string | undefined
-): Promise<string[]> {
+): Promise<DesktopModel[]> {
   const endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   try {
     logger.info(
@@ -133,7 +106,7 @@ export async function fetchClaudeModels(
             preferredModels: [...PREFERRED_CLAUDE_MODELS],
           })
         );
-        return [...PREFERRED_CLAUDE_MODELS];
+        return PREFERRED_CLAUDE_MODELS.map((id) => ({ id, isRouter: false }));
       }
       throw new ConfigurationError(
         response.status === 401
@@ -153,28 +126,19 @@ export async function fetchClaudeModels(
         `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
       );
     }
-    const json = await response.json() as ModelsListResponse | CodeMieLlmModel[];
-    const ids = Array.isArray(json)
-      ? json
-        .map((model) => model.id || model.base_name || model.deployment_name)
-        .filter((id): id is string => typeof id === 'string')
-      : (json.data ?? [])
-        .map((m) => m.id)
-        .filter((id): id is string => typeof id === 'string');
-    const allClaudeIds = ids.filter((id) => /^claude-/i.test(id));
-    const nonVertexClaudeIds = allClaudeIds.filter((id) => !/-vertex$/i.test(id));
-    const claudeIds = nonVertexClaudeIds.length > 0 ? nonVertexClaudeIds : allClaudeIds;
+    const json = await response.json() as ModelsListResponse | DesktopCatalogEntry[];
+    const entries: DesktopCatalogEntry[] = Array.isArray(json) ? json : (json.data ?? []);
+    const claudeModels = toDesktopModels(entries);
     logger.info(
       '[proxy] Gateway model discovery completed',
       ...sanitizeLogArgs({
         endpoint,
-        totalModelCount: ids.length,
-        totalClaudeModelCount: claudeIds.length,
-        availableClaudeModels: claudeIds,
-        usedVertexFallback: nonVertexClaudeIds.length === 0 && allClaudeIds.length > 0,
+        totalModelCount: entries.length,
+        totalClaudeModelCount: claudeModels.length,
+        availableClaudeModels: claudeModels.map((model) => model.id),
       })
     );
-    return claudeIds;
+    return claudeModels;
   } catch (error) {
     if (error instanceof ConfigurationError) {
       throw error;
@@ -192,102 +156,6 @@ export async function fetchClaudeModels(
       `Reason: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-}
-
-/**
- * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
- * model discovery response via {@link resolveTenantModelId} — exact match, a
- * dated variant (latest if multiple), or a `-vertex` variant, in that order.
- * Entries with no available match are dropped silently.
- *
- * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
- */
-export function selectPreferredClaudeModels(
-  available: string[],
-  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
-): string[] {
-  const resolved: string[] = [];
-  const missingPreferredModels: string[] = [];
-  for (const name of preferred) {
-    const match = resolveTenantModelId(name, available);
-    if (match) {
-      resolved.push(match);
-    } else {
-      missingPreferredModels.push(name);
-    }
-  }
-  logger.info(
-    '[proxy] Preferred Claude model selection completed',
-    ...sanitizeLogArgs({
-      preferredModels: [...preferred],
-      availableClaudeModels: available,
-      selectedModels: resolved,
-      missingPreferredModels,
-    })
-  );
-  return resolved;
-}
-
-const ROUTER_MODEL_PATTERN = /^claude-(.+-)?router(-.+)?$/i;
-
-function isRouterModel(id: string): boolean {
-  return ROUTER_MODEL_PATTERN.test(id);
-}
-
-/**
- * Desktop has no built-in display name for router aliases and would show the
- * raw ID, so derive one: `claude-router-premium` → `Router Premium`.
- */
-export function toInferenceModelEntry(id: string): InferenceModelEntry {
-  if (!isRouterModel(id)) return { name: id };
-  const labelOverride = id
-    .replace(/^claude-/i, '')
-    .split('-')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-  return { name: id, labelOverride };
-}
-
-/**
- * Build the exact model set Claude Desktop should be offered.
- *
- * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus, sonnet, and haiku families to a single entry each:
- * the first (highest-priority) ID that resolved. With preferred order
- * `opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, and
- * `haiku: 5.5 → 4-5` in {@link PREFERRED_CLAUDE_MODELS}, this exposes the
- * highest-priority model in each family when the gateway serves it and
- * otherwise falls back to the next-best available ID. Order is preserved.
- */
-export function selectDesktopClaudeModels(
-  available: string[],
-  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
-): string[] {
-  const resolved = selectPreferredClaudeModels(available, preferred);
-  // Router aliases (e.g. `claude-router-standard`, `claude-smart-router`) are not tied to a family, so
-  // they bypass the curated list and are always offered when the gateway serves them.
-  const routers = available.filter((id) => isRouterModel(id) && !resolved.includes(id));
-  let opusKept = false;
-  let sonnetKept = false;
-  let haikuKept = false;
-  return resolved.filter((id) => {
-    if (/^claude-opus-/i.test(id)) {
-      if (opusKept) return false;
-      opusKept = true;
-      return true;
-    }
-    if (/^claude-sonnet-/i.test(id)) {
-      if (sonnetKept) return false;
-      sonnetKept = true;
-      return true;
-    }
-    if (/^claude-haiku-/i.test(id)) {
-      if (haikuKept) return false;
-      haikuKept = true;
-      return true;
-    }
-    return true;
-  }).concat(routers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -863,9 +731,10 @@ export async function writeDesktopConfig(
     }
   }
 
-  // Discover available Claude models from the gateway — narrowed to the profile's
-  // project when one is set — and curate down to the preferred set (one model per
-  // family, plus router aliases) so the user doesn't have to type them in the GUI.
+  // Check the Claude models the profile's project offers Desktop, so a project with none
+  // fails here with a clear message. The list itself is not written: with no
+  // `inferenceModels` in its config Desktop asks the proxy's `GET /v1/models` on every
+  // start (DesktopModelsPlugin), so later changes on the project's Models tab reach it.
   const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
   if (discoveredModels.length === 0) {
     throw new ConfigurationError(
@@ -881,7 +750,6 @@ export async function writeDesktopConfig(
       'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
     );
   }
-  const inferenceModels: InferenceModelEntry[] = resolvedModels.map(toInferenceModelEntry);
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
   // failure we must NOT revoke previously-managed org entries (a transient backend
@@ -944,10 +812,9 @@ export async function writeDesktopConfig(
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
       discoveredModelCount: discoveredModels.length,
-      discoveredModels,
+      discoveredModels: discoveredModels.map((model) => model.id),
       resolvedModelCount: resolvedModels.length,
-      resolvedModels,
-      inferenceModelsWritten: inferenceModels.length > 0,
+      resolvedModels: resolvedModels.map((model) => model.id),
       managedMcpServerCount: managedMcpServers.length,
       seededDefaultCount: seedDefaults.length,
       displacedDefaultCount: displacedDefaults.length,
@@ -964,13 +831,14 @@ export async function writeDesktopConfig(
     delete existing[key];
   }
   delete existing.inferenceModels;
+  delete existing.modelDiscoveryEnabled;
   delete existing.coworkEgressAllowedHosts;
   delete existing.managedMcpServers;
 
   const merged = {
     ...existing,
     ...buildGatewayConfig(proxyUrl, gatewayKey),
-    ...(inferenceModels.length > 0 ? { inferenceModels: JSON.stringify(inferenceModels) } : {}),
+    modelDiscoveryEnabled: true,
     coworkEgressAllowedHosts: JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS]),
     managedMcpServers: JSON.stringify(managedMcpServers),
   };
@@ -981,8 +849,7 @@ export async function writeDesktopConfig(
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
-      inferenceModelsWritten: inferenceModels.length > 0,
-      resolvedModels,
+      resolvedModels: resolvedModels.map((model) => model.id),
       managedMcpServerCount: managedMcpServers.length,
       finalConfigKeys: Object.keys(merged),
     })
@@ -1114,6 +981,7 @@ export async function removeDesktopConfig(
     delete existing[key];
   }
   delete existing.inferenceModels;
+  delete existing.modelDiscoveryEnabled;
   delete existing.coworkEgressAllowedHosts;
 
   // Drop every server CodeMie manages (names recorded on earlier runs plus the bundled

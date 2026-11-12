@@ -1,4 +1,5 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
+import { isClaudeFamilyModel, isClaudeFamilyName } from '../../../utils/model-family.js';
 import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -30,14 +31,6 @@ const GPT_FAMILY_PATTERNS: RegExp[] = [
   /\bgpt\b/i,
 ];
 
-const CLAUDE_FAMILY_PATTERNS: RegExp[] = [
-  /claude/i,
-  /anthropic/i,
-  /sonnet/i,
-  /opus/i,
-  /haiku/i,
-];
-
 function getModelId(model: LlmModel): string | undefined {
   return model.deployment_name || model.base_name || model.label;
 }
@@ -57,7 +50,7 @@ export function isCopilotCompatibleModelName(modelName: string | undefined): mod
     return false;
   }
   return GPT_FAMILY_PATTERNS.some((pattern) => pattern.test(modelName))
-    || CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(modelName));
+    || isClaudeFamilyName(modelName);
 }
 
 function isCopilotCompatibleModel(model: LlmModel): boolean {
@@ -110,7 +103,7 @@ function rankModel(model: LlmModel): RankedCopilotModel {
   const preferredGptCodexBonus = /gpt[-_.]?5[-_.]?[23].*codex/i.test(searchText) ? 1 : 0;
   const preferredClaudeBonus = /claude[-_.]?(?:sonnet[-_.]?)?(?:4(?:[-_.]5|[-_.]6)?|5)(?:[-_.]|$)/i.test(searchText) ? 1 : 0;
   const gptFamilyBonus = GPT_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText)) ? 1 : 0;
-  const claudeFamilyBonus = CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText)) ? 1 : 0;
+  const claudeFamilyBonus = isClaudeFamilyModel(model) ? 1 : 0;
   const defaultBonus = model.default ? 1 : 0;
   const toolBonus = model.features?.tools === false ? 0 : 1;
   const streamingBonus = model.features?.streaming === false ? 0 : 1;

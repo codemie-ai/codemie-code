@@ -11,6 +11,13 @@ import {
   buildAuthHeaders
 } from '../../core/codemie-auth-helpers.js';
 import { isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
+import {
+  isClaudeFamilyModel,
+  isClaudeFamilyName,
+  isRouterModel,
+  routerTierTargets,
+  type ModelFamilyFields,
+} from '../../../utils/model-family.js';
 export { fetchCodeMieUserInfo };
 export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
 
@@ -105,10 +112,7 @@ export function buildModelLabelIndex(models: LlmModel[]): Map<string, string> {
   return labels;
 }
 
-/** Whether a catalog entry is a router: a Switchyard virtual router or a declared LiteLLM auto-router. */
-export function isRouterModel(model: LlmModel): boolean {
-  return model.is_router === true || model.litellm_router?.is_router === true;
-}
+export { isClaudeFamilyModel, isClaudeFamilyName, isRouterModel, routerTierTargets, type ModelFamilyFields };
 
 /**
  * Picker order: the selected entry, then routers, then everything else. Stable, so each group

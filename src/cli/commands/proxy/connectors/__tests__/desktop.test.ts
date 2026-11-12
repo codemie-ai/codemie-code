@@ -16,6 +16,7 @@ import {
   cloneManagedEntry,
   DEFAULT_MANAGED_MCP_SERVERS,
   describeManagedSettingsOverride,
+  type DesktopModel,
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
@@ -38,6 +39,11 @@ const LOOPBACK_GATEWAY_CONFIG = JSON.stringify({
   inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
   inferenceGatewayApiKey: 'codemie-proxy',
 });
+
+const ids = (models: DesktopModel[]) => models.map((model) => model.id);
+
+const selectDesktopIds = (available: string[]) =>
+  ids(selectDesktopClaudeModels(available.map((id) => ({ id, isRouter: false }))));
 
 // Mirrors the real gateway response shape — includes vertex/non-claude/dated
 // variants so we exercise the filter and resolver logic together.
@@ -227,7 +233,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
+    expect(ids(models)).toEqual([
       'claude-sonnet-4-5-20250929',
       'claude-4-5-sonnet',
       'claude-sonnet-5',
@@ -296,7 +302,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
+    expect(ids(models)).toEqual([
       'claude-opus-5-5',
       'claude-opus-5',
       'claude-opus-4-8',
@@ -328,7 +334,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
+    expect(ids(models)).toEqual([
       'claude-sonnet-4-5-vertex',
       'claude-sonnet-4-6-vertex',
     ]);
@@ -346,7 +352,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual(['claude-sonnet-4-6']);
+    expect(ids(models)).toEqual(['claude-sonnet-4-6']);
   });
 
   it('throws ConfigurationError with re-auth message when response is HTML (Keycloak redirect)', async () => {
@@ -379,7 +385,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toContain('claude-sonnet-4-6');
+    expect(ids(models)).toContain('claude-sonnet-4-6');
   });
 });
 
@@ -466,7 +472,7 @@ describe('selectPreferredClaudeModels', () => {
 
 describe('selectDesktopClaudeModels', () => {
   it('exposes Opus 5.5, Sonnet 5.5, and Haiku 5.5 when available', () => {
-    const result = selectDesktopClaudeModels([
+    const result = selectDesktopIds([
       'claude-sonnet-5',
       'claude-sonnet-5-5',
       'claude-opus-5',
@@ -482,7 +488,7 @@ describe('selectDesktopClaudeModels', () => {
   });
 
   it('collapses Haiku to a single highest-priority model', () => {
-    const result = selectDesktopClaudeModels([
+    const result = selectDesktopIds([
       'claude-haiku-4-5-20251001',
       'claude-haiku-5-5',
     ]);
@@ -490,7 +496,7 @@ describe('selectDesktopClaudeModels', () => {
   });
 
   it('exposes only Opus 4.8 when the gateway serves it', () => {
-    const result = selectDesktopClaudeModels([
+    const result = selectDesktopIds([
       'claude-sonnet-4-6',
       'claude-opus-4-8',
       'claude-opus-4-7',
@@ -505,7 +511,7 @@ describe('selectDesktopClaudeModels', () => {
   });
 
   it('falls back to the highest available opus when 4.8 is absent', () => {
-    const result = selectDesktopClaudeModels([
+    const result = selectDesktopIds([
       'claude-sonnet-4-6',
       'claude-opus-4-7',
       'claude-opus-4-6-20260205',
@@ -519,19 +525,19 @@ describe('selectDesktopClaudeModels', () => {
   });
 
   it('uses the next opus down when only 4.6 is available', () => {
-    expect(selectDesktopClaudeModels(['claude-opus-4-6-20260205']))
+    expect(selectDesktopIds(['claude-opus-4-6-20260205']))
       .toEqual(['claude-opus-4-6-20260205']);
   });
 
   it('keeps a single dated Opus 4.8 over older canonical opus ids', () => {
-    expect(selectDesktopClaudeModels([
+    expect(selectDesktopIds([
       'claude-opus-4-8-20260601',
       'claude-opus-4-7',
     ])).toEqual(['claude-opus-4-8-20260601']);
   });
 
   it('returns no opus entry when the gateway serves none', () => {
-    expect(selectDesktopClaudeModels(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
+    expect(selectDesktopIds(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
       .toEqual(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
   });
 });
@@ -550,7 +556,7 @@ describe('writeDesktopConfig', () => {
     statePath = join(baseDir, 'managed-state.json');
     await rm(baseDir, { recursive: true, force: true });
     originalFetch = globalThis.fetch;
-    // Default: stub fetch to return our model list so writeDesktopConfig can populate inferenceModels.
+    // Default: stub fetch to return our model list so writeDesktopConfig can check the catalog.
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
@@ -579,31 +585,22 @@ describe('writeDesktopConfig', () => {
     expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
   });
 
-  it('writes only the models the profile project allows (routers-only project)', async () => {
-    const fetchSpy = vi.fn().mockImplementation(async (input: URL | string) => {
-      const url = new URL(String(input));
-      const all = [
-        { base_name: 'claude-opus-5-5' },
-        { base_name: 'claude-sonnet-5-5' },
-        { base_name: 'claude-haiku-5-5' },
-        { base_name: 'claude-router-standard' },
-        { base_name: 'claude-router-premium' },
-      ];
-      const body = url.searchParams.get('project_id') === 'router-demo'
-        ? all.filter((m) => m.base_name.includes('router'))
-        : all;
-      return { ok: true, headers: { get: () => 'application/json' }, json: async () => body };
+  it('checks the profile project\'s models and leaves the list to Desktop discovery', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'claude-router-standard' }, { base_name: 'claude-router-premium' }],
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
     const written = await writeDesktopConfig(
       'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, 'router-demo'
     );
+    expect(new URL(String(fetchSpy.mock.calls[0][0])).searchParams.get('project_id')).toBe('router-demo');
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-router-standard', labelOverride: 'Router Standard' },
-      { name: 'claude-router-premium', labelOverride: 'Router Premium' },
-    ]);
+    // Desktop asks the proxy's GET /v1/models on every start instead of reading a fixed list.
+    expect(config.inferenceModels).toBeUndefined();
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('explains when the profile project allows no Claude models', async () => {
@@ -675,31 +672,19 @@ describe('writeDesktopConfig', () => {
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
   });
 
-  it('populates inferenceModels with the curated preferred Claude set (single opus)', async () => {
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
-    const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-opus-4-7' },
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-haiku-4-5-20251001' },
-        ]);
-  });
-
-  it('replaces existing inferenceModels entries — does not merge user-added ones', async () => {
+  it('removes a model list written by an earlier connect, so Desktop discovers models', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
-      inferenceModels: [{ name: 'my-custom-model' }, { name: 'claude-sonnet-4-5-20250929' }],
+      inferenceModels: JSON.stringify([{ name: 'claude-sonnet-4-5-20250929' }]),
+      modelDiscoveryEnabled: false,
     }), 'utf-8');
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-opus-4-7' },
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-haiku-4-5-20251001' },
-        ]);
+    expect(config.inferenceModels).toBeUndefined();
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('fails fast when discovery returns nothing', async () => {
@@ -726,9 +711,7 @@ describe('writeDesktopConfig', () => {
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6-vertex' },
-    ]);
+    expect(config.inferenceProvider).toBe('gateway');
   });
 
   it('overwrites the four inference keys with new values', async () => {
