@@ -4,8 +4,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.8] - 2026-11-12
+
 ### Added
 
+- `codemie analytics sync` delivers each developer's priced analytics report once a day to a Power Automate webhook, a git repository, or both; a team lead connects the team with `codemie analytics sync bootstrap` and each developer registers the daily job with the command it prints
 - Claude Desktop Cowork sessions now appear on the CLI Analytics tab (turns, tools, subagents, tokens, cost) once Claude Desktop is connected with `codemie proxy connect --claude-desktop`; sessions that ran while the proxy was stopped are sent when it runs again, up to 7 days back. `codemie proxy analytics disable` and `exclude` apply to them
 - `codemie proxy status` shows whether Claude Desktop sessions are being collected (`Desktop: collecting` / `NOT collecting` with the command that fixes it) and the latest analytics data that was not stored (`Last dropped: <reason>`); `codemie proxy analytics status` shows the latter too
 
@@ -20,6 +23,12 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- Cookie-only SSO credentials are no longer expired locally
+- `codemie self-update` warns when the shell still resolves an older `codemie` install
+- Any Pi 1.x release is accepted, and `codemie install pi` installs the latest Pi release
+- Managed and native sessions select the CodeMie project the same way
+- The claude-code-otlp endpoint is refreshed before Claude Code starts
+- Agent tool results in Claude Code sessions carry the forked agent's id in analytics
 - With Claude Desktop connected, connecting another client, `codemie proxy start`, `codemie proxy restart` or a Claude Code hook no longer restarts the proxy outside Desktop mode, which silently stopped the collection of Claude Desktop sessions
 - The route of a model request (`x-litellm-model-name`) is no longer lost from a streamed answer whose first event is split across network chunks, or from a compressed non-streaming answer, so the cost of such a request is priced by its route
 - An analytics session discarded for having no CodeMie project is now logged and shown by `codemie proxy status`
