@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { isSessionRejection401 } from '../session-rejection.js';
 
 /**
@@ -47,5 +48,43 @@ describe('isSessionRejection401', () => {
     ['a missing status', undefined],
   ])('is false for %s even with the session-rejection body', (_label, status) => {
     expect(isSessionRejection401(r(status), SESSION_BODY)).toBe(false);
+  });
+
+  describe('encoded bodies', () => {
+    const encoded = (encoding: string | string[], body: Buffer) => ({
+      statusCode: 401,
+      headers: { 'content-encoding': encoding },
+      body,
+    });
+    const raw = Buffer.from(SESSION_BODY, 'utf-8');
+    const litellm = Buffer.from(LITELLM_BODY, 'utf-8');
+
+    it.each([
+      ['gzip', 'gzip', gzipSync(raw)],
+      ['x-gzip', 'x-gzip', gzipSync(raw)],
+      ['deflate', 'deflate', deflateSync(raw)],
+      ['brotli', 'br', brotliCompressSync(raw)],
+      ['an uppercase header value', 'GZIP', gzipSync(raw)],
+      ['identity', 'identity', raw],
+      ['stacked encodings, undone in reverse', ['gzip', 'br'], brotliCompressSync(gzipSync(raw))],
+    ])('is true for a session rejection encoded with %s', (_label, encoding, body) => {
+      const { body: payload, ...response } = encoded(encoding, body);
+      expect(isSessionRejection401(response, payload)).toBe(true);
+    });
+
+    it('is false for a gzip-encoded body that is not the session rejection', () => {
+      const { body, ...response } = encoded('gzip', gzipSync(litellm));
+      expect(isSessionRejection401(response, body)).toBe(false);
+    });
+
+    it.each([
+      ['corrupt gzip data', 'gzip', Buffer.from('not gzip data')],
+      ['an unsupported encoding', 'zstd-unknown', raw],
+      ['a header that does not match the bytes', 'gzip', raw],
+      ['a body that expands past the cap', 'gzip', gzipSync(Buffer.alloc(2 * 1024 * 1024, 0x20))],
+    ])('is false, without throwing, for %s', (_label, encoding, body) => {
+      const { body: payload, ...response } = encoded(encoding, body);
+      expect(isSessionRejection401(response, payload)).toBe(false);
+    });
   });
 });

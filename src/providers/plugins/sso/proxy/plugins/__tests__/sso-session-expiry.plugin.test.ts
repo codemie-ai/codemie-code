@@ -1,4 +1,5 @@
 import { IncomingMessage } from 'http';
+import { gzipSync } from 'node:zlib';
 import { Readable } from 'stream';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PluginContext, ProxyInterceptor, UpstreamResponseTools } from '../types.js';
@@ -637,6 +638,36 @@ describe('SSOSessionExpiryPlugin', () => {
       expect(tools.fromBuffer).toHaveBeenCalledWith(original, LITELLM_401_BODY);
       expect((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toBe(LITELLM_401_BODY);
       expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    });
+
+    it('recovers from a gzip-encoded session rejection', async () => {
+      const interceptor = await interceptorWithStore({ cookies: { session: 'same' } });
+      const tools = createTools();
+      tools.readBody.mockResolvedValue(gzipSync(SESSION_REJECTION_BODY));
+
+      const result = await interceptor.onUpstreamResponse!(
+        contextWith({ session: 'same' }),
+        response(401, { ...UNAUTHORIZED, 'content-encoding': 'gzip' }),
+        tools
+      );
+
+      expect(result.statusCode).toBe(401);
+      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a gzip-encoded non-session 401 through with its original compressed bytes', async () => {
+      const interceptor = await interceptorWithStore({ cookies: { session: 'same' } });
+      const tools = createTools();
+      const compressed = gzipSync(LITELLM_401_BODY);
+      tools.readBody.mockResolvedValue(compressed);
+      const original = response(401, { ...UNAUTHORIZED, 'content-encoding': 'gzip' });
+
+      const result = await interceptor.onUpstreamResponse!(contextWith({ session: 'same' }), original, tools);
+
+      expect(tools.fromBuffer).toHaveBeenCalledWith(original, compressed);
+      expect((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toBe(compressed);
       expect(startDetachedSsoLogin).not.toHaveBeenCalled();
     });
 
