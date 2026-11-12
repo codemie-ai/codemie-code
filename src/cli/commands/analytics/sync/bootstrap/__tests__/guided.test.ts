@@ -411,7 +411,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
         true, // open browser
         true // press enter
       ],
-      select: ['restart', 'windows', 'default']
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -425,7 +425,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, 'UTC', VALID_TRIGGER_URL],
       confirm: [true, true, true, true],
-      select: ['restart', 'windows', 'default']
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -446,7 +446,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
       input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
       // channel:yes, keep saved folder:no, pasted folder confirm:yes, open browser, press enter
       confirm: [true, false, true, true, true],
-      select: ['restart', 'windows', 'default']
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -459,7 +459,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
   it('declining reuse discards the saved webhook before steps 1-4 run again', async () => {
     await saveBootstrapState(COMPLETE_STATE, statePath);
     // Start over — then the scripted prompter runs dry at step 1, as if the lead quit there.
-    const prompt = createScriptedPrompt({ select: ['restart'] });
+    const prompt = createScriptedPrompt({ select: ['restart', 'webhook'] });
     const deps = createDeps(prompt);
 
     await expect(runGuided(deps)).rejects.toThrow(/ran out/);
@@ -1041,19 +1041,34 @@ describe('runGuided — delivery target selection', () => {
     expect(headings(deps)).toEqual(['Step 5 of 5 · Developers']);
   });
 
-  it('declining to reuse a saved git-only state restarts at the git repository step, never re-asking the target', async () => {
+  it('starting over on a saved git-only state re-asks the target, offering git, and keeps git-only when confirmed', async () => {
     await saveBootstrapState(GIT_ONLY_STATE, statePath);
     const prompt = createScriptedPrompt({
       input: [VALID_GIT_REPO, '', ''],
-      select: ['restart', 'never', 'default']
+      select: ['restart', 'git', 'never', 'default']
     });
     const deps = createDeps(prompt);
 
     expect(await runGuided(deps)).toBe(0);
 
-    expect(headings(deps)[0]).toBe('Step 2 of 5 · Git repository');
+    expect(prompt.select).toHaveBeenNthCalledWith(2, expect.stringContaining('deliver'), expect.any(Array), 'git');
+    expect(headings(deps).slice(0, 2)).toEqual(['Step 1 of 5 · Delivery target', 'Step 2 of 5 · Git repository']);
     // The stale git answers were discarded, so the saved branch is not offered back.
     expect(prompt.input).toHaveBeenNthCalledWith(2, expect.stringContaining('Branch'), undefined);
+  });
+
+  it('starting over on a saved git-only state can add the webhook target, asking its steps from the first', async () => {
+    await saveBootstrapState(GIT_ONLY_STATE, statePath);
+    // Start over, choose both — then the prompter runs dry at the Teams channel step.
+    const prompt = createScriptedPrompt({ select: ['restart', 'both'] });
+    const deps = createDeps(prompt);
+
+    await expect(runGuided(deps)).rejects.toThrow(/ran out/);
+
+    expect(prompt.select).toHaveBeenNthCalledWith(2, expect.stringContaining('deliver'), expect.any(Array), 'git');
+    expect(headings(deps)).toEqual(['Step 1 of 10 · Delivery target', 'Step 2 of 10 · Teams channel']);
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.targets).toEqual({ webhook: true, git: true });
   });
 
   it('a saved git-only state with an untested repository resumes at the git step, discarding the stale git answers', async () => {

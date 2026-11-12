@@ -830,7 +830,8 @@ skip the test.
 **Saved setup:** a re-run shows masked settings and offers **Reuse** (re-checks every chosen
 target live, then prints the command), **Change targets** (add or turn off a target; saved data
 of a target turned off is kept for later, but is left out of the printed command and of reuse
-checks) or **Start over**. State files from earlier CLI versions read as webhook-only.
+checks) or **Start over** (asks for the delivery targets again, offering the saved choice,
+then walks the steps with the saved answers as defaults). State files from earlier CLI versions read as webhook-only.
 
 **Non-interactive mode** (`--webhook`, `--webhook-b64` and/or `--git-repo`): no prompts, no
 TTY; validates options, checks every given target, prints command on success; fails with reason

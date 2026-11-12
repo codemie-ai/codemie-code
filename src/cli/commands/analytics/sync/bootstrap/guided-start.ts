@@ -22,17 +22,23 @@ const TARGET_CHOICES: { value: TargetChoice; name: string }[] = [
   { value: 'both', name: 'Both' }
 ];
 
+/** The menu choice that selects exactly `targets`. */
+function choiceOf(targets: TargetSelection): TargetChoice {
+  return targets.webhook && targets.git ? 'both' : targets.git ? 'git' : 'webhook';
+}
+
 /**
- * The "Delivery target" step, asked on a fresh run and on a saved run's "Change targets".
+ * The "Delivery target" step, asked on a fresh run and on a saved run's "Change targets" or
+ * "Start over" (which offer the saved selection as `def`).
  * Its heading's "of M" depends on the answer itself — the filtered list is not
  * known until the lead picks — so, unlike every other step, it asks first and prints its
  * heading afterwards, computed from the chosen selection, as a one-line confirmation.
  */
-async function stepTarget(deps: BootstrapDeps): Promise<TargetSelection> {
+async function stepTarget(deps: BootstrapDeps, def: TargetChoice = 'webhook'): Promise<TargetSelection> {
   const choice = await deps.prompt.select(
     'Where should developer machines deliver their analytics reports?',
     TARGET_CHOICES,
-    'webhook'
+    def
   );
   const targets: TargetSelection = { webhook: choice !== 'git', git: choice !== 'webhook' };
 
@@ -133,7 +139,7 @@ type SavedSetupChoice = 'reuse' | 'change' | 'restart';
 const SAVED_SETUP_CHOICES: { value: SavedSetupChoice; name: string }[] = [
   { value: 'reuse', name: 'Reuse them: re-check each delivery target, then print the install command' },
   { value: 'change', name: 'Change targets: keep these answers, add or turn off a delivery target' },
-  { value: 'restart', name: 'Start over: go through the steps again, with these answers as defaults' }
+  { value: 'restart', name: 'Start over: choose the targets and go through the steps again, with these answers as defaults' }
 ];
 
 /** The resume point for re-running from `startId`, after {@link discardStaleAnswers}. */
@@ -198,7 +204,7 @@ function firstStepOf(steps: readonly StepDescriptor[], kind: TargetKind): string
  * goes straight to the Developers step.
  */
 async function resolveChangeTargets(deps: BootstrapDeps, loaded: BootstrapState): Promise<StartPoint> {
-  const targets = await stepTarget(deps);
+  const targets = await stepTarget(deps, choiceOf(loaded.targets));
   const changed: BootstrapState = { ...loaded, targets };
   await saveBootstrapState(changed, deps.statePath);
 
@@ -225,15 +231,24 @@ async function resolveChangeTargets(deps: BootstrapDeps, loaded: BootstrapState)
 }
 
 /**
+ * "Start over": re-asks the target choice (the saved selection is the default), keeps every
+ * saved answer to offer back as a step default, and restarts at the first step after the
+ * target choice for the new selection. A target turned off keeps its saved data, as in
+ * "Change targets".
+ */
+async function resolveStartOver(deps: BootstrapDeps, loaded: BootstrapState): Promise<StartPoint> {
+  const targets = await stepTarget(deps, choiceOf(loaded.targets));
+  return resumeAt(deps, { ...loaded, targets }, stepsFor(targets)[1].id);
+}
+
+/**
  * The start logic (spec.md "Start logic"):
  * - Nothing saved: {@link resolveFreshStart}.
  * - A saved state (whichever targets it has) shows a masked summary and offers Reuse /
  *   Change targets / Start over (AC15, AC21):
  *   - Reuse: {@link resolveReuse}.
  *   - Change targets: {@link resolveChangeTargets}.
- *   - Start over: restarts at the filtered list's first step after the target choice — the
- *     saved `targets` are kept, never re-asked — with the saved answers offered back, after
- *     {@link discardStaleAnswers} drops what the re-run makes stale.
+ *   - Start over: {@link resolveStartOver}.
  */
 export async function resolveStartStep(deps: BootstrapDeps, loaded: BootstrapState | null): Promise<StartPoint> {
   if (loaded === null) {
@@ -252,5 +267,5 @@ export async function resolveStartStep(deps: BootstrapDeps, loaded: BootstrapSta
   if (choice === 'change') {
     return resolveChangeTargets(deps, loaded);
   }
-  return resumeAt(deps, loaded, stepsFor(loaded.targets)[1].id);
+  return resolveStartOver(deps, loaded);
 }
