@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
-import { SPOOL_STREAMS, statusFile, type SpoolStream } from './spool-paths.js';
+import { OTEL_JSON_STREAMS, OTEL_STREAMS, SPOOL_STREAMS, statusFile, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { STOP_REASONS, type StopReason } from '@/agents/core/evidence/stop-marker.js';
 import {
@@ -44,6 +44,22 @@ export interface SessionStatus {
    * for any bytes that are still pending or appended afterwards.
    */
   endedAt?: number;
+  /**
+   * The latest forwarded `SessionEnd` (`endedAt` keeps the first). A reopen that already worked is ended
+   * again; bytes written after this time are the next resume's (see reopen-hold.ts).
+   */
+  lastEndedAt?: number;
+  /**
+   * Size of each OTEL spool file when that `SessionEnd` was forwarded: bytes before it belong to the run
+   * that ended, bytes after it to a reopen. Lets the hold tell the reopen's startup records from records of
+   * the earlier run that are still unsent.
+   */
+  endedSizes?: Partial<Record<SpoolStream, number>>;
+  /**
+   * When the proxy saw a reopened (resumed) session do real work, before any hook pass said so. Lets the
+   * hold of the session's startup records stay released across a daemon restart (see reopen-hold.ts).
+   */
+  reopenWorkAt?: number;
   /** Project bound to the session: first usable name seen on a hook, original spelling, set once. */
   project?: string;
   /** Distinct project names seen once the session became ambiguous. Sticky: nothing is sent. */
@@ -304,6 +320,23 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (endedAt > 0) {
     status.endedAt = endedAt;
   }
+  const lastEndedAt = toOffset(source['lastEndedAt']);
+  if (lastEndedAt > 0) {
+    status.lastEndedAt = lastEndedAt;
+  }
+  const endedSizes = source['endedSizes'];
+  if (typeof endedSizes === 'object' && endedSizes !== null) {
+    const sizes: Partial<Record<SpoolStream, number>> = {};
+    for (const stream of SPOOL_STREAMS) {
+      const size = toOffset((endedSizes as Record<string, unknown>)[stream]);
+      if (stream !== 'hooks' && size > 0) sizes[stream] = size;
+    }
+    if (Object.keys(sizes).length > 0) status.endedSizes = sizes;
+  }
+  const reopenWorkAt = toOffset(source['reopenWorkAt']);
+  if (reopenWorkAt > 0) {
+    status.reopenWorkAt = reopenWorkAt;
+  }
   const project = source['project'];
   if (typeof project === 'string' && isSendableProjectName(project)) {
     status.project = project;
@@ -396,8 +429,22 @@ export async function updateStatus(
 }
 
 export async function markSessionEnded(sessionId: string): Promise<void> {
+  // Sizes first, outside the lock: a stat must not hold it.
+  const sizes: Partial<Record<SpoolStream, number>> = {};
+  for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
+    try {
+      const { size } = await stat(streamFile(sessionId, stream));
+      if (size > 0) sizes[stream] = size;
+    } catch {
+      // No file for this stream.
+    }
+  }
   await updateStatus(sessionId, (status) => {
-    status.endedAt ??= Date.now();
+    const now = Date.now();
+    status.endedAt ??= now;
+    status.lastEndedAt = now;
+    if (Object.keys(sizes).length > 0) status.endedSizes = sizes;
+    else delete status.endedSizes;
   });
 }
 

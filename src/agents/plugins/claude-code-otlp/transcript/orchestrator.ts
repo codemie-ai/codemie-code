@@ -32,11 +32,14 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
+import { lookupIsCostly, mayHoldCopiedLines, resolveInherited } from './continuation.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   acquireParseStateLock,
+  isReopenedIdle,
   loadParseState,
   saveParseState,
+  withParseStateLock,
   type TranscriptParseState,
   type OpenUsageRequest,
 } from './parse-state.js';
@@ -99,9 +102,26 @@ type MainTranscriptDerivationTrigger = MainTranscriptTrigger | 'PostCompact';
 export interface TranscriptPass {
   events: Record<string, unknown>[];
   finalize: (accepted: boolean) => Promise<void>;
+  /** The session was reopened by a `resume` and has shown no activity of its own yet: the caller
+   *  must not forward its lifecycle event (and `events` is empty). Absent = forward as usual. */
+  suppressLifecycle?: boolean;
 }
 
 const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
+
+/**
+ * What a pass that failed (the lock wait timed out, the derivation threw) falls back to. The caller then forwards the
+ * raw hook event, which for a session reopened without a prompt would stamp the reopen time on it (EPMCDME-16993): such
+ * a session stays silent here too, as after a pass that succeeded. Read without the lock; a state that cannot be read
+ * is not idle, so the hook is forwarded as before.
+ */
+async function failedPass<T extends TranscriptPass>(sessionId: string, empty: T): Promise<T> {
+  try {
+    return (await isSessionReopenedIdle(sessionId)) ? { ...empty, suppressLifecycle: true } : empty;
+  } catch {
+    return empty;
+  }
+}
 
 /**
  * Maximum time `openPostCompactPass` waits lock-free for `compact_boundary` lines to land.
@@ -120,6 +140,8 @@ const COMPACTION_SETTLE_INTERVAL_MS = 10_000;
 interface CompactionScan {
   compactions: Compaction[];
   offset: number;
+  /** Uuids of lines a continued session copied from its parent: their boundaries are not its own. */
+  excluded?: ReadonlySet<string>;
 }
 
 /**
@@ -153,7 +175,9 @@ async function scanCompactions(transcriptPath: string, scan: CompactionScan): Pr
   for (const line of lines) {
     if (!line.includes('compact_boundary')) continue;
     try {
-      boundaryLines.push(JSON.parse(line) as SignalLine);
+      const parsed = JSON.parse(line) as SignalLine & { uuid?: unknown };
+      if (typeof parsed.uuid === 'string' && scan.excluded?.has(parsed.uuid)) continue;
+      boundaryLines.push(parsed);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
@@ -192,9 +216,10 @@ function isCompactionNewer(candidate: Compaction, lastEnd: string): boolean {
 async function waitForCompactionsToSettle(
   transcriptPath: string,
   afterEnd: string,
-  waitBudgetMs: number
+  waitBudgetMs: number,
+  excluded: ReadonlySet<string> = new Set()
 ): Promise<CompactionScan> {
-  const scan: CompactionScan = { compactions: [], offset: 0 };
+  const scan: CompactionScan = { compactions: [], offset: 0, excluded };
   const deadline = Date.now() + waitBudgetMs;
   let previousSignature: string | undefined;
   let stableSince: number | undefined;
@@ -237,6 +262,8 @@ interface ContentBlock {
 
 interface TranscriptLine extends SignalLine {
   gitBranch?: string;
+  uuid?: string;
+  message?: { content?: unknown; model?: unknown };
 }
 
 /**
@@ -323,6 +350,28 @@ function findSkillInvocation(parsed: TranscriptLine): string {
   return '';
 }
 
+/** A user line that only records a local slash command or its output (`/exit`, `/model`, ...): no model work behind it. */
+function isLocalCommandTurn(parsed: TranscriptLine): boolean {
+  if (parsed.type !== 'user') return false;
+  const content = parsed.message?.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? String((content.find((block) => (block as { type?: unknown } | null)?.type === 'text') as { text?: unknown } | undefined)?.text ?? '')
+        : '';
+  return /^\s*<(command-name|command-message|local-command-)/.test(text);
+}
+
+/**
+ * Work the user did: a real assistant answer or a genuine prompt. Synthetic placeholders, local
+ * commands and the bookkeeping records Claude Code appends when it opens a session are not.
+ */
+function isOwnActivityLine(line: TranscriptLine): boolean {
+  if (line.type === 'assistant') return !isSyntheticModel(String(line.message?.model ?? ''));
+  return isGenuineUserTurn(line) && !isLocalCommandTurn(line);
+}
+
 /**
  * Recompute the full-session summary accumulator, named-invocation counts, and session start
  * time from byte 0 of the main transcript.
@@ -351,12 +400,14 @@ async function buildFullAccumulator(
   transcriptPath: string,
   final: boolean,
   extra: readonly SubagentFile[],
-  pass: PassSnapshot
+  pass: PassSnapshot,
+  excluded: ReadonlySet<string> = new Set()
 ): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
   endedAt: string;
+  hasOwnLines: boolean;
 }> {
   const acc = emptyAccumulator();
 
@@ -364,18 +415,31 @@ async function buildFullAccumulator(
   try {
     raw = await readFile(transcriptPath, 'utf-8');
   } catch {
-    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '' };
+    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '', hasOwnLines: false };
   }
 
-  const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
+  // Lines a continued session copied from its parent are not its own work: dropped here so no
+  // summary figure (models, tools, turns, timestamps) includes them. A copy is told by its uuid,
+  // but Claude Code also copies lines without one (`queue-operation`, ...) that carry a timestamp,
+  // so for a continuation everything before the first own line with a uuid is a copy too.
+  const rawLines: string[] = [];
   const allLines: TranscriptLine[] = [];
+  let ownStarted = excluded.size === 0;
 
-  for (const line of rawLines) {
+  for (const line of raw.split('\n')) {
+    if (line.trim().length === 0) continue;
     try {
-      allLines.push(JSON.parse(line) as TranscriptLine);
+      const parsed = JSON.parse(line) as TranscriptLine;
+      if (typeof parsed?.uuid === 'string' && excluded.has(parsed.uuid)) continue;
+      if (!ownStarted) {
+        if (typeof parsed?.uuid !== 'string') continue;
+        ownStarted = true;
+      }
+      allLines.push(parsed);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
+    rawLines.push(line);
   }
   const parsedLines = keepFirstByUuid(allLines.filter(isCountedTranscriptLine));
 
@@ -452,7 +516,11 @@ async function buildFullAccumulator(
   const startedAt = firstTimestamp(parsedLines);
   const endedAt = firstTimestamp([...parsedLines].reverse());
 
-  return { acc, named, startedAt, endedAt };
+  // Own activity is the bar the usage pass uses: a real answer or a genuine prompt. The synthetic
+  // placeholder and local-command lines written when a continuation is opened and closed are not.
+  const hasOwnLines = parsedLines.some(isOwnActivityLine);
+
+  return { acc, named, startedAt, endedAt, hasOwnLines };
 }
 
 /**
@@ -483,6 +551,57 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
     if (isCountedTranscriptLine(parsed)) keepFirstByUuid([parsed], seen);
   }
   return seen;
+}
+
+/** Lookups that found no parent before a session is taken to have none (EPMCDME-16992). */
+const MAX_PARENT_LOOKUPS = 3;
+
+/**
+ * The uuids a continued session copied from its parent transcript (EPMCDME-16992), kept in `state`.
+ * A found parent is final. A lookup that found nothing, complete or not, is repeated on the next passes (at
+ * most {@link MAX_PARENT_LOOKUPS} of them), because the parent's `continued-in` record may not be
+ * flushed yet on the first pass and an incomplete scan (unreadable directory or sibling, more
+ * candidates than the scan covers, the time budget) may succeed on a later one. After that the session is
+ * taken to have no parent, so the scan, which runs under the parse-state lock, cannot repeat for good.
+ * Lines already reported before a late find stay reported, but every later event and the summary
+ * (rebuilt from the whole transcript) exclude the copies. Empty for a session with no parent.
+ *
+ * In a project directory with more than 200 transcripts the scan stays incomplete and would repeat on every
+ * pass; there, a transcript with no line older than the session's own start (by 15 seconds) is taken for one with
+ * no copies and skips it. Elsewhere the scan always runs: it is complete after the first pass, so a skip would
+ * save nothing and could miss the parent of a young one.
+ * Known limits: a continuation in such a directory whose parent is younger than 15 seconds is not detected, and a
+ * first pass that runs before the parent's record is on disk reports the copied lines.
+ */
+async function ensureInherited(
+  state: TranscriptParseState,
+  sessionId: string,
+  transcriptPath: string
+): Promise<ReadonlySet<string>> {
+  if (
+    !state.inheritedResolved &&
+    (await lookupIsCostly(transcriptPath)) &&
+    !(await mayHoldCopiedLines(transcriptPath, state.sessionStartedAt))
+  ) {
+    // Costly lookup and no line older than the session itself: nothing was copied, the scan would only cost time.
+    state.inheritedResolved = true;
+  }
+  if (!state.inheritedResolved) {
+    const found = await resolveInherited(transcriptPath, sessionId);
+    const uuids = found?.uuids;
+    if (found && uuids && uuids.length > 0) {
+      state.inheritedUuids = uuids;
+      if (found.agentIds.length > 0) state.inheritedAgentIds = found.agentIds;
+      state.inheritedResolved = true;
+    } else {
+      // Every attempt that ended without a parent counts, complete or not: an incomplete scan (a crowded folder, an
+      // entry that cannot be read, the time budget) would otherwise repeat on every pass, under the lock, for good.
+      const previous = Number.isFinite(state.inheritedLookups) ? (state.inheritedLookups as number) : 0;
+      state.inheritedLookups = previous + 1;
+      if (state.inheritedLookups >= MAX_PARENT_LOOKUPS) state.inheritedResolved = true;
+    }
+  }
+  return new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
 }
 
 function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
@@ -545,6 +664,9 @@ async function deriveMainEvents(
     ? new Set<string>(state.seenMessageUuids)
     : await seedSeenUuids(transcriptPath, state.mainOffset);
   const seenUuids = seeded ?? new Set<string>();
+  const inherited = await ensureInherited(state, sessionId, transcriptPath);
+  for (const uuid of inherited) seenUuids.add(uuid);
+  let ownActivity = false;
   for (const line of lines) {
     let rawGitBranch = '';
     let isUserLine = false;
@@ -570,6 +692,13 @@ async function deriveMainEvents(
     }
 
     const parsed = parseUsageLine(line, 'main', '', '', '');
+    // Only work the user did counts: a real assistant answer or a genuine prompt. Records Claude Code
+    // appends on a reopen (hook attachments, mode / permission-mode / last-prompt lines) and its
+    // synthetic placeholder answers are not activity.
+    // Read from the line itself: `parsed` is null for a line without usage or ids.
+    if (head && isOwnActivityLine(head)) {
+      ownActivity = true;
+    }
     if (parsed) {
       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
@@ -588,22 +717,44 @@ async function deriveMainEvents(
   state.mainOffset = nextOffset;
   if (seeded) state.seenMessageUuids = [...seenUuids];
 
-  for (const key of touchedKeys) {
-    const request = state.openRequests[key];
-    // usageRequestKey isolates API-error rows even when request id and resolved model match a
-    // normal request, so suppressing one cannot hide that normal request from downstream.
-    if (!request.isApiError) {
-      events.push(buildUsageRequestEvent(sessionId, request));
+  // A reopened session stays silent until it has done something: opening it must not change its
+  // analytics (EPMCDME-16993).
+  if (state.reopened && ownActivity) state.reopenActive = true;
+  if (isReopenedIdle(state)) return [];
+
+  // Same for a continuation: until it has work of its own, a synthetic placeholder or a local command
+  // is all it holds, and reporting that would show the session as active.
+  if (inherited.size > 0 && ownActivity) state.continuationActive = true;
+  const holdsOnlyCopies = inherited.size > 0 && !state.continuationActive;
+  const summarises = trigger === 'Stop' || trigger === 'SessionEnd';
+  if (holdsOnlyCopies && !summarises) return [];
+
+  // A continuation whose parent was found only now has nothing new in this pass, yet its work may have been read
+  // (and reported) by an earlier pass that did not know the parent: the summary below decides from the whole
+  // transcript, so it must still be reached. Requests of this pass are not reported while only copies are held.
+  if (!holdsOnlyCopies) {
+    for (const key of touchedKeys) {
+      const request = state.openRequests[key];
+      // usageRequestKey isolates API-error rows even when request id and resolved model match a
+      // normal request, so suppressing one cannot hide that normal request from downstream.
+      if (!request.isApiError) {
+        events.push(buildUsageRequestEvent(sessionId, request));
+      }
     }
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(
+    const { acc, named, startedAt, endedAt, hasOwnLines } = await buildFullAccumulator(
       transcriptPath,
       trigger === 'SessionEnd',
       deferredCandidates(state),
-      pass
+      pass,
+      inherited
     );
+    // A continued session with no work of its own has nothing to summarise: the figures would
+    // otherwise be the parent's, stamped with the parent's timestamps.
+    if (inherited.size > 0 && !hasOwnLines) return events;
+    if (inherited.size > 0) state.continuationActive = true; // the transcript holds work of its own
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -654,6 +805,8 @@ function finalizeOf(
 export interface SessionStartPass extends TranscriptPass {
   sessionEnvFields: SessionEnvFields;
   gitHeadStart: string;
+  /** A `resume` of a session whose start was already recorded: nothing new to announce. */
+  reopened?: boolean;
 }
 
 /**
@@ -684,12 +837,24 @@ export interface SessionStartPass extends TranscriptPass {
 export async function openSessionStartPass(
   sessionId: string,
   gitHeadStart: string,
-  sessionEnvFields: SessionEnvFields
+  sessionEnvFields: SessionEnvFields,
+  source?: string
 ): Promise<SessionStartPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
+    // A resume of a session already started announces nothing: its start was reported once, and a
+    // start stamped at the reopen would move the session's activity window (EPMCDME-16993).
+    // Without a saved sessionStartedAt a resume is a first start here (the transition gate already
+    // stops a resume without an evidence record), and a state with offset 0 is not moved to the file
+    // size, which would drop never-reported work.
+    const reopened = source === 'resume' && Boolean(state.sessionStartedAt);
+    if (reopened) {
+      state.reopened = true;
+      state.reopenActive = false;
+      state.reopenedAt = Date.now();
+    }
     if (!state.gitHeadStart) {
       state.gitHeadStart = gitHeadStart;
     }
@@ -705,18 +870,54 @@ export async function openSessionStartPass(
           configured_model: sessionEnvFields.configured_model || last.configured_model,
         }
       : sessionEnvFields;
-    state.lastSessionEnvFields = merged;
+    // A reopen announces nothing, so it must not move the env baseline either: the first pass after
+    // the session is active again diffs the resumed model/permission mode against it and reports it.
+    if (!reopened || !last) {
+      state.lastSessionEnvFields = merged;
+    }
     return {
       events: [],
       finalize: finalizeOf(sessionId, state, release),
       sessionEnvFields: merged,
       gitHeadStart: state.gitHeadStart,
+      reopened,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
     return { ...EMPTY_PASS, sessionEnvFields, gitHeadStart };
+  }
+}
+
+/**
+ * Whether the session was reopened without a prompt and has done nothing since. Hooks that need no pass of
+ * their own (`Notification`, `InstructionsLoaded`, ...) stay silent for it, like the lifecycle ones
+ * (EPMCDME-16993). Read without the lock: a stale answer is wrong for one hook at most. A state that cannot be
+ * read is a fresh one, which is not idle.
+ */
+export async function isSessionReopenedIdle(sessionId: string): Promise<boolean> {
+  return isReopenedIdle(await loadParseState(sessionId));
+}
+
+/**
+ * A prompt is activity of the reopened session: from here its passthrough hooks (a permission `Notification`
+ * in the middle of the turn) must go out, without waiting for the first `Stop` pass to read its lines. Never
+ * throws: a failed lock leaves the state as it was, and the `Stop` pass sets the same flag later.
+ */
+export async function markReopenedActive(sessionId: string): Promise<void> {
+  try {
+    // Every prompt of every session passes here: only a reopened session that is still idle needs the lock.
+    if (!isReopenedIdle(await loadParseState(sessionId))) return;
+    await withParseStateLock(sessionId, async () => {
+      const state = await loadParseState(sessionId);
+      if (!isReopenedIdle(state)) return;
+      state.reopenActive = true;
+      await saveParseState(sessionId, state);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] could not mark the reopened session active', ...sanitizeLogArgs({ sessionId, err: msg }));
   }
 }
 
@@ -847,7 +1048,9 @@ export async function openSessionEnvCheckPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const candidate = await computeSessionEnvUpdate(state, input);
+    // A reopened session with no activity of its own announces nothing, not even an env change; the
+    // change stays uncommitted and is reported by the first check once the session is active again.
+    const candidate = isReopenedIdle(state) ? null : await computeSessionEnvUpdate(state, input);
 
     if (!candidate) {
       await release();
@@ -1015,21 +1218,29 @@ export async function openMainTranscriptPass(
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger, pass);
     // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
     // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
-    if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
+    // A reopened session with no activity of its own sends nothing (the plugin drops this pass's
+    // payload), so it must not consume deferred subagents or the env baseline either: both stay for
+    // the first pass after the session is active again.
+    const idle = isReopenedIdle(state);
+    if (!idle && (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact')) {
       events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, pass, envCheck?.cwd)));
     }
 
-    if (envCheck) {
+    if (envCheck && !idle) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
 
-    return { events, finalize: finalizeOf(sessionId, state, release) };
+    return {
+      events,
+      finalize: finalizeOf(sessionId, state, release),
+      suppressLifecycle: idle,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_PASS;
+    return failedPass(sessionId, EMPTY_PASS);
   }
 }
 
@@ -1064,13 +1275,32 @@ export async function openPostCompactPass(
   waitBudgetMs: number = POST_COMPACT_WAIT_BUDGET_MS
 ): Promise<TranscriptPass> {
   const peekState = await loadParseState(sessionId);
-  const scan = await waitForCompactionsToSettle(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
+  const scan = await waitForCompactionsToSettle(
+    transcriptPath,
+    peekState.lastCompactionEnd,
+    waitBudgetMs,
+    new Set(Array.isArray(peekState.inheritedUuids) ? peekState.inheritedUuids : [])
+  );
 
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
+    // A reopened session with no activity of its own announces nothing; `lastCompactionEnd` stays
+    // put, so a compaction is reported by the first pass after the session is active again.
+    if (isReopenedIdle(state)) {
+      return { events: [], finalize: finalizeOf(sessionId, state, release) };
+    }
+
+    // The parent lookup may only have resolved in the pass above: boundaries collected before that
+    // may be copies, so start the scan over with the resolved set.
+    const inherited = new Set(Array.isArray(state.inheritedUuids) ? state.inheritedUuids : []);
+    if (inherited.size > (scan.excluded?.size ?? 0)) {
+      scan.compactions = [];
+      scan.offset = 0;
+    }
+    scan.excluded = inherited;
 
     // Catch up with anything appended while the lock was being acquired; only the appended bytes
     // are read, so this stays cheap even on a large transcript (and no-ops while it is unchanged).
@@ -1260,6 +1490,8 @@ async function deriveSubagentEvents(
   sessionId: string,
   subagentFile: SubagentFile
 ): Promise<Record<string, unknown>[]> {
+  // A subagent transcript copied from the parent is not this session's own work.
+  if (state.inheritedAgentIds?.includes(subagentFile.agentId)) return [];
   const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
   const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
 
@@ -1403,11 +1635,15 @@ export async function openSessionEndPass(
 
     // End of the session: nothing more will arrive, so a subagent still unproven is an agent. The
     // summary above resolved the same candidates with the same `final`: reuse it.
+    // A reopened session with no activity of its own sends nothing at all (the plugin drops this
+    // pass's payload), so the backstop must not consume subagent state or the env baseline either:
+    // they stay for the first pass after the session is active again.
+    const idle = isReopenedIdle(state);
     pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, {
       final: true,
       extra: deferredCandidates(state),
     });
-    for (const rawFile of pass.snapshot.files) {
+    for (const rawFile of idle ? [] : pass.snapshot.files) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
@@ -1425,7 +1661,7 @@ export async function openSessionEndPass(
       }
     }
 
-    if (envCheck) {
+    if (envCheck && !idle) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
       if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
@@ -1435,11 +1671,12 @@ export async function openSessionEndPass(
       finalize: finalizeOf(sessionId, state, release),
       gitHeadStart: state.gitHeadStart,
       sessionStartedAt: state.sessionStartedAt,
+      suppressLifecycle: idle,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionEnd pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_SESSION_END_PASS;
+    return failedPass(sessionId, EMPTY_SESSION_END_PASS);
   }
 }
