@@ -35,6 +35,19 @@ vi.mock('../../event-fields/session-env-fields.js', () => ({
   sessionEnvFieldsEqual: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
 }));
 
+// Lets a test make the per-session lock wait time out, as it does when a sibling hook holds the lock too long.
+const lockWait = vi.hoisted(() => ({ timeOut: false }));
+vi.mock('../parse-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../parse-state.js')>();
+  return {
+    ...actual,
+    acquireParseStateLock: async (sessionId: string) => {
+      if (lockWait.timeOut) throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
+      return actual.acquireParseStateLock(sessionId);
+    },
+  };
+});
+
 import {
   openMainTranscriptPass,
   openPostCompactPass,
@@ -42,6 +55,8 @@ import {
   openSessionEnvCheckPass,
   openSubagentPass,
   openSessionEndPass,
+  isSessionReopenedIdle,
+  markReopenedActive,
   type MainTranscriptTrigger,
   type SubagentFile,
 } from '../orchestrator.js';
@@ -3546,5 +3561,771 @@ describe('settled scope vs late correlation metadata (EPMCDME-16391 cache invari
     const stop = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
     await stop.finalize(true);
     expect(scopedTokens(stop.events).filter((x) => x.startsWith('kid='))).toEqual(['kid=skill:inner:9']);
+  });
+});
+
+describe('continued session (EPMCDME-16992)', () => {
+  /** A `type`d line, so the uuid-based exclusion applies to it as it does to real transcripts. */
+  function typedAssistant(uuid: string, messageId: string, sessionId: string, timestamp: string): string {
+    return JSON.stringify({
+      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
+      type: 'assistant',
+      sessionId,
+    });
+  }
+  function typedUser(uuid: string, sessionId: string, timestamp: string): string {
+    return JSON.stringify({
+      type: 'user',
+      uuid,
+      sessionId,
+      timestamp,
+      gitBranch: 'main',
+      cwd: '/repo',
+      message: { role: 'user', content: 'hi' },
+    });
+  }
+  const continuedIn = (parent: string, child: string): string =>
+    JSON.stringify({ type: 'continued-in', timestamp: '2026-11-01T19:43:28.390Z', sessionId: parent, continuedInSessionId: child });
+
+  const parentLines = (): string[] => [
+    typedUser('p-u1', 'P', '2026-11-01T17:44:35.647Z'),
+    typedAssistant('p-a1', 'msg-p1', 'P', '2026-11-01T17:45:33.000Z'),
+    typedAssistant('p-a2', 'msg-p2', 'P', '2026-11-01T17:46:33.000Z'),
+  ];
+  const copiedLines = (): string[] => [
+    typedUser('p-u1', 'C', '2026-11-01T17:44:35.647Z'),
+    typedAssistant('p-a1', 'msg-p1', 'C', '2026-11-01T17:45:33.000Z'),
+    typedAssistant('p-a2', 'msg-p2', 'C', '2026-11-01T17:46:33.000Z'),
+  ];
+
+  it('reports only the continued session\'s own requests and turns', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z'),
+    ]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    const usage = pass.events.filter((e) => e.type === 'agent.usage.request');
+    expect(usage).toHaveLength(1);
+    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary?.turns).toBe(1);
+    expect(summary?.started_at).toBe('2026-11-01T19:50:00.000Z');
+  });
+
+  it('emits no usage and no summary when the session has no own lines', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', copiedLines());
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
+  it('honours a parent whose continued-in record lands after the first pass', async () => {
+    const path = writeTranscript('C.jsonl', copiedLines());
+    const first = await openMainTranscriptPass('C', path, 'Stop');
+    await first.finalize(true);
+    // The parent's record was not on disk yet: the copies are reported by this first pass.
+    expect(first.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
+
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    appendFileSync(
+      path,
+      [typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'), typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z')].join('\n') + '\n'
+    );
+    const second = await openMainTranscriptPass('C', path, 'Stop');
+    await second.finalize(true);
+
+    const usage = second.events.filter((e) => e.type === 'agent.usage.request');
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ message_id: 'msg-c1' });
+    const summary = second.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary?.turns).toBe(1);
+  });
+
+  /** A line Claude Code writes without a `uuid` but with a `timestamp`; a continuation copies those too. */
+  const queued = (timestamp: string): string =>
+    JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 'C', timestamp, content: 'queued' });
+
+  it('starts the summary at the first own line, not at a copied line that has no uuid', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      queued('2026-11-01T17:44:00.000Z'),
+      ...copiedLines(),
+      queued('2026-11-01T17:47:00.000Z'),
+      typedUser('c-u1', 'C', '2026-11-01T19:50:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-01T19:50:10.000Z'),
+    ]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
+    expect(summary).toMatchObject({
+      started_at: '2026-11-01T19:50:00.000Z',
+      ended_at: '2026-11-01T19:50:10.000Z',
+      duration_ms: 10000,
+    });
+  });
+
+  it('sends no summary for a continuation whose copies are followed only by uuid-less lines', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [queued('2026-11-01T17:44:00.000Z'), ...copiedLines(), queued('2026-11-10T16:23:52.000Z')]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+  });
+
+  it('reports nothing for a continuation whose own lines are a synthetic placeholder and local /exit commands', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: 'No response requested.' }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+    const command = (uuid: string, content: string, timestamp: string): string =>
+      JSON.stringify({ type: 'user', uuid, sessionId: 'C', timestamp, message: { role: 'user', content } });
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      synthetic,
+      command('c-x1', '<command-name>/exit</command-name>\n<command-message>exit</command-message>', '2026-11-10T16:23:53.000Z'),
+      command('c-x2', '<local-command-stdout>Goodbye!</local-command-stdout>', '2026-11-10T16:23:53.100Z'),
+    ]);
+
+    const stop = await openMainTranscriptPass('C', path, 'Stop');
+    await stop.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    for (const pass of [stop, end]) {
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+      expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    }
+  });
+
+  it('still sends the summary of a continuation whose parent is found by a later pass than the one that read its work', async () => {
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+    ]);
+    const first = await openMainTranscriptPass('C', path, 'Stop'); // no parent on disk yet: the work is read here
+    await first.finalize(true);
+    expect(first.events.some((e) => e.type === 'agent.usage.request' && e.message_id === 'msg-c1')).toBe(true);
+
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const second = await openMainTranscriptPass('C', path, 'Stop'); // finds the parent, reads nothing new
+    await second.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    const summary = [...second.events, ...end.events].find((e) => e.type === 'agent.session.summary');
+    expect(summary).toMatchObject({ started_at: '2026-11-10T16:21:00.000Z' });
+    expect([...second.events, ...end.events].filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+  });
+
+  it('does not report a subagent transcript copied from the parent, only the continuation own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const copied = [usageLine({ uuid: 'sa-1', messageId: 'msg-sa1', outputTokens: 40 })];
+    writeSubagentFixture('P', 'copied', copied);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+    ]);
+    writeSubagentFixture('C', 'copied', copied);
+    writeSubagentFixture('C', 'own', [usageLine({ uuid: 'sb-1', messageId: 'msg-sb1', outputTokens: 50 })]);
+
+    const main = await openMainTranscriptPass('C', path, 'Stop');
+    await main.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+
+    const subagents = [...main.events, ...end.events].filter((e) => e.type === 'agent.subagent.usage');
+    expect(subagents.map((e) => e.agent_id)).toEqual(['own']);
+    const requests = [...main.events, ...end.events].filter((e) => e.type === 'agent.usage.request').map((e) => e.message_id);
+    expect(requests).not.toContain('msg-sa1');
+    expect(requests).toContain('msg-sb1');
+  });
+
+  describe('parent lookup is skipped only where it is costly and nothing can have been copied', () => {
+    const START = '2026-11-10T16:20:00.000Z';
+    /** More siblings than the lookup scans: the lookup stays incomplete, which is the costly case. */
+    const crowdTheFolder = (): void => {
+      for (let i = 0; i < 201; i += 1) writeTranscript(`filler-${i}.jsonl`, []);
+    };
+
+    it('skips the sibling scan for a session whose lines are all newer than its own start (crowded folder)', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: START });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      const state = await loadParseState('C');
+      expect(state.inheritedResolved).toBe(true);
+      expect(state.inheritedUuids ?? []).toEqual([]);
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('still looks for the parent in an ordinary folder, even when no line is older than the session (X8)', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      // A parent younger than a minute: its copies are stamped less than 60 s before the continuation's start.
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('p-u1', 'C', '2026-11-10T16:20:20.000Z'),
+        typedAssistant('p-a1', 'msg-p1', 'C', '2026-11-10T16:20:30.000Z'),
+        typedAssistant('p-a2', 'msg-p2', 'C', '2026-11-10T16:20:40.000Z'),
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: '2026-11-10T16:21:00.000Z' });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('still looks for the parent when a line is older than the session (crowded folder)', async () => {
+      const { saveParseState, createParseState, loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        ...copiedLines(),
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+      await saveParseState('C', { ...createParseState(), sessionStartedAt: START });
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    });
+
+    it('looks for the parent when the session has no saved start (crowded folder)', async () => {
+      const { loadParseState } = await import('../parse-state.js');
+      crowdTheFolder();
+      writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+      const path = writeTranscript('C.jsonl', [
+        typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z'),
+        typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:21:05.000Z'),
+      ]);
+
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+
+      expect((await loadParseState('C')).inheritedUuids).toEqual(expect.arrayContaining(['p-u1', 'p-a1', 'p-a2']));
+    });
+  });
+
+  it('stops repeating a parent lookup that cannot complete (an entry that cannot be read) after three passes', async () => {
+    const { loadParseState } = await import('../parse-state.js');
+    mkdirSync(join(transcriptDir, 'odd.jsonl')); // a directory named like a transcript: never readable as one
+    const path = writeTranscript('C.jsonl', [typedUser('c-u1', 'C', '2026-11-10T16:21:00.000Z')]);
+
+    const resolvedAfter: (boolean | undefined)[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const pass = await openMainTranscriptPass('C', path, 'Stop');
+      await pass.finalize(true);
+      resolvedAfter.push((await loadParseState('C')).inheritedResolved);
+    }
+
+    expect(resolvedAfter.map((v) => v === true)).toEqual([false, false, true, true]);
+  });
+
+  it('Preview case of EPMCDME-16992: a continuation opened and closed without a prompt reports nothing and starts nowhere', async () => {
+    // Copies with uuid-less queue lines before and after them, then what opening and /exit leave behind.
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }], usage: { input_tokens: 0, output_tokens: 0 } },
+    });
+    const command = (uuid: string, content: string, timestamp: string): string =>
+      JSON.stringify({ type: 'user', uuid, sessionId: 'C', timestamp, message: { role: 'user', content } });
+    const lines = [
+      queued('2026-11-01T17:44:00.000Z'),
+      ...copiedLines(),
+      queued('2026-11-10T16:23:50.000Z'),
+      synthetic,
+      command('c-x1', '\n<command-name>/exit</command-name>', '2026-11-10T16:23:53.000Z'),
+      command('c-x2', '<local-command-stdout>Goodbye!</local-command-stdout>', '2026-11-10T16:23:53.100Z'),
+    ];
+    const path = writeTranscript('C.jsonl', lines);
+
+    const stop = await openMainTranscriptPass('C', path, 'Stop');
+    await stop.finalize(true);
+    const end = await openSessionEndPass('C', path, '/repo');
+    await end.finalize(true);
+    for (const pass of [stop, end]) {
+      expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(0);
+      expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+    }
+
+    // Once there is real work, the start is the continuation's own first line (the placeholder Claude Code
+    // wrote at the open, 16:23:52 as in QA's report), never a copied line or a queue line from before it.
+    const later = writeTranscript('C.jsonl', [
+      ...lines,
+      typedUser('c-u1', 'C', '2026-11-10T16:30:00.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:30:05.000Z'),
+    ]);
+    const final = await openSessionEndPass('C', later, '/repo');
+    await final.finalize(true);
+    expect(final.events.find((e) => e.type === 'agent.session.summary')?.started_at).toBe('2026-11-10T16:23:52.000Z');
+  });
+
+  it('reports a synthetic answer of a continuation that has already done work of its own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      typedUser('c-u1', 'C', '2026-11-10T16:23:52.000Z'),
+      typedAssistant('c-a1', 'msg-c1', 'C', '2026-11-10T16:23:57.000Z'),
+    ]);
+    const first = await openMainTranscriptPass('C', path, 'Stop');
+    await first.finalize(true);
+    expect(first.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        ...JSON.parse(typedAssistant('c-s2', 'msg-s2', 'C', '2026-11-10T16:30:00.000Z')),
+        message: { role: 'assistant', model: '<synthetic>', content: [], usage: { input_tokens: 0, output_tokens: 0 } },
+      }) + '\n'
+    );
+    const second = await openMainTranscriptPass('C', path, 'Stop');
+    await second.finalize(true);
+
+    expect(second.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+  });
+
+  it('sends no summary for a continuation whose only own line is a synthetic answer', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const synthetic = JSON.stringify({
+      ...JSON.parse(typedAssistant('c-s1', 'msg-s1', 'C', '2026-11-10T16:23:52.000Z')),
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] },
+    });
+    const path = writeTranscript('C.jsonl', [...copiedLines(), synthetic]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
+  it('does not take a local command with leading whitespace for work of its own', async () => {
+    writeTranscript('P.jsonl', [...parentLines(), continuedIn('P', 'C')]);
+    const command = JSON.stringify({
+      type: 'user',
+      uuid: 'c-x1',
+      sessionId: 'C',
+      timestamp: '2026-11-10T16:23:53.000Z',
+      message: { role: 'user', content: '\n  <command-name>/exit</command-name>' },
+    });
+    const path = writeTranscript('C.jsonl', [...copiedLines(), command]);
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')).toBeUndefined();
+  });
+
+  it('does not report the parent\'s copied compactions as its own', async () => {
+    const boundary = (uuid: string, timestamp: string): string =>
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid,
+        timestamp,
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      });
+    writeTranscript('P.jsonl', [...parentLines(), boundary('p-b1', '2026-11-01T17:50:00.000Z'), continuedIn('P', 'C')]);
+    const path = writeTranscript('C.jsonl', [
+      ...copiedLines(),
+      boundary('p-b1', '2026-11-01T17:50:00.000Z'),
+      typedUser('c-u1', 'C', '2026-11-10T16:23:52.000Z'),
+      boundary('c-b1', '2026-11-10T16:30:00.000Z'),
+    ]);
+
+    const pass = await openPostCompactPass('C', path, 2_000);
+    await pass.finalize(true);
+
+    const done = pass.events.filter((e) => e.type === 'agent.session.compact.done');
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ timestamp: '2026-11-10T16:30:00.000Z' });
+  });
+
+  it('counts every line when the parent transcript is absent', async () => {
+    const path = writeTranscript('C.jsonl', copiedLines());
+
+    const pass = await openSessionEndPass('C', path, '/repo');
+    await pass.finalize(true);
+
+    expect(pass.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
+    expect(pass.events.find((e) => e.type === 'agent.session.summary')?.turns).toBe(1);
+  });
+});
+
+describe('reopened session without activity (EPMCDME-16993)', () => {
+  const user = (uuid: string, timestamp: string): string =>
+    JSON.stringify({ type: 'user', uuid, timestamp, gitBranch: 'main', cwd: '/repo', message: { role: 'user', content: 'hi' } });
+  const assistant = (uuid: string, messageId: string, timestamp: string): string =>
+    JSON.stringify({
+      ...JSON.parse(usageLine({ uuid, messageId, requestId: `req-${messageId}`, outputTokens: 10, timestamp })),
+      type: 'assistant',
+    });
+
+  async function startSession(sessionId: string, source?: string): Promise<{ reopened?: boolean }> {
+    const pass = await openSessionStartPass(sessionId, 'sha-start', sessionEnvFixture, source);
+    await pass.finalize(true);
+    return pass;
+  }
+
+  it('flags a resume of an already started session and keeps its original start', async () => {
+    const sessionId = 'session-reopen-flag';
+    await startSession(sessionId, 'startup');
+    const first = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+
+    const reopen = await startSession(sessionId, 'resume');
+    const second = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+
+    expect(reopen.reopened).toBe(true);
+    expect(second.sessionStartedAt).toBe(first.sessionStartedAt);
+  });
+
+  it('reports a reopened session as idle until a prompt marks it active, and never a fresh or running one', async () => {
+    const sessionId = 'session-reopen-idle-flag';
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false); // no saved state
+    await startSession(sessionId, 'startup');
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false); // started, not reopened
+
+    await startSession(sessionId, 'resume');
+    expect(await isSessionReopenedIdle(sessionId)).toBe(true);
+
+    await markReopenedActive(sessionId);
+    expect(await isSessionReopenedIdle(sessionId)).toBe(false);
+    const state = JSON.parse(readFileSync(join(codemieHome, 'analytics', 'state', `${sessionId}.json`), 'utf-8'));
+    expect(state).toMatchObject({ reopened: true, reopenActive: true });
+  });
+
+  it('leaves the state of a session that was never reopened untouched when a prompt marks activity', async () => {
+    const sessionId = 'session-prompt-not-reopened';
+    await startSession(sessionId, 'startup');
+    const statePath = join(codemieHome, 'analytics', 'state', `${sessionId}.json`);
+    const before = readFileSync(statePath, 'utf-8');
+
+    await markReopenedActive(sessionId);
+    await markReopenedActive('session-without-state');
+
+    expect(readFileSync(statePath, 'utf-8')).toBe(before);
+  });
+
+  it('does not flag a first start, even with source resume', async () => {
+    const pass = await startSession('session-reopen-first', 'resume');
+
+    expect(pass.reopened).toBeFalsy();
+  });
+
+  it('suppresses Stop and SessionEnd until the reopened session has own activity', async () => {
+    const sessionId = 'session-reopen-suppress';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
+    await idleEnd.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+    expect(idleEnd.suppressLifecycle).toBe(true);
+    expect(idleEnd.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await active.finalize(true);
+
+    expect(active.suppressLifecycle).toBe(false);
+    expect(active.events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+    expect(active.events.some((e) => e.type === 'agent.session.summary')).toBe(true);
+
+    const end = await openSessionEndPass(sessionId, path, '/repo');
+    await end.finalize(true);
+    expect(end.suppressLifecycle).toBe(false);
+  });
+
+  it('keeps a reopened idle session silent when the lock wait times out, and still forwards the hook of one that is not idle', async () => {
+    const idleId = 'session-reopen-lock-timeout';
+    const path = writeTranscript(`${idleId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(idleId, 'startup');
+    await mainEvents(idleId, path, 'Stop');
+    await startSession(idleId, 'resume');
+
+    lockWait.timeOut = true;
+    try {
+      const idle = await openMainTranscriptPass(idleId, path, 'Stop');
+      const idleEnd = await openSessionEndPass(idleId, path, '/repo');
+      expect(idle.suppressLifecycle).toBe(true);
+      expect(idle.events).toEqual([]);
+      expect(idleEnd.suppressLifecycle).toBe(true);
+
+      const ordinary = await openMainTranscriptPass('session-ordinary-lock-timeout', path, 'Stop');
+      expect(ordinary.suppressLifecycle).toBeFalsy();
+    } finally {
+      lockWait.timeOut = false;
+    }
+  });
+
+  it('keeps forwarding Stop for a new session that has no lines yet', async () => {
+    const sessionId = 'session-reopen-fresh';
+    const path = writeTranscript(`${sessionId}.jsonl`, []);
+    await startSession(sessionId, 'startup');
+
+    const pass = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await pass.finalize(true);
+
+    expect(pass.suppressLifecycle).toBeFalsy();
+  });
+
+  it('re-arms suppression on a second resume', async () => {
+    const sessionId = 'session-reopen-rearm';
+    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z')]);
+    await startSession(sessionId, 'startup');
+    await startSession(sessionId, 'resume');
+    appendFileSync(path, assistant('a1', 'msg-1', '2026-11-02T10:00:05.000Z') + '\n');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+  });
+  it('keeps a reopened session silent when the reopen only appends non-message records', async () => {
+    const sessionId = 'session-reopen-records-only';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      [
+        JSON.stringify({ type: 'attachment', uuid: 'att-1', timestamp: '2026-11-07T18:17:46.000Z', attachment: { type: 'hook_success', hookEvent: 'SessionStart' } }),
+        JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId }),
+        JSON.stringify({ type: 'last-prompt', leafUuid: 'a1', sessionId }),
+      ].join('\n') + '\n'
+    );
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+  });
+
+  it('reports an env change made at resume once the reopened session is active', async () => {
+    const sessionId = 'session-reopen-env';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
+    await resume.finalize(true);
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop', {
+      effort: sessionEnvFixture.effort,
+      permissionMode: 'plan',
+    });
+    await active.finalize(true);
+
+    const env = active.events.filter((e) => e.type === 'agent.session.env');
+    expect(env).toHaveLength(1);
+    expect(env[0]).toMatchObject({ permission_mode: 'plan' });
+  });
+
+  it('keeps the env change for the first active Stop when an idle reopened Stop runs first', async () => {
+    const sessionId = 'session-reopen-idle-stop-env';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    const resume = await openSessionStartPass(sessionId, 'sha-start', { ...sessionEnvFixture, permission_mode: 'plan' }, 'resume');
+    await resume.finalize(true);
+    const envCheck = { effort: sessionEnvFixture.effort, permissionMode: 'plan' };
+
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
+    await idle.finalize(true);
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop', envCheck);
+    await active.finalize(true);
+
+    expect(active.suppressLifecycle).toBe(false);
+    expect(active.events.filter((e) => e.type === 'agent.session.env')).toHaveLength(1);
+  });
+
+  it('keeps subagent usage for the first active pass when an idle reopen ends first', async () => {
+    const sessionId = 'session-reopen-subagent';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    writeSubagentFixture(sessionId, 'a1', [usageLine({ uuid: 'uuid-sa-1', messageId: 'msg-sa-1', outputTokens: 777 })]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+
+    await startSession(sessionId, 'resume');
+    const idleEnd = await openSessionEndPass(sessionId, path, '/repo');
+    await idleEnd.finalize(true);
+    expect(idleEnd.events).toEqual([]);
+
+    await startSession(sessionId, 'resume');
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const end = await openSessionEndPass(sessionId, path, '/repo');
+    await end.finalize(true);
+
+    expect(end.events.filter((e) => e.type === 'agent.subagent.usage').map((e) => e.agent_id)).toEqual(['a1']);
+  });
+
+  it('keeps a reopened session silent when the reopen appends a synthetic answer without usage or ids', async () => {
+    const sessionId = 'session-reopen-synthetic-idless';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'syn-1',
+        timestamp: '2026-11-07T18:17:46.000Z',
+        message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] },
+      }) + '\n'
+    );
+    const idle = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await idle.finalize(true);
+
+    expect(idle.suppressLifecycle).toBe(true);
+    expect(idle.events).toEqual([]);
+  });
+
+  it('keeps a compaction made while reopened and idle for the first PostCompact after activity', async () => {
+    const sessionId = 'session-reopen-postcompact';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    appendFileSync(
+      path,
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-11-07T10:00:00.000Z',
+        compactMetadata: { trigger: 'manual', preTokens: 1000, postTokens: 300, durationMs: 5_000 },
+      }) + '\n'
+    );
+    const idle = await openPostCompactPass(sessionId, path, 100);
+    await idle.finalize(true);
+    expect(idle.events).toEqual([]);
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:05:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:05:05.000Z')].join('\n') + '\n');
+    const active = await openPostCompactPass(sessionId, path, 100);
+    await active.finalize(true);
+
+    expect(active.events.filter((e) => e.type === 'agent.session.compact.done')).toHaveLength(1);
+  });
+
+  it('keeps an env change seen while reopened and idle for the first env check after activity', async () => {
+    const sessionId = 'session-reopen-envcheck';
+    const path = writeTranscript(`${sessionId}.jsonl`, [
+      user('u1', '2026-11-01T10:00:00.000Z'),
+      assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z'),
+    ]);
+    await startSession(sessionId, 'startup');
+    await mainEvents(sessionId, path, 'Stop');
+    await startSession(sessionId, 'resume');
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+    const input = { effort: 'high', permissionMode: sessionEnvFixture.permission_mode };
+
+    const idle = await openSessionEnvCheckPass(sessionId, input);
+    await idle.finalize(true);
+    expect(idle.sessionEnvFields).toBeNull();
+
+    appendFileSync(path, [user('u2', '2026-11-07T10:00:00.000Z'), assistant('a2', 'msg-2', '2026-11-07T10:00:05.000Z')].join('\n') + '\n');
+    const active = await openMainTranscriptPass(sessionId, path, 'Stop');
+    await active.finalize(true);
+
+    const check = await openSessionEnvCheckPass(sessionId, input);
+    await check.finalize(true);
+    expect(check.sessionEnvFields).toMatchObject({ effort: 'high' });
+  });
+
+  it('survives a corrupt inheritedUuids value in the saved state', async () => {
+    const sessionId = 'session-corrupt-inherited';
+    const path = writeTranscript(`${sessionId}.jsonl`, [user('u1', '2026-11-01T10:00:00.000Z'), assistant('a1', 'msg-1', '2026-11-01T10:00:05.000Z')]);
+    const stateDir = join(codemieHome, 'analytics', 'state');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, `${sessionId}.json`), JSON.stringify({ inheritedUuids: 'oops', inheritedResolved: true }));
+
+    const events = await mainEvents(sessionId, path, 'Stop');
+
+    expect(events.filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
   });
 });

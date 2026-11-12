@@ -103,6 +103,22 @@ export function endedSessionGraceMs(): number {
 }
 
 /**
+ * How long OTEL bytes that arrive after a session ended are kept back, so the `SessionStart(resume)`
+ * hook of a reopen has marked the session before its startup records can be forwarded.
+ */
+export function reopenSettleMs(): number {
+  return envMinutesMs('OTLP_REOPEN_SETTLE_MINUTES', 0.25);
+}
+
+/**
+ * A spool that was quiet for this long and then gets new bytes may be a session that was killed (no
+ * `SessionEnd`) and resumed: its OTEL records are kept back for the settle time, like those of an ended one.
+ */
+export function resumeQuietGapMs(): number {
+  return envMinutesMs('OTLP_RESUME_QUIET_MINUTES', 2);
+}
+
+/**
  * Inactivity period after which a session that never reported `SessionEnd` is
  * considered abandoned and its drained spool may be deleted. Measured from the
  * latest spool-file write, never from session creation or cursor updates.
