@@ -1,7 +1,6 @@
 /**
  * The guided wizard's git step group: repo/branch/path entry and a temporary-copy test
- * push, used when a lead chooses the git delivery target (plan EPMCDME-17123 task 5 wires
- * this into the guided flow; this module is not yet imported by anything).
+ * push, used when a lead chooses the git delivery target.
  *
  * `askGitDetails` prompts for the three `GitSettings` fields, retrying the repo URL via
  * `askValidated` on `validateGitRepoUrl`'s `SyncConfigError` (a credential-bearing or

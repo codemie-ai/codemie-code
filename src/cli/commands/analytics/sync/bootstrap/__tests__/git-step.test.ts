@@ -1,5 +1,5 @@
 /**
- * Tests for the guided wizard's git step group (plan EPMCDME-17123 task 4):
+ * Tests for the guided wizard's git step group:
  * `askGitDetails`/`testGitCheck` in `../git-step.ts`.
  *
  * `GitTarget`, `createGitRunner` and `resolveSyncIdentity` are mocked — no real network call
