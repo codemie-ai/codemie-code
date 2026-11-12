@@ -41,7 +41,14 @@ function larger(a: number | undefined, b: number | undefined): number | undefine
   return a === undefined ? b : b === undefined ? a : Math.max(a, b);
 }
 
-/** The saving copy wins, except delivery marks it lacks and attempt counters lower than the other copy's. */
+function earlier(a: number | undefined, b: number | undefined): number | undefined {
+  return a === undefined ? b : b === undefined ? a : Math.min(a, b);
+}
+
+/**
+ * The saving copy wins, except delivery marks it lacks, attempt counters lower than the other copy's, and a later
+ * failing-since clock; `droppedReason` travels with the `droppedAt` it pairs with.
+ */
 function mergeCompleted(saving: Session, other: Session): Session {
   return {
     ...saving,
@@ -50,6 +57,9 @@ function mergeCompleted(saving: Session, other: Session): Session {
     legacyMetricsConsent: saving.legacyMetricsConsent ?? other.legacyMetricsConsent,
     legacyMetricsWithheld: saving.legacyMetricsWithheld ?? other.legacyMetricsWithheld,
     droppedAt: saving.droppedAt ?? other.droppedAt,
+    droppedReason: saving.droppedAt !== undefined ? saving.droppedReason : other.droppedReason,
+    deliveryFailingSince: earlier(saving.deliveryFailingSince, other.deliveryFailingSince),
+    deliveryRealAttempts: larger(saving.deliveryRealAttempts, other.deliveryRealAttempts),
     deliveryAttempts: larger(saving.deliveryAttempts, other.deliveryAttempts),
     finalizeAttempts: larger(saving.finalizeAttempts, other.finalizeAttempts),
   };

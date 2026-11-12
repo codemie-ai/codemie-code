@@ -73,7 +73,10 @@ export const CONTINUE_SESSION_ENV_KEY = 'CODEMIE_CONTINUE_SESSION';
 /**
  * Sync status (used by all processors)
  */
-export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'rejected';
+
+/** Why a record left the delivery queue with data unsent. */
+export type DropReason = 'rejected by the server' | 'retry budget exhausted' | 'retention expired';
 
 /**
  * Conversations sync state (ConversationsProcessor)
@@ -210,6 +213,12 @@ export interface Session {
   finalizeAttempts?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;
+  /** Why the record is dropped; set together with `droppedAt` */
+  droppedReason?: DropReason;
+  /** Unix ms of the first delivery failure that was not an `ok`; the retry window runs from it */
+  deliveryFailingSince?: number;
+  /** Delivery attempts that reached the server or could not be told apart from that; counted toward the retry budget */
+  deliveryRealAttempts?: number;
   /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */
   clientType?: string;
   /** The agent session id the launch named (e.g. `--session <ses_>`), selected exactly by the agent's transcript lookup */

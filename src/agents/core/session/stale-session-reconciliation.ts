@@ -20,7 +20,8 @@ import type { BaseHookEvent } from '../types.js';
 import type { Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
 import { awaitsDestination, isLegacyGatedProvider, legacyMetricsVerdict, legacyMetricsWithheld } from './legacy-metrics-gate.js';
-import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
+import { getSessionMetricsPath, getSessionPath } from './session-config.js';
+import { hasUndeliveredData } from './delivery-budget.js';
 import { latestRecordTime } from './BaseSessionAdapter.js';
 import { syntheticSessionEnd } from './synthetic-session-end.js';
 import { nextRecordStart, SESSION_UUID_PATTERN } from './next-record-start.js';
@@ -34,9 +35,6 @@ import { attemptNotServed, authWasRejected, awaitingDestination, failingServerAn
 import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
-import { getPayloadId } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
-import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 
 /**
  * A record without an owner is finalized once idle this long.
@@ -134,31 +132,6 @@ export async function maxDeltaTimestamp(sessionId: string): Promise<number | und
 export async function lastRecordedActivityAt(record: Session): Promise<number> {
   const times = [record.startTime, record.activityStartedAt ?? 0, (await maxDeltaTimestamp(record.sessionId)) ?? 0];
   return Math.max(...times.filter((time) => Number.isFinite(time)));
-}
-
-/**
- * Whether a closed record still holds data it was to send: an end metric neither sent nor skipped,
- * or — for a matched record — a metric line not synced or a conversation payload neither sent nor
- * superseded. A file that cannot be read is not delivered; a torn line in it is skipped.
- */
-async function hasUndeliveredData(record: Session): Promise<boolean> {
-  if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return true;
-  if (record.correlation?.status !== 'matched') return false;
-  try {
-    // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
-    if (!legacyMetricsWithheld(record)) {
-      const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[reconcile]');
-      if (deltas.some((delta) => delta.syncStatus !== 'synced')) return true;
-    }
-    const payloads = await readJSONLTolerant<ConversationPayloadRecord>(getSessionConversationPath(record.sessionId), '[reconcile]');
-    const sent = new Set(payloads.filter((p) => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).map(getPayloadId));
-    return payloads.some((p) =>
-      (p.status === CONVERSATION_SYNC_STATUS.PENDING || p.status === CONVERSATION_SYNC_STATUS.FAILED) && !sent.has(getPayloadId(p)));
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[reconcile] ${record.sessionId}: cannot read its pending data; counted undelivered: ${msg}`);
-    return true;
-  }
 }
 
 /** Writes `droppedAt` into the live `{id}.json` when it leaves the delivery queue with data still unsent. */
