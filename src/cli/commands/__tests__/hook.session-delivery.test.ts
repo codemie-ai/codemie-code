@@ -52,7 +52,7 @@ const { processEvent, createHookCommand } = await import('../hook.js');
 const { deliverSessionRecord } = await import('../hook/delivery.js');
 const { renameSessionFiles } = await import('../../../agents/core/session/session-generation.js');
 const { finalizeOwnRecord, reconcileOtherSessions, isLiveRecordFileName } = await import('../../../agents/core/session/stale-session-reconciliation.js');
-const { noticeDeliveryAtExit } = await import('../../../agents/core/session/exit-notice.js');
+const { noticeDeliveryAtExit, listExitDelivery, formatExitDelivery } = await import('../../../agents/core/session/exit-notice.js');
 const { logger } = await import('@/utils/logger.js');
 const { ensureSessionFile } = await import('../../../agents/core/session/ensure-session.js');
 const { exec } = await import('@/utils/exec.js');
@@ -3021,8 +3021,18 @@ describe('the own-record step at exit', () => {
 });
 
 describe('the exit notice', () => {
-  const PENDING = "CodeMie: this session's analytics are not delivered yet; they will be sent at the next codemie start. Nothing is lost.";
-  const DROPPED_ONE = 'CodeMie: analytics of 1 session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.';
+  const PENDING = "CodeMie: this session's analytics are not delivered yet; they will be retried at later `codemie` starts and are not dropped before ";
+  const DROPPED = 'CodeMie: analytics of these sessions were dropped: ';
+  const DOCTOR = 'Check the connection to CodeMie with `codemie doctor`.';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /** `d Mon HH:mm` in local time, as the notice prints it. */
+  function dateText(ms: number): string {
+    const d = new Date(ms);
+    return `${d.getDate()} ${MONTHS[d.getMonth()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  const droppedRecord = (overrides: Partial<Session> = {}): Session =>
+    baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: Date.now() + SECOND, droppedReason: 'retry budget exhausted', ...overrides });
+  const droppedLine = (s: Session): string => `${DROPPED}claude ${s.sessionId.slice(0, 8)} (started ${dateText(s.startTime)}) — retry budget exhausted`;
   const wrapperEnv = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
 
   function stderrLines(spy: { mock: { calls: unknown[][] } }): string[] {
@@ -3078,7 +3088,7 @@ describe('the exit notice', () => {
     respond = () => ok();
     await exitStep(own.sessionId, startedAt);
 
-    expect(stderrLines(stderr)).toEqual([expect.stringContaining(DROPPED_ONE)]);
+    expect(stderrLines(stderr)).toEqual([expect.stringContaining(droppedLine(capped))]);
   });
 
   it.each([
@@ -3109,14 +3119,80 @@ describe('the exit notice', () => {
   it('a record dropped before this wrapper started is not counted', async () => {
     const startedAt = Date.now();
     writeRecord(baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: startedAt - 60 * 60 * SECOND }), 'completed_');
-    writeRecord(baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: startedAt + SECOND }), 'completed_');
+    const recent = droppedRecord({ droppedAt: startedAt + SECOND });
+    writeRecord(recent, 'completed_');
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await exitStep(own.sessionId, startedAt);
 
-    expect(stderrLines(stderr)).toEqual([expect.stringContaining(DROPPED_ONE)]);
+    expect(stderrLines(stderr)).toEqual([expect.stringContaining(droppedLine(recent))]);
+  });
+
+  it('pending own data and an earlier drop are shown on separate lines; the pending date is now + window without a clock', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now() });
+    writeRecord(own);
+    const earlier = droppedRecord();
+    writeRecord(earlier, 'completed_');
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(lines).toEqual([
+      `${PENDING}${dateText(startedAt + 24 * 60 * 60 * 1000)}.`,
+      `${droppedLine(earlier)}. ${DOCTOR}`,
+    ]);
+  });
+
+  it('the pending date is the failing clock + window when a clock has started', async () => {
+    const startedAt = Date.now();
+    const since = startedAt - 5 * 60 * 60 * 1000;
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now(), deliveryFailingSince: since, deliveryRealAttempts: 1 });
+    writeRecord(own);
+
+    const lines = formatExitDelivery(await listExitDelivery(own.sessionId, startedAt, startedAt));
+
+    expect(lines).toEqual([`${PENDING}${dateText(since + 24 * 60 * 60 * 1000)}.`]);
+  });
+
+  it('five drops: three are named, then "and 2 more"; a session with a live and a completed_ file is listed once', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const drops = [1, 2, 3, 4, 5].map((i) => droppedRecord({ startTime: Date.parse('2026-10-01T10:00:00Z') + i * 60_000 }));
+    drops.forEach((d) => writeRecord(d, 'completed_'));
+    // The first also keeps a live copy (an older generation of the same session)
+    writeRecord({ ...drops[0], startTime: drops[0].startTime - 1000 });
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(entries.filter((e) => e.kind === 'dropped')).toHaveLength(5);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].match(/ claude [0-9a-f]{8} \(started /g)).toHaveLength(3);
+    expect(lines[0]).toContain('and 2 more');
+    expect(lines[0]).toContain(DOCTOR);
+    expect(lines[0]).not.toContain('Nothing is lost');
+  });
+
+  it('earlier sessions tried this run and still queued get one count line with the earliest drop time', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const a = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 3 * 60 * 60 * 1000, deliveryRealAttempts: 1 });
+    const b = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 2 });
+    writeRecord(a);
+    writeRecord(b);
+
+    const lines = formatExitDelivery(await listExitDelivery(own.sessionId, startedAt - 1000, startedAt));
+
+    expect(lines).toEqual([
+      `CodeMie: analytics of 2 earlier session(s) are still queued for retry; none is dropped before ${dateText(a.deliveryFailingSince! + 24 * 60 * 60 * 1000)}.`,
+    ]);
+  });
+
+  it('a run whose data was all delivered prints no delivery line', () => {
+    expect(formatExitDelivery([])).toEqual([]);
   });
 
   it('a clean exit with everything delivered prints nothing', async () => {
@@ -3591,7 +3667,7 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit', droppedAt: expect.any(Number) });
     expect(requests.map((r) => r.name)).toEqual(['codemie_cli_session_total']);
     await noticeDeliveryAtExit('own', startedAt, true);
-    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    expect(stderr.mock.calls.flat().join()).toContain('analytics of these sessions were dropped: copilot-cli');
     expect(existsSync(spool(id, 'metrics', 'completed_'))).toBe(false);
     expect(existsSync(spool(id, 'conversation', 'completed_'))).toBe(false);
   });

@@ -551,7 +551,7 @@ describe('reconcileOtherSessions', () => {
     await noticeDeliveryAtExit('own', startedAt, true);
 
     expect(load(failing.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(startedAt);
-    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    expect(stderr.mock.calls.flat().join()).toContain('analytics of these sessions were dropped: copilot-cli');
     stderr.mockRestore();
   });
 
