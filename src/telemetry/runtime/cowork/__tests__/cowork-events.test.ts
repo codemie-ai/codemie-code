@@ -3,30 +3,22 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   buildCoworkEvents,
   emptyCoworkEventState,
   stampCoworkEvent,
   type CoworkEnvelope,
 } from '../cowork-events.js';
+import { coworkFixtureFile } from './cowork-fixture.js';
 
 const CLI = '7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
 const AGENT = 'a11111111111111111';
-const SESSION_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  'fixtures', 'cowork-session', 'local-agent-mode-sessions',
-  '0f0f0f0f-aaaa-4bbb-8ccc-000000000001', '00000000-0000-4000-8000-000000000001', '1a2b3c4d',
-  '.claude', 'projects', 'session'
-);
-
-function fixtureLines(...segments: string[]): string[] {
-  return readFileSync(join(SESSION_DIR, ...segments), 'utf-8').split('\n').filter((line) => line.length > 0);
+function fixtureLines(name: 'main.jsonl' | 'subagent.jsonl'): string[] {
+  return readFileSync(coworkFixtureFile(name), 'utf-8').split('\n').filter((line) => line.length > 0);
 }
 
-const MAIN = fixtureLines(`${CLI}.jsonl`);
-const SUBAGENT = fixtureLines(CLI, 'subagents', `agent-${AGENT}.jsonl`);
+const MAIN = fixtureLines('main.jsonl');
+const SUBAGENT = fixtureLines('subagent.jsonl');
 /** The fixture's subagent lines carry no `gitBranch`; here each one does. */
 const SUBAGENT_ON_BRANCH = SUBAGENT.map((line) => JSON.stringify({ ...(JSON.parse(line) as object), gitBranch: 'synthetic-branch' }));
 

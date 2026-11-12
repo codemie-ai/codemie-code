@@ -6,11 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync,
+  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, sep } from 'node:path';
 
 const spoolFault = vi.hoisted(() => ({ failures: 0 }));
 const readStateMock = vi.hoisted(() => vi.fn());
@@ -41,6 +41,7 @@ import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
+import { COWORK_ACCOUNT_SEGMENTS, coworkFixtureFile, installCoworkFixture } from './cowork-fixture.js';
 
 type WireEvent = Record<string, unknown>;
 
@@ -49,8 +50,7 @@ const LOCAL = 'local_1a2b3c4d-1111-4222-8333-444455556666';
 const AGENT = 'a11111111111111111';
 const CLI_2 = '8d2e3f40-5b6c-4d7e-9f0a-1b2c3d4e5f60';
 const LOCAL_2 = 'local_2b3c4d5e-1111-4222-8333-444455556666';
-const ACCOUNT_DIR = join('0f0f0f0f-aaaa-4bbb-8ccc-000000000001', '00000000-0000-4000-8000-000000000001');
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'cowork-session');
+const ACCOUNT_DIR = join(...COWORK_ACCOUNT_SEGMENTS);
 const LAST_LINE_MS = Date.parse('2026-11-10T10:00:30.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const INACTIVITY_TIMEOUT_MS = 300_000;
@@ -169,7 +169,7 @@ beforeEach(() => {
   ]) {
     vi.stubEnv(key, undefined);
   }
-  cpSync(FIXTURE, getClaudeDesktopBaseDir(), { recursive: true });
+  installCoworkFixture(getClaudeDesktopBaseDir());
   writeProfile('synthetic-project');
   vi.spyOn(logger, 'warn');
 });
@@ -182,6 +182,24 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+describe('installCoworkFixture', () => {
+  it('lays the fixture session out in the Claude Desktop layout', () => {
+    const root = getClaudeDesktopLocalSessionsRoot();
+    const files = (readdirSync(root, { recursive: true }) as string[])
+      .filter((path) => statSync(join(root, path)).isFile())
+      .map((path) => path.split(sep).join('/'))
+      .sort();
+
+    expect(files).toEqual([
+      '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/1a2b3c4d/.claude/projects/session/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.jsonl',
+      '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/1a2b3c4d/.claude/projects/session/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f/subagents/agent-a11111111111111111.jsonl',
+      '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/1a2b3c4d/.claude/projects/session/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f/subagents/agent-a11111111111111111.meta.json',
+      '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/1a2b3c4d/audit.jsonl',
+      '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/local_1a2b3c4d-1111-4222-8333-444455556666.json',
+    ]);
+  });
 });
 
 describe('CoworkEventProducer.run', () => {
@@ -256,7 +274,7 @@ describe('CoworkEventProducer.run', () => {
     writeFileSync(join(codeRoot, `${LOCAL}.json`), JSON.stringify({ sessionId: LOCAL, cliSessionId: CLI, createdAt: LAST_LINE_MS - 30_000, lastActivityAt: LAST_LINE_MS, cwd: join(home, 'repo') }));
     const codeTranscript = join(home, '.claude', 'projects', 'synthetic-repo', `${CLI}.jsonl`);
     mkdirSync(dirname(codeTranscript), { recursive: true });
-    cpSync(join(FIXTURE, 'local-agent-mode-sessions', ACCOUNT_DIR, '1a2b3c4d', '.claude', 'projects', 'session', `${CLI}.jsonl`), codeTranscript);
+    cpSync(coworkFixtureFile('main.jsonl'), codeTranscript);
     mkdirSync(join(getClaudeDesktopLocalSessionsRoot(), ACCOUNT_DIR, '2b3c4d5e'), { recursive: true });
     writeFileSync(join(getClaudeDesktopLocalSessionsRoot(), ACCOUNT_DIR, '2b3c4d5e', 'audit.jsonl'), '{"type":"system"}\n');
     writeFileSync(metadataPath(LOCAL_2), JSON.stringify({ sessionId: LOCAL_2, cliSessionId: CLI_2, createdAt: LAST_LINE_MS - 30_000, lastActivityAt: LAST_LINE_MS }));

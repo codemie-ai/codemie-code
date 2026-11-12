@@ -4,18 +4,17 @@
  * the Cowork fixture and a temp ~/.codemie (CODEMIE_HOME) holding the profile; `fetch` is the stubbed boundary.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ClaudeDesktopTelemetryAdapter } from '@/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js';
 import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { DesktopTelemetryRuntime } from '../../DesktopTelemetryRuntime.js';
 import type { DesktopTelemetryRuntimeConfig, LocalTelemetryAdapter } from '../../types.js';
+import { installCoworkFixture } from './cowork-fixture.js';
 
 const CLI = '7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'cowork-session');
 const LAST_LINE_MS = Date.parse('2026-11-10T10:00:30.000Z');
 
 const config: DesktopTelemetryRuntimeConfig = {
@@ -60,7 +59,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => {
     throw new Error('no network in this test');
   }));
-  cpSync(FIXTURE, getClaudeDesktopBaseDir(), { recursive: true });
+  installCoworkFixture(getClaudeDesktopBaseDir());
   const profile = (project: string) => ({
     provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com', codeMieProject: project,
   });
