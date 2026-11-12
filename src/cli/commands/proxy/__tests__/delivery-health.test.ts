@@ -45,7 +45,8 @@ vi.mock('@/providers/core/credential-owner.js', () => ({
 vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js', () => ({
   forwarderIdentity,
 }));
-vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js', () => ({
+vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getPolicyState,
 }));
 vi.mock('@/utils/logger.js', () => ({
@@ -220,8 +221,24 @@ describe('collectDeliveryHealth', () => {
     });
   });
 
-  it('reads classificationStalled against the resolved capability: evidence never flags either reason', async () => {
+  it('reports classification_unsupported when capability is evidence but the policy does not advertise the publication contract', async () => {
     getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 11, mismatchHeld: false, sendFailed: false, classificationStalled: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unsupported',
+      pendingBytes: 11,
+    });
+  });
+
+  it('stays healthy when capability is evidence and the policy already advertises the publication contract, even if stalled', async () => {
+    getPolicyState.mockResolvedValue({
+      policy: null,
+      capability: 'evidence',
+      usable: false,
+      refreshDue: true,
+      publicationContracts: ['1'],
+    });
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, classificationStalled: true });
     const health = await collectDeliveryHealth(state, ok);
     expect(health).toMatchObject({ status: 'healthy' });
@@ -244,7 +261,7 @@ describe('collectDeliveryHealth', () => {
 
   it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {
     forwarderIdentity.mockReturnValue(null);
-    // A stalled session alone is not enough: capability must fall back to 'evidence' when identity fails.
+    // A stalled session alone is not enough: the policy state must fall back to null when identity fails.
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: false, classificationStalled: true });
     const health = await collectDeliveryHealth(state, ok);
     expect(health.reason).not.toBe('classification_unreachable');
@@ -275,7 +292,7 @@ describe('collectDeliveryHealth', () => {
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
   });
 
-  it('falls back to evidence, instead of going unknown, when the credential lookup throws', async () => {
+  it('falls back to an unresolved policy state, instead of going unknown, when the credential lookup throws', async () => {
     getStoredAnalyticsCredentials.mockRejectedValue(new Error('boom'));
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, sendFailed: false, classificationStalled: false });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
@@ -353,8 +370,13 @@ describe('formatDeliveryLines', () => {
   it('says the spool-derived reasons cover the whole machine', () => {
     expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
     expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
-    expect(DELIVERY_REASONS.classification_unreachable.label).toContain('on this machine');
-    expect(DELIVERY_REASONS.classification_unsupported.label).toContain('on this machine');
+  });
+
+  it('writes classification_unreachable/classification_unsupported for a non-technical reader', () => {
+    expect(DELIVERY_REASONS.classification_unreachable.label).toBe('waiting for the CodeMie server to respond');
+    expect(DELIVERY_REASONS.classification_unsupported.label).toBe(
+      "the CodeMie server isn't set up to accept this data yet — contact your CodeMie administrator"
+    );
   });
 
   it('reports a stopped proxy for null', () => {

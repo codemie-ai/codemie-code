@@ -4,7 +4,7 @@ import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { summarizeSpoolDelivery } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
 import { forwarderIdentity } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
-import { getPolicyState, type Capability } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js';
+import { advertisesContract, getPolicyState, type PolicyState } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
@@ -25,10 +25,12 @@ export interface DeliveryHealth {
 
 /**
  * Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile.
- * `identity_mismatch`, `send_failed`, `classification_unreachable` and `classification_unsupported`
- * come from the spool, which is shared by the whole machine, so their labels say so. Neither
- * `classification_unreachable` nor `classification_unsupported` has a `run`: there is nothing the
- * CLI can do locally — the first may clear on its own, the second needs the backend upgraded.
+ * `identity_mismatch` and `send_failed` come from the spool, which is shared by the whole machine,
+ * so their labels say so. `classification_unreachable` and `classification_unsupported` are
+ * deliberately written for a non-technical reader instead — plain wording over machine-scope
+ * precision — and neither has a `run`: there is nothing the CLI can do locally — the first clears
+ * on its own once the server responds, the second needs a CodeMie administrator to enable the
+ * feature server-side.
  *
  * Known limitation: `classification_unreachable`/`classification_unsupported` read the active
  * profile's capability against every session in the shared spool (see `SpoolDeliverySummary`'s
@@ -40,38 +42,38 @@ export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: str
   auth_rejected: { label: 'analytics auth rejected', run: 'codemie profile login' },
   identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
   send_failed: { label: 'sending to analytics failed on this machine' },
-  classification_unreachable: { label: 'analytics backend has never answered for a pending session on this machine' },
-  classification_unsupported: { label: 'analytics backend does not support classification for a pending session on this machine; it will be discarded' },
+  classification_unreachable: { label: 'waiting for the CodeMie server to respond' },
+  classification_unsupported: { label: "the CodeMie server isn't set up to accept this data yet — contact your CodeMie administrator" },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown', pendingBytes: 0 };
 
 /**
- * The backend capability for the active profile's namespace, read from the on-disk stored
- * credential — never the daemon's live one. Run through `withVerifiedOwner`, the same owner
+ * The cached classification-policy state for the active profile's namespace, read from the on-disk
+ * stored credential — never the daemon's live one. Run through `withVerifiedOwner`, the same owner
  * lookup the daemon's own tick applies before it writes the policy cache (`otlp.plugin.ts`'s
  * `tick`), so a login with no `codemie_access_token` claim (oauth2-proxy) resolves to the same
- * namespace key the daemon actually cached under, instead of always falling back to `'evidence'`.
- * `withVerifiedOwner` may probe the backend once and then cache the result on disk, bounded by
- * its own timeout and failure cooldown. `'evidence'` is also the safe fallback whenever no
- * NamespaceId can be resolved, so an unresolved identity can never produce a false
- * `classification_unreachable` (spec AC3). Never throws, for the same reason: a credential-read
- * failure here must not blank out the other signals `collectDeliveryHealth` already computed.
+ * namespace key the daemon actually cached under, instead of always falling back to an unresolved
+ * state. `withVerifiedOwner` may probe the backend once and then cache the result on disk, bounded
+ * by its own timeout and failure cooldown. `null` is the safe fallback whenever no NamespaceId can
+ * be resolved (or the read fails), so an unresolved identity can never produce a false
+ * `classification_unreachable`/`classification_unsupported` (spec AC3) — only a genuinely resolved
+ * `PolicyState` ever drives a reason. Never throws, for the same reason: a credential-read failure
+ * here must not blank out the other signals `collectDeliveryHealth` already computed.
  */
-async function resolveCapability(state: DaemonState): Promise<Capability> {
+async function resolvePolicyState(state: DaemonState): Promise<PolicyState | null> {
   try {
     const stored = await getStoredAnalyticsCredentials(state.syncCodeMieUrl, {}, {
       provider: state.provider,
       baseUrl: state.targetUrl,
     });
-    if (!stored) return 'evidence';
+    if (!stored) return null;
     const identity = forwarderIdentity(await withVerifiedOwner(stored.credentials));
-    if (!identity) return 'evidence';
-    const policy = await getPolicyState({ ...identity, profile: state.profile });
-    return policy.capability;
+    if (!identity) return null;
+    return await getPolicyState({ ...identity, profile: state.profile });
   } catch (error) {
     logger.debug('[delivery-health] Could not resolve analytics capability:', error);
-    return 'evidence';
+    return null;
   }
 }
 
@@ -92,9 +94,9 @@ export async function collectDeliveryHealth(
     );
     // The spool scan touches different data than capability resolution (credential read, possibly
     // an owner-verification probe), so all three run concurrently instead of the scan waiting on it.
-    const [marker, capability, spool] = await Promise.all([
+    const [marker, policyState, spool] = await Promise.all([
       applicableAuthMarker(source, [state.targetUrl, state.syncApiUrl, getPlatformUrl(source)]),
-      resolveCapability(state),
+      resolvePolicyState(state),
       summarizeSpoolDelivery(),
     ]);
 
@@ -103,9 +105,13 @@ export async function collectDeliveryHealth(
       : marker ? 'auth_rejected'
       : spool.mismatchHeld ? 'identity_mismatch'
       : spool.sendFailed ? 'send_failed'
-      // Capability is a single resolved value, so at most one of these two ever applies.
-      : spool.classificationStalled && capability === 'unknown' ? 'classification_unreachable'
-      : spool.classificationStalled && capability === 'legacy' ? 'classification_unsupported'
+      // Capability is a single resolved value, so at most one of these three ever applies. `evidence`
+      // means the backend answered with a usable policy but one that still does not advertise the
+      // negotiated publication contract — a stalled session under it is just as stuck as under
+      // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
+      : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
+      : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
+      : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
       : undefined;
 
     if (reason) {
