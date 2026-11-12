@@ -67,6 +67,10 @@ export function createSyncProcessor(): SessionProcessor {
         return { success: true, message: 'Sync deferred: conversation file gone' };
       }
 
+      // EPMCDME-17142: the same session-frozen work-consent boundary as the legacy /v1/metrics path (anthropic-subscription only)
+      const withheld = await consentGateWithholds(session.sessionId, pendingPayloads, context);
+      if (withheld) return withheld;
+
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
         return { success: true, message: 'No pending payloads' };
@@ -394,4 +398,45 @@ function applyPayloadOutcome(
         }
       };
   });
+}
+
+/**
+ * The legacy work-consent gate (`legacyMetricsVerdict`: frozen consent, still held, destination accepted) for sessions of a gated
+ * provider; every other provider is unchanged. A final verdict marks the queued payloads `withheld` (terminal: not sent, not a failed
+ * attempt, the session counts as delivered) and persists the verdict so the metric senders agree. A transient verdict sends nothing and
+ * changes nothing; a destination still awaited is not counted as a reconciliation attempt. Returns the result to report, or undefined to send.
+ */
+async function consentGateWithholds(
+  sessionId: string,
+  pending: ConversationPayloadRecord[],
+  context: ProcessingContext
+): Promise<ProcessingResult | undefined> {
+  if (pending.length === 0) return undefined;
+  const gate = await import('@/agents/core/session/legacy-metrics-gate.js');
+  const { SessionStore } = await import('@/agents/core/session/SessionStore.js');
+  const record = await new SessionStore().loadSession(sessionId);
+  if (!record || !gate.isLegacyGatedProvider(record.provider)) return undefined;
+  const verdict = await gate.legacyMetricsVerdict(record);
+  if (verdict.publish) return undefined;
+  logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] Conversations withheld: ${verdict.reason}`);
+  if (!('transient' in verdict)) {
+    await gate.persistLegacyMetricsWithheld(sessionId, verdict.reason);
+    try {
+      await rewriteSessionFile<ConversationPayloadRecord>('conversation', sessionId, (current) => {
+        for (const p of current) {
+          if (isSendCandidate(p)) {
+            p.status = CONVERSATION_SYNC_STATUS.WITHHELD;
+            p.error = verdict.reason;
+          }
+        }
+        return current;
+      }, context);
+    } catch (writeError) {
+      logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to mark withheld payloads (nothing was sent):`, writeError);
+    }
+  } else if (gate.awaitsDestination(verdict)) {
+    const { noteAwaitingDestination } = await import('../../bounded-request.js');
+    noteAwaitingDestination(context.abortSignal);
+  }
+  return { success: true, message: `conversations withheld: ${verdict.reason}` };
 }

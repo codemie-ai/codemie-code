@@ -249,3 +249,39 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect(posts()[0].headers).not.toHaveProperty('X-CodeMie-Work-Consent');
   });
 });
+
+describe('a confirmed-subscription record cannot reach the old-backend or persisted legacy path', () => {
+  const legacyBackend = () => { h.be.policy = { status: 404, body: {} }; }; // authenticated 404 = genuinely old endpoint
+  const persistLegacyMode = async (m: M, sid: string) =>
+    m.st.writeStatus(sid, { ...m.st.createStatus(), sendMode: 'legacy' });
+  const earlierImplementationRecord = async (m: M, sid: string, org?: string) =>
+    m.rec.createOrRead(keyOf(m, sid), {
+      session_id: sid, launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven', organization: org,
+      project: 'proj-orig', project_source: 'profile', api_identity: identity(m).api_identity, owner_hash: identity(m).owner_hash,
+      funding_route: 'subscription', collection_generation: 0, // funding claim but no `negotiate_publication` marker
+    });
+
+  it.each([
+    ['Personal', 'Gmail Personal'],
+    ['Unknown + subscription', undefined],
+  ])('%s on a legacy backend with a persisted legacy sendMode: nothing is sent', async (_n, org) => {
+    legacyBackend();
+    const m = await load();
+    await stamp(m, 's1', org, 'subscription');
+    await persistLegacyMode(m, 's1');
+    await hook(m, 's1');
+    await drain(m, 's1');
+    expect(posts()).toEqual([]);
+  });
+
+  it('a funding record from the earlier implementation (no negotiation marker) stays unsent on a legacy backend and under a persisted legacy sendMode', async () => {
+    legacyBackend();
+    const m = await load();
+    expect((await earlierImplementationRecord(m, 's1', 'Gmail Personal')).kind).toBe('created');
+    await persistLegacyMode(m, 's1');
+    await hook(m, 's1');
+    await drain(m, 's1');
+    await drain(m, 's1');
+    expect(posts()).toEqual([]);
+  });
+});
