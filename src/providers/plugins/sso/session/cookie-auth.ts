@@ -26,12 +26,15 @@ export type CredentialsSupersededCheck = (sentCookies: string) => Promise<boolea
  */
 export interface CookieAuth {
   cookies: string;
+  /** SSO authorization fallback (see `SSOCredentials.authorization`), read from the same store entry. */
+  authorization?: string;
   credentialsSuperseded?: CredentialsSupersededCheck;
   readTimedOut?: boolean;
 }
 
 interface CookieSet {
   cookies: Record<string, string>;
+  authorization?: string;
 }
 
 interface CookieSource {
@@ -196,6 +199,7 @@ export async function readCookieAuth(
 
   return {
     cookies,
+    authorization: first?.authorization ?? '',
     readTimedOut,
     credentialsSuperseded: (sentCookies: string) => sentCredentialsSuperseded(sentCookies, source),
   };

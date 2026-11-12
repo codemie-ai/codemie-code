@@ -9,6 +9,10 @@ vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: vi.fn(function () {
     return { getStoredCredentials };
   }),
+  // Real implementation mirrored here since this mock factory replaces the whole
+  // module — see sso.auth.ts for the canonical definition.
+  hasUsableSsoCredential: (cookies?: Record<string, string>, authorization?: string) =>
+    Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim()),
 }));
 vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
   startDetachedSsoLogin: vi.fn(),
