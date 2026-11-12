@@ -2,7 +2,7 @@ import { apiIdentity } from '@/agents/core/evidence/api-identity.js';
 import { logger } from '@/utils/logger.js';
 import { forwarderIdentity } from './spool-io.js';
 import { ORG_ENCODING_V1, organizationSendable } from '@/agents/core/evidence/org-encoding.js';
-import { classify, decide, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
+import { classify, decide, workConsentNeed, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
@@ -30,7 +30,7 @@ export function setClassificationConsumer(c: Consumer | undefined): void {
 
 export type SessionClassification =
   | { action: 'send'; result: ClassResult }
-  | { action: 'hold'; reason: 'classification_unresolved' | 'personal_not_forwardable' | 'verdict_unavailable' | 'organization_encoding_unsupported' }
+  | { action: 'hold'; reason: 'classification_unresolved' | 'work_consent_required' | 'personal_not_forwardable' | 'verdict_unavailable' | 'organization_encoding_unsupported' }
   | { action: 'suppress' };
 
 export function authHeadersFor(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
@@ -100,6 +100,13 @@ export async function classifySession(
       class: 'personal', status: 'determinate', basis: 'org_no_match',
       ...(verdict.policy_version ? { policy_version: verdict.policy_version } : {}),
     };
+  }
+  // No explicit work consent frozen on the record (a consent that was later revoked is stopped by sendGuard before
+  // any send): Personal / Unknown+subscription never leaves the machine, and an unresolved classification waits.
+  if (!record.consent_ref) {
+    const need = workConsentNeed(result, record.funding_route);
+    if (need === 'required') return { action: 'hold', reason: 'work_consent_required' };
+    if (need === 'unresolved') return { action: 'hold', reason: 'classification_unresolved' };
   }
   const decision = decide(result, consumer);
   if (decision === 'withhold') return { action: 'hold', reason: 'classification_unresolved' };
