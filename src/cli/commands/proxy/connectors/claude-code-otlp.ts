@@ -337,6 +337,23 @@ export async function localizeCodemieHookCommands(hooksBlock: Record<string, unk
 }
 
 /**
+ * Repair stale CodeMie CLI paths in the OTLP hooks of ~/.claude/settings.json (EPMCDME-17164).
+ * Missing file or invalid JSON is a no-op; nothing is written when no path is stale.
+ */
+export async function healClaudeSettingsHooks(): Promise<boolean> {
+  const file = getClaudeSettingsPath();
+  let settings: { hooks?: Record<string, unknown> };
+  try {
+    settings = JSON.parse(await readFile(file, 'utf-8'));
+  } catch {
+    return false; // missing or invalid JSON: leave the file alone
+  }
+  if (!settings?.hooks || !(await localizeCodemieHookCommands(settings.hooks))) return false;
+  await writeAtomically(file, JSON.stringify(settings, null, 2) + '\n');
+  return true;
+}
+
+/**
  * True if a hook GROUP contains at least one codemie-owned command. Used only
  * for the "have we already touched this file before" backup heuristic in the
  * connect path — safe at group granularity since it's purely informational
