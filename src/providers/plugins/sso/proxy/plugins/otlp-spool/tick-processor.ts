@@ -141,6 +141,9 @@ async function applySessionEvidenceLocked(
           ? '[otlp-tick] analytics publication held: the backend does not advertise the publication contract'
           : '[otlp-tick] analytics publication held: the backend capability could not be confirmed');
       }
+      if (decision.reason === 'work_consent_required' && key) {
+        await writeNotice(key, 'work_consent_required', sessionId).catch(() => undefined);
+      }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };
   } else if (decision.action === 'lose' && decision.reason === 'publication_contract_unavailable' && key &&

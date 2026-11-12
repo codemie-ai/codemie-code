@@ -144,12 +144,23 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     const status = (await m.st.readStatus('s1'))!;
     expect(status.holds?.session?.reason).toBe('work_consent_required');
     expect(status.cursors).toMatchObject({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    const key = keyOf(m, 's1');
+    const reason = await m.stop.takeNotice(key);
+    expect(reason).toBe('work_consent_required');
+    const { stopNoticeText } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.notice.js');
+    const notice = stopNoticeText(reason!);
+    expect(notice).toContain('codemie proxy analytics connect-folder');
+    expect(notice).toContain('start a new session');
+    expect(notice).not.toMatch(/retry|backend/i);
+    await drain(m, 's1');
+    expect(await m.stop.takeNotice(key)).toBeUndefined();
+    expect(posts()).toEqual([]);
   });
 
   it.each([
-    ['Personal', 'Gmail Personal'],
-    ['Unknown + subscription', undefined],
-  ])('positive control, %s with the folder connected before the session: it reaches the consented project', async (_n, org) => {
+    ['Personal', 'Gmail Personal', 'personal'],
+    ['Unknown + subscription', undefined, 'unknown'],
+  ])('positive control, %s with the folder connected before the session: it reaches the consented project', async (_n, org, subscriptionType) => {
     const m = await load();
     await connect(m);
     expect(await stamp(m, 's1', org, 'subscription')).toMatchObject({ ok: true, record: { consent_ref: expect.any(String) } });
@@ -157,7 +168,11 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     await drain(m, 's1');
 
     expect(posts().length).toBeGreaterThan(0);
-    expect(posts()[0].headers).toMatchObject({ 'X-CodeMie-Work-Consent': 'explicit-folder', 'X-CodeMie-Project': 'proj-orig' });
+    expect(posts()[0].headers).toMatchObject({
+      'X-CodeMie-Work-Consent': 'explicit-folder',
+      'X-CodeMie-Project': 'proj-orig',
+      'X-CodeMie-Subscription-Type': subscriptionType,
+    });
     expect((await m.st.readStatus('s1'))!.cursors.hooks).toBe(hooksSize('s1'));
   });
 
