@@ -2,7 +2,7 @@
  * Installed agents health check
  *
  * Reports each installed agent's version against the version CodeMie
- * recommends: a match is `ok`, a mismatch is a `warn` carrying the
+ * recommends: a supported version is `ok`, any other is a `warn` carrying the
  * recommendation, and a version below the minimum supported one is an `error`
  * (that is the only version state that actually blocks the agent).
  */
@@ -57,7 +57,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       };
     }
 
-    if (version !== compat.supportedVersion) {
+    if (!compat.isSupported) {
       return {
         status: 'warn',
         message: `${agent.displayName}${versionStr} - CodeMie recommends v${compat.supportedVersion}`,

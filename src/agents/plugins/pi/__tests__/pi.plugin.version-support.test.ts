@@ -45,10 +45,10 @@ describe('PiPlugin version support', () => {
     vi.clearAllMocks();
   });
 
-  it('should declare 1.4.0 as the supported Pi version', async () => {
+  it('should declare 1.5.2 as the supported Pi version', async () => {
     const { PiPluginMetadata } = await import('../pi.plugin.js');
 
-    expect(PiPluginMetadata.supportedVersion).toBe('1.4.0');
+    expect(PiPluginMetadata.supportedVersion).toBe('1.5.2');
   });
 
   it('should not declare a minimum supported version so no installed Pi is blocked', async () => {
@@ -67,7 +67,7 @@ describe('PiPlugin version support', () => {
     await plugin.installVersion('supported');
 
     expect(processes.installGlobal).toHaveBeenCalledWith('@earendil-works/pi-coding-agent', {
-      version: '1.4.0',
+      version: '1.5.2',
     });
   });
 });

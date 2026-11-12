@@ -199,6 +199,7 @@ export interface VersionCompatibilityResult {
   compatible: boolean;              // true if installed version is compatible
   installedVersion: string | null;  // null if not installed
   supportedVersion: string;         // version from metadata
+  isSupported: boolean;             // true if installed needs no notice (see AgentMetadata.acceptsSupportedMajor)
   isNewer: boolean;                 // true if installed > supported (one-time notice)
   hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
@@ -226,6 +227,13 @@ export interface AgentMetadata {
    * Special values: 'latest', 'stable' (channels)
    */
   supportedVersion?: string;
+
+  /**
+   * Treat every release on `supportedVersion`'s major line as supported (e.g.
+   * '1.5.2' accepts any 1.x.x), so neither the launch notice nor `codemie doctor`
+   * flags it. Default: only an exact match is supported.
+   */
+  acceptsSupportedMajor?: boolean;
 
   /**
    * Oldest version that still works with CodeMie. Versions below this are
