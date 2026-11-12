@@ -1557,7 +1557,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(conversationPuts).toEqual([]);
   });
 
-  it('a start whose request the server never answers spends its attempt; the start after the 3rd renames unsent', async () => {
+  it('a start whose request the server never answers spends no real attempt; no later start renames the record unsent', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);
     // The server never answers; only the attempt's 10 s deadline ends a request
@@ -1584,9 +1584,9 @@ describe('SessionEnd inside the agent hook process', () => {
       const attempts: Array<number | undefined> = [];
       for (let start = 0; start < 3; start++) {
         await runStart();
-        attempts.push(readRecord(session.sessionId).deliveryAttempts);
+        attempts.push(readRecord(session.sessionId).deliveryRealAttempts);
       }
-      expect(attempts).toEqual([1, 2, 3]);
+      expect(attempts).toEqual([0, 0, 0]);
       expect(endMetrics().length).toBeGreaterThanOrEqual(3);
 
       requests = [];
@@ -1595,9 +1595,9 @@ describe('SessionEnd inside the agent hook process', () => {
       vi.useRealTimers();
     }
 
-    expect(requests).toEqual([]);
-    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
-    expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeUndefined();
+    expect(requests.length).toBeGreaterThan(0);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+    expect(readRecord(session.sessionId).droppedAt).toBeUndefined();
   });
 
   it('a start with no stored credentials leaves an undelivered record in place: no request, no attempt, never renamed unsent', async () => {
@@ -1610,7 +1610,7 @@ describe('SessionEnd inside the agent hook process', () => {
     try {
       for (let start = 0; start < 4; start++) {
         await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
-        attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryAttempts : 'renamed');
+        attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryRealAttempts : 'renamed');
       }
     } finally {
       vi.mocked(getStoredAnalyticsCredentials).mockImplementation(async () => ({ credentials: { cookies: { session: 'abc' } } }) as Awaited<ReturnType<typeof getStoredAnalyticsCredentials>>);
@@ -1657,7 +1657,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(kept.endMetricSentAt).toBeUndefined();
   });
 
-  it('a start whose end metric meets a permission denial (403) spends an attempt and marks no credentials invalid', async () => {
+  it('a start whose end metric meets a permission denial (403) spends no real attempt and marks no credentials invalid', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);
     respond = () => new Response(JSON.stringify({ message: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
@@ -1666,7 +1666,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(endMetrics().length).toBeGreaterThan(0);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
     expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(false);
   });
 
@@ -1744,7 +1744,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, meets a permission denial (403) spends an attempt and marks no credentials invalid', async () => {
+  it('an undelivered record whose only pending request, a conversation, meets a permission denial (403) spends no real attempt and marks no credentials invalid', async () => {
     const session = conversationOnlyRecord();
     respond = () => new Response(JSON.stringify({ message: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1752,7 +1752,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
     expect(readAuthMarker()).toBeUndefined();
   });
 
@@ -1897,7 +1897,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, is answered 500 with a body that cannot be read spends an attempt', async () => {
+  it('an undelivered record whose only pending request, a conversation, is answered 500 with a body that cannot be read spends no real attempt', async () => {
     const session = conversationOnlyRecord();
     respond = () => ({ ok: false, status: 500, statusText: 'Internal Server Error', headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('socket hang up')) }) as unknown as Response;
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1905,7 +1905,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.filter((url) => !url.includes('/v1/conversations/'))).toEqual([]);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
   });
 
   it('a stranded record whose delta sync is answered 503 gets its finalize attempt back; the record is kept', async () => {
@@ -2965,16 +2965,20 @@ describe('the exit notice', () => {
     expect(stderr).not.toHaveBeenCalled();
   });
 
-  it('a record the start pass dropped at its attempt cap: droppedAt on its completed_ record, one dropped line', async () => {
+  it('a record the start pass dropped with its retry budget spent: droppedAt on its completed_ record, one dropped line', async () => {
     const startedAt = Date.now();
-    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryAttempts: 3 });
+    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
     writeRecord(capped);
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
+    // A failure that counts: the server answers 404 in JSON
+    respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
     expect(readRecord(capped.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(readRecord(capped.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
+    respond = () => ok();
     await exitStep(own.sessionId, startedAt);
 
     expect(stderrLines(stderr)).toEqual([expect.stringContaining(DROPPED_ONE)]);
@@ -2983,8 +2987,8 @@ describe('the exit notice', () => {
   it.each([
     { lines: ['failed'], dropped: true },
     { lines: ['pending', 'success'], dropped: false },
-  ])('a capped record whose conversation payload lines are $lines: dropped $dropped at the rename', async ({ lines, dropped }) => {
-    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now(), deliveryAttempts: 3 });
+  ])('a record with its budget spent whose conversation payload lines are $lines: dropped $dropped at the rename', async ({ lines, dropped }) => {
+    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now(), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
     writeRecord(capped);
     writeDeltas(capped.sessionId, [{ timestamp: capped.startTime + SECOND, syncStatus: 'synced' }]);
     writeFileSync(join(sessionsDir, `${capped.sessionId}_conversation.jsonl`), lines.map((status) => `${JSON.stringify({
@@ -2998,6 +3002,7 @@ describe('the exit notice', () => {
     })}\n`).join(''));
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
+    respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
 
     await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
 
@@ -3467,7 +3472,7 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(session.sessionId).reason).toBe('logout');
   });
 
-  it('the read still failing: the own-record step rejects, three starts spend their attempts, the fourth ends it completed with nothing of the transcript sent', async () => {
+  it('the read still failing: the own-record step rejects, three starts spend their attempts, the fourth after 24 h of failing ends it completed with nothing of the transcript sent', async () => {
     const { session, env, end } = copilotRun();
     const id = session.sessionId;
     const startedAt = Date.now();
@@ -3475,13 +3480,14 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
 
     await end();
     await expect(finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND })).rejects.toMatchObject({ code: 'EISDIR' });
-    expect(readRecord(id).finalizeAttempts).toBeUndefined();
+    expect(readRecord(id).deliveryRealAttempts).toBeUndefined();
 
     for (const spent of [1, 2, 3]) {
       await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
-      expect(readRecord(id)).toMatchObject({ status: 'active', finalizeAttempts: spent });
+      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: spent });
     }
     expect(requests).toEqual([]);
+    writeRecord({ ...readRecord(id), deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
 
     await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
 

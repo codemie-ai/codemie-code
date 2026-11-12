@@ -1,6 +1,6 @@
 import { logger } from '@/utils/logger.js';
 import { getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { markDroppedIfUndelivered } from '@/agents/core/session/stale-session-reconciliation.js';
+import { markDroppedIfUndelivered } from '@/agents/core/session/delivery-budget.js';
 import { hasSendPath } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
 import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';

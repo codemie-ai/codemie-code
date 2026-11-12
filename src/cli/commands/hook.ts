@@ -9,11 +9,11 @@ import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } 
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import {
   lastRecordedActivityAt,
-  markDroppedIfUndelivered,
   maxDeltaTimestamp,
   readLiveRecord,
   reconcileLockPath,
 } from '@/agents/core/session/stale-session-reconciliation.js';
+import { markDroppedIfUndelivered } from '@/agents/core/session/delivery-budget.js';
 import { sameHost } from '@/agents/core/session/send-path.js';
 import { syntheticSessionEnd } from '@/agents/core/session/synthetic-session-end.js';
 import { nextRecordStart } from '@/agents/core/session/next-record-start.js';

@@ -1,19 +1,19 @@
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
-import type { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
 import {
   isLiveRecordFileName,
   LEGACY_IDLE_MS,
-  markDroppedIfUndelivered,
-  MAX_ATTEMPTS,
   readLiveRecord,
   RECONCILE_PER_START,
-  reconcileLockPath,
-  settleAttempt
+  reconcileLockPath
 } from '@/agents/core/session/stale-session-reconciliation.js';
+import { markDroppedIfUndelivered } from '@/agents/core/session/delivery-budget.js';
+import { attemptNotServed, authWasRejected, awaitingDestination, failingServerAnswered } from '@/providers/plugins/sso/session/bounded-request.js';
+import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { isDeliveryDone } from '@/cli/commands/hook/delivery.js';
 import type { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import type {
@@ -27,6 +27,43 @@ import { logger } from '@/utils/logger.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { getCodemiePath } from '@/utils/paths.js';
+
+/**
+ * Attempts per Desktop record before it is renamed unsent. ponytail: the Desktop daemon keeps its own attempt cap until it
+ * reports to the delivery budget like the reconciler does.
+ */
+const MAX_DESKTOP_ATTEMPTS = 3;
+
+/**
+ * Gives a counted delivery attempt back when no request of it was served: rejected credentials, a request that never
+ * left or met a failing server (within the evidence retention), or a legacy metric awaiting its destination.
+ */
+async function settleDesktopAttempt(sessionId: string, before: number | undefined, signal: AbortSignal): Promise<void> {
+  const failingServer = failingServerAnswered(signal);
+  let why: string | undefined;
+  if (authWasRejected(signal)) {
+    why = 'credentials rejected by the server';
+  } else if (attemptNotServed(signal) && (!failingServer || (await withinEvidenceRetention(sessionId)))) {
+    why = failingServer ? 'answered by a failing server' : 'request never reached the server';
+  } else if (awaitingDestination(signal) && (await withinEvidenceRetention(sessionId))) {
+    why = 'legacy metrics wait for the destination confirmation';
+  }
+  if (!why) return;
+  const record = await readLiveRecord(sessionId);
+  if (!record) return;
+  const restored: Session = { ...record };
+  if (before === undefined) delete restored.deliveryAttempts;
+  else restored.deliveryAttempts = before;
+  await new SessionStore().saveSession(restored);
+  logger.info(`[desktop-telemetry] ${sessionId}: ${why}; deliveryAttempts rolled back`);
+}
+
+/** Whether the record's session ended (or, unended, started) within the evidence record's retention. */
+async function withinEvidenceRetention(sessionId: string): Promise<boolean> {
+  const record = await readLiveRecord(sessionId);
+  const at = record?.endTime ?? record?.startTime;
+  return at !== undefined && Date.now() - at < evidenceRecordIdleDays() * 86_400_000;
+}
 
 /** The processing, finalization, delivery and start-up / re-delivery reconciliation of Desktop records. */
 export class DesktopSessionDelivery {
@@ -93,7 +130,7 @@ export class DesktopSessionDelivery {
    * metric — then the `completed_*` rename once delivered; the caller holds the reconcile lock. Without
    * usable credentials (no stored cookies, or the analytics auth marked invalid) the record is saved, its flush
    * processed locally, nothing sent, and it waits for a re-login. A counted attempt saves the record with `deliveryAttempts` + 1 before any send and
-   * gives it back as {@link settleAttempt} rules (rejected credentials, or a request of it that never left or was answered by a failing server — the latter while the record is within the evidence retention — with none of its requests ending in a counted failure); past {@link MAX_ATTEMPTS} the record is renamed
+   * gives it back as {@link settleDesktopAttempt} rules (rejected credentials, or a request of it that never left or was answered by a failing server — the latter while the record is within the evidence retention — with none of its requests ending in a counted failure); past {@link MAX_DESKTOP_ATTEMPTS} the record is renamed
    * without sending. A failed send is logged, never thrown: the record stays `{id}.json`.
    */
   private async deliverLocked(record: Session, options: { countAttempt: boolean; flush: boolean }): Promise<void> {
@@ -110,7 +147,7 @@ export class DesktopSessionDelivery {
     const signal = new AbortController().signal;
     if (options.countAttempt) {
       const attempts = record.deliveryAttempts ?? 0;
-      if (attempts >= MAX_ATTEMPTS) {
+      if (attempts >= MAX_DESKTOP_ATTEMPTS) {
         logger.warn('[desktop-telemetry] Undelivered after the last attempt; renamed without sending', { sessionId, attempts });
         await this.sessionStore.saveSession(record);
         await markDroppedIfUndelivered(sessionId);
@@ -122,7 +159,7 @@ export class DesktopSessionDelivery {
 
     await this.sendRecord(record, options.flush, signal);
     if (options.countAttempt) {
-      await settleAttempt({ sessionId, field: 'deliveryAttempts', before: record.deliveryAttempts, signal }, false);
+      await settleDesktopAttempt(sessionId, record.deliveryAttempts, signal);
     }
     await this.renameToCompleted(sessionId);
   }
