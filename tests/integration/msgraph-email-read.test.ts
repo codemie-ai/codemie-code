@@ -72,7 +72,8 @@ describe('msgraph.js emails --read', () => {
     const script = join(stubDir, 'msgraph.js');
     copyFileSync(SCRIPT, script);
 
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, CODEMIE_HOME: home };
+    // os.homedir() reads USERPROFILE on Windows, HOME elsewhere
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, CODEMIE_HOME: home };
     delete env.NODE_ENV;
     delete env.VITEST;
 
