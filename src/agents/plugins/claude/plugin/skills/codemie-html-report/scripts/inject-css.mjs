@@ -11,8 +11,8 @@
  *
  * Fonts are embedded, so the page looks the same offline. Of the faces in style-guide/fonts/fonts.css
  * it embeds only those the page needs: a subset whose unicode-range covers a character the page
- * uses (its scripts included, since chart labels and injected data are text too), italics only if
- * the page sets any, JetBrains Mono only if it shows code. An English report gets one 63 KB face.
+ * uses (its scripts included, since chart labels and injected data are text too), of Geist and
+ * Geist Mono, the product's two faces. An English report gets two faces, about 68 KB.
  * --cdn keeps the Google Fonts @import instead: a smaller file that needs a network connection.
  *
  * The agent never reads or writes the CSS itself, which keeps a page build about 40k tokens cheaper.
@@ -65,23 +65,20 @@ function ranges(value) {
 }
 
 /**
- * The embedded faces this page needs, and a one-line account of them. A page uses Inter and
- * JetBrains Mono, a deck Geist and Geist Mono; a deck always takes its mono face, which sets its
- * labels and values, and Geist has no italics.
+ * The embedded faces this page needs, and a one-line account of them. Pages and decks use the
+ * product's faces: a page sets its interface in Geist Mono and its reading text in Geist, a deck
+ * the other way round, so both always take both. Geist has no italics; a browser slants it.
  */
-function fontsFor(page, deck) {
+function fontsFor(page) {
   const used = new Set();
   for (const ch of page) used.add(ch.codePointAt(0));
-  const [sans, monoFamily] = deck ? ['Geist', 'Geist Mono'] : ['Inter', 'JetBrains Mono'];
-  const italic = !deck && /<(?:em|i|cite|dfn|var|address)\b|font-style\s*:\s*italic/i.test(page);
-  const mono = deck || /<(?:code|pre|kbd|samp)\b|\bclass\s*=\s*["'][^"']*\bmono\b|--font-mono/i.test(page);
+  const families = ['Geist', 'Geist Mono'];
   const file = fs.readFileSync(path.join(__dirname, '..', 'style-guide', 'fonts', 'fonts.css'), 'utf8');
   const picked = [];
   for (const [face, subset, rules] of file.matchAll(/\/\* ([a-z-]+) \*\/\s*@font-face\s*\{([^}]*)\}/g)) {
     const family = (rules.match(/font-family:\s*'([^']+)'/) || [])[1];
     const isItalic = /font-style:\s*italic/.test(rules);
-    const isMono = family === monoFamily;
-    if ((family !== sans && !isMono) || (isItalic && !italic) || (isMono && !mono)) continue;
+    if (!families.includes(family) || isItalic) continue;
     const covered = ranges(rules.match(/unicode-range:\s*([^;]+);/)[1]);
     for (const cp of used) {
       if (covered.some(([from, to]) => cp >= from && cp <= to)) {
@@ -104,13 +101,10 @@ const deck = (html.match(/<[a-z][\w-]*\b[^>]*(?:\bclass\s*=\s*["'](?:[^"']*\s)?s
 const files = deck ? [...FILES, 'deck'] : FILES;
 // Each file goes in under its own name, so the built page shows where every rule comes from.
 const system = files.map((name) => `/* ==== style-guide/css/${name}.css ==== */\n${fs.readFileSync(path.join(dir, `${name}.css`), 'utf8')}`).join('\n') + '\n' + OVERRIDES;
-const fonts = cdn ? { css: '', note: 'from Google Fonts, which needs a network connection' } : fontsFor(html, deck);
-// With --cdn, a comment may precede @import, so tokens.css's font import stays valid after the
-// marker; a deck's import also asks for Geist.
-const DECK_FAMILIES = '&family=Geist:wght@400..800&family=Geist+Mono:wght@400..600';
-const css = cdn
-  ? (deck ? system.replace(GOOGLE_FONTS_IMPORT, (m) => m.replace('&display=swap', `${DECK_FAMILIES}&display=swap`)) : system)
-  : `${fonts.css}\n${system.replace(GOOGLE_FONTS_IMPORT, '')}`;
+const fonts = cdn ? { css: '', note: 'from Google Fonts, which needs a network connection' } : fontsFor(html);
+// With --cdn, a comment may precede @import, so tokens.css's font import of Geist and Geist Mono
+// stays valid after the marker.
+const css = cdn ? system : `${fonts.css}\n${system.replace(GOOGLE_FONTS_IMPORT, '')}`;
 const block = `${START}\n${css}\n/* slop:ignore-end */`;
 fs.writeFileSync(target, html.replace(PLACEHOLDER, () => block), 'utf8');
 console.log(`✓ Design system inlined into ${target} (${files.length} files${deck ? ', deck layout included' : ''}, ${Math.round(system.length / 1024)} KB; fonts: ${fonts.note})`);

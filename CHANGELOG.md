@@ -16,6 +16,7 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie-opencode --reasoning-effort` selects an OpenCode model variant and is clamped to the levels the model offers: `minimal`–`xhigh` for Responses API models, `low`–`high` for the others
 - `codemie-pi` uses Pi's built-in MCP support and no longer installs `pi-mcp-adapter`. Installs that still have the adapter keep built-in MCP disabled until it is removed (`pi remove npm:pi-mcp-adapter`)
 - `codemie-pi` takes a model's context window from the CodeMie model catalog when the catalog gives one
+- HTML pages from the Claude plugin's `codemie-html-report` skill (0.4.0) look like the CodeMie app in light and dark: Geist Mono for the interface and Geist for text, the app's cards, stat tiles and tables, and its violet corner light behind the page. Decks are unchanged
 
 ### Fixed
 
