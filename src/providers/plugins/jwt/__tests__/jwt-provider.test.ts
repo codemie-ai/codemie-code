@@ -143,7 +143,7 @@ describe('JWTModelProxy.fetchModels', () => {
       { id: 'claude-sonnet-4-6', name: 'claude-sonnet-4-6' },
     ]);
     // Passes the resolved base URL + token straight through to the HTTP client.
-    expect(fetchCodeMieModelsMock).toHaveBeenCalledWith('https://api.example.com', 'the-token');
+    expect(fetchCodeMieModelsMock).toHaveBeenCalledWith('https://api.example.com', 'the-token', undefined);
   });
 
   it('returns an empty list when the API returns no models', async () => {

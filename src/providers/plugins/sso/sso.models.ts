@@ -89,7 +89,7 @@ export class SSOModelProxy extends BaseModelProxy {
     if (suppliedCookies && config.baseUrl) {
       // Real API/network errors propagate so setup.js can show an actionable
       // message instead of silently reporting "Found 0 available models".
-      return await this.fetchModelsFromAPI(config.baseUrl, suppliedCookies);
+      return await this.fetchModelsFromAPI(config.baseUrl, suppliedCookies, config.codeMieProject ?? undefined);
     }
 
     // Profile baseUrl first, workspace codeMieUrl as fallback
@@ -108,7 +108,7 @@ export class SSOModelProxy extends BaseModelProxy {
       throw new Error('No CodeMie URL configured');
     }
 
-    return await this.fetchModelsFromAPI(apiUrl, credentials.cookies);
+    return await this.fetchModelsFromAPI(apiUrl, credentials.cookies, config.codeMieProject ?? undefined);
   }
 
   /**
@@ -175,9 +175,13 @@ export class SSOModelProxy extends BaseModelProxy {
    * router alias a user could actually route through (Switchyard virtual routers and LiteLLM
    * auto-router declarations alike), since fetchCodeMieModels never carried that flag through.
    */
-  private async fetchModelsFromAPI(apiUrl: string, cookies: Record<string, string>): Promise<ModelInfo[]> {
+  private async fetchModelsFromAPI(
+    apiUrl: string,
+    cookies: Record<string, string>,
+    project?: string
+  ): Promise<ModelInfo[]> {
     try {
-      const llmModels = await fetchCodeMieLlmModels(apiUrl, cookies);
+      const llmModels = await fetchCodeMieLlmModels(apiUrl, cookies, project);
 
       const models: ModelInfo[] = [];
       for (const model of llmModels) {
