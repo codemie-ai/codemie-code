@@ -184,6 +184,34 @@ export function injectEventName(raw: string, eventName: string): string {
 }
 
 /**
+ * Debug-log which CODEMIE_* variables are present when CODEMIE_AGENT is missing — NAMES ONLY.
+ * Values can carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
+ * and the log file is attached to bug reports and support requests.
+ */
+function logMissingAgentEnv(): void {
+  const codemieEnvVars = Object.keys(process.env)
+    .filter(key => key.startsWith('CODEMIE_'))
+    .join(', ');
+  logger.debug(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+}
+
+/**
+ * Whether this hook invocation belongs to a CodeMie-managed session
+ * (both CODEMIE_AGENT and CODEMIE_SESSION_ID are set). Debug-logs why not.
+ */
+function isCodemieManagedSession(): boolean {
+  if (!process.env.CODEMIE_AGENT) {
+    logMissingAgentEnv();
+    return false;
+  }
+  if (!process.env.CODEMIE_SESSION_ID) {
+    logger.debug('[hook:debug] CODEMIE_SESSION_ID missing, not a CodeMie session, skipping');
+    return false;
+  }
+  return true;
+}
+
+/**
  * Initialize logger context using CODEMIE_SESSION_ID
  *
  * Uses CODEMIE_SESSION_ID from environment for:
@@ -198,13 +226,7 @@ export function injectEventName(raw: string, eventName: string): string {
 function initializeLoggerContext(): string {
   const agentName = process.env.CODEMIE_AGENT;
   if (!agentName) {
-    // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
-    // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
-    // and the log file is attached to bug reports and support requests.
-    const codemieEnvVars = Object.keys(process.env)
-      .filter(key => key.startsWith('CODEMIE_'))
-      .join(', ');
-    logger.debug(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+    logMissingAgentEnv();
     throw new Error('CODEMIE_AGENT environment variable is required');
   }
 
@@ -1688,6 +1710,13 @@ export function createHookCommand(): Command {
         if (analyticsAgent) {
           const otlpInput = opts.event ? injectEventName(input, opts.event) : input;
           await analyticsAgent.processOtlpEvent(otlpInput, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+          await logger.close();
+          process.exitCode = 0;
+          return;
+        }
+
+        // Global hooks fire for non-CodeMie `claude` runs too: nothing to track, exit 0 quietly
+        if (!isCodemieManagedSession()) {
           await logger.close();
           process.exitCode = 0;
           return;
