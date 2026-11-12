@@ -14,7 +14,11 @@ import { access, constants, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
-import { isProjectExcluded, readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
+import {
+  getClaudeAnalyticsPreferencesPath,
+  isProjectExcluded,
+  readClaudeAnalyticsPreferences,
+} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import {
   openMainTranscriptPass,
   openSessionEndPass,
@@ -87,6 +91,7 @@ export class CoworkEventProducer {
   private readonly lastFailure = new Map<string, string>();
   private readonly otelWarned = new Set<string>();
   private hooksOnlyWarned = false;
+  private corruptPreferencesWarned = false;
 
   constructor(private readonly options: CoworkEventProducerOptions) {
     this.discover = options.discover ?? discoverClaudeDesktopSessions;
@@ -96,7 +101,15 @@ export class CoworkEventProducer {
   async run(now: number): Promise<void> {
     try {
       const preferences = await readClaudeAnalyticsPreferences();
-      if (preferences.kind !== 'ok' || !preferences.value.enabled) return;
+      if (preferences.kind === 'corrupt') {
+        if (!this.corruptPreferencesWarned) {
+          this.corruptPreferencesWarned = true;
+          logger.warn(`[cowork-producer] Cowork sessions are not sent while the preferences file is corrupt: ${getClaudeAnalyticsPreferencesPath()}`);
+        }
+        return;
+      }
+      this.corruptPreferencesWarned = false;
+      if (!preferences.value.enabled) return;
       if (!hooksOnlyForwardAllowed()) {
         if (!this.hooksOnlyWarned) {
           this.hooksOnlyWarned = true;
@@ -140,7 +153,8 @@ export class CoworkEventProducer {
   }
 
   /**
-   * The Cowork sessions of the window that have an inner transcript, minus those Desktop exports OTel for itself;
+   * The Cowork sessions of the window that have an inner transcript, metadata and transcript both under the local-agent
+   * sessions root, minus those Desktop exports OTel for itself;
    * `listed` — the id of every session discovered in the window, kept or not.
    */
   private async listSessions(now: number): Promise<{ sessions: CoworkSession[]; listed: Set<string> }> {

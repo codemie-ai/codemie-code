@@ -556,6 +556,51 @@ describe('proxy start', () => {
     });
   });
 
+  it('names the running codemie-daemon daemon as a conflict while Claude Desktop is connected, and stops or spawns nothing', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4005 });
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        url: 'http://127.0.0.1:4005',
+        profile: 'default',
+        port: 4005,
+        gatewayKey: 'local-key',
+        clientType: 'codemie-daemon',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://example.com/api',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'default',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+
+    await expect(createProxyCommand().parseAsync(['start'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(chalk.red([
+      '✗ A proxy is already running with different settings:',
+      '  profile: default',
+      '  port: 4005',
+      '  client: codemie-daemon',
+      '',
+      'Stop it first:',
+      '  codemie proxy stop',
+    ].join('\n')));
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a matching CodeMie URL', 'https://custom.example.com'],
     ['a workspace URL for another environment', 'https://prod.example.com'],

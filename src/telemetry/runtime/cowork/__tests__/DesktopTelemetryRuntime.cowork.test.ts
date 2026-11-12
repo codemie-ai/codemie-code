@@ -39,7 +39,7 @@ function spoolPath(): string {
 async function pollTwice(runtime: DesktopTelemetryRuntime): Promise<void> {
   for (let poll = 0; poll < 2; poll++) {
     await runtime.triggerPoll();
-    await (runtime as unknown as { coworkRun?: Promise<void> }).coworkRun;
+    await (runtime as unknown as { cowork?: { inFlight?: Promise<void> } }).cowork?.inFlight;
   }
 }
 

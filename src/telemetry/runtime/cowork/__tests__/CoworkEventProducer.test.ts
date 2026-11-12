@@ -35,6 +35,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
   readState: readStateMock,
 }));
 
+import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/OtlpAgentAdapter.js';
 import { logger } from '@/utils/logger.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
@@ -362,15 +363,63 @@ describe('CoworkEventProducer.run', () => {
   });
 
   it.each([
-    ['a corrupt preferences file', () => '{not json'],
-    ['enabled: false', () => JSON.stringify({ enabled: false })],
-    ['the working directory under excludedProjects', () => JSON.stringify({ excludedProjects: [home] })],
-  ])('produces nothing with %s', async (_case, preferences) => {
-    writeFileSync(join(codemieHome, 'claude-analytics.json'), preferences());
+    ['a corrupt preferences file', () => '{not json', true],
+    ['enabled: false', () => JSON.stringify({ enabled: false }), false],
+    ['the working directory under excludedProjects', () => JSON.stringify({ excludedProjects: [home] }), false],
+  ])('produces nothing with %s', async (_case, preferences, warnsCorrupt) => {
+    const preferencesPath = join(codemieHome, 'claude-analytics.json');
+    writeFileSync(preferencesPath, preferences());
 
     await settle(newProducer(), LAST_LINE_MS + 20_000);
 
     expect(existsSync(spoolPath())).toBe(false);
+    expect(warnings().map(([message]) => message)).toEqual(warnsCorrupt
+      ? [`[cowork-producer] Cowork sessions are not sent while the preferences file is corrupt: ${preferencesPath}`]
+      : []);
+  });
+
+  it('warns again when the preferences file is corrupt again after a valid read', async () => {
+    const preferencesPath = join(codemieHome, 'claude-analytics.json');
+    const producer = newProducer();
+
+    writeFileSync(preferencesPath, '{not json');
+    await producer.run(LAST_LINE_MS + 20_000);
+    writeFileSync(preferencesPath, JSON.stringify({ enabled: false }));
+    await producer.run(LAST_LINE_MS + 40_000);
+    writeFileSync(preferencesPath, '{not json');
+    await producer.run(LAST_LINE_MS + 60_000);
+
+    const corruptMessage = `[cowork-producer] Cowork sessions are not sent while the preferences file is corrupt: ${preferencesPath}`;
+    expect(warnings().map(([message]) => message)).toEqual([corruptMessage, corruptMessage]);
+  });
+
+  it('cuts a subagent description longer than the limit in agent.subagent.usage', async () => {
+    const description = 'Check the synthetic notes and list every open question. '.repeat(10);
+    writeFileSync(subagentPath(AGENT, '.meta.json'), JSON.stringify({
+      agentType: 'general-purpose', toolUseId: 'toolu_synthetic_agent', description, spawnDepth: 1,
+    }));
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    const usage = events().filter((event) => event['type'] === 'agent.subagent.usage');
+    expect(usage.map((event) => event['description'])).toEqual([boundedText(description, TEXT_FIELD_LIMITS['description'])]);
+  });
+
+  it('skips a session whose metadata sessionId leads its transcript outside the sessions root', async () => {
+    const outsideDir = join(getClaudeDesktopBaseDir(), 'outside');
+    const outsideProjects = join(outsideDir, '.claude', 'projects', 'session');
+    mkdirSync(outsideProjects, { recursive: true });
+    writeFileSync(join(outsideDir, 'audit.jsonl'), '{"type":"system"}\n');
+    writeFileSync(join(outsideProjects, `${CLI_2}.jsonl`), readFileSync(mainPath(), 'utf-8').replaceAll(CLI, CLI_2));
+    const metadata = JSON.parse(readFileSync(metadataPath(), 'utf-8')) as Record<string, unknown>;
+    writeFileSync(join(dirname(metadataPath()), 'local_escape.json'), JSON.stringify({
+      ...metadata, sessionId: 'local_../../../outside', cliSessionId: CLI_2,
+    }));
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(existsSync(spoolPath(CLI_2))).toBe(false);
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
   });
 
   it('emits the usage of a subagent without agentType, and no subagent start or stop', async () => {
@@ -452,7 +501,7 @@ describe('CoworkEventProducer.run', () => {
       .toMatchObject({ skill_name: 'synthetic-review', agent_type: 'general-purpose' });
   });
 
-  it('sends no stop for a background agent until its file was quiet for one run', async () => {
+  it('stops a background agent only at the session\'s end, after the tool events of its late lines, at its last line', async () => {
     const background = 'abg00000000000001';
     appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h1', '2026-11-10T10:00:32.000Z', 'msg_synthetic_H',
       [{ type: 'tool_use', id: 'toolu_synthetic_bg', name: 'Agent', input: { subagent_type: 'general-purpose', run_in_background: true } }]));
@@ -462,16 +511,28 @@ describe('CoworkEventProducer.run', () => {
     writeFileSync(subagentPath(background, '.meta.json'), JSON.stringify({ agentType: 'general-purpose', toolUseId: 'toolu_synthetic_bg' }));
     writeFileSync(subagentPath(background), assistantLine('00000000-0000-4000-8000-0000000000h3', '2026-11-10T10:00:34.000Z', 'msg_synthetic_BG1', []));
     const producer = newProducer();
-    const stops = () => events().filter((event) => event['event_id'] === `agent.subagent.stop:${CLI}:${background}`);
+    const stopId = `agent.subagent.stop:${CLI}:${background}`;
+    const stops = () => events().filter((event) => event['event_id'] === stopId);
 
-    await producer.run(LAST_LINE_MS + 20_000);
-    appendFileSync(subagentPath(background), assistantLine('00000000-0000-4000-8000-0000000000h4', '2026-11-10T10:00:44.000Z', 'msg_synthetic_BG2', []));
-    await producer.run(LAST_LINE_MS + 30_000);
-    const whileGrowing = stops();
-    await producer.run(LAST_LINE_MS + 40_000);
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const afterQuietRuns = stops();
+    appendFileSync(subagentPath(background), assistantLine('00000000-0000-4000-8000-0000000000h4', '2026-11-10T10:00:44.000Z', 'msg_synthetic_BG2',
+      [{ type: 'tool_use', id: 'toolu_synthetic_bg_read', name: 'Read', input: { file_path: '/synthetic/notes.md' } }]));
+    appendFileSync(subagentPath(background), userLine('00000000-0000-4000-8000-0000000000h5', '2026-11-10T10:00:45.000Z',
+      [{ type: 'tool_result', tool_use_id: 'toolu_synthetic_bg_read', content: 'notes' }]));
+    await settle(producer, LAST_LINE_MS + 40_000);
+    const afterGrowth = stops();
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 60_000);
 
-    expect(whileGrowing).toEqual([]);
-    expect(stops().map((event) => event['timestamp'])).toEqual(['2026-11-10T10:00:44.000Z']);
+    expect(afterQuietRuns).toEqual([]);
+    expect(afterGrowth).toEqual([]);
+    expect(stops().map((event) => event['timestamp'])).toEqual(['2026-11-10T10:00:45.000Z']);
+    const ids = events().map((event) => event['event_id']);
+    const stopAt = ids.indexOf(stopId);
+    expect(ids.indexOf(`agent.tool.start:${CLI}:toolu_synthetic_bg_read`)).toBeGreaterThan(-1);
+    expect(ids.indexOf(`agent.tool.start:${CLI}:toolu_synthetic_bg_read`)).toBeLessThan(stopAt);
+    expect(ids.indexOf(`agent.tool.end:${CLI}:toolu_synthetic_bg_read`)).toBeGreaterThan(-1);
+    expect(ids.indexOf(`agent.tool.end:${CLI}:toolu_synthetic_bg_read`)).toBeLessThan(stopAt);
   });
 
   it('keeps a session open while a subagent writes after the main transcript went quiet, and ends it at that line', async () => {

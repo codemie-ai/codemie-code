@@ -874,6 +874,27 @@ describe('DesktopTelemetryRuntime', () => {
       ]);
       expect(readRecord(sessionIdFor('ext-1')!)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
     });
+
+    it('warns once about a run still in flight 5 minutes after its start', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const overdue = () => warn.mock.calls.filter(([message]) => String(message).includes('Cowork producer run still in flight'));
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, { run: () => new Promise<void>(() => {}) });
+
+      await runtime.triggerPoll();
+      vi.setSystemTime(T0 + 5 * 60_000 - 1);
+      await runtime.triggerPoll();
+      const beforeFiveMinutes = overdue();
+      vi.setSystemTime(T0 + 5 * 60_000);
+      await runtime.triggerPoll();
+      await pollTicks(runtime, 2);
+      await runtime.stop();
+
+      expect(beforeFiveMinutes).toEqual([]);
+      expect(overdue()).toEqual([[
+        '[desktop-telemetry] Cowork producer run still in flight after 5 minutes; no new run starts until it ends',
+        { startedAt: '2026-09-29T10:00:00.000Z' },
+      ]]);
+    });
   });
 
   describe('a failure never stops the daemon', () => {

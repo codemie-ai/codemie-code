@@ -24,7 +24,10 @@ export interface CoworkEventState {
   seenUuids: string[];
   /** Tool calls whose result has not been read yet: `tool_use_id` -> `tool_name`. */
   openTools: Record<string, string>;
-  /** `tool_use_id`s of `Agent` / `Task` / `Skill` calls whose result was read. */
+  /**
+   * `tool_use_id`s of `Agent` / `Task` / `Skill` calls whose result was read. A background call's launch answer
+   * (`status: 'async_launched'`) is not its result: such an agent is stopped at the session's end.
+   */
   agentResults: string[];
   subagents: Record<string, { firstAt?: string; lastAt?: string; started?: boolean; stopped?: boolean }>;
   sessionStarted: boolean;
@@ -133,6 +136,10 @@ function readAgentId(toolUseResult: unknown): string {
   return typeof agentId === 'string' ? agentId : '';
 }
 
+function isBackgroundLaunch(toolUseResult: unknown): boolean {
+  return Boolean(toolUseResult && typeof toolUseResult === 'object' && (toolUseResult as Record<string, unknown>)['status'] === 'async_launched');
+}
+
 /**
  * Tool events of one line: `agent.tool.start` per `tool_use` block of an assistant line, `agent.tool.end` (or
  * `agent.tool.error`) per `tool_result` block of a user line whose call is known. Only names, ids, paths, line counts
@@ -162,7 +169,9 @@ function toolEvents(line: CoworkLine, sessionId: string, state: CoworkEventState
     if (!toolName || !block.tool_use_id) continue;
     const toolUseId = block.tool_use_id;
     delete state.openTools[toolUseId];
-    if (toolName === 'Skill' || AGENT_DISPATCH_TOOLS.has(toolName)) state.agentResults.push(toolUseId);
+    if ((toolName === 'Skill' || AGENT_DISPATCH_TOOLS.has(toolName)) && !isBackgroundLaunch(line.toolUseResult)) {
+      state.agentResults.push(toolUseId);
+    }
     if (block.is_error === true || block.isError === true) {
       events.push({
         type: 'agent.tool.error',
@@ -311,7 +320,8 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
 
 /**
  * The wire form of one event, the producer's or the transcript orchestrator's: the envelope under the event's own
- * fields, every string masked with the hook path's rules and `prompt_body` cut to the hook path's prompt limit. An
+ * fields, every string masked with the hook path's rules, every field of `TEXT_FIELD_LIMITS` cut to its limit and
+ * `prompt_body` cut to the prompt limit. An
  * event without an `event_id` (the orchestrator's) gets the one the Claude Code hook path gives it; `timestamp`
  * falls back to `fallbackTimestamp` when the event has none.
  */
@@ -331,6 +341,9 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     ...own,
     timestamp: own['timestamp'] || fallbackTimestamp,
   }, UNMASKED_FIELD_KEYS) as WireEvent;
+  for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
+    if (Object.prototype.hasOwnProperty.call(masked, field)) masked[field] = boundedText(masked[field], maxChars);
+  }
   if (typeof masked['prompt_body'] === 'string') {
     masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
   }
