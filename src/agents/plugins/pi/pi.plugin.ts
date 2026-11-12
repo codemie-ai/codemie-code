@@ -21,11 +21,16 @@ import { PiSessionAdapter } from './pi.session.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
 import { sendPathApiUrl } from '../../core/session/send-path.js';
 
-// Recommended Pi version, installed by `codemie install pi --supported`; a mismatch
-// only produces a non-blocking notice. There is deliberately no minimum supported
-// version: no installed Pi version is blocked from starting.
+// Recommended Pi version, installed by `codemie install pi --supported`. Any 1.x.x
+// release is supported (`acceptsSupportedMajor`); only another major line gets a
+// non-blocking notice. There is deliberately no minimum supported version: no
+// installed Pi version is blocked from starting.
 // **UPDATE THIS WHEN BUMPING PI VERSION**
-const PI_SUPPORTED_VERSION = '1.4.0';
+const PI_SUPPORTED_VERSION = '1.5.2';
+
+// A bare package spec lets npm fall back to an older release (the `legacy-node20`
+// 0.x line) when `latest` does not match the local Node engine; the tag forces it.
+const PI_LATEST_TAG = 'latest';
 
 /**
  * Pi flags that select an existing session. Pi rejects `--session-id` when any of
@@ -175,7 +180,8 @@ export const PiPluginMetadata: AgentMetadata = {
   description: 'Pi - open-source coding agent harness',
   npmPackage: '@earendil-works/pi-coding-agent',
   supportedVersion: PI_SUPPORTED_VERSION,
-  cliCommand: process.env.CODEMIE_PI_BIN || 'pi',
+  acceptsSupportedMajor: true,
+  cliCommand:process.env.CODEMIE_PI_BIN || 'pi',
 
   sessionAnalyticsReport: true,
 
@@ -469,6 +475,11 @@ export class PiPlugin extends BaseAgentAdapter {
 
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /** `codemie install pi` always installs the newest Pi release. */
+  async install(): Promise<void> {
+    await this.installVersion(PI_LATEST_TAG);
   }
 
   /**
