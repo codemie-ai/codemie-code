@@ -1,6 +1,6 @@
 /**
  * Shared tenant model-name resolver for the VS Code Copilot BYOK and Claude
- * Desktop connectors.
+ * Desktop connectors and the proxy's Claude Desktop model list.
  *
  * Generalizes `codex-model-resolver.ts`'s date-stripping identity-parse shape
  * to also strip known vendor prefixes (GPT) and match both token orders

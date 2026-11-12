@@ -11,6 +11,13 @@ import {
   buildAuthHeaders
 } from '../../core/codemie-auth-helpers.js';
 import { isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
+import {
+  isClaudeFamilyModel,
+  isClaudeFamilyName,
+  isRouterModel,
+  routerTierTargets,
+  type ModelFamilyFields,
+} from '../../../utils/model-family.js';
 export { fetchCodeMieUserInfo };
 export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
 
@@ -105,10 +112,7 @@ export function buildModelLabelIndex(models: LlmModel[]): Map<string, string> {
   return labels;
 }
 
-/** Whether a catalog entry is a router: a Switchyard virtual router or a declared LiteLLM auto-router. */
-export function isRouterModel(model: LlmModel): boolean {
-  return model.is_router === true || model.litellm_router?.is_router === true;
-}
+export { isClaudeFamilyModel, isClaudeFamilyName, isRouterModel, routerTierTargets, type ModelFamilyFields };
 
 /**
  * Picker order: the selected entry, then routers, then everything else. Stable, so each group
@@ -257,7 +261,32 @@ export interface LlmModel {
 }
 
 /**
+ * URL of the model catalog. With a project, `project_id` makes the backend narrow the
+ * list to the models that project allows (its Models tab); without one, the full list.
+ */
+export function buildLlmModelsUrl(apiUrl: string, project?: string): string {
+  const base = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
+  return project ? `${base}&project_id=${encodeURIComponent(project)}` : base;
+}
+
+function modelsFetchError(statusCode: number | undefined, statusMessage: string | undefined, project?: string): Error {
+  if (statusCode === 401 || statusCode === 403) {
+    return new Error('Authentication failed - invalid or expired credentials');
+  }
+  if (statusCode === 404 && project) {
+    return new Error(
+      `Failed to fetch models: project "${project}" was not found. Check the project in your CodeMie profile (codemie setup).`
+    );
+  }
+  return new Error(`Failed to fetch models: ${statusCode} ${statusMessage}`);
+}
+
+/**
  * Fetch full model objects from /v1/llm_models?include_all=true (supports both cookies and JWT)
+ *
+ * `project` is required on purpose: each caller must decide whether it wants the
+ * project's models or, by passing `undefined`, the whole catalog. Agents should go
+ * through `fetchCodeMieCatalogForEnv` (sso.catalog.ts), which reads it from the env.
  *
  * Unlike fetchCodeMieModels (which returns only IDs), this returns the complete model
  * descriptor including cost, features, and provider metadata.
@@ -268,19 +297,22 @@ export interface LlmModel {
 /* eslint-disable no-redeclare */
 export function fetchCodeMieLlmModels(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  project: string | undefined
 ): Promise<LlmModel[]>;
 export function fetchCodeMieLlmModels(
   apiUrl: string,
-  jwtToken: string
+  jwtToken: string,
+  project: string | undefined
 ): Promise<LlmModel[]>;
 export async function fetchCodeMieLlmModels(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  project: string | undefined
 ): Promise<LlmModel[]> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
-  const url = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
+  const url = buildLlmModelsUrl(apiUrl, project);
 
   const client = new HTTPClient({
     timeout: 10000,
@@ -291,10 +323,7 @@ export async function fetchCodeMieLlmModels(
   const response = await client.getRaw(url, headers);
 
   if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-    if (response.statusCode === 401 || response.statusCode === 403) {
-      throw new Error('Authentication failed - invalid or expired credentials');
-    }
-    throw new Error(`Failed to fetch models: ${response.statusCode} ${response.statusMessage}`);
+    throw modelsFetchError(response.statusCode, response.statusMessage, project);
   }
 
   const parsed = JSON.parse(response.data);
@@ -311,19 +340,22 @@ export async function fetchCodeMieLlmModels(
 /* eslint-disable no-redeclare */
 export function fetchCodeMieModels(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  project: string | undefined
 ): Promise<string[]>;
 export function fetchCodeMieModels(
   apiUrl: string,
-  jwtToken: string
+  jwtToken: string,
+  project: string | undefined
 ): Promise<string[]>;
 export async function fetchCodeMieModels(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  project: string | undefined
 ): Promise<string[]> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
-  const url = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
+  const url = buildLlmModelsUrl(apiUrl, project);
 
   const client = new HTTPClient({
     timeout: 30000,
@@ -334,10 +366,7 @@ export async function fetchCodeMieModels(
   const response = await client.getRaw(url, headers);
 
   if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-    if (response.statusCode === 401 || response.statusCode === 403) {
-      throw new Error('Authentication failed - invalid or expired credentials');
-    }
-    throw new Error(`Failed to fetch models: ${response.statusCode} ${response.statusMessage}`);
+    throw modelsFetchError(response.statusCode, response.statusMessage, project);
   }
 
   // Parse the response

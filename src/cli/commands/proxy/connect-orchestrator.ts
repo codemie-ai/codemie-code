@@ -574,7 +574,9 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
-      orgMcpServers
+      orgMcpServers,
+      undefined, // default managed-MCP state path
+      state.project
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
@@ -623,7 +625,7 @@ async function runVscodeByok(
   projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
+    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders, state.project);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({
@@ -726,7 +728,7 @@ async function runCodexDesktop(
     const configPath = getCodexDesktopConfigPath();
     console.log(chalk.cyan(`Codex config: ${configPath}`));
 
-    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey, state.project);
     const model = selectCodexModel(discovered, options.model, options.profileModel);
 
     await writeCodexDesktopConfig({

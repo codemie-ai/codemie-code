@@ -160,9 +160,10 @@ const GITHUB_COPILOT_DEPLOYMENT_PATTERN = /^github-copilot-/i;
  */
 async function resolveManagedModels(
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  project?: string
 ): Promise<VsCodeManagedModel[]> {
-  const descriptors = await fetchTenantModelDescriptors(proxyUrl, gatewayKey);
+  const descriptors = await fetchTenantModelDescriptors(proxyUrl, gatewayKey, project);
   const models: VsCodeManagedModel[] = [];
   for (const descriptor of descriptors) {
     if (GITHUB_COPILOT_DEPLOYMENT_PATTERN.test(descriptor.id)) continue;
@@ -269,22 +270,25 @@ export async function writeAtomically(configPath: string, content: string): Prom
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
   gatewayKey: string,
-  insiders = false
+  insiders = false,
+  project?: string
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
     proxyUrl,
-    gatewayKey
+    gatewayKey,
+    project
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  project?: string
 ): Promise<WriteVsCodeConfigResult> {
   const providers = await readProviders(configPath);
-  const models = await resolveManagedModels(proxyUrl, gatewayKey);
+  const models = await resolveManagedModels(proxyUrl, gatewayKey, project);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
     .filter(index => index >= 0);
