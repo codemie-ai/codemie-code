@@ -415,6 +415,23 @@ describe('SSOSessionSyncPlugin', () => {
       await interceptor.onProxyStop?.();
     });
 
+    it('gives every timer tick its own abort controller signal', async () => {
+      vi.useFakeTimers();
+      const interceptor = await plugin.createInterceptor(buildContext());
+      await interceptor.onProxyStart?.();
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      const signals = syncMock.mock.calls.map(call => (call[1] as { abortSignal?: AbortSignal }).abortSignal);
+      expect(signals).toHaveLength(2);
+      expect(signals[0]).toBeInstanceOf(AbortSignal);
+      expect(signals[1]).toBeInstanceOf(AbortSignal);
+      expect(signals[0]).not.toBe(signals[1]);
+
+      await interceptor.onProxyStop?.();
+    });
+
     it('respects a custom CODEMIE_SESSION_SYNC_INTERVAL', async () => {
       vi.useFakeTimers();
       process.env.CODEMIE_SESSION_SYNC_INTERVAL = '5000';

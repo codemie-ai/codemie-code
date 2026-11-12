@@ -86,4 +86,51 @@ describe('MetricsSyncProcessor', () => {
     expect(delta).toMatchObject({ syncStatus: 'pending', syncAttempts: 0 });
     expect(delta.syncError).toBeUndefined();
   });
+
+  describe('bounded run and stable delta id', () => {
+    function seed(branches: string[]): void {
+      writeFileSync(join(sessionsDir, `${SESSION_ID}.json`), JSON.stringify({
+        sessionId: SESSION_ID, agentName: 'claude', provider: 'ai-run-sso',
+        startTime: Date.parse('2026-10-01T10:00:00Z'), workingDirectory: home, status: 'active',
+        activeDurationMs: 0, gitBranch: 'main',
+        correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native' },
+      }));
+      writeFileSync(join(sessionsDir, `${SESSION_ID}_metrics.jsonl`), branches.map((branch, i) => `${JSON.stringify({
+        recordId: `rec-${i}`, sessionId: SESSION_ID, agentSessionId: 'claude-native',
+        timestamp: Date.parse('2026-10-01T10:01:00Z') + i, gitBranch: branch, tools: { Read: 1 },
+        toolStatus: { Read: { success: 1, failure: 0 } }, fileOperations: [],
+        syncStatus: 'pending', syncAttempts: 0, deltaId: 'delta-stable',
+      })}\n`).join(''));
+    }
+    const context = (signal: AbortSignal): never => ({
+      sessionId: SESSION_ID, apiBaseUrl: 'http://127.0.0.1:4999', cookies: 'session=abc',
+      clientType: 'codemie-claude', version: '0.0.0', dryRun: false, abortSignal: signal, stopAtFirstFailure: true,
+    }) as never;
+
+    it('against a 503 server one run sends exactly one request and then stops', async () => {
+      seed(['main', 'feature']);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Response('unavailable', { status: 503, headers: { 'content-type': 'text/plain' } }));
+
+      const result = await new MetricsSyncProcessor().process(
+        { sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(false);
+    });
+
+    it('sends a resent delta with the delta id of its first send', async () => {
+      seed(['main']);
+      const ids: unknown[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        ids.push((JSON.parse(String((init as RequestInit).body)) as { attributes: { delta_id?: string } }).attributes.delta_id);
+        return new Response('unavailable', { status: 503, headers: { 'content-type': 'text/plain' } });
+      });
+
+      await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
+      await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
+
+      expect(ids).toEqual(['delta-stable', 'delta-stable']);
+    });
+  });
 });

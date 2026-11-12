@@ -17,6 +17,7 @@ import { shouldStopSync, SyncStoppedError } from '../../../../../../agents/core/
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
+import { deltaIdOf } from './delta-id.js';
 import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
@@ -206,7 +207,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         cookies: context.cookies,
         apiKey: context.apiKey,
         timeout: 30000,
-        retryAttempts: 3,
+        retryAttempts: context.stopAtFirstFailure ? 0 : 3, // a timer run ends at its first outcome that is not ok
         version: context.version,
         clientType,
         dryRun: context.dryRun,
@@ -236,6 +237,10 @@ export class MetricsSyncProcessor implements SessionProcessor {
           (delta.gitBranch || sessionMetadata.gitBranch || '') === metric.attributes.branch
         );
 
+        // The branch's id as written; a branch mixing batches (or a legacy line) gets a hash of the distinct ones
+        const storedIds = [...new Set(branchDeltas.map(d => d.deltaId ?? d.recordId))];
+        metric.attributes.delta_id = storedIds.length === 1 && branchDeltas[0].deltaId ? storedIds[0] : deltaIdOf(storedIds);
+
         try {
           const response = await metricsSender.sendSessionMetric(metric);
 
@@ -244,6 +249,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
             for (const delta of branchDeltas) {
               failedByRecordId.set(delta.recordId, response.message);
             }
+            if (context.stopAtFirstFailure) break;
             continue;
           }
 
@@ -265,6 +271,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
             failedByRecordId.set(delta.recordId, message);
             if (rejected) rejectedRecordIds.add(delta.recordId);
           }
+          // The first outcome that is not ok ends a timer run: the other branches wait for the next tick
+          if (context.stopAtFirstFailure) break;
         }
       }
 

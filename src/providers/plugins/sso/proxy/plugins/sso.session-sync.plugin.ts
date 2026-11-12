@@ -259,11 +259,14 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
         this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
       }
 
-      // Use SessionSyncer service
-      const result = await this.syncer.sync(
-        this.sessionId,
-        deadlineMs === undefined ? this.context : { ...this.context, syncDeadlineMs: deadlineMs }
-      );
+      // Each run owns its controller: its outcomes are read from this signal alone
+      const run = new AbortController();
+      const result = await this.syncer.sync(this.sessionId, {
+        ...this.context,
+        abortSignal: run.signal,
+        stopAtFirstFailure: true,
+        ...(deadlineMs !== undefined && { syncDeadlineMs: deadlineMs })
+      });
 
       if (result.success) {
         logger.info(`[${this.name}] ${result.message}`);
