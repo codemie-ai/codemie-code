@@ -1,0 +1,444 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "All 11 findings resolved per check round (confidence high); no new findings."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "11 blocking findings (CR-001..CR-011) incl. 2 critical (AC23 target choice not persisted, AC24 help text); user chose one fix-up round for all."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "All 11 findings resolved per check round (confidence high); no new findings."
+    }
+  ],
+  "reviewed_head": "de97eee9ca81c28b376bd6466d89673e768c267c",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 11 prior blocking findings (CR-001..CR-011) verified against current source: resolved, none unresolved or ungraded. CR-003 closed in git-step.ts (askGitDetails safeDefault) rather than the cited guided-late-steps.ts, which is unchanged; the credential-echo defect no longer reaches a prompt. No new findings discovered (targeted verifier).",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [
+    "credential",
+    "public-api",
+    "data-contract",
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 11,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/__tests__/analytics-sync-cli.test.ts",
+      "title": "No test for --git-* option wiring on bootstrap",
+      "problem": "No test checks that the bootstrap command registers --git-repo, --git-branch and --git-path or forwards them to runBootstrap. Bootstrap cases in analytics-sync-cli.test.ts only pass --webhook, --include-external and --lookback-days; the --git-repo help assertions are on `install`. Every run-bootstrap test calls runBootstrap directly with a hand-built options object. (regression-gap)",
+      "impact": "If an option is dropped or renamed, commander rejects the flag or runBootstrap receives undefined, and no test fails. The shipped git-only bootstrap flow would be dead from the CLI. Consumer: the `sync bootstrap` action in index.ts.",
+      "recommendation": "In analytics-sync-cli.test.ts, parse ['sync','bootstrap','--git-repo','git@h:o/r.git','--git-branch','main','--git-path','reports'] and assert runBootstrap received { gitRepo, gitBranch, gitPath }, plus a bootstrap.helpInformation() check for '--git-repo <url>', '--git-branch <name>' and '--git-path <dir>'",
+      "status": "resolved",
+      "check_notes": "analytics-sync-cli.test.ts:200-210 asserts bootstrap forwards gitRepo/gitBranch/gitPath; help assertions at 123-128 cover the three options.",
+      "fix": {
+        "change": "Added bootstrap --git-* option forwarding and help tests",
+        "test": "analytics-sync-cli.test.ts: forwards --git-repo/--git-branch/--git-path; bootstrap --help lists git options"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 101,
+      "title": "Bootstrap help description omits git target",
+      "problem": "Story AC24 requires the bootstrap help text to describe choosing webhook, git or both. The command .description still reads 'connect a Teams channel and SharePoint folder, then print the install command...'; only the --git-* option help and a code comment changed. The unchanged analytics-sync-cli.test.ts:102-104 assertion pins the stale text.",
+      "impact": "`codemie analytics sync --help` tells leads bootstrap is Teams/SharePoint only; required criterion AC24 is only partly met, and the stale-fixture test would fail on any correction.",
+      "recommendation": "Update the .description to cover the git target and the three-way choice, update the doc comment above createSyncBootstrapCommand, and update the pinned expectation in analytics-sync-cli.test.ts so it reflects the new contract.",
+      "status": "resolved",
+      "check_notes": "index.ts:103-105 description now names Teams webhook, git repository, or both; test pin at analytics-sync-cli.test.ts:102-104 updated to match.",
+      "fix": {
+        "change": "Bootstrap .description and doc comment now describe the webhook/git/both choice; pinned expectation updated",
+        "test": "analytics-sync-cli.test.ts: lists bootstrap, install, ... description"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided-late-steps.ts",
+      "line": 132,
+      "title": "Retained saved git URL shown as default unvalidated",
+      "problem": "In Change targets, adding git to a setup that holds a retained (git-off) URL returns { startId, state, onlyTarget } without discardStaleAnswers. checkReuse runs only on the kept targets, so git is skipped. stepGitRepo then passes current.gitRepoUrl to askGitDetails as the prompt default, which inquirer displays.",
+      "impact": "A hand-edited or otherwise credential-bearing saved gitRepoUrl can reach the terminal, contradicting AC10 and the security doc ('never stored or printed'). Reachability needs a tampered state file, so unconfirmed as a normal path.",
+      "recommendation": "In resolveChangeTargets, re-validate retained git details (or run discardStaleAnswers) before running the added git step; in askGitDetails, do not offer a saved default that fails validateGitRepoUrl.",
+      "status": "resolved",
+      "check_notes": "guided-late-steps.ts unchanged, but git-step.ts askGitDetails now passes saved values through safeDefault (validate, drop on failure or blank), so a credential-bearing retained URL is never shown as a prompt default.",
+      "fix": {
+        "change": "askGitDetails offers a saved repo/branch/path as default only when it still validates",
+        "test": "guided.test.ts: Change targets over a retained credential-bearing git URL never offers it as default"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 333,
+      "title": "Target choice not persisted on fresh start",
+      "problem": "AC23 requires that interrupting after the target choice resumes at the first unanswered step for the chosen targets. resolveFreshStart returns { startId, state } for git-only and for the 'not imported' answer without calling saveBootstrapState, and stepTarget never saves. The first save happens only after a step answer.",
+      "impact": "An interrupt right after choosing targets leaves no state file, so the next run re-asks the target instead of resuming; a required story criterion is unmet.",
+      "recommendation": "Call saveBootstrapState with { version: 2, targets } immediately after stepTarget in resolveFreshStart, before returning on every path.",
+      "status": "resolved",
+      "check_notes": "guided-start.ts resolveFreshStart calls saveBootstrapState({version:2,targets}) right after stepTarget, before every return path.",
+      "fix": {
+        "change": "resolveFreshStart saves {version:2,targets} right after the target choice",
+        "test": "guided.test.ts: saves the target choice right away (git-only and not-imported)"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "title": "guided.ts exceeds 500-line limit",
+      "problem": "code-quality.md says files stay under 500 lines; guided.ts grew from 344 to 543 lines and now mixes step handlers with start-point resolution (resolveFreshStart, resolveReuse, resolveChangeTargets, resolveStartStep).",
+      "impact": "Documented code-quality standard broken by this change; blocks the workflow per standards review.",
+      "recommendation": "move the start-point resolution helpers (resolveFreshStart through resolveStartStep and their StartPoint type) into a sibling module such as guided-start.ts, as was done with guided-late-steps.ts.",
+      "status": "resolved",
+      "check_notes": "start-point helpers moved to new guided-start.ts (256 lines); guided.ts now 305 lines.",
+      "fix": {
+        "change": "Moved start-point resolution into guided-start.ts; guided.ts now 305 lines",
+        "test": "guided.test.ts (existing start-logic tests)"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 118,
+      "title": "Blank --git-repo escapes as uncaught error",
+      "problem": "`--git-repo \"\"` (or whitespace) passes givesAnyTarget because the raw flag is defined, but validateGitSettings returns undefined for it. With no webhook either, no checks run and buildInstallCommand (outside the try) throws SyncConfigError. With --webhook plus a blank --git-repo the git flag is silently dropped.",
+      "impact": "runBootstrap is documented as never throwing and the commander action has no catch, so lead gets an unhandled rejection instead of a clean exit 1; no test covers it.",
+      "recommendation": "const hasTarget = hasAnyTarget(webhookUrl, git); if (!hasTarget) { deps.err('--git-repo is empty'); return 1; } and add a run-bootstrap test: runBootstrap({ gitRepo: '   ' }, deps) returns non-zero without throwing.",
+      "status": "resolved",
+      "check_notes": "blank --git-repo routes to runNonInteractive; validateNonInteractive throws SyncConfigError '--git-repo is empty', caught, returns 1. No uncaught throw.",
+      "fix": {
+        "change": "Blank --git-repo throws a SyncConfigError during validation, giving a clean exit 1",
+        "test": "run-bootstrap.test.ts: blank --git-repo alone and with --webhook"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 148,
+      "title": "runNonInteractive exceeds 50-line limit",
+      "problem": "code-quality.md says functions stay under 50 lines; runNonInteractive spans about 74 lines (148-221) after adding git target handling.",
+      "impact": "Documented code-quality standard broken by this change.",
+      "recommendation": "extract the git-target handling (validation and test push) and the webhook-target handling into separate helper functions called from runNonInteractive.",
+      "status": "resolved",
+      "check_notes": "runNonInteractive now ~21 lines; logic split into validateNonInteractive, runChecks, printNonInteractiveResult.",
+      "fix": {
+        "change": "Split runNonInteractive into validateNonInteractive, runChecks, printNonInteractiveResult",
+        "test": "run-bootstrap.test.ts (existing non-interactive tests)"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 192,
+      "title": "No cleanup line when webhook sent but git failed",
+      "problem": "In non-interactive dual-target mode, if the webhook test passes and the git test fails, the Teams/SharePoint test file is already delivered. The failure path returns 1 without printing CLEANUP_LINE.",
+      "impact": "The lead is not told to delete the delivered test file, leaving a stray artifact in the team channel/folder.",
+      "recommendation": "When a webhook send fulfilled but another check rejected, print CLEANUP_LINE before returning 1.",
+      "status": "resolved",
+      "check_notes": "runChecks returns webhookSent; runNonInteractive prints CLEANUP_LINE on failure when the webhook test file was delivered.",
+      "fix": {
+        "change": "Print CLEANUP_LINE when the webhook send succeeded but another check failed",
+        "test": "run-bootstrap.test.ts: cleanup line when webhook delivered but git failed; absent when webhook failed"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 235,
+      "title": "--git-branch/--git-path without --git-repo ignored",
+      "problem": "validateGitSettings returns undefined when no repo is set, so a valid --git-branch or --git-path passed without --git-repo is silently dropped. With --webhook plus --git-branch the lead gets a webhook-only command; on a TTY with no target flag the guided wizard starts.",
+      "impact": "Lead assumes the branch applied; non-interactive mode is meant to fail closed.",
+      "recommendation": "if (!opts.gitRepo && (opts.gitBranch || opts.gitPath)) { deps.err('--git-branch/--git-path need --git-repo'); return 1; }",
+      "status": "resolved",
+      "check_notes": "runBootstrap rejects --git-branch/--git-path without a non-blank --git-repo with exit 1 before any target routing.",
+      "fix": {
+        "change": "runBootstrap fails closed on --git-branch/--git-path without --git-repo",
+        "test": "run-bootstrap.test.ts: branch/path without repo, with and without TTY"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/state-store.ts",
+      "line": 104,
+      "title": "v2 state shape check ignores targets contents",
+      "problem": "isBootstrapStateShape accepts any version 2 file whose targets is an object. targets {} , {webhook:false,git:false} or non-boolean values load fine; stepsFor then drops the target step and toInstallCommandOptions yields no target.",
+      "impact": "Step headings and [1] indexing misbehave, Start over lands on lookback, and Reuse reaches buildInstallCommand, which throws. Needs a hand-edited or corrupt file.",
+      "recommendation": "typeof t.webhook === 'boolean' && typeof t.git === 'boolean' && (t.webhook || t.git)",
+      "status": "resolved",
+      "check_notes": "isBootstrapStateShape requires boolean webhook and git with at least one true for version 2.",
+      "fix": {
+        "change": "v2 state shape requires boolean webhook/git flags with at least one true",
+        "test": "state-store.test.ts: v2 file with empty/off/non-boolean targets is discarded with a notice"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/state-store.ts",
+      "line": 238,
+      "title": "Reuse revalidates only the git repo URL",
+      "problem": "REVALIDATORS['git-repo'] calls validateGitRepoUrl(state.gitRepoUrl) only: a blank URL passes (it returns undefined) and the saved gitBranch/gitPath go to the printed install command without validateGitBranch/validateGitPath.",
+      "impact": "A hand-edited or old state file can print --git-repo \"\" or an invalid/option-like branch or path into the shared command, which install later rejects. Reachability needs a tampered state file.",
+      "recommendation": "if (validateGitRepoUrl(s.gitRepoUrl) === undefined) throw new Error('missing'); validateGitBranch(s.gitBranch); validateGitPath(s.gitPath);",
+      "status": "resolved",
+      "check_notes": "git-repo REVALIDATORS rejects a blank URL and runs validateGitBranch and validateGitPath on saved values.",
+      "fix": {
+        "change": "git-repo re-validator rejects a blank URL and validates saved branch and path",
+        "test": "state-store.test.ts: checkReuse resumes at git-repo for blank URL, bad branch, escaping path"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: Fresh guided run's first step asks webhook / git / both",
+      "status": "pass",
+      "notes": "stepTarget select in resolveFreshStart; guided.test covers first prompt"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: Git-only skips webhook steps; step count reflects shown steps",
+      "status": "pass",
+      "notes": "stepsFor filters to 5 git-only steps; guided.test headings"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: Webhook-only runs today's steps unchanged; prints no git flags",
+      "status": "pass",
+      "notes": "shortcut kept; toInstallCommandOptions gates git on targets.git"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: Both-targets prints a command carrying webhook and git",
+      "status": "pass",
+      "notes": "guided.test both-targets asserts --webhook-b64 and --git-repo"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: Empty branch/folder fall back to install's own defaults",
+      "status": "pass",
+      "notes": "askGitDetails leaves branch/path undefined on blank"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: Test push from a temporary working copy, removed after; proceed only on success",
+      "status": "pass",
+      "notes": "mkdtemp + rm in finally in git-step.ts and run-bootstrap.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: Test-push email via install's resolution; non-interactive fails with no command",
+      "status": "pass",
+      "notes": "resolveSyncIdentity; TTY-only unsaved prompt; non-interactive returns 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: Test push leaves lead's installed sync settings and working copy unchanged",
+      "status": "pass",
+      "notes": "dir override to mkdtemp path"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: Failed test push shows hint; retry / different details / skip; no credential prompt",
+      "status": "pass",
+      "notes": "testGitCheck select flow"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: Credential-bearing repo URL rejected without echo; never saved or printed",
+      "status": "pass",
+      "notes": "validated on entry, Reuse, non-interactive; see CR-003/CR-011 for edge paths with hand-edited state"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: Printed command including git carries developer push-access note",
+      "status": "pass",
+      "notes": "GIT_ACCESS_NOTE printed in both modes"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: --git-repo alone: no questions, test-push, git-only command",
+      "status": "pass",
+      "notes": "givesAnyTarget routes to runNonInteractive"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: Webhook + --git-repo checked concurrently, each with own timeout; fail closed",
+      "status": "pass",
+      "notes": "Promise.allSettled; git runner 120s network timeout, webhook send default timeout"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: No TTY and no target flag: message names --webhook/--webhook-b64 and --git-repo",
+      "status": "pass",
+      "notes": "NO_TTY_MESSAGE asserted"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: Saved setup opens with summary and Reuse/Change targets/Start over",
+      "status": "pass",
+      "notes": "summarizeState with host-only masking; SAVED_SETUP_CHOICES"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: v1 webhook setup read as webhook-only; prints with no extra questions",
+      "status": "pass",
+      "notes": "loadBootstrapState maps v1 to v2 targets webhook-only"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC17: Reuse re-checks every chosen target with retry/change/skip",
+      "status": "pass",
+      "notes": "resolveReuse runs testSendLoop and testGitCheck, saves outcomes"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC18: Change targets keeps saved answers, asks only newly added target's steps",
+      "status": "pass",
+      "notes": "resolveChangeTargets onlyTarget"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC19: Adding git to saved webhook setup asks only git details, tests push, prints both",
+      "status": "pass",
+      "notes": "guided.test covers"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC20: Turning webhook off omits it from command and Reuse checks, keeps it saved",
+      "status": "pass",
+      "notes": "gated on targets.webhook; data stays on disk"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC21: Saved git-only setup opens with summary and three-way menu",
+      "status": "pass",
+      "notes": "guided.test asserts confirm not called"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC22: File written by this change unreadable by older #765-only CLI",
+      "status": "pass",
+      "notes": "version 2; old reader accepts only version 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC23: Interrupt after target choice or git check resumes at first unanswered step",
+      "status": "partial",
+      "notes": "git-check half saved; target choice alone not persisted on git-only / not-imported paths (CR-004)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC24: Help text, COMMANDS.md, ANALYTICS-SYNC.md, security guide describe three-way choice",
+      "status": "partial",
+      "notes": "docs updated; bootstrap .description in index.ts still Teams/SharePoint only (CR-002)"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal NG1: no changes to developer-side sync install behavior",
+      "status": "partial",
+      "notes": "adds hasAnyTarget and edits validateInstallOptions check; behavior-neutral"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal NG2: no developer access granting or credential storage",
+      "status": "pass",
+      "notes": "credential URLs rejected; nothing stored"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal NG4: no changes to Power Automate flow template or import steps",
+      "status": "pass",
+      "notes": "no flow template changes"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal NG5: bootstrap keeps one saved setup",
+      "status": "pass",
+      "notes": "single analytics-sync-bootstrap.json"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "8 subjects in 62bced1c..HEAD all match <type>(<scope>): <subject>; types and scope in commitlint enums; under 100 chars."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "guided.ts is 543 lines (limit 500); runNonInteractive in run-bootstrap.ts spans ~74 lines (limit 50). Other checks hold."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "State written 0o600; git URL revalidated on reuse without echo; mkdtemp removed in finally; branch/path validators block option injection. No concrete issue."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Acceptance partials on AC23 (target choice not persisted) and AC24 (bootstrap help text still webhook-only) plus input-validation gaps in non-interactive and saved-state paths and two code-quality size limits block approval; all lenses ran, no deferrals, 17 candidates dismissed as noise or by-design (timeouts already bounded, secret retention per AC20, stale comments). Fix pack and brief written; no deferred backlog needed.",
+    "confidence": "high",
+    "risk_flags": [
+      "credential",
+      "public-api",
+      "data-contract",
+      "security"
+    ]
+  }
+}
