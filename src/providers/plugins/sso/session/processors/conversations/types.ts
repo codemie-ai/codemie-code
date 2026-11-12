@@ -14,15 +14,13 @@ export const CONVERSATION_SYNC_STATUS = {
   SUCCESS: 'success',
   FAILED: 'failed',
   /** Terminal: every entry is also carried by a newer queued record, so it is never sent */
-  SUPERSEDED: 'superseded',
-  /** Terminal: the legacy work-consent gate withheld it for good (no consent, revoked, destination held); never sent, not a transport error */
-  WITHHELD: 'withheld'
+  SUPERSEDED: 'superseded'
 } as const;
 
 /**
  * Conversation sync status type
  */
-export type ConversationSyncStatus = 'pending' | 'success' | 'failed' | 'superseded' | 'withheld';
+export type ConversationSyncStatus = 'pending' | 'success' | 'failed' | 'superseded';
 
 /**
  * Conversation payload record stored in JSONL
