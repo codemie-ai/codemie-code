@@ -13,11 +13,12 @@ import {
   readLiveRecord,
   reconcileLockPath,
 } from '@/agents/core/session/stale-session-reconciliation.js';
-import { markDroppedIfUndelivered } from '@/agents/core/session/delivery-budget.js';
+import { budgetSpent, hasUndeliveredData, leaveQueue } from '@/agents/core/session/delivery-budget.js';
 import { sameHost } from '@/agents/core/session/send-path.js';
 import { syntheticSessionEnd } from '@/agents/core/session/synthetic-session-end.js';
 import { nextRecordStart } from '@/agents/core/session/next-record-start.js';
-import { isClosedGeneration, moveSetToGeneration } from '@/agents/core/session/session-generation.js';
+import { isClosedGeneration, moveSetToGeneration, requeueSetUnderNewId } from '@/agents/core/session/session-generation.js';
+import type { LockBounds } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { configSendPathApiUrl, getConfigValue } from './hook/config-value.js';
 import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
 import type { PidLock } from '@/utils/pid-lock.js';
@@ -1150,13 +1151,14 @@ async function setAsideUnclosed(
   if (live.status !== 'completed' && !isOtherGeneration(live, nativeSessionId)) return { outcome: 'own' };
   const previousEnd = live.status === 'completed' ? live.endTime : await closeUnclosedLocally(live, config);
   if (live.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
-  return (await moveUnclosedGeneration(sessionId, options)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
+  return (await moveUnclosedGeneration(sessionId, live, config, options)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
 }
 
 /**
  * Closes a generation its full close left unclosed: `completed`, `interrupted`, ending at its last
  * recorded activity, nothing flushed or sent here (the flush is what failed). The save alone is the
- * close: a failed dropped mark is only logged. Returns the end written; undefined when the save failed.
+ * close: a failed dropped mark is only logged. The mark is written only when the delivery budget is
+ * already spent; otherwise the generation stays queued. Returns the end written; undefined when the save failed.
  */
 async function closeUnclosedLocally(live: Session, config: HookProcessingConfig | undefined): Promise<number | undefined> {
   let endTime: number;
@@ -1171,12 +1173,38 @@ async function closeUnclosedLocally(live: Session, config: HookProcessingConfig 
   }
   logger.warn(`[hook] New generation: the previous generation of ${live.sessionId} was still active; closed locally at its last recorded activity, not flushed here`);
   if (sendsThroughThisLaunch(live, config)) {
-    await markDroppedIfUndelivered(live.sessionId).catch((error: unknown) => {
+    await markIfBudgetSpent(live.sessionId).catch((error: unknown) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn(`[hook] New generation: the previous generation of ${live.sessionId} could not be marked dropped: ${errorMessage}`);
     });
   }
   return endTime;
+}
+
+/**
+ * Marks the closed live record dropped when its delivery budget is already spent (see `budgetSpent`) and data is
+ * unsent; the set is moved by the caller. A record whose budget is not spent is never marked: it stays queued.
+ */
+async function markIfBudgetSpent(sessionId: string): Promise<void> {
+  const record = await readLiveRecord(sessionId);
+  if (!record || record.status !== 'completed') return;
+  const now = Date.now();
+  const reason = budgetSpent(record, 'counted', now);
+  if (reason) await leaveQueue(record, reason, now, async () => true);
+}
+
+/**
+ * Sets the live set of the previous generation aside, so the fresh record can take `{id}.json`. A generation of this launch
+ * that still holds undelivered data and was not dropped stays in the delivery queue: re-keyed under a fresh session id,
+ * which the start pass lists by its name. Any other moves to its generation name.
+ */
+async function setGenerationAside(sessionId: string, ours: boolean, bounds: LockBounds): Promise<string | undefined> {
+  const record = await readLiveRecord(sessionId);
+  if (ours && record?.status === 'completed' && !budgetSpent(record, 'counted', Date.now()) && (await hasUndeliveredData(record))) {
+    const queuedAs = await requeueSetUnderNewId(sessionId, bounds);
+    if (queuedAs) return queuedAs;
+  }
+  return moveSetToGeneration(sessionId, '', bounds);
 }
 
 /** Whether this launch delivers the record: it has a send path and the record is of its CodeMie host. */
@@ -1185,19 +1213,25 @@ function sendsThroughThisLaunch(record: Session, config: HookProcessingConfig | 
 }
 
 /**
- * Moves a completed `{id}.json` set the previous generation's close left in place to its generation
- * name as it is, delivered or not, its file locks waited for within {@link GENERATION_CLOSE_BUDGET_MS}
+ * Sets a completed `{id}.json` set the previous generation's close left in place aside (see
+ * {@link setGenerationAside}): queued when it is of this launch and its budget is not spent, else at its
+ * generation name as it is. Its file locks are waited for within {@link GENERATION_CLOSE_BUDGET_MS}
  * and the SessionEnd's bounds. False when the move failed or a lock stayed held: the set is kept and no
  * fresh record is written.
  */
-async function moveUnclosedGeneration(sessionId: string, options: SessionEndOptions): Promise<boolean> {
+async function moveUnclosedGeneration(
+  sessionId: string,
+  live: Session,
+  config: HookProcessingConfig | undefined,
+  options: SessionEndOptions
+): Promise<boolean> {
   try {
-    const moved = await moveSetToGeneration(sessionId, '', {
+    const moved = await setGenerationAside(sessionId, sendsThroughThisLaunch(live, config), {
       deadlineMs: Math.min(Date.now() + GENERATION_CLOSE_BUDGET_MS, options.deadlineMs ?? Infinity),
       signal: options.abortSignal,
       pidOnlyLiveness: options.hookProcess === true,
     });
-    logger.warn(`[hook] New generation: the previous generation of ${sessionId} could not be closed; it stays local as ${moved}, unsent`);
+    logger.warn(`[hook] New generation: the previous generation of ${sessionId} could not be closed; it is kept as ${moved}, unsent`);
     return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1431,7 +1465,8 @@ async function waitReconcileLock(sessionId: string, options: SessionEndOptions, 
  * of it wrote it first) is its own, not closed (`own`); no `{id}.json` leaves nothing to close.
  * `closed` carries the end the close wrote.
  *
- * ponytail: a generation whose delivery does not finish inside the budget leaves the queue (local only)
+ * A generation of this launch whose delivery does not finish inside the budget stays queued (re-keyed under a
+ * fresh session id the start pass lists) and is not marked, unless its delivery budget is already spent.
  */
 async function closeGenerationLocked(
   sessionId: string,
@@ -1464,13 +1499,13 @@ async function closeGenerationLocked(
     previousEnd = after && after.status !== 'completed' ? await closeUnclosedLocally(after, config) : after?.endTime;
     if (after && after.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
     if (Date.now() >= deadlineMs) {
-      logger.info(`[hook] New generation: delivery budget spent; moving the previous generation aside as it is`);
+      logger.info(`[hook] New generation: delivery budget spent; setting the previous generation aside as it is`);
     }
     await moveSetToGeneration(sessionId, 'completed_');
     if (ours && after?.status === 'completed') {
-      await markDroppedIfUndelivered(sessionId);
+      await markIfBudgetSpent(sessionId);
     }
-    await moveSetToGeneration(sessionId, '', { deadlineMs, signal: options.abortSignal, pidOnlyLiveness: options.hookProcess === true });
+    await setGenerationAside(sessionId, ours, { deadlineMs, signal: options.abortSignal, pidOnlyLiveness: options.hookProcess === true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook] New generation: failed to close the previous generation: ${errorMessage}`);

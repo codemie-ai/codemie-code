@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { appendFile, readFile, rename, unlink } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { appendFile, readFile, rename, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { logger } from '@/utils/logger.js';
+import { getCodemiePath } from '@/utils/paths.js';
 import { getSessionConversationLockPath, getSessionMetricsLockPath, getSessionPath } from './session-config.js';
 import { acquireSessionFileLock, type LockBounds } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import type { PidLock } from '@/utils/pid-lock.js';
@@ -136,6 +138,58 @@ async function moveSetToGenerationUnlocked(sessionId: string, prefix: '' | 'comp
   }
   logger.info(`[hook] Moved ${prefix}${sessionId} set to generation ${base}`);
   return base;
+}
+
+/**
+ * Re-keys the live set (`{id}.json` and its two sidecars) under a fresh session id, so the generation stays in the
+ * delivery queue: the start pass lists live records by name (`<uuid>.json`), which a `completed_<id>-<generation>` name is not.
+ * The set moves under its metrics and conversation locks (taken within `bounds`) and under the new id's reconcile lock,
+ * so no start pass reads the new record before its sidecars are there. The new `.json` is written first and the old one
+ * removed last: a kill mid-move leaves the old record whole, and a later close queues it once more (an end metric may be
+ * sent twice; no line is lost). A failed move puts the sidecars back and rethrows.
+ * Returns the new session id, or undefined when there was no set to move.
+ * @throws {SessionFileLockTimeoutError} When a lock of the live set stays held past `bounds`: nothing moved
+ */
+export async function requeueSetUnderNewId(sessionId: string, bounds?: LockBounds): Promise<string | undefined> {
+  return withSetLocks(sessionId, bounds, () => requeueSetUnlocked(sessionId));
+}
+
+async function requeueSetUnlocked(sessionId: string): Promise<string | undefined> {
+  const sessionsDir = dirname(getSessionPath(sessionId));
+  const from = sessionSetFiles(sessionsDir, sessionId);
+  if (!existsSync(from.json)) return undefined;
+
+  const record = JSON.parse(await readFile(from.json, 'utf-8')) as Record<string, unknown>;
+  const newId = randomUUID();
+  const to = sessionSetFiles(sessionsDir, newId);
+  const { acquirePidLock } = await import('@/utils/pid-lock.js');
+  const lock = await acquirePidLock(getCodemiePath('sessions', `${newId}.reconcile.lock`), { mode: 'try' });
+  const moved: Array<'metrics' | 'conversation'> = [];
+  try {
+    const tmp = `${to.json}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify({ ...record, sessionId: newId }, null, 2), 'utf-8');
+    await rename(tmp, to.json);
+    try {
+      for (const key of ['metrics', 'conversation'] as const) {
+        if (!existsSync(from[key])) continue;
+        await rename(from[key], to[key]);
+        moved.push(key);
+      }
+    } catch (error) {
+      for (const key of moved.reverse()) {
+        await rename(to[key], from[key]).catch((undoError: unknown) => {
+          logger.error(`[hook] Could not move ${basename(to[key])} back to ${basename(from[key])}:`, undoError);
+        });
+      }
+      await unlink(to.json).catch(() => undefined);
+      throw error;
+    }
+    await unlink(from.json);
+  } finally {
+    await lock?.release();
+  }
+  logger.info(`[hook] Kept the undelivered ${sessionId} set queued as ${newId}`);
+  return newId;
 }
 
 type SessionSetFiles = ReturnType<typeof sessionSetFiles>;

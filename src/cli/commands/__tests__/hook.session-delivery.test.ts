@@ -51,7 +51,7 @@ vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal
 const { processEvent, createHookCommand } = await import('../hook.js');
 const { deliverSessionRecord } = await import('../hook/delivery.js');
 const { renameSessionFiles } = await import('../../../agents/core/session/session-generation.js');
-const { finalizeOwnRecord, reconcileOtherSessions } = await import('../../../agents/core/session/stale-session-reconciliation.js');
+const { finalizeOwnRecord, reconcileOtherSessions, isLiveRecordFileName } = await import('../../../agents/core/session/stale-session-reconciliation.js');
 const { noticeDeliveryAtExit } = await import('../../../agents/core/session/exit-notice.js');
 const { logger } = await import('@/utils/logger.js');
 const { ensureSessionFile } = await import('../../../agents/core/session/ensure-session.js');
@@ -509,6 +509,67 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const done = readRecord(session.sessionId, 'completed_');
     expect(done.endMetricSentAt).toBeTypeOf('number');
     expect(done.droppedAt).toBeUndefined();
+  });
+
+  describe('the SessionEnd delivery reports its outcome to the delivery budget', () => {
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    function payloadAtThreeAttempts(session: Session): void {
+      writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), `${JSON.stringify({
+        payloadId: 'payload-1',
+        timestamp: session.startTime + SECOND,
+        isTurnContinuation: false,
+        historyIndices: [0],
+        messageCount: 1,
+        payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hi', history_index: 0 }] },
+        status: 'failed',
+        syncAttempts: 3,
+      })}\n`);
+    }
+
+    it('an end metric sent plus one payload at syncAttempts 3 that fails with a counted answer, then succeeds: kept with the clock and one real attempt, never droppedAt, delivered at the next start', async () => {
+      const session = baseRecord({ endTime: Date.now() - 60 * 60 * SECOND, startTime: Date.now() - 2 * 60 * 60 * SECOND, endMetricSentAt: Date.now() - 60 * 60 * SECOND });
+      writeRecord(session);
+      writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }]);
+      payloadAtThreeAttempts(session);
+      respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session));
+
+      const kept = readRecord(session.sessionId);
+      expect(kept.droppedAt).toBeUndefined();
+      expect(kept.deliveryRealAttempts).toBe(1);
+      expect(kept.deliveryFailingSince).toBeTypeOf('number');
+
+      respond = () => ok();
+      await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+      const done = readRecord(session.sessionId, 'completed_');
+      expect(done.droppedAt).toBeUndefined();
+      expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+    });
+
+    it('a 503 starts the clock and spends no real attempt; a delivery that goes through starts neither', async () => {
+      const failing = baseRecord();
+      writeRecord(failing);
+      writeDeltas(failing.sessionId, [{ timestamp: failing.startTime + SECOND }]);
+      respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(failing));
+
+      expect(readRecord(failing.sessionId)).toMatchObject({ deliveryRealAttempts: 0, deliveryFailingSince: expect.any(Number) });
+
+      const healthy = baseRecord();
+      writeRecord(healthy);
+      writeDeltas(healthy.sessionId, [{ timestamp: healthy.startTime + SECOND }]);
+      respond = () => ok();
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(healthy));
+
+      const done = readRecord(healthy.sessionId, 'completed_');
+      expect(done.deliveryFailingSince).toBeUndefined();
+      expect(done.droppedAt).toBeUndefined();
+    });
   });
 
   it('an end metric sent but a line left pending (sync stopped by the abort) keeps {id}.json', async () => {
@@ -1364,7 +1425,15 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next' } });
   });
 
-  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered, the server down (503): A moved aside marked dropped', async () => {
+  /** The live-named record files (as the start pass lists them) of a generation set aside under a name other than `ownId`'s. */
+  function queuedGenerations(ownId: string, agentSessionId: string): Session[] {
+    return readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${ownId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session)
+      .filter((record) => record.correlation.agentSessionId === agentSessionId);
+  }
+
+  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered, the server down (503): A stays queued under a name the start pass lists, unmarked; the next healthy start delivers it', async () => {
     const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
     const id = a.sessionId;
     writeRecord(a);
@@ -1375,10 +1444,25 @@ describe('SessionEnd inside the agent hook process', () => {
     await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
 
     expect(endMetrics().map((m) => m.attributes.session_id)).toContain('gen-a');
-    const movedA = JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')) as Session;
-    expect(movedA.endMetricSentAt).toBeUndefined();
-    expect(movedA.droppedAt).toEqual(expect.any(Number));
+    expect(existsSync(join(sessionsDir, `completed_${id}-gen-a.json`))).toBe(false);
+    const [queued, ...rest] = queuedGenerations(id, 'gen-a');
+    expect(rest).toEqual([]);
+    expect(queued).toMatchObject({ status: 'completed', startTime: a.startTime });
+    expect(queued.endMetricSentAt).toBeUndefined();
+    expect(queued.droppedAt).toBeUndefined();
+    expect(readDeltas(queued.sessionId).map((d) => d.syncStatus)).toEqual(['pending']);
     expect(readRecord(id)).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'claude-native-next' } });
+
+    respond = () => ok();
+    requests = [];
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: id }).done;
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toContain('gen-a');
+    const delivered = readRecord(queued.sessionId, 'completed_');
+    expect(delivered.endMetricSentAt).toBeTypeOf('number');
+    expect(delivered.droppedAt).toBeUndefined();
+    expect(readDeltas(queued.sessionId, 'completed_').map((d) => d.syncStatus)).toEqual(['synced']);
   });
 
   /** B's live record with its sidecars, and A's closed set under `completed_<id><aSuffix>.json` (its generation name by default). */
@@ -1955,10 +2039,14 @@ describe('SessionEnd inside the agent hook process', () => {
     await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-next', transcript_path: join(home, 'next.jsonl'), permission_mode: 'default', cwd: home, source: 'clear' }, a);
 
     expect(seen.statusWrites).toBe(1);
-    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail.json`), 'utf-8')) as Session;
-    expect(moved).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, droppedAt: expect.any(Number) });
+    expect(existsSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail.json`))).toBe(false);
+    const [queued] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${a.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(queued).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, correlation: { agentSessionId: 'gen-status-fail' } });
+    expect(queued.droppedAt).toBeUndefined();
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
-    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('marked dropped'))).toHaveLength(1);
+    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('marked dropped'))).toHaveLength(0);
     expect(readRecord(a.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
   });
 
@@ -2234,7 +2322,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
   });
 
-  it('an active generation the full close leaves unclosed is closed locally (its dropped mark from that close), moved aside; a fresh record its own, starting at the /clear', async () => {
+  it('an active generation the full close leaves unclosed is closed locally, left queued unmarked under a name the start pass lists; a fresh record its own, starting at the /clear', async () => {
     clearLogs();
     const lastDelta = Date.parse('2026-10-01T10:40:00Z');
     const session = baseRecord({
@@ -2256,11 +2344,15 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(seen.statusWrites).toBe(1);
     expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
-    const old = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed.json`), 'utf-8')) as Session;
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed.json`))).toBe(false);
+    const [old] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${session.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(old.correlation.agentSessionId).toBe('gen-unclosed');
     expect(old.status).toBe('completed');
     expect(old.endTime).toBe(lastDelta);
-    expect(old.droppedAt).toEqual(expect.any(Number));
-    const oldLines = readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed_metrics.jsonl`), 'utf-8').trim().split('\n');
+    expect(old.droppedAt).toBeUndefined();
+    const oldLines = readFileSync(join(sessionsDir, `${old.sessionId}_metrics.jsonl`), 'utf-8').trim().split('\n');
     expect(oldLines.map((l) => JSON.parse(l).recordId)).toEqual([`rec-${session.sessionId}-0`, `rec-${session.sessionId}-1`]);
     expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(false);
   });
@@ -2404,7 +2496,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
   });
 
-  it('a delivery slower than the 2 s budget is cut, the generation moved anyway and logged', async () => {
+  it('a delivery slower than the 2 s budget is cut, the generation set aside anyway, queued unmarked, and logged', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-slow' } });
     writeRecord(session);
     // The server never answers the end metric; only the budget's abort ends that request
@@ -2421,8 +2513,13 @@ describe('SessionStart source=clear closes the previous generation', () => {
     await processEvent(clearStart(), config(session));
 
     expect(Date.now() - startedAt).toBeLessThan(4 * SECOND);
-    const movedPath = join(sessionsDir, `completed_${session.sessionId}-gen-slow.json`);
-    expect((JSON.parse(readFileSync(movedPath, 'utf-8')) as Session).droppedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-slow.json`))).toBe(false);
+    const [queued, ...rest] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${session.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(rest).toEqual([]);
+    expect(queued).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'gen-slow' } });
+    expect(queued.droppedAt).toBeUndefined();
     expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('delivery budget spent'))).toBe(true);
     expect(stderr).not.toHaveBeenCalled();
   });

@@ -250,7 +250,7 @@ export interface ReconcilePass {
  * awaiting its destination is no failure; an abort of the pass before any send is no attempt; a throw nothing noted,
  * or an abort after a send ran, counts; otherwise it went through.
  */
-function attemptResult(signal: AbortSignal, thrown: boolean): RequestOutcome {
+export function attemptResult(signal: AbortSignal, thrown: boolean): RequestOutcome {
   const noted = attemptOutcome(signal);
   if (noted) return noted;
   if (awaitingDestination(signal)) return 'ok';

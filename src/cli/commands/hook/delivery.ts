@@ -1,6 +1,8 @@
 import { logger } from '@/utils/logger.js';
-import { getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { markDroppedIfUndelivered } from '@/agents/core/session/delivery-budget.js';
+import { beginRealAttempt, budgetSpent, hasUndeliveredData, leaveQueue, noteOutcome } from '@/agents/core/session/delivery-budget.js';
+import { attemptResult } from '@/agents/core/session/stale-session-reconciliation.js';
+import type { DropReason, Session } from '@/agents/core/session/types.js';
+import type { RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { hasSendPath } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
 import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
@@ -37,25 +39,85 @@ export async function deliverSessionRecord(
   config: HookProcessingConfig | undefined,
   options: SessionEndOptions
 ): Promise<void> {
-  // 3. Send session end metrics (only reads the session file, which still exists —
-  //    the rename stays last)
-  await sendSessionEndMetrics(sessionId, agentSessionId, reason, config, options);
+  // A caller that holds the reconcile lock reports the attempt's outcome itself (the start pass, the `/clear` close)
+  const reports = !options.holdsReconcileLock && syncApplies(config);
+  const attempt = reports ? attemptSignal(options) : undefined;
+  const bounded = attempt ? { ...options, abortSignal: attempt.signal } : options;
+  try {
+    if (attempt) await beginAttempt(sessionId);
 
-  // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
-  //    abortable; unfinished work stays pending)
-  await syncPendingDataToAPI(sessionId, agentSessionId, config, options);
+    // 3. Send session end metrics (only reads the session file, which still exists —
+    //    the rename stays last)
+    await sendSessionEndMetrics(sessionId, agentSessionId, reason, config, bounded);
+
+    // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
+    //    abortable; unfinished work stays pending)
+    await syncPendingDataToAPI(sessionId, agentSessionId, config, bounded);
+  } finally {
+    attempt?.release();
+  }
+  const reported = attempt ? await reportOutcome(sessionId, attemptResult(attempt.signal, false)) : undefined;
+
+  // A hook process waits for the file locks no longer than the SessionEnd budget, never the 10 s per-lock wait
+  const rename = async (id: string): Promise<boolean> => {
+    const syncDeadlineMs = options.hookProcess ? sessionEndDeadlineMs(options) : options.deadlineMs;
+    return renameSessionFiles(id, lockBoundsOf({ syncDeadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }));
+  };
 
   // 5. Rename files LAST, and only once delivered
   if (await isDeliveryDone(sessionId, config)) {
-    // A line past its sync-attempt cap counts as done: it leaves the queue unsent
-    if (syncApplies(config)) await markDroppedIfUndelivered(sessionId);
-    // A hook process waits for the file locks no longer than the SessionEnd budget, never the 10 s per-lock wait
-    const syncDeadlineMs = options.hookProcess ? sessionEndDeadlineMs(options) : options.deadlineMs;
-    if (!await renameSessionFiles(sessionId, lockBoundsOf({ syncDeadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }))) {
+    if (!await rename(sessionId)) {
+      logger.warn(`[hook:SessionEnd] Session ${sessionId} not renamed; kept live for a later start pass`);
+    }
+  } else if (reported?.spent) {
+    // The budget of a record that kept failing is spent: it leaves the queue marked, with its data unsent
+    if (!await leaveQueue(reported.record, reported.spent, Date.now(), rename)) {
       logger.warn(`[hook:SessionEnd] Session ${sessionId} not renamed; kept live for a later start pass`);
     }
   } else {
     logger.info(`[hook:SessionEnd] Session ${sessionId} is not completed or not fully delivered yet; kept as ${sessionId}.json for a later run`);
+  }
+}
+
+/** A signal of this delivery alone, following the SessionEnd's own abort: the outcomes its requests note stay apart from other work's. */
+function attemptSignal(options: SessionEndOptions): { signal: AbortSignal; release: () => void } {
+  const controller = new AbortController();
+  const parent = options.abortSignal;
+  const follow = (): void => controller.abort();
+  if (parent?.aborted) controller.abort();
+  parent?.addEventListener('abort', follow, { once: true });
+  return { signal: controller.signal, release: () => parent?.removeEventListener('abort', follow) };
+}
+
+/** Saves one more real attempt on the record before the send, so a kill during it spends it. */
+async function beginAttempt(sessionId: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
+    const store = new SessionStore();
+    const record = await store.loadSession(sessionId);
+    if (record) await store.saveSession(beginRealAttempt(record));
+  } catch (error) {
+    logger.warn(`[hook:SessionEnd] Cannot record the delivery attempt of ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Reports the delivery's outcome to the delivery budget: the record is saved with the clock and the real-attempt counter
+ * as `noteOutcome` leaves them. `spent` is why the budget lets a completed record leave the queue now.
+ */
+async function reportOutcome(sessionId: string, outcome: RequestOutcome): Promise<{ record: Session; spent: DropReason | undefined } | undefined> {
+  try {
+    const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
+    const store = new SessionStore();
+    const latest = await store.loadSession(sessionId);
+    if (!latest) return undefined;
+    const now = Date.now();
+    const record = noteOutcome(latest, outcome, now);
+    await store.saveSession(record);
+    return { record, spent: latest.status === 'completed' ? budgetSpent(record, outcome, now) : undefined };
+  } catch (error) {
+    logger.warn(`[hook:SessionEnd] Cannot report the delivery outcome of ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
   }
 }
 
@@ -85,8 +147,7 @@ export function nativeSessionId(record: { sessionId: string; correlation?: { age
 
 /**
  * Delivery is done when the record is `completed` (a close whose status write failed stays live
- * for the stranded path), the end metric is sent or does not apply, and — for a matched record
- * whose sync applies — no metric line is pending / retryable and no conversation payload is waiting.
+ * for the stranded path) and holds no undelivered data (the one predicate, {@link hasUndeliveredData}).
  */
 export async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
   const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
@@ -94,36 +155,9 @@ export async function isDeliveryDone(sessionId: string, config?: HookProcessingC
   if (!record) return false;
   // A record whose close did not complete stays live for the stranded path
   if (record.status !== 'completed') return false;
-  if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return false;
-  // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
-  if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;
-  // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
-  const { legacyMetricsWithheld } = await import('../../../agents/core/session/legacy-metrics-gate.js');
-  return hasNoPendingData(sessionId, legacyMetricsWithheld(record));
-}
-
-/**
- * No metric line pending / retryable (unless `metricsWithheld`) and no conversation payload waiting;
- * false when they cannot be read.
- */
-async function hasNoPendingData(sessionId: string, metricsWithheld: boolean): Promise<boolean> {
-  try {
-    const { readJSONLTolerant } = await import('../../../agents/core/session/utils/jsonl-reader.js');
-    if (!metricsWithheld) {
-      const { isDeltaSendCandidate } = await import('../../../providers/plugins/sso/session/processors/metrics/metrics-sync-processor.js');
-      const deltas = await readJSONLTolerant<Parameters<typeof isDeltaSendCandidate>[0]>(getSessionMetricsPath(sessionId), '[hook:SessionEnd]');
-      if (deltas.some(isDeltaSendCandidate)) {
-        return false;
-      }
-    }
-    const { isSendCandidate } = await import('../../../providers/plugins/sso/session/processors/conversations/payload-queue.js');
-    const payloads = await readJSONLTolerant<Parameters<typeof isSendCandidate>[0]>(getSessionConversationPath(sessionId), '[hook:SessionEnd]');
-    return !payloads.some(isSendCandidate);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[hook:SessionEnd] Cannot read the pending data of ${sessionId}; kept undelivered: ${msg}`);
-    return false;
-  }
+  // Without a sync, only the end metric's own mark is left to wait for
+  if (!syncApplies(config)) return record.endMetricSentAt !== undefined || record.endMetricSkipped !== undefined;
+  return !(await hasUndeliveredData(record));
 }
 
 /**
