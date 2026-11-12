@@ -3706,3 +3706,220 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 });
+
+describe('EPMCDME-17068 regressions', () => {
+  const HOUR = 60 * 60 * SECOND;
+  const wrapperEnv = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+  const json = (status: number, message = 'x'): Response => new Response(JSON.stringify({ message }), { status, headers: { 'content-type': 'application/json' } });
+  const lostText = 'Nothing is lost';
+
+  function stderrLines(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map((args) => args.map(String).join(' '));
+  }
+  /** One launch's exit step: its own record, then the notice. */
+  async function exitStep(sessionId: string, startedAt: number): Promise<void> {
+    await finalizeOwnRecord(sessionId, { env: wrapperEnv, deadlineMs: Date.now() + 10 * SECOND });
+    await noticeDeliveryAtExit(sessionId, startedAt, true);
+  }
+  /** A launch whose agent ran its SessionEnd hook (delivery attempted, failing or not), then the wrapper's exit notice. */
+  async function launchEnds(own: Session, startedAt: number): Promise<void> {
+    await processEvent(syntheticEnd(), config(own));
+    await noticeDeliveryAtExit(own.sessionId, startedAt, true);
+  }
+  function startPass(): Promise<void> {
+    return reconcileOtherSessions({ env: wrapperEnv, ownSessionId: 'own' }).done;
+  }
+  function stored(id: string): Session | undefined {
+    for (const prefix of ['', 'completed_']) {
+      if (existsSync(join(sessionsDir, `${prefix}${id}.json`))) return readRecord(id, prefix);
+    }
+    return undefined;
+  }
+  const spentRecord = (): Session => baseRecord({
+    status: 'completed',
+    endTime: Date.parse('2026-10-01T10:30:00Z'),
+    deliveryRealAttempts: 3,
+    deliveryFailingSince: Date.now() - 25 * HOUR,
+  });
+
+  it('delivery fails at exit: the data stays, no drop is reported, and the next start delivers it', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord();
+    writeRecord(own);
+    respond = () => json(503, 'unavailable');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await launchEnds(own, startedAt);
+
+    expect(stored(own.sessionId)?.droppedAt).toBeUndefined();
+    expect(stderrLines(stderr).join('\n')).not.toContain(lostText);
+    respond = () => ok();
+    requests = [];
+    await startPass();
+
+    expect(endMetrics()).toHaveLength(1);
+    expect(readRecord(own.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(own.sessionId, 'completed_').droppedAt).toBeUndefined();
+  });
+
+  it('pending own data and a drop of an earlier session in one run are each reported accurately', async () => {
+    const startedAt = Date.now();
+    const capped = spentRecord();
+    writeRecord(capped);
+    const own = baseRecord({ ownerPid: process.pid });
+    writeRecord(own);
+    respond = () => json(404, 'not found');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+    respond = () => json(503, 'unavailable');
+    await exitStep(own.sessionId, startedAt);
+
+    const lines = stderrLines(stderr);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('not delivered yet');
+    expect(lines[1]).toContain(`claude ${capped.sessionId.slice(0, 8)}`);
+    expect(lines[1]).toContain('retry budget exhausted');
+    expect(lines.join('\n')).not.toContain(lostText);
+    expect(stored(own.sessionId)?.droppedAt).toBeUndefined();
+  });
+
+  it.each([401, 403])('credentials expire mid-delivery (%i): a record past its window with 3 attempts is not discarded and spends no attempt', async (status) => {
+    const capped = spentRecord();
+    writeRecord(capped);
+    respond = () => json(status, 'expired');
+
+    await startPass();
+
+    expect(endMetrics().length).toBeGreaterThan(0);
+    const kept = stored(capped.sessionId)!;
+    expect(kept.droppedAt).toBeUndefined();
+    expect(kept.deliveryRealAttempts).toBe(3);
+    expect(existsSync(join(sessionsDir, `${capped.sessionId}.json`))).toBe(true);
+    await clearAnalyticsAuthStatus();
+    respond = () => ok();
+    requests = [];
+    await startPass();
+    expect(readRecord(capped.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+  });
+
+  it('a permanent drop is reported with its reason and the notice never says "Nothing is lost"', async () => {
+    const startedAt = Date.now();
+    const capped = spentRecord();
+    writeRecord(capped);
+    const own = baseRecord({ ownerPid: process.pid });
+    writeRecord(own);
+    respond = () => json(404, 'not found');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+    respond = () => ok();
+    await exitStep(own.sessionId, startedAt);
+
+    const text = stderrLines(stderr).join('\n');
+    expect(text).toContain('analytics of these sessions were dropped');
+    expect(text).toContain('retry budget exhausted');
+    expect(text).not.toContain(lostText);
+  });
+
+  it('repro: four launches fail with 503, then a healthy fifth delivers everything and nothing is dropped', async () => {
+    const ids: string[] = [];
+    respond = () => json(503, 'unavailable');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i < 4; i++) {
+      const startedAt = Date.now();
+      const own = baseRecord({ startTime: Date.parse('2026-10-01T10:00:00Z') + i * 60_000 });
+      ids.push(own.sessionId);
+      writeRecord(own);
+      await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+      await launchEnds(own, startedAt);
+    }
+    for (const id of ids) expect(stored(id)?.droppedAt).toBeUndefined();
+
+    respond = () => ok();
+    requests = [];
+    await startPass();
+
+    expect(endMetrics()).toHaveLength(4);
+    for (const id of ids) {
+      expect(readRecord(id, 'completed_').endMetricSentAt).toBeTypeOf('number');
+      expect(readRecord(id, 'completed_').droppedAt).toBeUndefined();
+    }
+    expect(stderrLines(stderr).join('\n')).not.toContain(lostText);
+  }, 150_000);
+
+  it('json400: each rejection is reported as a drop at its own launch', async () => {
+    respond = () => json(400, 'bad request');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i < 2; i++) {
+      stderr.mockClear();
+      const startedAt = Date.now();
+      const own = baseRecord();
+      writeRecord(own);
+
+      await launchEnds(own, startedAt);
+
+      const text = stderrLines(stderr).join('\n');
+      expect(text).toContain(`claude ${own.sessionId.slice(0, 8)}`);
+      expect(text).toContain('rejected by the server');
+      expect(text).not.toContain(lostText);
+      expect(stored(own.sessionId)?.droppedAt).toBeTypeOf('number');
+    }
+  });
+
+  it('/clear during an outage keeps the previous generation queued and unmarked; the next healthy start delivers it', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-one', agentSessionFile: transcript } });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const queued = readdirSync(sessionsDir).filter((n) => n.endsWith('.json') && !n.startsWith('completed_') && !n.endsWith('-codemie-marker.json') && n !== `${session.sessionId}.json`);
+    expect(queued).toHaveLength(1);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith('completed_') && n.endsWith('.json'))).toEqual([]);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, queued[0]), 'utf-8')) as Session;
+    expect(previous.droppedAt).toBeUndefined();
+    expect(previous.status).toBe('completed');
+
+    respond = () => ok();
+    requests = [];
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: session.sessionId }).done;
+
+    expect(endMetrics().length).toBeGreaterThanOrEqual(1);
+    expect(readRecord(previous.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(previous.sessionId, 'completed_').droppedAt).toBeUndefined();
+  });
+
+  it('an outage longer than the window (CODEMIE_DELIVERY_RETRY_WINDOW_MS) with 3+ starts drops nothing; a counted failure after it does', async () => {
+    vi.stubEnv('CODEMIE_DELIVERY_RETRY_WINDOW_MS', '50');
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+    for (let i = 0; i < 4; i++) {
+      await startPass();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    expect(stored(session.sessionId)?.droppedAt).toBeUndefined();
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+
+    respond = () => ok();
+    requests = [];
+    await startPass();
+    expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(session.sessionId, 'completed_').droppedAt).toBeUndefined();
+
+    const other = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 200 });
+    writeRecord(other);
+    respond = () => json(404, 'not found');
+    await startPass();
+    expect(readRecord(other.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
+  });
+});
