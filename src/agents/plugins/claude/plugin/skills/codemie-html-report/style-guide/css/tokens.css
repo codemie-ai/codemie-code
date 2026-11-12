@@ -3,38 +3,44 @@
  * CSS Custom Properties for the CodeMie UI design system.
  * Dark theme is default. Add class="light" to <html> for light mode.
  *
- * Source: tailwind.config.ts + component analysis from codemie-ui-next
+ * Source: tailwind.config.ts + component analysis from codemie-ui-next, checked against the
+ * running app (codemie-preview, November 2026): its theme classes, computed styles and images.
  */
 
 /* ============================================================
    FONT IMPORT
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400..800&family=Geist+Mono:wght@400..600&display=swap');
 
 /* ============================================================
    GLOBAL SCALE (theme-independent)
    ============================================================ */
 :root {
   /* --- Typography --- */
-  --font-sans: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-  --font-mono: 'JetBrains Mono', 'GeistMono', 'Fira Code', 'Courier New', monospace;
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  /* The product sets its interface in Geist Mono (titles, labels, numbers, tables, buttons) and
+     only reading text, such as a chat answer, in Geist. A deck sets both to Geist. */
+  --font-ui:   var(--font-mono);
+  --font-text: var(--font-sans);
 
   --text-xs-1:  0.625rem;  /* 10px  */
   --text-xs:    0.75rem;   /* 12px  */
   --text-sm-1:  0.813rem;  /* 13px  */
   --text-sm:    0.875rem;  /* 14px  */
   --text-base:  1rem;      /* 16px  */
-  --text-h1:    2rem;      /* 32px  */
-  --text-h2:    1.5rem;    /* 24px  */
-  --text-h3:    1rem;      /* 16px  */
-  --text-h4:    0.875rem;  /* 14px  */
-  --text-h5:    0.75rem;   /* 12px  */
+  /* The app's scale, all weight 600: page title 24, group heading 20, card title 18 */
+  --text-h1:    1.5rem;    /* 24px  */
+  --text-h2:    1.25rem;   /* 20px  */
+  --text-h3:    1.125rem;  /* 18px  */
+  --text-h4:    1rem;      /* 16px  */
+  --text-h5:    0.875rem;  /* 14px  */
 
-  --lh-h1:   2rem;    /* 32px */
-  --lh-h2:   1.5rem;  /* 24px */
-  --lh-h3:   1.3125rem; /* 21px */
-  --lh-h4:   1.125rem;  /* 18px */
-  --lh-h5:   1rem;      /* 16px */
+  --lh-h1:   2rem;      /* 32px */
+  --lh-h2:   1.75rem;   /* 28px */
+  --lh-h3:   1.75rem;   /* 28px */
+  --lh-h4:   1.5rem;    /* 24px */
+  --lh-h5:   1.25rem;   /* 20px */
 
   /* --- Border Radius --- */
   --radius-sm:   4px;
@@ -61,6 +67,7 @@
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --shadow-sidebar: -1px 0 0 0 rgba(255, 255, 255, 0.1);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);   /* stat cards, as in the app */
 
   /* --- Transitions --- */
   --transition-fast: 120ms ease;
@@ -103,6 +110,7 @@
   --color-bg-btn-primary:    #20222E;   /* Primary button background    */
   --color-bg-btn-primary-h:  #262941;   /* Primary button hover         */
   --color-bg-pagination-active: #212224;
+  --color-bg-float:          #232323;   /* Code, chips, neutral tags     */
 
   /* --- Text --- */
   --color-text-primary:      #FFFFFF;   /* Main body text               */
@@ -163,6 +171,19 @@
   --color-cyan:              #06B6D4;
   --color-cyan-bg:           #003942;
   --color-cyan-border:       #005866;
+
+  /* --- Ink: semantic text on a tinted surface (tags, alerts, text utilities) --- */
+  --color-info-ink:          #4DABF7;
+  --color-success-ink:       #3FBF68;
+  --color-warning-ink:       #F5A534;
+  --color-error-ink:         #FF6B76;
+  --color-purple-ink:        #D3A6FF;
+  --color-cyan-ink:          #22C7E0;
+
+  /* --- Page glow: the light the app puts behind its navigation (bottom left) and, much fainter,
+     along the bottom of its content. Drawn once, behind the page, by base.css --- */
+  --glow-corner: radial-gradient(640px 540px at 0% 100%, rgba(119, 140, 255, 0.34) 0%, rgba(158, 0, 255, 0.2) 34%, rgba(158, 0, 255, 0.07) 58%, rgba(158, 0, 255, 0) 78%);
+  --glow-floor:  radial-gradient(60% 40% at 72% 100%, rgba(120, 75, 255, 0.1) 0%, rgba(120, 75, 255, 0) 72%);
 
   /* --- Charts: series in the product's order (src/utils/chartColors.ts), stopping before
      green, red and yellow, which mean status on a report; a fourth series is "other" --- */
@@ -235,6 +256,7 @@
   --color-bg-btn-primary:    #D5E7FC;
   --color-bg-btn-primary-h:  #B2D7FF;
   --color-bg-pagination-active: #D5E7FC;
+  --color-bg-float:          #F2F0EF;
 
   --color-text-primary:      #333333;
   --color-text-secondary:    #333333;
@@ -245,7 +267,7 @@
   --color-text-link-hover:   #0C4DAF;
   --color-text-inverse:      #FFFFFF;
   --color-text-heading:      #007AFF;
-  --color-text-nav:          #FFFFFF;
+  --color-text-nav:          #333333;   /* dark labels on the light rail, as in the app */
 
   --color-border-primary:    #CCCCCC;
   --color-border-secondary:  #BBBBBB;
@@ -291,6 +313,17 @@
   --color-cyan:              #06B6D4;
   --color-cyan-bg:           #DFFAFF;
   --color-cyan-border:       #005866;
+
+  /* Ink at 4.5:1 or better on white and on its own tint */
+  --color-info-ink:          #0B5FA5;
+  --color-success-ink:       #15703A;
+  --color-warning-ink:       #8A5A00;
+  --color-error-ink:         #BC1728;
+  --color-purple-ink:        #6D28D9;
+  --color-cyan-ink:          #06697A;
+
+  --glow-corner: radial-gradient(640px 540px at 0% 100%, rgba(105, 95, 255, 0.26) 0%, rgba(159, 0, 255, 0.11) 36%, rgba(159, 0, 255, 0.035) 60%, rgba(159, 0, 255, 0) 80%);
+  --glow-floor:  radial-gradient(60% 40% at 72% 100%, rgba(120, 75, 255, 0.07) 0%, rgba(120, 75, 255, 0) 72%);
 
   --color-chart-purple:      #8B5CF6;
   --color-chart-grid:        rgba(51, 51, 51, 0.12);

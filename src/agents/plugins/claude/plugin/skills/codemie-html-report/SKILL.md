@@ -8,7 +8,7 @@ description: >
   HTML artifact is on brand and free of AI slop.
 metadata:
   author: codemie-team
-  version: "0.3.0"
+  version: "0.4.0"
 authors:
   - Vadym Vlasenko <Vadym_Vlasenko@epam.com>
 ---
@@ -93,9 +93,11 @@ Read only the references the page needs:
 
 ## Step 2 — Layout
 
-- **Report or dashboard** (most pages): `body.p-6 > .container` with the `h1`, a subtitle
-  `p.text-muted` (period · source · generated date), an optional `.alert.alert-info` data note,
-  a `.stat-grid`, then `.card.mt-4` sections.
+- **Report, dashboard, overview or explainer** (most pages): `body.p-6 > .container`, then a
+  `header.page-header` holding the `h1` and a `p.page-subtitle` (period · source · generated
+  date, or one line on what the page covers), an optional `.alert.alert-info` data note, a
+  `.stat-grid`, then `.card.mt-4` sections. Group related cards under an `h2.mt-8.mb-3`; put
+  side-by-side cards in a `.grid.grid-2.gap-4`.
 - **App mockup**: `.app-shell > .app-navbar + .app-sidebar + .app-content > .app-header + main.app-main`.
 - **Centred** (login, error, empty state): `body.flex.items-center.justify-center.min-h-screen > .max-w-md.w-full.p-6`.
 - **Deck** (slides, a presentation): read `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/references/deck.md` and follow it in place of Steps 1–3.
@@ -105,6 +107,13 @@ Read only the references the page needs:
 ## Step 3 — Components and classes
 
 ```html
+<header class="page-header">
+  <div>
+    <h1>Release pipeline, week 41: 46 deploys, 2 rolled back</h1>
+    <p class="page-subtitle">6–12 October 2026 · GitLab deploy log · generated 13 October 2026</p>
+  </div>
+</header>
+
 <div class="stat-grid">
   <div class="stat-card">
     <span class="stat-card-label">Total users</span>
@@ -114,7 +123,10 @@ Read only the references the page needs:
 </div>
 
 <div class="card mt-4">
-  <div class="card-header"><div class="card-title">Two services carry 61% of the week's deploys</div></div>
+  <div class="card-header">
+    <div class="card-title">Two services carry 61% of the week's deploys</div>
+    <div class="card-description">28 of 46 deploys; the rest spread over nine services</div>
+  </div>
   <div class="card-body">
     <div class="table-wrapper"><table class="table">
       <thead><tr><th>Service</th><th>Status</th><th class="td-number">Deploys</th></tr></thead>
@@ -129,17 +141,20 @@ Read only the references the page needs:
 
 Type labels as normal words ("Total users"); the component sets their case. Card titles, stat
 labels and stat descriptions wrap (the build makes them), so a title can carry a whole finding
-and a description the number's base; keep each to one sentence.
+and a description the number's base; keep each to one sentence. Paragraphs and lists (`ul`, `ol`
+with no list class; they keep their bullets) read in Geist; everything else is the app's Geist
+Mono. Put a value, path or id in `<code>`, a long one in `<pre>`.
 
 Use only these classes:
 
+- **Page**: `page-header` `page-subtitle`
 - **Layout**: `container` `flex` `flex-col` `flex-wrap` `flex-1` `items-center|start|end` `justify-between|center|end` `grid` `grid-2` `grid-3` `grid-4` `grid-auto-fill-sm|md|lg` `gap-1|2|3|4|5|6|8` `w-full` `max-w-sm|md|lg|xl` `mx-auto` `ml-auto` `overflow-x-auto` `relative` `sticky` `top-0` `hidden`
 - **Spacing**: `p-1|2|3|4|6|8` `px-2|3|4` `py-1|2|3|4` `pt-2|4|8` `pb-2|4` `mt-1|2|3|4|6|8` `mb-1|2|3|4|6`
 - **Text**: `text-xs|sm|base|lg|xl|2xl` `font-normal|medium|semibold|bold` `text-primary|secondary|tertiary|muted` `text-left|center|right` `mono` `caption` `truncate` `nowrap` `line-clamp-2|3`
 - **Surfaces**: `card` (`card-header` `card-title` `card-subtitle` `card-description` `card-body` `card-footer`), `panel` (`panel-header` `panel-body`), `border` `border-top|bottom` `rounded-md|lg|xl` `bg-card|page|secondary|tertiary`
 - **Data**: `stat-grid` `stat-card` (`stat-card-label` `stat-card-value` `stat-card-desc`), `table-wrapper` `table` `td-number`, `dl-grid`, `progress-bar` (`progress-track` `progress-fill` `progress-label`)
 - **Charts**: `chart-frame` `chart-frame-sm|lg` around a canvas; `chart-bar` for a magnitude beside a number in a table row
-- **Status**: `badge` + `badge-success|error|warning|in-progress|pending|advanced|not-started`, `badge-dot`; `tag` + `tag-blue|purple`, `tag-sm`; `alert` + `alert-info|success|warning|error`
+- **Status**: `badge` + `badge-success|error|warning|in-progress|pending|advanced|not-started`, `badge-dot`; `tag` (a neutral category) + `tag-blue|purple`, `tag-sm`; `alert` + `alert-info|success|warning|error`
 - **Views**: `empty-state` (`empty-state-title` `empty-state-description`), `tooltip-wrapper` `tooltip`
 - **Buttons**, rarely needed in a report: `btn` + `btn-primary|secondary|tertiary`, `btn-sm`
 - **Mockups**: `app-shell` `app-navbar` `app-sidebar` `app-content` `app-header` `app-main`, `nav-sidebar` `nav-item` `nav-icon` `nav-group-label`, `form-group` `form-label` `form-input` `input` `textarea` `select`, `modal` (`modal-header` `modal-title` `modal-body` `modal-footer`)
@@ -147,7 +162,10 @@ Use only these classes:
 ## Design rules
 
 1. Colours from tokens only, `var(--color-…)`, never a hex value: both themes depend on it.
-2. Use the components; never restyle cards, badges or buttons in page styles.
+2. Use the components; never restyle cards, badges, tables or buttons in page styles, and never
+   set a `font-family`, a `font-size` on a heading, or a `background` on `html`, `body` or the
+   container. The system already draws the app's look: its two faces, its type scale and its
+   page background, a soft violet light in the lower left corner that shows in the margins.
 3. Semantic HTML: `table` for data, `button` for actions, `label` for fields.
 4. Badge colours mean status, one badge per row; nothing else on the page is red, amber or green.
 5. No decorative effects in page styles: no gradient text, gradient or blob backgrounds, glass, glow, animation or hover lift.

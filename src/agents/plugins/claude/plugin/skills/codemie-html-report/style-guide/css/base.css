@@ -22,13 +22,29 @@ html {
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--color-text-primary);
   background-color: var(--color-bg-page);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* The product's background: a soft light in the lower left corner of the window, where the app
+   has its navigation, and a fainter one along the bottom. It stays put while the page scrolls and
+   cards are opaque, so it shows in the margins and gaps only. A deck draws none (deck.css). */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--glow-corner), var(--glow-floor);
+}
+
+@media print {
+  body::before { display: none; }
 }
 
 /* ============================================================
@@ -94,9 +110,24 @@ img, svg, video {
 /* ============================================================
    LISTS
    ============================================================ */
-ul, ol {
+:where(ul, ol) {
   list-style: none;
 }
+
+/* A list on a page is content: it keeps its markers and reads in the text face. Zero specificity,
+   so a component or a page style that styles a list wins; slides, navigation and app mockups keep
+   bare lists. */
+:where(ul, ol):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) { padding-left: 1.25rem; }
+:where(ul):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) { list-style: disc; }
+:where(ol):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) { list-style: decimal; }
+:where(ul, ol):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) > li {
+  font-family: var(--font-text);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+}
+:where(ul, ol):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) > li + li { margin-top: var(--space-1); }
+:where(ul, ol):where(:not(.slide *, nav *, .app-shell *, .cm-controls *)) > li::marker { color: var(--color-text-muted); }
 
 /* ============================================================
    CODE
@@ -107,22 +138,23 @@ code, pre, kbd, samp {
 
 code {
   font-size: 0.875em;
-  background: var(--color-bg-quaternary);
-  color: var(--color-text-secondary);
+  background: var(--color-bg-float);
+  color: var(--color-text-primary);
   padding: 0.1em 0.4em;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-primary);
+  border: 1px solid var(--color-border-structural);
+  overflow-wrap: break-word;
 }
 
 pre {
-  background: var(--color-bg-quaternary);
-  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-float);
+  border: 1px solid var(--color-border-structural);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   overflow-x: auto;
   font-size: var(--text-xs);
   line-height: 1.6;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 pre code {
