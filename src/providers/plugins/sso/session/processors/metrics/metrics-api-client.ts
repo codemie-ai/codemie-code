@@ -181,6 +181,7 @@ class MetricsApiClient {
     }
 
     const request = boundedRequest(this.config.timeout, this.bounds);
+    let answered = false;
 
     try {
       const response = await fetch(url, {
@@ -189,10 +190,17 @@ class MetricsApiClient {
         body,
         signal: request.signal
       });
-      request.noteOutcome();
 
       const responseText = await response.text();
-      const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
+      answered = true;
+      let data: MetricsSyncResponse | MetricsApiError;
+      try {
+        data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
+      } catch (error) {
+        request.noteAnswer(response.status, false, false);
+        throw error;
+      }
+      request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true);
 
       if (!response.ok) {
         if ('code' in data && 'details' in data) {
@@ -237,7 +245,7 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
-      request.noteOutcome(error);
+      if (!answered) request.noteOutcome(error);
       if ((error as Error).name === 'AbortError') {
         const stopReason = request.stopReason();
         if (stopReason) {
@@ -275,7 +283,7 @@ function parseMetricsResponse(
     error.responseText = excerpt;
     // fetch follows the redirect of expired cookies, so the SSO login page lands as a 2xx HTML page
     // (Keycloak answers HTTP 200 + login HTML); an HTML 4xx / 5xx is a proxy's or WAF's own error page
-    // (413, a 403 block page, a 502), a failure counted by its status, not rejected credentials
+    // (413, a 403 block page, a 502), a failing server's answer, not rejected credentials
     const isHtml = Boolean(contentType?.includes('text/html'));
     error.isAuthFailure = statusCode === 401 || (isHtml && statusCode >= 200 && statusCode < 300);
     throw error;

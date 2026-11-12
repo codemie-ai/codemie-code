@@ -43,7 +43,7 @@ const signalsThatSent = new WeakSet<AbortSignal>();
 
 /**
  * Records that a request started under `signal`.
- * Lets a caller that owns the signal tell an attempt that reached the server from one stopped before it.
+ * Lets a caller that owns the signal tell an attempt that made a request from one stopped before any.
  */
 export function noteSendAttempt(signal: AbortSignal | undefined): void {
   if (signal) signalsThatSent.add(signal);
@@ -109,10 +109,21 @@ export function requestNeverLeft(error: unknown): boolean {
 
 const signalsReached = new WeakSet<AbortSignal>();
 const signalsNeverLeft = new WeakSet<AbortSignal>();
+const signalsFailingServer = new WeakSet<AbortSignal>();
 
 /**
- * Records that a request under `signal` reached the server or may have: it got any HTTP answer, timed out, or failed
- * after its connection opened (a reset after the send), so a server may have served it.
+ * Whether an answer is a failing server's: a 5xx, a 429, or a 4xx whose body is not JSON (a proxy's or WAF's own
+ * page). A 401 is rejected credentials whatever its body; a JSON 4xx is the application's verdict on the request.
+ */
+export function isFailingServerAnswer(status: number, bodyIsJson: boolean): boolean {
+  if (status >= 500 || status === 429) return true;
+  return status >= 400 && status !== 401 && !bodyIsJson;
+}
+
+/**
+ * Records that a request under `signal` ended in a counted failure: a server may have served it — it timed out, failed
+ * after its connection opened (a reset after the send, a body that could not be read), or got an answer that is
+ * neither a success nor a failing server's (see {@link isFailingServerAnswer}).
  */
 export function noteServerReached(signal: AbortSignal | undefined): void {
   if (signal) signalsReached.add(signal);
@@ -123,12 +134,23 @@ export function noteNeverLeft(signal: AbortSignal | undefined): void {
   if (signal) signalsNeverLeft.add(signal);
 }
 
+/** Records that a request under `signal` got a failing server's answer (see {@link isFailingServerAnswer}). */
+export function noteFailingServer(signal: AbortSignal | undefined): void {
+  if (signal) signalsFailingServer.add(signal);
+}
+
+/** Whether a request under `signal` got a failing server's answer (see {@link noteFailingServer}). */
+export function failingServerAnswered(signal: AbortSignal): boolean {
+  return signalsFailingServer.has(signal);
+}
+
 /**
- * Whether no request under `signal` reached the server: one failed before its connection opened and none reached it
- * or may have (see {@link noteNeverLeft}, {@link noteServerReached}).
+ * Whether no request under `signal` was served: one failed before its connection opened or got a failing server's
+ * answer, and none ended in a counted failure (see {@link noteNeverLeft}, {@link noteFailingServer},
+ * {@link noteServerReached}). A successful request does not change it.
  */
-export function attemptNeverReached(signal: AbortSignal): boolean {
-  return signalsNeverLeft.has(signal) && !signalsReached.has(signal);
+export function attemptNotServed(signal: AbortSignal): boolean {
+  return (signalsNeverLeft.has(signal) || signalsFailingServer.has(signal)) && !signalsReached.has(signal);
 }
 
 export interface BoundedRequest {
@@ -139,10 +161,16 @@ export interface BoundedRequest {
   /** Clears the timer and the abort listener */
   dispose(): void;
   /**
-   * Notes on the caller's signal what became of the request: without `error` its response arrived; an `error` that
-   * never left notes {@link noteNeverLeft}, any other {@link noteServerReached}.
+   * Notes on the caller's signal a request that got no usable answer: an `error` that never left notes
+   * {@link noteNeverLeft}, any other (a timeout, a reset, a body that could not be read, the caller's abort)
+   * {@link noteServerReached}.
    */
-  noteOutcome(error?: unknown): void;
+  noteOutcome(error: unknown): void;
+  /**
+   * Notes on the caller's signal an answered request once its status and body kind are known: a success notes
+   * nothing, a failing server's answer {@link noteFailingServer}, any other {@link noteServerReached}.
+   */
+  noteAnswer(status: number, bodyIsJson: boolean, success: boolean): void;
 }
 
 /** The signal for one request: its own `timeoutMs`, capped by the remaining budget, plus the caller's abort. */
@@ -171,8 +199,13 @@ export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRe
       clearTimeout(timer);
       bounds.abortSignal?.removeEventListener('abort', onAbort);
     },
-    noteOutcome: (error?: unknown) => {
-      if (error !== undefined && requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
+    noteOutcome: (error: unknown) => {
+      if (requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
+      else noteServerReached(bounds.abortSignal);
+    },
+    noteAnswer: (status: number, bodyIsJson: boolean, success: boolean) => {
+      if (success) return;
+      if (isFailingServerAnswer(status, bodyIsJson)) noteFailingServer(bounds.abortSignal);
       else noteServerReached(bounds.abortSignal);
     },
   };

@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- An undelivered session no longer loses its end metric to an outage that answers with errors: a delivery attempt answered 5xx, 429 or a gateway's error page is given back, so Claude Desktop and CLI sessions are delivered once the server recovers
 - OpenCode v2: choosing a model from the "CodeMie SSO (Responses API)" list no longer fails with `Invalid model name`; the list now holds only the models CodeMie serves, and `--model` starts on the requested model
 - OpenCode v2: sessions sync their metrics and conversations again, hooks (prompt, tool, stop) run, `--reasoning-effort` no longer aborts `--task` runs, and each `codemie-opencode` session runs its own OpenCode server instead of attaching to a background service that held another session's settings
 - OpenCode v2: session titles are generated with the profile's haiku-tier model when it is in the catalog
