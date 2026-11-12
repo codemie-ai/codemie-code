@@ -34,6 +34,7 @@ import { getEffectiveClientType } from './client-type.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
@@ -165,6 +166,25 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
     return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
+}
+
+/** Identities kept while Claude Desktop is connected: Codex and VS Code BYOK need their own request normalizers. */
+const DESKTOP_KEPT_CLIENT_TYPES: ReadonlySet<string> = new Set(['codex-desktop', 'vscode-byok']);
+
+/**
+ * The identity a daemon is matched and spawned with. While Claude Desktop's applied config points
+ * at CodeMie's local gateway, every identity but a kept one becomes the Desktop one, so no connect,
+ * restart, start or hook cold start turns the Desktop runtime off; the gateway's port comes with it
+ * for a spawn that has no running daemon's port to keep. A kept identity, or no connected Desktop,
+ * is returned unchanged and without a port.
+ */
+export async function withDesktopIdentity(
+  identity: ClientIdentity
+): Promise<{ identity: ClientIdentity; gatewayPort?: number }> {
+  if (DESKTOP_KEPT_CLIENT_TYPES.has(getEffectiveClientType(identity))) return { identity };
+  const gateway = await readDesktopGateway();
+  if (!gateway) return { identity };
+  return { identity: { clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }, gatewayPort: gateway.port };
 }
 
 // ── Daemon matching (shared strict path, spec §3.2) ──────────────────────────
@@ -936,13 +956,17 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       syncPluginSkills(),
     ]);
 
-    const identity = deriveDaemonIdentity(activeTargets);
-    clientType = identity.clientType;
+    const derived = deriveDaemonIdentity(activeTargets);
+    // A connect naming Claude Desktop writes the gateway URL itself: identity and port come from the targets alone.
+    const { identity, gatewayPort }: { identity: ClientIdentity; gatewayPort?: number } = activeTargets.claudeDesktop
+      ? { identity: derived.spawnOptions }
+      : await withDesktopIdentity(derived.spawnOptions);
+    clientType = getEffectiveClientType(identity);
 
     // The record is written after wiring succeeds (below), not at spawn time.
     const ensured = await ensureDaemon(
-      buildRequestedConfig(profile, identity.clientType, config, projectBinding),
-      identity.spawnOptions,
+      buildRequestedConfig(profile, clientType, config, projectBinding, gatewayPort),
+      identity,
       config,
       Boolean(opts.force),
       verbose,

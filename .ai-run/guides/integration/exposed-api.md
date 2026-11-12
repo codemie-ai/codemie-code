@@ -77,10 +77,10 @@ Plugin-extensible HTTP proxy that streams requests to an upstream API and runs p
 | `provider?` | `string` | e.g. `'ai-run-sso'` |
 | `sessionId?` | `string` | For traceability |
 
-**Request processing order**: build context → `onRequest` hooks → forward to upstream → `onResponseHeaders` hooks → stream chunks (`onResponseChunk`) → `onResponseComplete` hooks.
+**Request processing order**: build context → `onRequest` hooks → forward to upstream → `onResponseHeaders` hooks → stream chunks (`onResponseChunk`) → `onResponseStreamEnd` hooks (the bytes an interceptor still holds) → `onResponseComplete` hooks.
 
 **Plugin lifecycle hooks**:
-`onProxyStart` → `onRequest` → `onResponseHeaders` → `onResponseChunk` → `onResponseComplete` → `onProxyStop` / `onError`
+`onProxyStart` → `onRequest` → `onResponseHeaders` → `onResponseChunk` → `onResponseStreamEnd` → `onResponseComplete` → `onProxyStop` / `onError`
 
 | DO | DON'T |
 |----|-------|
@@ -113,7 +113,7 @@ interface ProxyPlugin {
 ```
 (`src/providers/plugins/sso/proxy/plugins/registry.ts:14`)
 
-**`ProxyInterceptor` hooks** (all optional): `onProxyStart`, `onRequest`, `onResponseHeaders`, `onResponseChunk`, `onResponseComplete`, `onProxyStop`, `onError`.
+**`ProxyInterceptor` hooks** (all optional): `onProxyStart`, `onRequest`, `onResponseHeaders`, `onResponseChunk` (may return `null` to hold a chunk back), `onResponseStreamEnd` (returns the bytes still held when the upstream stream ends), `onResponseComplete`, `onProxyStop`, `onError`.
 
 **`PluginContext` fields**: `config: ProxyConfig`, `logger`, `credentials?: SSOCredentials`, `profileConfig?`.
 

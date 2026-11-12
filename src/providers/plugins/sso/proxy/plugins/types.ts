@@ -119,8 +119,18 @@ export interface ProxyInterceptor {
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage>;
 
-  /** Called during streaming (optional, for transform/inspection) */
+  /**
+   * Called during streaming (optional, for transform/inspection). Returning `null` holds the chunk: no later
+   * interceptor's `onResponseChunk` sees it, so an interceptor that holds bytes must be the last one with a chunk hook.
+   */
   onResponseChunk?(context: ProxyContext, chunk: Buffer): Promise<Buffer | null>;
+
+  /**
+   * Bytes this interceptor still holds for the client when the upstream stream has ended. They are written straight to
+   * the client, past every other interceptor's `onResponseChunk`: correct only while the interceptor that holds bytes
+   * is the last one with a chunk hook.
+   */
+  onResponseStreamEnd?(context: ProxyContext): Promise<Buffer | null>;
 
   /** Called after response fully streamed */
   onResponseComplete?(context: ProxyContext, metadata: ResponseMetadata): Promise<void>;

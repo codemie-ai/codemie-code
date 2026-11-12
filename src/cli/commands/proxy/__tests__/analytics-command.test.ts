@@ -24,6 +24,11 @@ vi.mock('@/utils/project-root.js', () => ({
   resolveProjectRoot: () => projectRoot,
 }));
 
+vi.mock('../connectors/desktop.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
+  readDesktopGateway: vi.fn(async () => null),
+}));
+
 describe('createProxyAnalyticsCommand', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -302,6 +307,23 @@ describe('createProxyAnalyticsCommand', () => {
       ]);
       expect(lines[3]).toContain(headline);
       expect(lines).not.toContain('');
+    });
+
+    it('prints the Last dropped line and the project hint after the Delivery lines', async () => {
+      mockRunningDaemon({
+        status: 'healthy',
+        pendingBytes: 0,
+        latestDrop: { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-11T10:00:00.000Z'), local: true },
+      });
+      await runCommand(['status', '--claude-code-otlp']);
+
+      const lines = plainOutput().split('\n');
+      expect(lines.slice(0, 3)).toEqual([
+        'Delivery: healthy',
+        '  Last dropped: no_project (hooks, 2026-11-11T10:00:00.000Z)',
+        '  Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
+      ]);
+      expect(lines[3]).toContain('Hooks:');
     });
 
     it.each(connectors)('%j --json equals the collected status plus the same delivery object', async (flags) => {

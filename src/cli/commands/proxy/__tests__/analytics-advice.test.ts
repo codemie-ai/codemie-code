@@ -24,6 +24,11 @@ vi.mock('@/utils/project-root.js', () => ({
   resolveProjectRoot: () => join(tempDir, 'project-root'),
 }));
 
+vi.mock('../connectors/desktop.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
+  readDesktopGateway: vi.fn(async () => null),
+}));
+
 describe('analytics advice', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 

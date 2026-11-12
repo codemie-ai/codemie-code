@@ -750,7 +750,7 @@ No plaintext key or generated placeholder is written to that file. On first setu
 
 ## Connect Claude Desktop via CodeMie Proxy
 
-Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations. Cowork sessions also appear on the CLI Analytics tab — turns, tools, subagents, tokens and cost — under your user and the profile's CodeMie project.
 
 ### Prerequisites
 
@@ -776,6 +776,8 @@ codemie proxy inspect desktop --limit 5
 codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
+
+With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

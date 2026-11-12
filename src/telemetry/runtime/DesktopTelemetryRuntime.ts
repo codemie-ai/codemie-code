@@ -20,15 +20,14 @@ import {
   isForeignRecord,
   isSameFingerprint,
   readTranscriptFingerprint,
+  detectAttribution,
+  type Attribution,
   type TrackedSession
 } from '@/telemetry/runtime/desktop-session.js';
 import { ReconcileLockHeldError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
-import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
-import { ConfigLoader } from '@/utils/config.js';
-
-type Attribution = [string | undefined, string | undefined, string | undefined];
+import { CoworkRunner, type CoworkProducer } from '@/telemetry/runtime/cowork/CoworkRunner.js';
 
 export class DesktopTelemetryRuntime {
   private readonly sessionStore = new SessionStore();
@@ -53,13 +52,17 @@ export class DesktopTelemetryRuntime {
   private startupChain?: Promise<void>;
   private stopped = false;
   private redeliveryPass?: Promise<void>;
+  /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
+  private readonly cowork?: CoworkRunner;
 
   constructor(
     private readonly adapter: LocalTelemetryAdapter,
-    private readonly config: DesktopTelemetryRuntimeConfig
+    private readonly config: DesktopTelemetryRuntimeConfig,
+    cowork?: CoworkProducer
   ) {
     this.metrics = new DesktopSessionMetrics(config, this.sessionStore);
     this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
+    this.cowork = CoworkRunner.forAdapter(adapter, config, cowork);
   }
 
   /**
@@ -163,6 +166,7 @@ export class DesktopTelemetryRuntime {
         }
       }
 
+      if (!this.stopped) this.cowork?.startIfIdle(now);
       await this.finalizeInactive(now);
       this.startRedeliveryIfDue(now);
     } finally {
@@ -283,7 +287,7 @@ export class DesktopTelemetryRuntime {
       }
     }
 
-    const attribution = await this.detectAttribution(discovered.workingDirectory);
+    const attribution = await detectAttribution(discovered.workingDirectory, this.config.profile);
     const [gitBranch, repository, project] = attribution;
     logger.info('[desktop-telemetry] Session resolved', {
       externalSessionId: discovered.externalSessionId,
@@ -427,7 +431,7 @@ export class DesktopTelemetryRuntime {
   private async followFolder(existing: Session, workingDirectory: string): Promise<void> {
     if (workingDirectory === existing.workingDirectory) return;
     // ponytail: the start metric and the deltas sent before the switch keep the previous folder's attribution
-    const [gitBranch, repository, project] = await this.detectAttribution(workingDirectory);
+    const [gitBranch, repository, project] = await detectAttribution(workingDirectory, this.config.profile);
     logger.info('[desktop-telemetry] Session switched folder', {
       sessionId: existing.sessionId, from: existing.workingDirectory, to: workingDirectory, gitBranch, repository, project
     });
@@ -463,17 +467,6 @@ export class DesktopTelemetryRuntime {
     if (endMetricLeft) {
       existing.stretchStartTime = discovered.updatedAt;
     }
-  }
-
-  private detectAttribution(workingDirectory: string): Promise<Attribution> {
-    return Promise.all([
-      detectGitBranch(workingDirectory),
-      detectGitRemoteRepo(workingDirectory),
-      // The daemon's own profile, by name: the active profile may have changed since it started.
-      ConfigLoader.load(workingDirectory, this.config.profile ? { name: this.config.profile } : undefined)
-        .then(c => c.codeMieProject ?? undefined)
-        .catch(() => undefined)
-    ]);
   }
 
   /**

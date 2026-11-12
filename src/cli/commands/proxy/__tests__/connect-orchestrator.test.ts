@@ -54,6 +54,7 @@ vi.mock('../connectors/desktop.js', () => ({
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
+  readDesktopGateway: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('../connectors/vscode.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode.js')>()),
@@ -110,6 +111,12 @@ vi.mock('../prompts/analytics-confirmation.js', () => ({
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
 }));
+
+// A test that connects Claude Desktop leaves the shared mock as it found it: not connected.
+afterEach(async () => {
+  const { readDesktopGateway } = await import('../connectors/desktop.js');
+  vi.mocked(readDesktopGateway).mockResolvedValue(null);
+});
 
 // ── shared test helpers ──────────────────────────────────────────────────────
 
@@ -1895,5 +1902,217 @@ describe('assertSsoCredentials', () => {
 
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Desktop identity while Claude Desktop is connected', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+  });
+
+  type State = Awaited<ReturnType<typeof import('../daemon-manager.js').checkStatus>>['state'];
+
+  /** Happy profile, Claude Desktop connected to `gatewayPort` (or not, with null), and the given running daemon. */
+  async function arrange(gatewayPort: number | null, running: Record<string, unknown> | null) {
+    await setupHappyMocks();
+    const daemon = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    vi.mocked(readDesktopGateway).mockResolvedValue(gatewayPort === null ? null : { port: gatewayPort });
+    vi.mocked(daemon.checkStatus).mockResolvedValue(
+      running ? { running: true, state: running as State } : { running: false, state: null }
+    );
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    vi.mocked(daemon.writeConnectionRecord).mockResolvedValue(true);
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    return { daemon, connectTargets };
+  }
+
+  it('keeps a running Desktop-mode daemon when Claude Code analytics alone is connected', async () => {
+    const desktop = matchingDesktopState({ clientType: 'claude-desktop' });
+    const s = await arrange(4001, desktop);
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }),
+      'p',
+      'claude-desktop'
+    );
+  });
+
+  it('respawns a claude-code-otlp daemon in Desktop mode on the gateway port', async () => {
+    const otlp = matchingDesktopState({ clientType: 'claude-code-otlp', telemetryMode: undefined });
+    const s = await arrange(4001, otlp);
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-desktop' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.stopDaemon).toHaveBeenCalled();
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4001 })
+    );
+  });
+
+  it('derives the identity from the targets once Desktop is disconnected', async () => {
+    const s = await arrange(null, matchingDesktopState({ clientType: 'claude-desktop' }));
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-code-otlp', telemetryMode: undefined }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.stopDaemon).toHaveBeenCalled();
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ clientType: 'claude-code-otlp', port: 4001 });
+    expect(spawned.telemetryMode).toBeUndefined();
+  });
+
+  it('a connect naming Claude Desktop spawns with the target identity on the default port', async () => {
+    const s = await arrange(4005, null);
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState() as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeDesktop: true } });
+
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ telemetryMode: 'claude-desktop', port: 4001 });
+    expect(spawned.clientType).toBeUndefined();
+  });
+
+  it('keeps a running codex-desktop daemon', async () => {
+    const codex = matchingDesktopState({ clientType: 'codex-desktop', telemetryMode: undefined });
+    const s = await arrange(4001, codex);
+
+    await s.connectTargets({ targets: { codexDesktop: true } });
+
+    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it('keeps a Desktop-mode spawn that came up off the gateway port', async () => {
+    const s = await arrange(4005, null);
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-desktop', port: 62000, url: 'http://127.0.0.1:62000' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await expect(s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true })).resolves.toBeUndefined();
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 62000 }),
+      'p',
+      'claude-desktop'
+    );
+  });
+});
+
+describe('ensureOtlpProxy while Claude Desktop is connected', () => {
+  let outputSpies: Array<ReturnType<typeof vi.spyOn>>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.doMock('../../../../providers/core/codemie-auth-helpers.js', () => ({
+      getStoredPlatformCredentials: vi.fn().mockResolvedValue({ token: 't' }),
+    }));
+    outputSpies = [
+      vi.spyOn(process.stdout, 'write').mockImplementation(() => true),
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true),
+      ...(['log', 'info', 'warn', 'error'] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => {})),
+    ];
+  });
+
+  afterEach(() => {
+    for (const spy of outputSpies) spy.mockRestore();
+    vi.doUnmock('../../../../providers/core/codemie-auth-helpers.js');
+    vi.resetModules();
+  });
+
+  async function arrange(record: Record<string, unknown>, gatewayPort: number, spawnedPort: number) {
+    const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
+    const daemon = await import('../daemon-manager.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    const { logger } = await import('../../../../utils/logger.js');
+    await setupHappyMocks();
+    vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
+    vi.mocked(daemon.readState).mockResolvedValue(null);
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record as Awaited<ReturnType<typeof daemon.readConnectionRecord>>);
+    vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(daemon.spawnDaemon).mockResolvedValue(
+      daemonState({ port: spawnedPort, url: `http://127.0.0.1:${spawnedPort}` }) as Awaited<ReturnType<typeof daemon.spawnDaemon>>
+    );
+    vi.mocked(ConfigLoader.loadLocalConfigProfile).mockResolvedValue({ name: 'p' });
+    for (const method of ['warn', 'info', 'status', 'success'] as const) {
+      outputSpies.push(vi.spyOn(logger, method).mockImplementation(() => {}));
+    }
+    return { ensureOtlpProxy, daemon };
+  }
+
+  it('spawns a claude-code-otlp record in Desktop mode on the gateway port, writing nothing to the console', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'claude-code-otlp', updatedAt: '' }, 4005, 4005);
+
+    await s.ensureOtlpProxy('claude-code-otlp');
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+    for (const spy of outputSpies.slice(0, 6)) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('keeps a spawn that came up off the gateway port and points Claude Code at it, writing nothing to the console', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'claude-code-otlp', updatedAt: '' }, 4005, 62000);
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
+
+    await expect(s.ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 62000, url: 'http://127.0.0.1:62000' })
+    );
+    for (const spy of outputSpies.slice(0, 6)) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('spawns a no-record claude cold start in Desktop mode on the gateway port', async () => {
+    const s = await arrange({}, 4005, 4005);
+    vi.mocked(s.daemon.readConnectionRecord).mockResolvedValue(null);
+
+    await s.ensureOtlpProxy('claude');
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+  });
+
+  it('keeps a codex-desktop record identity and port', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'codex-desktop', updatedAt: '' }, 4005, 4001);
+
+    await s.ensureOtlpProxy('claude-code-otlp');
+
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ clientType: 'codex-desktop', port: 4001 });
+    expect(spawned.telemetryMode).toBeUndefined();
   });
 });

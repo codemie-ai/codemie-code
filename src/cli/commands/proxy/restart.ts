@@ -4,7 +4,7 @@ import { ToolExecutionError } from '../../../utils/errors.js';
 import type { ProjectBindingState } from '../../../utils/project-binding.js';
 import { checkStatus, stopDaemon, writeConnectionRecord, type DaemonState } from './daemon-manager.js';
 import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
-import { DEFAULT_DAEMON_PORT } from './connect-orchestrator.js';
+import { DEFAULT_DAEMON_PORT, withDesktopIdentity } from './connect-orchestrator.js';
 import {
   launchDaemon,
   prepareDaemonLaunch,
@@ -20,14 +20,18 @@ function printRestarted(daemonState: DaemonState): void {
   console.log(chalk.green(`✓ Proxy restarted at ${daemonState.url}  (profile: ${daemonState.profile})`));
 }
 
-/** Nothing (alive) to preserve: a stale state file is ignored, as `proxy start` does. */
+/**
+ * Nothing (alive) to preserve: a stale state file is ignored, as `proxy start` does. With Claude
+ * Desktop connected the daemon starts in Desktop mode, asking for the gateway's port.
+ */
 async function restartStopped(opts: ProxyRestartOptions): Promise<void> {
   const config = await ConfigLoader.load(process.cwd(), opts.profile ? { name: opts.profile } : undefined);
   const profile = config.name ?? 'default';
   const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
+  const { identity, gatewayPort } = await withDesktopIdentity({ clientType: 'codemie-daemon' });
   printRestarted(await launchDaemon(config, profile, {
-    port: DEFAULT_DAEMON_PORT,
-    clientType: 'codemie-daemon',
+    port: gatewayPort ?? DEFAULT_DAEMON_PORT,
+    ...identity,
     projectBinding,
     writeRecord: await shouldWriteConnectionRecord(opts.profile),
   }));
@@ -94,7 +98,10 @@ export function restartProject(
   };
 }
 
-/** Replace a running daemon, keeping its port and identity (the start-time conflict check does not apply). */
+/**
+ * Replace a running daemon, keeping its port and identity (the start-time conflict check does not apply).
+ * With Claude Desktop connected a replaceable identity becomes the Desktop one; the port is kept.
+ */
 async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<void> {
   const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
   const profile = config.name ?? opts.profile ?? state.profile;
@@ -102,6 +109,10 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
   const { project, projectBinding } = restartProject(state, opts, config.codeMieProject, resolvedBinding);
   // Fail on a bad profile or expired SSO before the working daemon is touched.
   const prepared = await prepareDaemonLaunch(config, profile);
+  const { identity } = await withDesktopIdentity({
+    clientType: state.clientType,
+    telemetryMode: state.telemetryMode,
+  });
 
   await stopDaemon();
   await stopRacingDaemon();
@@ -110,8 +121,8 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
   try {
     daemonState = await spawnForProfile(prepared, profile, {
       port: state.port,
-      clientType: state.clientType,
-      telemetryMode: state.telemetryMode,
+      clientType: identity.clientType,
+      telemetryMode: identity.telemetryMode,
       gatewayKey: state.gatewayKey,
       // A switched profile's tenant may not serve the old profile's model.
       model: opts.profile ? undefined : state.model,
@@ -131,7 +142,7 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
   }
   // `profile` is the one the daemon was just spawned for (equal to daemonState.profile).
   if (await shouldWriteConnectionRecord(opts.profile)) {
-    await writeConnectionRecord(daemonState, profile, state.clientType);
+    await writeConnectionRecord(daemonState, profile, identity.clientType);
   }
   printRestarted(daemonState);
 }

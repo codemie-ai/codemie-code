@@ -2,7 +2,8 @@ import { stat } from 'fs/promises';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { logger } from '@/utils/logger.js';
-import { processStartedAt } from '@/utils/processes.js';
+import { ConfigLoader } from '@/utils/config.js';
+import { detectGitBranch, detectGitRemoteRepo, processStartedAt } from '@/utils/processes.js';
 
 /** How often a live daemon retries delivering its undelivered records; these retries spend no attempt. */
 export const DESKTOP_REDELIVERY_INTERVAL_MS = 10 * 60 * 1000;
@@ -77,4 +78,18 @@ export async function readTranscriptFingerprint(transcriptPath: string): Promise
     });
     return undefined;
   }
+}
+
+/** A working directory's git branch, repository and CodeMie project. */
+export type Attribution = [string | undefined, string | undefined, string | undefined];
+
+export function detectAttribution(workingDirectory: string, profile: string | undefined): Promise<Attribution> {
+  return Promise.all([
+    detectGitBranch(workingDirectory),
+    detectGitRemoteRepo(workingDirectory),
+    // The daemon's own profile, by name: the active profile may have changed since it started.
+    ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
+      .then(c => c.codeMieProject ?? undefined)
+      .catch(() => undefined)
+  ]);
 }

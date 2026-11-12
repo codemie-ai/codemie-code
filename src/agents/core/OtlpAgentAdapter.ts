@@ -60,7 +60,7 @@ const MAX_PROMPT_CHARS = 200;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
 /** Free-text fields cut after masking, each to its own limit. */
-const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
+export const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
   prompt: MAX_PROMPT_CHARS,
   tool_input: MAX_TOOL_FIELD_CHARS,
   tool_response: MAX_TOOL_FIELD_CHARS,
@@ -69,11 +69,30 @@ const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
 };
 
 /** Top-level identifier fields that are never free text; masking must not touch them. */
-const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
+export const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
   'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
   'hook_event_name', 'tool_name', 'tool_use_id', 'agent_id', 'agent_type', 'agent_name',
   'notification_type', 'error_type',
 ]);
+
+export function boundedText(value: unknown, maxChars: number): string {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  let text: string;
+  if (typeof value === 'string') {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value) ?? String(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  const cut = text.slice(0, maxChars);
+  // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
@@ -317,7 +336,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: this.boundedText(limited['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: boundedText(limited['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
     };
     event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
@@ -356,29 +375,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
     for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
       if (Object.prototype.hasOwnProperty.call(limited, field)) {
-        limited[field] = this.boundedText(limited[field], maxChars);
+        limited[field] = boundedText(limited[field], maxChars);
       }
     }
     return limited;
-  }
-
-  private boundedText(value: unknown, maxChars: number): string {
-    if (value === undefined || value === null) {
-      return '';
-    }
-    let text: string;
-    if (typeof value === 'string') {
-      text = value;
-    } else {
-      try {
-        text = JSON.stringify(value) ?? String(value);
-      } catch {
-        text = String(value);
-      }
-    }
-    const cut = text.slice(0, maxChars);
-    // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
-    return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
 
   /**

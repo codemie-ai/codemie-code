@@ -10,6 +10,8 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
+import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
 import { resolveTenantModelId } from './model-name-resolver.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
@@ -753,6 +755,12 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
   };
 }
 
+/** The `appliedId` of a parsed `_meta.json`, only when it is safe as a file name; else no applied config. */
+function appliedConfigId(meta: unknown): string | undefined {
+  const appliedId = isRecord(meta) ? meta.appliedId : undefined;
+  return typeof appliedId === 'string' && isSafeSessionId(appliedId) ? appliedId : undefined;
+}
+
 /**
  * Returns the base directory where Claude Desktop (3P) stores its config.
  * macOS:   ~/Library/Application Support/Claude-3p
@@ -783,7 +791,7 @@ export function describeManagedSettingsOverride(
 
 /**
  * Returns the path to the active inference config JSON file under configLibrary/.
- * If `_meta.json` doesn't exist or has no `appliedId`, returns the path that
+ * If `_meta.json` doesn't exist or has no safe `appliedId`, returns the path that
  * a freshly-generated UUID would use; the caller is responsible for creating
  * `_meta.json` to register it.
  */
@@ -792,8 +800,8 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
   const metaPath = join(libDir, '_meta.json');
   if (existsSync(metaPath)) {
     try {
-      const meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
-      if (meta.appliedId) return join(libDir, `${meta.appliedId}.json`);
+      const appliedId = appliedConfigId(JSON.parse(await readFile(metaPath, 'utf-8')));
+      if (appliedId) return join(libDir, `${appliedId}.json`);
     } catch {
       // Corrupt meta — fall through to fresh UUID
     }
@@ -830,7 +838,7 @@ export async function writeDesktopConfig(
     }
   }
 
-  const configId = meta.appliedId ?? randomUUID();
+  const configId = appliedConfigId(meta) ?? randomUUID();
   const configPath = join(libDir, `${configId}.json`);
 
   let existing: Record<string, unknown> = {};
@@ -1004,6 +1012,36 @@ function isLoopbackGatewayUrl(value: unknown): boolean {
   }
 }
 
+/** A gateway config pointing at a loopback address: the shape `connect` writes, as opposed to a user's own gateway. */
+function isCodeMieGatewayConfig(config: Record<string, unknown>): boolean {
+  return config.inferenceProvider === 'gateway' && isLoopbackGatewayUrl(config.inferenceGatewayBaseUrl);
+}
+
+/**
+ * The local gateway Claude Desktop's applied config points at, or null when Desktop is not
+ * connected to CodeMie's (no applied config or an unsafe `appliedId`, not a loopback gateway
+ * config, a gateway key other than the local one, a URL without a port, anything unreadable,
+ * an unsupported platform). The local key is the one the daemon state file names, else the
+ * default key. Read-only; never throws.
+ */
+export async function readDesktopGateway(baseDir?: string, stateFile?: string): Promise<{ port: number } | null> {
+  try {
+    const libDir = join(baseDir ?? getDesktopBaseDir(), 'configLibrary');
+    const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
+    const appliedId = appliedConfigId(meta);
+    if (!appliedId) return null;
+    const config: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
+    if (!isRecord(config) || !isCodeMieGatewayConfig(config)) return null;
+    const port = Number.parseInt(new URL(config.inferenceGatewayBaseUrl as string).port, 10);
+    if (!Number.isInteger(port) || port <= 0) return null;
+    const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+    return config.inferenceGatewayApiKey === localKey ? { port } : null;
+  } catch (error) {
+    logger.debug('[proxy] Claude Desktop gateway not readable', ...sanitizeLogArgs(error));
+    return null;
+  }
+}
+
 /**
  * Reverse {@link writeDesktopConfig}: strip the CodeMie gateway settings and managed MCP
  * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
@@ -1034,7 +1072,7 @@ export async function removeDesktopConfig(
     );
   }
 
-  const configId = meta.appliedId;
+  const configId = appliedConfigId(meta);
   const configPath = configId ? join(libDir, `${configId}.json`) : undefined;
   if (!configId || !configPath || !existsSync(configPath)) {
     return { removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' };
@@ -1052,7 +1090,7 @@ export async function removeDesktopConfig(
     );
   }
 
-  if (existing.inferenceProvider !== 'gateway' || !isLoopbackGatewayUrl(existing.inferenceGatewayBaseUrl)) {
+  if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
 

@@ -8,6 +8,10 @@ vi.mock('../connectors/claude-code-otlp.js', () => ({
   hasClaudeCodeOtlpHooks: vi.fn(),
 }));
 
+vi.mock('../connectors/desktop.js', () => ({
+  readDesktopGateway: vi.fn(),
+}));
+
 vi.mock('@/agents/core/copilot-connector-scope.js', () => ({
   readCopilotConnectorScope: vi.fn(),
 }));
@@ -21,6 +25,7 @@ vi.mock('../analytics-status.js', () => ({
 
 import { hasClaudeCodeOtlpHooks } from '../connectors/claude-code-otlp.js';
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import { readDesktopGateway } from '../connectors/desktop.js';
 import {
   collectClaudeAnalyticsStatus,
   collectCopilotAnalyticsStatus,
@@ -99,6 +104,12 @@ describe('hasActiveAnalyticsConnector', () => {
   beforeEach(() => {
     vi.mocked(hasClaudeCodeOtlpHooks).mockReset().mockResolvedValue(false);
     vi.mocked(readCopilotConnectorScope).mockReset().mockResolvedValue({ kind: 'ok', value: { enabled: false } });
+    vi.mocked(readDesktopGateway).mockReset().mockResolvedValue(null);
+  });
+
+  it('is true when only Claude Desktop is connected to a local gateway', async () => {
+    vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
+    await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
   });
 
   it('is false when no connector is connected', async () => {
