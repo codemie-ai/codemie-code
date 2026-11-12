@@ -8,7 +8,28 @@ import { readSpoolState } from './spool-state.js';
 /** How many sessions are inspected at once (bounds open file handles on a large spool). */
 const SESSION_CONCURRENCY = 16;
 
-/** What the spool says about analytics delivery, aggregated over every session. Derived from existing files only. */
+/**
+ * Hold reasons that mean the session's local classification never completed. Deliberately
+ * excludes `publication_stopped`, which means the backend answered and declined, not that
+ * classification stalled.
+ */
+const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable', 'organization_encoding_unsupported']);
+
+/**
+ * What the spool says about analytics delivery, aggregated over every session. Derived from
+ * existing files only, and deliberately capability-free: the daemon's capability resolve (a
+ * credential read, possibly an owner-verification network probe) and this spool scan touch
+ * disjoint data, so the caller runs them in parallel and reads `classificationStalled` against
+ * whichever capability it resolved — `'unknown'` means `classification_unreachable`, `'legacy'`
+ * means `classification_unsupported` (see `delivery-health.ts`'s `collectDeliveryHealth`).
+ *
+ * Known limitation (shared with `mismatchHeld`, not introduced by `classificationStalled`): the
+ * spool is one shared directory for the whole machine, and a session's own status file carries no
+ * `api_identity`/`owner_hash` of its own (see `session-status.ts`) — there is nothing to scope this
+ * roll-up to. Every flag here is read against whichever identity/capability is active right now.
+ * A session still pending from a profile the user has since switched away from is judged by the
+ * now-active profile's capability instead of its own, until it drains or is lost to retention.
+ */
 export interface SpoolDeliverySummary {
   /** Sum of unsent bytes (size - cursor) across all spool streams of all sessions. */
   pendingBytes: number;
@@ -16,6 +37,8 @@ export interface SpoolDeliverySummary {
   mismatchHeld: boolean;
   /** At least one stream has a live delivery-failure record. */
   sendFailed: boolean;
+  /** A session with pending data is held on a reason that means its classification never completed (see spec AC1-AC3). */
+  classificationStalled: boolean;
 }
 
 async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary> {
@@ -25,27 +48,39 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     const { size, cursor } = spool.streams[stream];
     return sum + Math.max(0, size - cursor);
   }, 0);
-  if (!status) return { pendingBytes, mismatchHeld: false, sendFailed: false };
+  if (!status) {
+    return { pendingBytes, mismatchHeld: false, sendFailed: false, classificationStalled: false };
+  }
 
-  const mismatchHeld = pendingBytes > 0 && status.holds?.session?.reason === 'analytics_endpoint_mismatch';
+  const holdReason = status.holds?.session?.reason ?? '';
+  const mismatchHeld = pendingBytes > 0 && holdReason === 'analytics_endpoint_mismatch';
+  const classificationStalled = pendingBytes > 0 && CLASSIFICATION_STALL_REASONS.has(holdReason);
   const live = await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
-  return { pendingBytes, mismatchHeld, sendFailed: live.some((rec) => rec !== undefined) };
+  return {
+    pendingBytes,
+    mismatchHeld,
+    sendFailed: live.some((rec) => rec !== undefined),
+    classificationStalled,
+  };
 }
 
 /**
  * Read-only roll-up of the OTLP spool's delivery state. Never throws: an unreadable spool yields the
  * empty summary, and a session whose status is unreadable counts its stream bytes as pending without flags.
+ * Takes no capability — see `SpoolDeliverySummary`'s docstring for why, and pair the result with the
+ * caller's own capability resolve.
  */
 export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
-  const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false, sendFailed: false };
+  const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false, sendFailed: false, classificationStalled: false };
   try {
     const ids = await listSessionIds();
     for (let i = 0; i < ids.length; i += SESSION_CONCURRENCY) {
-      const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map(summarizeSession));
+      const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map((id) => summarizeSession(id)));
       for (const s of batch) {
         summary.pendingBytes += s.pendingBytes;
         summary.mismatchHeld ||= s.mismatchHeld;
         summary.sendFailed ||= s.sendFailed;
+        summary.classificationStalled ||= s.classificationStalled;
       }
     }
   } catch (err) {
