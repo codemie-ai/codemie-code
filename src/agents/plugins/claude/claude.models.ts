@@ -1,6 +1,7 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import { buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieCatalogForEnv, projectFromEnv } from '../../../providers/plugins/sso/sso.catalog.js';
+import { getPlatformUrlFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -158,7 +159,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
   const jwtToken = env.CODEMIE_JWT_TOKEN;
   const baseUrl = env.CODEMIE_BASE_URL;
   const platformUrl = getPlatformUrlFromEnv(env);
-  const projectKey = env.CODEMIE_PROJECT || '';
+  const projectKey = projectFromEnv(env) ?? '';
   const cacheKey = jwtToken && baseUrl
     ? `jwt:${baseUrl}:${projectKey}`
     : `sso:${platformUrl ?? ''}:${projectKey}`;
@@ -171,22 +172,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
     return cachedCatalog.models;
   }
 
-  let models: LlmModel[];
-  if (jwtToken && baseUrl) {
-    logger.debug('[claude-models] Fetching CodeMie model list via JWT auth');
-    models = await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
-  } else if (platformUrl) {
-    const found = await getStoredPlatformCredentialsFromEnv(env);
-    if (!found) {
-      throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
-      );
-    }
-    logger.debug('[claude-models] Fetching CodeMie model list via SSO auth');
-    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
-  } else {
-    models = [];
-  }
+  const models = (await fetchCodeMieCatalogForEnv(env, { logPrefix: '[claude-models]' })) ?? [];
 
   cachedCatalog = { key: cacheKey, fetchedAt: Date.now(), models };
   return models;

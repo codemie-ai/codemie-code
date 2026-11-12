@@ -167,7 +167,7 @@ export async function backupIfUnmanaged(
 export async function discoverCodexModels(
   proxyUrl: string,
   gatewayKey: string,
-  project?: string
+  project: string | undefined
 ): Promise<string[]> {
   const url = buildProxyLlmModelsUrl(proxyUrl, project);
 

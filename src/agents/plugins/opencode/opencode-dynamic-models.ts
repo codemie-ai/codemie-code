@@ -14,10 +14,10 @@
  */
 
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, isRouterModel } from '../../../providers/plugins/sso/sso.http-client.js';
+import { isRouterModel } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import type { OpenCodeModelConfig } from './opencode-model-configs.js';
 import { OPENCODE_MODEL_CONFIGS } from './opencode-model-configs.js';
-import { getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 import { isResponsesApiModel } from '../../../utils/responses-api-models.js';
 
@@ -135,20 +135,14 @@ export async function fetchDynamicModelConfigs(
   selectedModelId?: string,
 ): Promise<Record<string, OpenCodeModelConfig>> {
   try {
-    let rawModels: LlmModel[];
-    const jwtToken = env.CODEMIE_JWT_TOKEN;
-
-    if (jwtToken) {
-      rawModels = await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
-      logger.debug('[dynamic-models] Fetched model list via JWT auth');
-    } else {
-      const found = await getStoredPlatformCredentialsFromEnv(env);
-      if (!found) {
-        logger.debug('[dynamic-models] No SSO credentials found, using static model configs');
-        return OPENCODE_MODEL_CONFIGS;
-      }
-      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
-      logger.debug('[dynamic-models] Fetched model list via SSO auth');
+    const rawModels = await fetchCodeMieCatalogForEnv(env, {
+      logPrefix: '[dynamic-models]',
+      jwtBaseUrl: baseUrl,
+      requireCredentials: false,
+    });
+    if (!rawModels) {
+      logger.debug('[dynamic-models] No SSO credentials found, using static model configs');
+      return OPENCODE_MODEL_CONFIGS;
     }
 
     const result: Record<string, OpenCodeModelConfig> = {};

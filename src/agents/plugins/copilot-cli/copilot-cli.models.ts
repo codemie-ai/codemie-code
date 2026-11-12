@@ -1,6 +1,5 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -146,28 +145,7 @@ function compareRankedModels(a: RankedCopilotModel, b: RankedCopilotModel): numb
 }
 
 async function fetchCodeMieModelsForCopilot(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
-  const jwtToken = env.CODEMIE_JWT_TOKEN;
-  const baseUrl = env.CODEMIE_BASE_URL;
-
-  if (jwtToken && baseUrl) {
-    logger.debug('[copilot-cli-models] Fetching CodeMie model list via JWT auth');
-    return fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
-  }
-
-  const platformUrl = getPlatformUrlFromEnv(env);
-  if (platformUrl) {
-    const found = await getStoredPlatformCredentialsFromEnv(env);
-    if (!found) {
-      throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
-      );
-    }
-
-    logger.debug('[copilot-cli-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
-  }
-
-  return [];
+  return (await fetchCodeMieCatalogForEnv(env, { logPrefix: '[copilot-cli-models]' })) ?? [];
 }
 
 export async function resolveCopilotModel(env: NodeJS.ProcessEnv): Promise<CopilotModelResolution> {

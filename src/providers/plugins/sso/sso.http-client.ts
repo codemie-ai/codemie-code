@@ -280,6 +280,10 @@ function modelsFetchError(statusCode: number | undefined, statusMessage: string 
 /**
  * Fetch full model objects from /v1/llm_models?include_all=true (supports both cookies and JWT)
  *
+ * `project` is required on purpose: each caller must decide whether it wants the
+ * project's models or, by passing `undefined`, the whole catalog. Agents should go
+ * through `fetchCodeMieCatalogForEnv` (sso.catalog.ts), which reads it from the env.
+ *
  * Unlike fetchCodeMieModels (which returns only IDs), this returns the complete model
  * descriptor including cost, features, and provider metadata.
  *
@@ -290,17 +294,17 @@ function modelsFetchError(statusCode: number | undefined, statusMessage: string 
 export function fetchCodeMieLlmModels(
   apiUrl: string,
   cookies: Record<string, string>,
-  project?: string
+  project: string | undefined
 ): Promise<LlmModel[]>;
 export function fetchCodeMieLlmModels(
   apiUrl: string,
   jwtToken: string,
-  project?: string
+  project: string | undefined
 ): Promise<LlmModel[]>;
 export async function fetchCodeMieLlmModels(
   apiUrl: string,
   auth: Record<string, string> | string,
-  project?: string
+  project: string | undefined
 ): Promise<LlmModel[]> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);
@@ -333,17 +337,17 @@ export async function fetchCodeMieLlmModels(
 export function fetchCodeMieModels(
   apiUrl: string,
   cookies: Record<string, string>,
-  project?: string
+  project: string | undefined
 ): Promise<string[]>;
 export function fetchCodeMieModels(
   apiUrl: string,
   jwtToken: string,
-  project?: string
+  project: string | undefined
 ): Promise<string[]>;
 export async function fetchCodeMieModels(
   apiUrl: string,
   auth: Record<string, string> | string,
-  project?: string
+  project: string | undefined
 ): Promise<string[]> {
 /* eslint-enable no-redeclare */
   const headers = buildAuthHeaders(auth);

@@ -142,7 +142,7 @@ function logCatalogFetchThrew(endpoint: string, proxyUrl: string, error: unknown
  * Model catalog URL on the local proxy. With a project, `project_id` makes the backend
  * narrow the list to the models that project allows (its Models tab).
  */
-export function buildProxyLlmModelsUrl(proxyUrl: string, project?: string): string {
+export function buildProxyLlmModelsUrl(proxyUrl: string, project: string | undefined): string {
   const url = new URL('/v1/llm_models?include_all=true', proxyUrl);
   if (project) url.searchParams.set('project_id', project);
   return url.toString();
@@ -164,7 +164,7 @@ function isAbortError(error: unknown): boolean {
 export async function fetchTenantModelDescriptors(
   proxyUrl: string,
   gatewayKey: string,
-  project?: string
+  project: string | undefined
 ): Promise<TenantModelDescriptor[]> {
   let endpoint: string;
   try {
@@ -219,7 +219,7 @@ export async function fetchTenantModelDescriptors(
 export async function fetchTenantModelCatalog(
   proxyUrl: string,
   gatewayKey: string,
-  project?: string
+  project: string | undefined
 ): Promise<string[]> {
   return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey, project)).map((d) => d.id);
 }

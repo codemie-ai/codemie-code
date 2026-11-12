@@ -13,6 +13,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
 import { resolveTenantModelId } from './model-name-resolver.js';
+import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -95,11 +96,9 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 export async function fetchClaudeModels(
   proxyUrl: string,
   gatewayKey: string,
-  project?: string
+  project: string | undefined
 ): Promise<string[]> {
-  const endpointUrl = new URL('/v1/llm_models?include_all=true', proxyUrl);
-  if (project) endpointUrl.searchParams.set('project_id', project);
-  const endpoint = endpointUrl.toString();
+  const endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   try {
     logger.info(
       '[proxy] Fetching Claude models from gateway',
@@ -111,7 +110,7 @@ export async function fetchClaudeModels(
         preferredModels: [...PREFERRED_CLAUDE_MODELS],
       })
     );
-    const response = await fetch(endpointUrl, {
+    const response = await fetch(endpoint, {
       headers: { Authorization: `Bearer ${gatewayKey}` },
     });
     if (!response.ok) {
@@ -873,7 +872,7 @@ export async function writeDesktopConfig(
       project
         ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
           'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
-        : `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
+        : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
     );
   }
   const resolvedModels = selectDesktopClaudeModels(discoveredModels);

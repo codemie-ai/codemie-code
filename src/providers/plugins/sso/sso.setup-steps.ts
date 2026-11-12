@@ -249,7 +249,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       // Test API access
       try {
-        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
+        // Only checks that the session can read the catalog; no project narrowing needed.
+        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies, undefined);
       } catch (error) {
         return {
           valid: false,

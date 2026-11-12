@@ -16,8 +16,7 @@
  */
 
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -86,20 +85,7 @@ export function assertGeminiModelAllowed(model: string | undefined, availableMod
 }
 
 async function fetchCodeMieModelsForGemini(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
-  const jwtToken = env.CODEMIE_JWT_TOKEN;
-  const baseUrl = env.CODEMIE_BASE_URL;
-  if (jwtToken && baseUrl) {
-    logger.debug('[gemini-models] Fetching CodeMie model list via JWT auth');
-    return await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
-  }
-
-  const found = await getStoredPlatformCredentialsFromEnv(env);
-  if (found) {
-    logger.debug('[gemini-models] Fetching CodeMie model list via SSO auth');
-    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
-  }
-
-  return [];
+  return (await fetchCodeMieCatalogForEnv(env, { logPrefix: '[gemini-models]', requireCredentials: false })) ?? [];
 }
 
 /**
