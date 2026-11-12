@@ -409,16 +409,13 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
 
   // Spawned, not a processEvent unit call: the failure line is printed by the command's action, so the whole
   // stderr of a missing CODEMIE_AGENT is observable only on the CLI process.
-  it('a missing CODEMIE_AGENT leaves only the failure line on stderr; the variable names go to the file log under CODEMIE_DEBUG', async () => {
+  it('a missing CODEMIE_AGENT exits 0 with empty stderr; the variable names go to the file log under CODEMIE_DEBUG', async () => {
     const home = freshHome();
     const res = await run(home, ['hook'], sessionStart(home), { CODEMIE_AGENT: '', CODEMIE_DEBUG: '1' });
 
-    expect(res.code).toBe(1);
+    expect(res.code).toBe(0);
     expect(res.stdout).toBe('');
-    expect(res.stderr).not.toContain('[hook:debug]');
-    const lines = res.stderr.trimEnd().split('\n');
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toBe('codemie hook: SessionStart failed: CODEMIE_AGENT environment variable is required');
+    expect(res.stderr).toBe('');
     expect(fileLog(home)).toContain('[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ');
   });
 
