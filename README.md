@@ -542,7 +542,7 @@ codemie-pi --resume <session-id>              # open a specific session
 |---|---|
 | **Managed agent dir** | `~/.pi/agent` is copied once to `<project>/.pi/codemie/agent`; Pi runs against the copy via `PI_CODING_AGENT_DIR`. Your skills, prompts, and extensions carry over — your Pi home is never modified. |
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
-| **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
+| **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
 | **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
@@ -750,7 +750,7 @@ No plaintext key or generated placeholder is written to that file. On first setu
 
 ## Connect Claude Desktop via CodeMie Proxy
 
-Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations. Cowork sessions also appear on the CLI Analytics tab — turns, tools, subagents, tokens and cost — under your user and the profile's CodeMie project.
 
 ### Prerequisites
 
@@ -776,6 +776,8 @@ codemie proxy inspect desktop --limit 5
 codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
+
+With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

@@ -445,8 +445,9 @@ describe.skipIf(!sqliteAvailable)('opencode run session selection', () => {
   it('a session whose parse throws fails the run\'s result without stopping the run\'s other sessions', async () => {
     const a = writeRecord({ startTime: T0 + 10 * SECOND });
     await writeSessions([
-      // Updated past the largest valid Date: newest-updated, so processed first, and its parse throws
-      { id: 'ses_broken', created: T0 + 15 * SECOND, updated: 1e16, prompts: [T0 + 20 * SECOND] },
+      // Updated past the largest valid Date (8.64e15): newest-updated, so processed first, and its parse
+      // throws. Still a safe integer: node:sqlite refuses to read a larger one, failing the whole listing.
+      { id: 'ses_broken', created: T0 + 15 * SECOND, updated: 8.7e15, prompts: [T0 + 20 * SECOND] },
       { id: 'ses_ok', created: T0 + 30 * SECOND, updated: T0 + 50 * SECOND, prompts: [T0 + 35 * SECOND] },
     ]);
 

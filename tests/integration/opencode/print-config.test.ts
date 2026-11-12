@@ -22,7 +22,7 @@ describe('print-config against the real opencode plugin', () => {
     const generated = extractGeneratedConfig(resultEnv);
     const redacted = redactSecrets(generated) as Record<string, unknown>;
 
-    expect(redacted.model).toContain('codemie-proxy/');
+    expect(redacted.model).toContain('codemie-openai/');
     const provider = redacted.provider as Record<string, any>;
     expect(provider['codemie-proxy'].options.apiKey).toBe('***REDACTED***');
     expect(provider['codemie-proxy'].options.baseURL).toBe('https://example.invalid/');

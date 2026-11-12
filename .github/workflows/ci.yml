@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   secrets-detection:
     name: Security
@@ -23,6 +27,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [secrets-detection]
     if: |
       always() &&
@@ -66,6 +71,7 @@ jobs:
   test-ubuntu:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [build]
     permissions:
       contents: read
@@ -101,6 +107,7 @@ jobs:
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
+    timeout-minutes: 30
     needs: [build]
     permissions:
       contents: read

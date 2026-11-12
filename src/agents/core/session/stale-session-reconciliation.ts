@@ -30,7 +30,7 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptNeverReached, authWasRejected, awaitingDestination, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptNotServed, authWasRejected, awaitingDestination, failingServerAnswered, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
 import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
@@ -53,8 +53,9 @@ export const RECONCILE_PER_START = 5;
 
 /**
  * Attempts per record: past them a stranded record is finalized without its flush, an undelivered one renamed unsent.
- * An attempt is not counted when no request of it reached the server: every request it made failed before the
- * connection opened (a connection refused, an unresolved host or an unreachable network), so no server can have served it.
+ * An attempt is not counted when no request of it was served: a request failed before the connection opened (a
+ * connection refused, an unresolved host or an unreachable network) or got a failing server's answer (a 5xx, a 429 or
+ * a non-JSON 4xx), and none ended in a counted failure; see {@link settleAttempt}.
  */
 export const MAX_ATTEMPTS = 3;
 
@@ -312,18 +313,27 @@ async function rollBackAttempt(attempt: Attempt): Promise<void> {
 }
 
 /**
- * Settles an attempt that ran to its end or threw: rejected credentials anywhere in it, no request of it that
- * reached the server (see {@link attemptNeverReached}), or an abort of the pass before any send, put its counter
- * back; any other outcome keeps it counted — an HTTP answer, a timeout or a reset after the send of any of its
- * requests, and the attempt's own deadline expiring included, so a record that always runs past it reaches its last attempt.
+ * Settles an attempt that ran to its end or threw, first match wins: rejected credentials anywhere in it; a request
+ * of it that no server served — one never left or got a failing server's answer (a 5xx, a 429 or a non-JSON 4xx) —
+ * with none ending in a counted failure, a successful request beside it changing nothing (see
+ * {@link attemptNotServed}), a failing server's answer only while the record is within the
+ * evidence retention; a legacy metric awaiting its destination within that retention; an abort of the pass before
+ * any send — each puts its counter back. Any other outcome keeps it counted: a timeout, a reset after the send, a
+ * JSON 4xx other than 401 or a 2xx that is not a success in any of its requests, an attempt that made no request
+ * noting an outcome, and the attempt's own deadline expiring with a request in flight or none made, so a record that
+ * always runs past it reaches its last attempt. The conversation metadata request notes no outcome, the delivery
+ * ignoring its failure.
  */
 export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise<void> {
+  const failingServer = failingServerAnswered(attempt.signal);
   if (authWasRejected(attempt.signal)) {
     // Rejected credentials are no attempt: the record waits for a re-login
     await restoreCounter(attempt, 'credentials rejected by the server');
-  } else if (attemptNeverReached(attempt.signal)) {
-    await restoreCounter(attempt, 'request never reached the server');
-  } else if (awaitingDestination(attempt.signal) && (await destinationCanStillAnswer(attempt.sessionId))) {
+  } else if (attemptNotServed(attempt.signal) && (!failingServer || (await withinEvidenceRetention(attempt.sessionId)))) {
+    await restoreCounter(attempt, failingServer
+      ? 'answered by a failing server (5xx, 429 or a non-JSON 4xx)'
+      : 'request never reached the server');
+  } else if (awaitingDestination(attempt.signal) && (await withinEvidenceRetention(attempt.sessionId))) {
     // A legacy metric withheld until the backend confirms the destination (EPMCDME-17054) spends no attempt
     await restoreCounter(attempt, 'legacy metrics wait for the destination confirmation');
   } else if (aborted) {
@@ -334,10 +344,11 @@ export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise
 const DAY_MS = 86_400_000;
 
 /**
- * Whether the destination-accepted marker can still appear for the record: its session ended (or, unended, started)
- * within the evidence record's retention. Past it the waiting attempts count again, so the record is dropped in the end.
+ * Whether the record's session ended (or, unended, started) within the evidence record's retention: while it does, an
+ * attempt that awaited the destination or met a failing server is given back; past it such attempts count again, so
+ * the record is dropped in the end.
  */
-async function destinationCanStillAnswer(sessionId: string): Promise<boolean> {
+async function withinEvidenceRetention(sessionId: string): Promise<boolean> {
   const record = await new SessionStore().loadSession(sessionId);
   const at = record?.endTime ?? record?.startTime;
   return at !== undefined && Date.now() - at < evidenceRecordIdleDays() * DAY_MS;
@@ -478,7 +489,7 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
         closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
       }
     } finally {
-      // Also on a throw: a flush cut by the pass's abort, met by rejected credentials or that never reached the server is no attempt
+      // Also on a throw: a flush cut by the pass's abort, met by rejected credentials or that no server served is no attempt
       if (!closedLocally) await settleAttempt(attempt, controller.signal.aborted);
     }
   } finally {

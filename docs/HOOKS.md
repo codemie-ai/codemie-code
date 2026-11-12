@@ -581,6 +581,8 @@ The filter runs in the hook process. The plugin (`src/agents/plugins/claude-code
 
 Claude Code OTel telemetry is still exported globally, so untracked sessions reach the daemon as OTEL-only data. The daemon never sends OTEL-only sessions (completeness gate decision `skip`); they are skipped after `OTLP_SEND_MAX_ATTEMPTS` ticks and deleted by the sweeper after `OTLP_ABANDONED_SESSION_GRACE_MINUTES`. Details: [ARCHITECTURE-PROXY.md](ARCHITECTURE-PROXY.md#614-claude-code-otlp-per-project-allowlist).
 
+A Claude Desktop Cowork session runs no CodeMie hook. The Desktop daemon builds its plugin events from the session's transcript and writes them into the spool's `hooks` stream itself, so the session is sent without the hook-time allowlist; `codemie proxy analytics disable` and the excluded folders still apply to it.
+
 ## Environment Variables
 
 Hooks have access to the following environment variables:

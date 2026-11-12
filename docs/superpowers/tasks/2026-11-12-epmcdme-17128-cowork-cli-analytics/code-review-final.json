@@ -1,0 +1,411 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Approved over CR-002, CR-005, CR-006, CR-007, CR-008 and CR-009: closed without a code change"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix-ups requested after the final round: doc comments on three new exports and a guard on the last-drop time of proxy status"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Approved over CR-002, CR-005, CR-006, CR-007, CR-008 and CR-009: closed without a code change"
+    }
+  ],
+  "reviewed_head": "becea4d01cf6b5576ebc37d1fb370ba4c4169d38",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "3 of 9 prior blocking findings resolved (CR-001 by recorded decision, CR-003 and CR-004 in source at HEAD). CR-002 and CR-005 to CR-009 are kind:code and were closed by story-owner notes with no source change, CR-005 by an author-side spec amendment; owner waivers cannot resolve code findings, so they need a fix or re-triage as decisions on a new final round. Note: fix_evidence reviewed_head is 851ed0c0 but HEAD is becea4d0.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "breaking-change"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 3,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 6
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/session-signals.ts",
+      "title": "Regression-safety story AC is contradicted",
+      "problem": "Story AC 'existing CodeMie CLI and Claude Code analytics remain unaffected' fails. countTurns now leaves out interrupt, command-output and automatic-prompt lines, so agent.session.summary.turns drops for ordinary Claude Code sessions. Also, while Desktop is connected, withDesktopIdentity (connect-orchestrator.ts) switches proxy start, proxy restart and hook cold starts to the claude-desktop identity, which changes X-CodeMie-Client on non-Desktop traffic and drops the Codex reasoning sanitizer for an oh-my-pi daemon. Both changes match spec items, so the spec and the story AC disagree.",
+      "impact": "Turn counts for existing Claude Code sessions shift on the analytics dashboards, and other CLI clients sharing the daemon are attributed to claude-desktop. This breaks the regression guarantee the story requires.",
+      "recommendation": "Get a product decision: either keep countTurns and the Claude Code session turns as they were (move the new exclusion rule to Cowork only) and stop forcing the claude-desktop identity on non-Desktop daemons, or amend the story AC to accept both changes on purpose.",
+      "status": "resolved",
+      "check_notes": "Mapped decision present: story owner accepted both changes (turn count fix, Desktop identity) with a non-empty rationale."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 1037,
+      "title": "Desktop gateway check rejects custom key offline",
+      "problem": "readDesktopGateway accepts the Desktop config's inferenceGatewayApiKey only when it equals the daemon state file's gatewayKey, or DEFAULT_GATEWAY_KEY when there is no state file. clearState (daemon-manager.ts) deletes the state file on every stop. So with the daemon stopped and Desktop connected using a non-default gateway key, the gateway reads as not connected.",
+      "impact": "proxy start, proxy restart from stopped, and hook cold start then spawn outside Desktop mode, and Cowork collection stops. This is the regression the change is meant to prevent. Only the Desktop: status line shows it.",
+      "recommendation": "When no daemon state file exists, accept any loopback CodeMie gateway config (or compare against the key the next start will use / the key recorded at connect time) so start, restart and hook cold start stay in Desktop mode; add a test for a stopped daemon with a non-default key.",
+      "status": "wont-fix",
+      "check_notes": "desktop.ts not in changed_files; readDesktopGateway unchanged. Recorded as a story-owner closure with no code change; a kind:code finding needs a source fix in changed_files, so re-triage it as a deci",
+      "disposition": {
+        "rationale": "The CLI never makes a gateway key other than the default: every spawn uses the default key and no option or environment variable sets another.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/daemon-conflict.ts",
+      "line": 3,
+      "title": "New exported functions lack JSDoc",
+      "problem": "code-quality.md requires JSDoc on all public APIs. The new exports formatDaemonConflict (daemon-conflict.ts:3), emptyCoworkCursor and coworkCursorPath (cowork-cursor.ts:23, 27) have none.",
+      "impact": "The documented documentation standard is not met for new exported functions, and the standards audit marks code-quality as a blocking partial.",
+      "recommendation": "Add a one-line JSDoc to formatDaemonConflict, emptyCoworkCursor and coworkCursorPath.",
+      "status": "resolved",
+      "check_notes": "HEAD has one-line JSDoc on formatDaemonConflict, emptyCoworkCursor and coworkCursorPath."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/delivery-health.ts",
+      "line": 82,
+      "title": "Last-dropped timestamp can crash proxy status",
+      "problem": "formatDropLines calls new Date(drop.at).toISOString() with no guard. The at value comes through toOffset/parseDiscard (session-status.ts), which accept any finite positive number with no upper bound. A value past the Date range makes toISOString throw a RangeError.",
+      "impact": "A corrupt or out-of-range status file breaks proxy status and proxy analytics status output, the commands meant to show delivery problems.",
+      "recommendation": "Guard the conversion: const d = new Date(drop.at); const when = Number.isFinite(d.getTime()) ? d.toISOString() : String(drop.at); or clamp `at` to the valid Date range in toOffset/parseDiscard.",
+      "status": "resolved",
+      "check_notes": "formatDropLines now checks Number.isNaN(at.getTime()) and prints String(drop.at); regression test added."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 48,
+      "title": "Undeclared backfill env option added",
+      "problem": "The spec says 'no new option and no new consent; sessions older than 7 days never appear'. The change adds the env option CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS (capped by MAX_BACKFILL_DAYS = 14), which can widen the window to 14 days.",
+      "impact": "This partly meets an approved spec requirement. Users can widen collection to sessions older than 7 days through an option the spec does not declare.",
+      "recommendation": "Remove CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS and fix the window at 7 days as the spec states, or get the spec amended to declare the option.",
+      "status": "wont-fix",
+      "check_notes": "Code unchanged; spec.md now declares CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS (verified), but the author amended it. Needs spec-owner approval via a decision.",
+      "disposition": {
+        "rationale": "The backfill window variable is declared in the PR description and in docs/ARCHITECTURE-PROXY.md and is covered by a test; it adds no command option and no consent.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 237,
+      "title": "New functions exceed 50-line limit",
+      "problem": "code-quality.md says functions stay under 50 lines. The new CoworkEventProducer.process (~70 lines), buildCoworkEvents (~71 lines, cowork-events.ts) and toolEvents (~54 lines) are over it.",
+      "impact": "The documented code-structure standard is not met for new code. The standards audit treats it as blocking.",
+      "recommendation": "Split CoworkEventProducer.process, buildCoworkEvents and toolEvents into named helpers (per pass / per event type) so each stays under 50 lines.",
+      "status": "wont-fix",
+      "check_notes": "Functions still over 50 lines. Recorded as a story-owner closure with no code change; a kind:code finding needs a source fix in changed_files, so re-triage it as a decision on a new final round or fix",
+      "disposition": {
+        "rationale": "Each of the three functions is one sequential pass; the functions beside them in the same runtime are longer. Splitting them adds risk with no change in behaviour.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 270,
+      "title": "Backfill window skips orchestrator usage passes",
+      "problem": "On a cursor-less first run, windowStartMs is passed only to buildCoworkEvents. The orchestrator passes (main, subagent, session-end) read the whole transcript and still emit agent.usage.request for lines older than the window. The test 'builds no producer event older than the window' asserts that msg_synthetic_OLD is sent.",
+      "impact": "Usage older than the 7-day window is sent. When orchestrator state is lost on a long-lived session, usage older than the backend's 14-day dedupe can be re-sent and counted twice, against the no-duplicates AC. Whether that double-count path is reached in practice was not confirmed.",
+      "recommendation": "Apply the same windowStartMs to the orchestrator passes (openMainTranscriptPass / openSubagentPass / openSessionEndPass) on a cursor-less first run, so no usage line older than the window is emitted; update the 'builds no producer event older than the window' test so it checks orchestrator events too.",
+      "status": "wont-fix",
+      "check_notes": "CoworkEventProducer.ts unchanged; orchestrator passes still ignore windowStartMs. Recorded as a story-owner closure with no code change; a kind:code finding needs a source fix in changed_files, so re-",
+      "disposition": {
+        "rationale": "The window bounds the producer's own events; a session's usage is sent whole so its tokens and cost are complete, and a lost producer cursor alone re-sends none of it.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "title": "New files break kebab-case naming",
+      "problem": "code-quality.md Naming Conventions require kebab-case.ts file names. The new files CoworkEventProducer.ts and CoworkRunner.ts use PascalCase. The repo does already have PascalCase files such as DesktopTelemetryRuntime.ts.",
+      "impact": "The documented naming standard is not met by newly added files. The standards audit treats it as blocking.",
+      "recommendation": "Rename to cowork-event-producer.ts and cowork-runner.ts and update imports, or record the PascalCase class-file exception in code-quality.md.",
+      "status": "wont-fix",
+      "check_notes": "PascalCase file names kept; code-quality.md not amended. Recorded as a story-owner closure with no code change; a kind:code finding needs a source fix in changed_files, so re-triage it as a decision o",
+      "disposition": {
+        "rationale": "The class files of this directory are named after their class, as DesktopTelemetryRuntime.ts and its neighbours are.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/cowork-events.ts",
+      "line": 305,
+      "title": "Cursor seen-uuid set grows without bound",
+      "problem": "buildCoworkEvents stores every counted line uuid in state.seenUuids = [...seen], and agentResults only grows. Both are kept in the Cowork cursor, which saveCoworkCursor writes out in full on every processing.",
+      "impact": "For a long-lived Cowork session, the cursor file, the per-run parse and serialize cost, and memory grow without limit on every producer run.",
+      "recommendation": "Bound the persisted state: keep only uuids at or after the read offsets (or cap at a fixed MAX_SEEN_UUIDS keeping the newest), and prune agentResults entries whose subagent has stopped.",
+      "status": "wont-fix",
+      "check_notes": "cowork-events.ts unchanged; seenUuids still unbounded. Recorded as a story-owner closure with no code change; a kind:code finding needs a source fix in changed_files, so re-triage it as a decision on",
+      "disposition": {
+        "rationale": "The transcript orchestrator's own parse state keeps the same uncapped list of seen uuids; the Cowork cursor follows it.",
+        "source": "hitl"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "title": "Modified files already past 500-line limit",
+      "problem": "orchestrator.ts, desktop.ts, connect-orchestrator.ts and sso.proxy.ts are over the code-quality.md 500-line limit, and this change adds net lines to them.",
+      "preexisting": "All four files were over 500 lines before this branch; the standards audit records the overage as predating the change."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "Telemetry delivery: Cowork sessions collected and delivered to CLI Analytics",
+      "status": "pass",
+      "notes": "CoworkEventProducer appends to hooks spool; runner wired into DesktopTelemetryRuntime"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Session visibility: correct user, project, time range, no duplicates",
+      "status": "pass",
+      "notes": "project from ConfigLoader, deterministic event ids, own-OTel sessions skipped"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Usage metrics: model, tokens, cost, API calls reported",
+      "status": "pass",
+      "notes": "orchestrator usage/subagent/summary passes; route marker kept for pricing"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Activity reporting: tool activity and session metrics",
+      "status": "pass",
+      "notes": "tool start/end/error, prompts, subagent start/stop, session start/end"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Reliability: delivery survives Desktop restart and never fails silently",
+      "status": "pass",
+      "notes": "persistent cursor saved after append; warn-once + retry; Desktop: and Last dropped: status lines"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Regression safety: existing CodeMie CLI and Claude Code analytics remain unaffected",
+      "status": "fail",
+      "notes": "countTurns lowers Claude Code summary turns; start/restart/cold start force claude-desktop identity while Desktop connected"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Automated coverage: unit and integration tests for Cowork collection, delivery, attribution",
+      "status": "pass",
+      "notes": "producer, events, runtime, spool, delivery-summary, connect/restart/cold-start tests added"
+    },
+    {
+      "kind": "spec",
+      "item": "Producer takes every Cowork session active in the last 7 days",
+      "status": "pass",
+      "notes": "default 7-day discovery window"
+    },
+    {
+      "kind": "spec",
+      "item": "Reads inner transcript and subagent files from own cursor and appends session/prompt/tool/subagent plus usage and summary events",
+      "status": "pass",
+      "notes": "process reads cursor offsets, runs orchestrator passes then own events"
+    },
+    {
+      "kind": "spec",
+      "item": "Event ids built from the transcript, never from the clock",
+      "status": "pass",
+      "notes": "eventId keyed by uuid/tool_use_id/agentId/lastLineAt"
+    },
+    {
+      "kind": "spec",
+      "item": "Session ends after inactivity timeout; background subagent stopped at its last line",
+      "status": "pass",
+      "notes": "endDue on lastLineAt; async_launched results excluded"
+    },
+    {
+      "kind": "spec",
+      "item": "Text fields cut to the limits of the Claude Code hook path",
+      "status": "pass",
+      "notes": "maskSecretsDeep + boundedText per TEXT_FIELD_LIMITS"
+    },
+    {
+      "kind": "spec",
+      "item": "Code tab sessions and own-OTel sessions are left alone",
+      "status": "pass",
+      "notes": "audit.jsonl required; otelConfig sessions skipped"
+    },
+    {
+      "kind": "spec",
+      "item": "Failing session warned once and retried; cursor does not move; nothing appended twice",
+      "status": "pass",
+      "notes": "warnFailure dedupe; cursor saved last; finalize(false) on failure"
+    },
+    {
+      "kind": "spec",
+      "item": "While Desktop config points at local gateway, connect/start/restart/cold start use claude-desktop identity",
+      "status": "pass",
+      "notes": "readDesktopGateway + withDesktopIdentity on all paths"
+    },
+    {
+      "kind": "spec",
+      "item": "Desktop identity never replaces codex-desktop or vscode-byok",
+      "status": "pass",
+      "notes": "DESKTOP_KEPT_CLIENT_TYPES short-circuit"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy restart of a running daemon keeps its port",
+      "status": "pass",
+      "notes": "restartRunning spawns with state.port"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy status prints a Desktop: line",
+      "status": "pass",
+      "notes": "formatDesktopLine with reason and remedy"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy status / analytics status print Last dropped: <reason>",
+      "status": "pass",
+      "notes": "sessionDrop merges lastDiscard and lastLoss; formatDropLines"
+    },
+    {
+      "kind": "spec",
+      "item": "Session discarded for no CodeMie project is warned once per session",
+      "status": "pass",
+      "notes": "no_project loss + warnNoProjectDiscardOnce"
+    },
+    {
+      "kind": "spec",
+      "item": "Corrupt preferences file and 5-minute in-flight run each warned once",
+      "status": "pass",
+      "notes": "corruptPreferencesWarned; OVERDUE_RUN_MS warn once"
+    },
+    {
+      "kind": "spec",
+      "item": "Routing header injector rewrites chunk-cut message_start and br/gzip/deflate JSON",
+      "status": "pass",
+      "notes": "held tail + onResponseStreamEnd; decompressBody"
+    },
+    {
+      "kind": "spec",
+      "item": "countTurns skips self-written and automatic prompts; producer still sends automatic prompts",
+      "status": "pass",
+      "notes": "SELF_WRITTEN/AUTO_PROMPT prefixes; producer uses isSelfWrittenUserText only"
+    },
+    {
+      "kind": "spec",
+      "item": "Desktop connector checks applied config id before using it as a file path",
+      "status": "pass",
+      "notes": "appliedConfigId (isSafeSessionId) in every user"
+    },
+    {
+      "kind": "spec",
+      "item": "Docs updated: README, CHANGELOG, AGENTS, COMMANDS, ARCHITECTURE-PROXY, ARCHITECTURE-OTLP-PLUGIN, HOOKS, exposed-api",
+      "status": "pass",
+      "notes": "all eight files changed"
+    },
+    {
+      "kind": "spec",
+      "item": "No new option and no new consent; sessions older than 7 days never appear",
+      "status": "partial",
+      "notes": "consent switches honoured, but new env CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS (cap 14) introduced"
+    },
+    {
+      "kind": "spec",
+      "item": "Session folder without CodeMie project is not sent, and proxy status says so",
+      "status": "pass",
+      "notes": "unbound hooks discarded as no_project loss, shown with setup hint"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy status --json gains desktop and analytics.latestDrop",
+      "status": "pass",
+      "notes": "payload.desktop and DeliveryHealth.latestDrop"
+    },
+    {
+      "kind": "spec",
+      "item": "Claude Code hook path, Copilot producers, gate and forwarder rules not changed",
+      "status": "pass",
+      "notes": "boundedText export only; gate verdict unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy start beside a daemon of another identity gives the usual conflict message",
+      "status": "pass",
+      "notes": "formatDaemonConflict moved unchanged; no stop or spawn"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "3 subjects in 093dbe9d..HEAD use allowed types (feat, fix) and allowed scope analytics, imperative mood, all under the 100-char subject-max-length in git-workflow.md"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "imports carry .js, no console.log, no any, exported functions have explicit return types; but code-quality.md 'Functions: under 50 lines' is broken by new functions (CoworkEventProducer.process ~70 lines, buildCoworkEvents ~71 lines, toolEvents ~54 lines), the 'Files kebab-case.ts' naming rule is broken by new files CoworkEventProducer.ts and CoworkRunner.ts (repo already has PascalCase precedent such as DesktopTelemetryRuntime.ts), and 'JSDoc on all public APIs' is unmet for new exports formatDaemonConflict, emptyCoworkCursor, coworkCursorPath; 'Files: under 500 lines' is also already exceeded by modified files orchestrator.ts (1445), desktop.ts (1140), connect-orchestrator.ts (1042), sso.proxy.ts (832), which this change grows"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no X-CodeMie attribution header, Responses user field or JWT override added or rewritten; routing-header-injector.plugin.ts copies upstream response routing headers (x-litellm-*, x-codemie-routing/requested/routed-*) into response bodies and does not inject request headers; decompression is bounded by maxOutputLength; new logger calls log session ids, step names and file paths, no credentials; cowork cursor written under getCodemiePath; no hardcoded secrets in new fixtures seen"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "The oversized diff means the lenses could not read all of it, so confidence is low. The regression-safety story AC fails and needs a human decision (CR-001). The no-new-option spec item is partial (CR-005). The code-quality standard is partial (function length, file naming, JSDoc). 1 deferred (files already over 500 lines, recorded in code-review-deferred.local.md) and 12 lens candidates dismissed as noise or already handled.",
+    "confidence": "low",
+    "risk_flags": [
+      "breaking-change"
+    ]
+  }
+}

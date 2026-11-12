@@ -1,0 +1,178 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Check round approved: both findings resolved"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Two decision findings, CR-001 and CR-002, went to a check round"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved: both findings resolved"
+    }
+  ],
+  "reviewed_head": "3254a7f449b8e447f762f822eef3309d26ab37ef",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Evidence-only check at HEAD 3254a7f4: both prior blocking findings were decision_needed and each has an id-mapped human decision with rationale (CR-001 kept as designed; CR-002 accepted by the story owner as at-least-once pending backend idempotency), so both are resolved. business_review and standards_review are carried forward unchanged; the two story ACs stay partial by that accepted decision. DF-001 deferred item not re-checked.",
+  "confidence": "low",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/session/bounded-request.ts",
+      "line": 118,
+      "title": "Deterministic HTTP rejections retried for full retention",
+      "problem": "isFailingServerAnswer treats every non-JSON 4xx and every 5xx as a transient outage, so deterministic answers such as a proxy's 413 page for an oversized payload, a non-JSON 404 route error, or a 5xx the application returns every time for one poison payload are given back by settleAttempt instead of counted. The changed tests assert 413/403 HTML pages spend no attempt.",
+      "impact": "Such a record is never dropped after MAX_ATTEMPTS; it is re-sent on every CLI start and every Desktop daemon pass for up to CODEMIE_EVIDENCE_RECORD_IDLE_DAYS (90 d). listCandidates picks the newest 5 records (RECONCILE_PER_START) with no rotation, so five such newer records hold every start slot and starve older deliverable records.",
+      "recommendation": "Decide whether deterministic answers (413 Payload Too Large, 404/405 route errors, a 5xx repeated for one payload) should keep being given back for CODEMIE_EVIDENCE_RECORD_IDLE_DAYS. If not, count 413 (and other non-transient 4xx) in isFailingServerAnswer, or cap give-backs per record; if yes, make listCandidates rotate records that were given back so they cannot hold all RECONCILE_PER_START slots, and document the behaviour.",
+      "status": "resolved",
+      "check_notes": "Id-mapped decision: kept as designed (give-back within retention, no per-status exception, no slot rotation) with non-empty rationale."
+    },
+    {
+      "id": "CR-002",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/telemetry/runtime/DesktopSessionDelivery.ts",
+      "title": "End metric not delivered exactly once",
+      "problem": "The story requires the end metric to be delivered exactly once after the server recovers, but the endMetricSentAt once-marker is saved only after a confirmed 2xx: a process cut between the 2xx and that save re-sends it (the ticket reports a duplicate in 19 of 20 runs), and a 502/504 returned after the backend already stored the metric is now given back and re-sent on later passes. Nothing deduplicates; docs/ARCHITECTURE-PROXY.md documents at-least-once pending backend idempotency, with no backend ticket filed.",
+      "impact": "Story AC 'the end metric is delivered exactly once' is partial: duplicate end metrics can reach analytics, and the change widens the re-send window for 502/504-after-commit across more passes.",
+      "recommendation": "Get a product/backend decision on the story's exactly-once criterion: either make POST /v1/metrics idempotent (e.g. a session-scoped idempotency key on the end metric) and file the backend ticket, or record endMetricSentAt durably before/atomically with the send acknowledgement and explicitly accept at-least-once for 502/504-after-commit in the story. Until decided, the story AC stays partial.",
+      "status": "resolved",
+      "check_notes": "Id-mapped decision: accepted by story owner as known limit; exactly-once only for 2xx-seen deliveries, backend idempotency out of scope; rationale given."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/agents/core/session/stale-session-reconciliation.ts",
+      "title": "Timeout/reset outages still drop the end metric",
+      "problem": "An outage whose requests time out or reset after send still counts every delivery, so the record is renamed completed_* unsent after 3 counted attempts.",
+      "preexisting": "Timeouts/resets were counted before this change; the task scopes the fix to outages answering with HTTP errors."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "A failed Desktop end-metric delivery is retried after connectivity is restored (including after a daemon restart)",
+      "status": "partial",
+      "notes": "HTTP-error outages now given back; timeout/reset outages still count and drop after 3 attempts; give-back ends past CODEMIE_EVIDENCE_RECORD_IDLE_DAYS"
+    },
+    {
+      "kind": "story-ac",
+      "item": "The end metric is delivered exactly once",
+      "status": "partial",
+      "notes": "Once-marker blocks resend after confirmed 2xx; 2xx-then-cut window open; 502/504 after commit can be re-sent; documented as at-least-once pending backend idempotency"
+    },
+    {
+      "kind": "spec",
+      "item": "A request answered 5xx, 429 or a non-JSON 4xx is noted as a failing server's answer",
+      "status": "pass",
+      "notes": "isFailingServerAnswer + noteFailingServer in bounded-request.ts; table test"
+    },
+    {
+      "kind": "spec",
+      "item": "An attempt whose requests only never left or met a failing server is given back; a successful request beside it changes nothing",
+      "status": "pass",
+      "notes": "attemptNotServed ignores successes; settleAttempt branch; mixed-signal tests"
+    },
+    {
+      "kind": "spec",
+      "item": "Still counted: timeout, reset after send, JSON 4xx other than 401, 2xx that is not a success",
+      "status": "pass",
+      "notes": "noteOutcome(error) -> noteServerReached; noteAnswer non-failing non-success -> noteServerReached; tests present"
+    },
+    {
+      "kind": "spec",
+      "item": "Rejected credentials (401, SSO login page) handled as before",
+      "status": "pass",
+      "notes": "authWasRejected checked first in settleAttempt; 401 excluded from failing-server"
+    },
+    {
+      "kind": "spec",
+      "item": "Failing-server give-back holds only within CODEMIE_EVIDENCE_RECORD_IDLE_DAYS (90 d default); past it attempts count again",
+      "status": "pass",
+      "notes": "withinEvidenceRetention gate in settleAttempt; recent vs 91-day test"
+    },
+    {
+      "kind": "spec",
+      "item": "Both API clients note one outcome per request after status and body kind are known",
+      "status": "pass",
+      "notes": "apiClient.ts and metrics-api-client.ts noteAnswer after parse; noteOutcome only when unanswered"
+    },
+    {
+      "kind": "spec",
+      "item": "The conversation metadata request notes no outcome",
+      "status": "pass",
+      "notes": "noteOutcome removed from metadata request; 422 and socket-hang-up tests"
+    },
+    {
+      "kind": "spec",
+      "item": "Rule lives in shared settleAttempt so the Desktop daemon and CLI start pass follow it alike",
+      "status": "pass",
+      "notes": "DesktopSessionDelivery.ts:125 and stale-session-reconciliation.ts:493 call settleAttempt"
+    },
+    {
+      "kind": "spec",
+      "item": "Docs updated: ARCHITECTURE-PROXY.md, ANALYTICS-REPORT.md, CHANGELOG.md",
+      "status": "pass",
+      "notes": "all three changed in diff"
+    },
+    {
+      "kind": "spec",
+      "item": "Metric deltas and conversation payloads keep their own cap of 3 sync attempts (not changed)",
+      "status": "pass",
+      "notes": "no syncAttempts change in diff"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "1 commit in range; subject uses allowed type fix and allowed scope analytics, imperative mood, under the 100-char subject-max-length documented in git-workflow.md"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "new exports in bounded-request.ts (isFailingServerAnswer, noteFailingServer, failingServerAnswered, attemptNotServed, BoundedRequest.noteAnswer) have explicit return types and JSDoc; imports keep .js extensions; camelCase naming; no console.log; changed hunks in stale-session-reconciliation.ts, apiClient.ts, metrics-api-client.ts and DesktopSessionDelivery.ts stay within the guide's conventions; generic Error throws and catch (error: any) in the clients are pre-existing lines, not introduced by this change"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no X-CodeMie-* attribution header, user field or JWT claim touched; no new log paths carrying credentials or headers; no new file paths built from external input; changes only classify response status/body kind to decide whether a delivery attempt is counted"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Both story ACs are partial and two decision_needed items remain: exactly-once delivery of the end metric is not guaranteed (2xx-then-cut window, 502/504 re-sends without backend idempotency), and deterministic non-JSON 4xx/poison 5xx answers are given back for the full retention and can hold the per-start slots. 1 deferred (timeout/reset outages still count attempts; pre-existing, out of the HTTP-error scope) -> code-review-deferred.local.md; 12 lens claims dismissed after reading the code (e.g. restoreCounter saves into completed_, metrics client JSON detection matches, retention env is clamped).",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

@@ -14,9 +14,15 @@
  * Two response paths:
  *   JSON (non-streaming) — buffer the body, merge fields at the top level (which is the
  *                          message object for the Messages API), return a new response.
+ *   JSON (compressed)    — `br`, `gzip`, `deflate` bodies are decompressed first and sent on
+ *                          uncompressed; a body that cannot be decoded passes on as received.
  *   SSE  (streaming)     — stash headers in `context.metadata` during onUpstreamResponse,
  *                          then merge them into the first `message_start` event's nested
- *                          `message` object as it streams past.
+ *                          `message` object as it streams past. Until the first whole `data:`
+ *                          line of the stream has passed, the unfinished last line of a chunk is
+ *                          held back, so a `message_start` that opens the stream is rewritten even
+ *                          when a chunk boundary cuts it; one that comes later is rewritten only
+ *                          when it arrives whole in a chunk. A compressed stream passes untouched.
  *
  * Header → body key mapping (matches what the analytics reader / statusline domain layer
  * expects — see routing-headers.mjs): the body key is the lowercased header name,
@@ -31,6 +37,7 @@
  */
 
 import { IncomingHttpHeaders, IncomingMessage } from 'http';
+import { brotliDecompress, gunzip, inflate } from 'zlib';
 import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
@@ -43,6 +50,13 @@ const LITELLM_PREFIX = 'x-litellm-';
 const CODEMIE_ROUTING_PREFIXES = ['x-codemie-routing-', 'x-codemie-requested-', 'x-codemie-routed-'];
 const METADATA_HEADERS_KEY = '_routingInjectionHeaders';
 const METADATA_INJECTED_KEY = '_routingInjected';
+const METADATA_HOLD_ENDED_KEY = '_routingHoldEnded';
+const METADATA_HELD_TAIL_KEY = '_routingHeldTail';
+
+/** Caps the memory a held unfinished line may take; a `message_start` event is about 0.5 KB. */
+export const MAX_HELD_TAIL_BYTES = 65536;
+const MAX_DECODED_BODY_BYTES = MAX_HELD_TAIL_BYTES * 256;
+const DECODABLE_ENCODINGS = new Set(['br', 'gzip', 'x-gzip', 'deflate']);
 
 /** Fields extracted from routing headers, keyed as they will appear in the body. */
 export type RoutingInjections = Record<string, string>;
@@ -183,6 +197,11 @@ class RoutingHeaderInjectorInterceptor implements ProxyInterceptor {
 
     const contentType = String(response.headers['content-type'] ?? '').toLowerCase();
     if (contentType.includes('text/event-stream')) {
+      const encoding = compressionOf(response.headers);
+      if (encoding) {
+        logger.debug(`[${this.name}] Not injecting into "${encoding}" SSE response: the stream is compressed`);
+        return response;
+      }
       // Streaming: defer to onResponseChunk so the stream is never buffered.
       context.metadata[METADATA_HEADERS_KEY] = injections;
       logger.debug(
@@ -191,22 +210,30 @@ class RoutingHeaderInjectorInterceptor implements ProxyInterceptor {
       return response;
     }
 
+    let body: Buffer;
     try {
-      const body = await tools.readBody(response);
-      const modified = injectIntoJsonBody(body, injections);
-      if (modified !== body) {
-        logger.debug(
-          `[${this.name}] Injected ${Object.keys(injections).length} routing header(s) into JSON response`
-        );
-      }
-      return tools.fromBuffer(response, modified);
+      body = await tools.readBody(response);
     } catch (error) {
-      logger.debug(`[${this.name}] JSON injection failed, forwarding original response:`, error);
+      logger.debug(`[${this.name}] Reading the JSON response failed, forwarding original response:`, error);
       return response;
+    }
+
+    // The body is drained from here on: every path answers with a response built from a buffer.
+    try {
+      return await this.injectIntoBufferedJson(response, body, injections, tools);
+    } catch (error) {
+      logger.debug(`[${this.name}] JSON injection failed, forwarding original body:`, error);
+      return tools.fromBuffer(response, body);
     }
   }
 
-  async onResponseChunk(context: ProxyContext, chunk: Buffer): Promise<Buffer> {
+  /**
+   * Holds back the unfinished last line of each chunk until the first whole `data:` line of the
+   * stream has passed, so a `message_start` event cut by a chunk boundary is rewritten once whole.
+   * After that, each chunk is rewritten whole until a `message_start` has been rewritten.
+   * Returns `null` while everything received so far is held.
+   */
+  async onResponseChunk(context: ProxyContext, chunk: Buffer): Promise<Buffer | null> {
     if (context.metadata[METADATA_INJECTED_KEY]) {
       return chunk;
     }
@@ -215,11 +242,137 @@ class RoutingHeaderInjectorInterceptor implements ProxyInterceptor {
       return chunk;
     }
 
-    const modified = injectIntoSseChunk(chunk, injections);
-    if (modified !== chunk) {
-      context.metadata[METADATA_INJECTED_KEY] = true;
+    if (context.metadata[METADATA_HOLD_ENDED_KEY]) {
+      const result = injectIntoSseChunk(chunk, injections);
+      if (result !== chunk) {
+        context.metadata[METADATA_INJECTED_KEY] = true;
+        logger.debug(`[${this.name}] Injected routing headers into SSE message_start`);
+      }
+      return result;
+    }
+
+    const held = context.metadata[METADATA_HELD_TAIL_KEY] as Buffer | undefined;
+    const data = held ? Buffer.concat([held, chunk]) : chunk;
+    const cut = data.lastIndexOf(0x0a) + 1;
+    const head = data.subarray(0, cut);
+    const tail = data.subarray(cut);
+    const rewrite = rewriteSseLines(head, injections);
+
+    if (rewrite.modified) {
       logger.debug(`[${this.name}] Injected routing headers into SSE message_start`);
     }
-    return modified;
+    if (rewrite.hasDataLine) {
+      context.metadata[METADATA_HOLD_ENDED_KEY] = true;
+      if (rewrite.modified) context.metadata[METADATA_INJECTED_KEY] = true;
+      delete context.metadata[METADATA_HELD_TAIL_KEY];
+      return rewrite.modified ? Buffer.concat([rewrite.buffer, tail]) : data;
+    }
+    if (tail.length > MAX_HELD_TAIL_BYTES) {
+      context.metadata[METADATA_INJECTED_KEY] = true;
+      delete context.metadata[METADATA_HELD_TAIL_KEY];
+      logger.debug(
+        `[${this.name}] Gave up SSE injection: an unfinished line exceeded ${MAX_HELD_TAIL_BYTES} bytes`
+      );
+      return data;
+    }
+
+    context.metadata[METADATA_HELD_TAIL_KEY] = tail;
+    return head.length > 0 ? head : null;
   }
+
+  /** Releases the held unfinished line, rewritten if it is a whole `message_start` event. */
+  async onResponseStreamEnd(context: ProxyContext): Promise<Buffer | null> {
+    const held = context.metadata[METADATA_HELD_TAIL_KEY] as Buffer | undefined;
+    delete context.metadata[METADATA_HELD_TAIL_KEY];
+    if (!held || held.length === 0) {
+      return null;
+    }
+    const injections = context.metadata[METADATA_HEADERS_KEY] as RoutingInjections;
+    return rewriteSseLines(held, injections).buffer;
+  }
+
+  private async injectIntoBufferedJson(
+    response: IncomingMessage,
+    body: Buffer,
+    injections: RoutingInjections,
+    tools: UpstreamResponseTools
+  ): Promise<IncomingMessage> {
+    const encoding = compressionOf(response.headers);
+    let plain = body;
+    if (encoding) {
+      if (!DECODABLE_ENCODINGS.has(encoding)) {
+        logger.debug(`[${this.name}] Not injecting into "${encoding}" JSON response: unknown encoding`);
+        return tools.fromBuffer(response, body);
+      }
+      try {
+        plain = await decompressBody(encoding, body);
+      } catch (error) {
+        logger.debug(
+          `[${this.name}] Not injecting into "${encoding}" JSON response: decompression failed (${String(error)})`
+        );
+        return tools.fromBuffer(response, body);
+      }
+    }
+
+    const modified = injectIntoJsonBody(plain, injections);
+    if (modified === plain) {
+      if (encoding) {
+        logger.debug(`[${this.name}] Not injecting into "${encoding}" JSON response: not a JSON object`);
+      }
+      return tools.fromBuffer(response, body);
+    }
+
+    logger.debug(
+      `[${this.name}] Injected ${Object.keys(injections).length} routing header(s) into JSON response`
+    );
+    const rewritten = tools.fromBuffer(response, modified);
+    if (encoding) {
+      delete rewritten.headers['content-encoding'];
+    }
+    return rewritten;
+  }
+}
+
+/** The response's `content-encoding`, trimmed and lowercased; `''` for none or `identity`. */
+function compressionOf(headers: IncomingHttpHeaders): string {
+  const encoding = String(headers['content-encoding'] ?? '').trim().toLowerCase();
+  return encoding === 'identity' ? '' : encoding;
+}
+
+/** Decompresses a body of a decodable `content-encoding`, failing past `MAX_DECODED_BODY_BYTES`. */
+function decompressBody(encoding: string, body: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const done = (error: Error | null, result: Buffer): void => (error ? reject(error) : resolve(result));
+    const options = { maxOutputLength: MAX_DECODED_BODY_BYTES };
+    if (encoding === 'br') brotliDecompress(body, options, done);
+    else if (encoding === 'deflate') inflate(body, options, done);
+    else gunzip(body, options, done);
+  });
+}
+
+/**
+ * Runs `injectIntoSseChunk` line by line, keeping a trailing `\r` of each line, and reports
+ * whether the buffer holds a whole `data:` line (one followed by `\n`).
+ */
+function rewriteSseLines(
+  buffer: Buffer,
+  injections: RoutingInjections
+): { buffer: Buffer; modified: boolean; hasDataLine: boolean } {
+  const lines = splitBufferLines(buffer);
+  let modified = false;
+  let hasDataLine = false;
+  const parts: Buffer[] = [];
+  lines.forEach((line, i) => {
+    const whole = i < lines.length - 1;
+    if (whole && line.subarray(0, 5).toString('utf-8') === 'data:') {
+      hasDataLine = true;
+    }
+    const crLength = line.length > 0 && line[line.length - 1] === 0x0d ? 1 : 0;
+    const content = line.subarray(0, line.length - crLength);
+    const rewritten = injectIntoSseChunk(content, injections);
+    if (rewritten !== content) modified = true;
+    if (i > 0) parts.push(NEWLINE);
+    parts.push(rewritten, line.subarray(line.length - crLength));
+  });
+  return { buffer: modified ? Buffer.concat(parts) : buffer, modified, hasDataLine };
 }

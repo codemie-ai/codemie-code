@@ -88,7 +88,7 @@ codemie proxy stop               # Stop the local proxy daemon
 codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
-codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
 codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
@@ -98,7 +98,7 @@ codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
-`codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+`codemie proxy connect --claude-desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
 
 ### VS Code BYOK custom endpoint
 
@@ -213,13 +213,13 @@ and routing coverage runs as part of `npm test`.
 
 ### Claude Desktop 3P
 
-#### `codemie proxy connect desktop`
+#### `codemie proxy connect --claude-desktop`
 
 Connect Claude Desktop 3P to the local CodeMie proxy.
 
 ```bash
-codemie proxy connect desktop
-codemie proxy connect desktop --profile codemie-new
+codemie proxy connect --claude-desktop
+codemie proxy connect --claude-desktop --profile codemie-new
 ```
 
 Behavior:
@@ -241,10 +241,28 @@ The warning is not a verdict. A managed source that sets only `disableAutoUpdate
 Recommended setup:
 
 ```bash
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 ```
 
-After the config is written, quit and reopen Claude Desktop.
+After the config is written, quit and reopen Claude Desktop. The older form `codemie proxy connect desktop` still works as a deprecated alias.
+
+**Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends every Cowork session to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. Three things stop a Cowork session from being sent:
+
+- `codemie proxy analytics disable`, or the session's folder under `codemie proxy analytics exclude` — the same switches as for Claude Code; the folder allowlist of `connect --claude-code-otlp` does not apply to Cowork;
+- no CodeMie project for the session's folder — `codemie proxy status` then shows `Last dropped: no_project`;
+- the daemon not running in Desktop mode — see the `Desktop:` line below.
+
+**The daemon stays in Desktop mode.** While Claude Desktop's applied config points at the local CodeMie gateway, `proxy connect` with any other target, `proxy start`, `proxy restart` and a hook's cold start all start the daemon with the `claude-desktop` identity. A daemon started anew asks for the port Claude Desktop points at; `proxy restart` of a running daemon keeps the port it holds. The Desktop identity is never put in place of a `codex-desktop` or `vscode-byok` one, because those clients need their own request handling: `proxy restart` and a hook's cold start keep such a daemon as it is, and `proxy status` then says Desktop is not collecting. A `proxy connect` for other targets replaces the running daemon with the identity of its targets. `proxy start` never replaces a running daemon: beside one with another identity or port it stops with `A proxy is already running with different settings` and the command that stops it. After `codemie proxy disconnect --claude-desktop` the next `proxy connect` derives the identity from its targets again; until then the restart of a running daemon and a hook's cold start keep the identity the daemon was last given.
+
+**`codemie proxy status` with Claude Desktop connected** prints one more line after `Uptime`:
+
+| Line | Meaning |
+|---|---|
+| `Desktop: collecting` | The daemon runs in Desktop mode on the port Claude Desktop points at. |
+| `Desktop: NOT collecting — the proxy runs as <client>; codemie proxy connect --claude-desktop replaces it` | Another client's proxy is running; connecting Claude Desktop replaces it. |
+| `Desktop: NOT collecting — Claude Desktop points at port <a>, the proxy listens on <b>; run: codemie proxy connect --claude-desktop` | The port Claude Desktop points at was taken; the command re-writes Claude Desktop's config, then restart Claude Desktop. |
+
+Below the `Analytics:` lines (and the `Delivery:` lines of `codemie proxy analytics status`) a `Last dropped: <reason> (<stream>, <time>)` line names the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project). `--json` carries the same as `desktop` (`connected`, `collecting`, and, when not collecting, `reason` and `remedy`) and `analytics.latestDrop`.
 
 #### `codemie proxy inspect desktop`
 
@@ -265,11 +283,11 @@ At a high level, this shows:
 
 ```bash
 codemie profile status
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 codemie proxy status
 codemie proxy inspect desktop --limit 5
 codemie proxy stop
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 ```
 
 If Claude Desktop still appears connected to Anthropic subscription or another Gateway:
@@ -497,7 +515,7 @@ A level outside an agent's supported range is **clamped to the nearest supported
 |-------|------------------|------------------|-----------------------|
 | `codemie-claude` | `--effort <level>` | low, medium, high, xhigh, max | `minimal` → `low` |
 | `codemie-codex` | `--config model_reasoning_effort=<level>` | minimal, low, medium, high, xhigh | `max` → `xhigh` |
-| `codemie-opencode` | `--variant <level>` | minimal … max (provider-specific) | passed through |
+| `codemie-opencode` | model variant (`provider/model#<level>`) | Responses API models: minimal, low, medium, high, xhigh; other models: low, medium, high | clamped to the model's list (`max` → `xhigh` or `high`, `minimal` → `low`) |
 | `codemie-gemini` | — (not supported) | — | flag ignored, warns on stderr |
 
 ```bash
@@ -785,6 +803,122 @@ codemie analytics --from 2025-12-01 --to 2025-12-07 --export json -o weekly-cost
 codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
+
+### Team lead setup (`analytics sync bootstrap`)
+
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
+```bash
+# Lead: guided wizard to connect Teams/SharePoint and print install command
+codemie analytics sync bootstrap
+
+# Non-interactive mode (no TTY needed; test-send before printing install command)
+codemie analytics sync bootstrap --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
+codemie analytics sync bootstrap --webhook <url> --lookback-days 14 --include-external always
+
+# Same, with the trigger URL base64url-encoded (Windows: see below)
+codemie analytics sync bootstrap --webhook-b64 <value>
+```
+
+`bootstrap` connects a Teams channel and SharePoint folder to a Power Automate flow, then
+prints the `codemie analytics sync install` command for developers. Installs nothing on the
+lead's machine.
+
+**Guided mode** (TTY, no `--webhook`): 8-step wizard — Teams channel, SharePoint folder, time
+zone, import flow, trigger URL, external sessions policy, lookback, print command. Answers
+save after each step, so interrupts resume with saved defaults. Re-run shows masked settings
+and offers quick reuse or restart.
+
+**Non-interactive mode** (`--webhook`): no prompts, no TTY; validates options, test-sends a
+check file, prints command on success; fails with reason on any validation or network error.
+
+**Lead-to-developer workflow:** (1) Lead runs `bootstrap`. (2) Lead gets a printed install
+command containing the trigger signature. (3) Lead shares **only that command with developers
+— do not post to shared logs or tickets**; signature is a secret. (4) Each developer runs the
+command to register their daily job.
+
+**Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
+CLI), `--include-external <windows|always|never>` (default: never).
+
+**Windows and `--webhook`:** when `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
+trigger URL at `&` and cmd.exe expands its `%…%` runs, so `--webhook "<url>"` arrives broken.
+Use the guided mode (the URL is pasted into a prompt, not the command line), or pass
+`--webhook-b64` with the URL encoded as base64url — it behaves exactly like `--webhook`, and
+giving both is an error. In PowerShell:
+
+```powershell
+$url = '<trigger URL>'
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($url)).TrimEnd('=').Replace('+','-').Replace('/','_')
+codemie analytics sync bootstrap --webhook-b64 $b64
+```
+
+**Output:** Install command to stdout; everything else to stderr. The webhook is printed as
+`--webhook-b64 <value>` — the trigger URL encoded as base64url (`A-Z a-z 0-9 - _` only), so the
+command runs unchanged in bash/zsh, PowerShell (including through a `codemie.cmd` shim, which
+would otherwise split a raw URL at `&`) and cmd.exe (which would otherwise expand `%…%` runs in
+it). The value is not encryption: it still carries the trigger signature — **treat the whole
+line as secret**.
+
+**Minimum CLI version:** after the command, bootstrap prints the lead's own CLI version as the minimum developers need ("Developers need CodeMie CLI <version> or newer…"). Anyone on an older version, or who sees "unknown command", runs `codemie self-update`.
+
+**State:** Lead's answers saved in `~/.codemie/analytics-sync-bootstrap.json` (mode 600) for
+resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
+
+### Scheduled delivery (`analytics sync`)
+
+```bash
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+`sync` is a one-way daily job: it sends this machine's analytics reports to the team's
+webhook on a schedule, nothing comes back. `install` registers a per-user OS job (launchd
+on macOS, a systemd user timer on Linux, Task Scheduler on Windows) that runs
+`analytics sync run --scheduled` once a day at `--at` (default `03:00` local) and catches
+up a run missed while the machine was asleep or off — on Linux it also runs while the user
+is logged out, via `loginctl enable-linger`.
+
+**`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
+same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
+`03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
+`--include-external <windows|always|never>` (default `never`). Install prints the run
+time, lookback, policy, the webhook host (signature masked), the email the reports will
+carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
+replaces the existing job and settings rather than duplicating them, and keeps the
+last-sent marker.
+
+**Taking over the standalone collector.** If the standalone collector's daily job is
+already registered, `install` removes it before registering the CLI's job and keeps the
+collector's last-sent marker, so the next run neither re-sends nor leaves a gap. The
+output says the collector's clone folder, `~/.codemie/codemie-onboarding`, can be deleted.
+
+**State** (under `~/.codemie`, via `getCodemiePath()`): settings at `analytics-sync.json`
+(mode `600`), the last-sent marker at `analytics-last-sent`, and the run log at
+`logs/analytics-sync.log`.
+
+**`status`** reports enabled/disabled (whether the OS job is actually registered), the run
+time, lookback, policy, the webhook host, the last run's time and outcome (parsed from the
+log), and the last successful send (the marker) — or "not installed"/"never" where nothing
+has run yet. **`uninstall`** removes the OS job and the settings file; the last-sent marker
+and the run log are kept.
+
+See [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync) for the
+full per-platform scheduler detail, the run log line format, and the delivery contract.
 
 ## Log Management Commands
 
@@ -1719,6 +1853,8 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). It only undoes an `exclude`: it does not touch the `settings.json` allowlist and does not start tracking a project that is outside the Project-scope allowlist (the command tells you when that is the case). |
 | `codemie proxy analytics status [--json]` | When an OTLP connector (Claude Code, Copilot CLI or Copilot Chat) is connected, show a Delivery section first (`Delivery: healthy`, `unhealthy (<reason>)`, `unknown (...)` or `proxy not running`, plus `Pending:` when bytes are unsent and, only when unhealthy, a `Run:` remedy; the spool is shared by the whole machine, so `Pending:` and the identity-mismatch and sending-failed reasons cover every session on this machine, not only this proxy's), then (always) the connector state (hooks installed, or connected), the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. With `--json` the output keeps its shape and adds a `delivery` key (same object as `analytics` in `proxy status --json`; `null` when the daemon is stopped or no connector is connected). |
+
+Claude Desktop Cowork sessions follow `disable` / `enable` and `exclude` / `include` too (the session's folder is what is excluded), although no hook runs for them; the folder allowlist of `connect --claude-code-otlp` does not apply to them.
 
 A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
 

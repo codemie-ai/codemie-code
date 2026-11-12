@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../claude-code-otlp.allowlist.js', () => ({
@@ -732,6 +733,55 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       { ensureOtlpProxy, forwardOtlpEventsToSpool }
     );
     expect(forwardedEvents()[0]).not.toHaveProperty('fork_agent_id');
+  });
+
+  describe('Agent result attribution (EPMCDME-16939)', () => {
+    const foregroundResult = JSON.parse(
+      readFileSync(new URL('../event-fields/__tests__/fixtures/foreground-agent-result.json', import.meta.url), 'utf-8')
+    ) as Record<string, unknown>;
+
+    async function forwardPostToolUse(overrides: Record<string, unknown>): Promise<Record<string, unknown>> {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ ...foregroundResult, ...overrides })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      return forwardedEvents()[0];
+    }
+
+    it('stamps fork_agent_id on a foreground Agent agent.tool.end while its tool_response is cut before the id (A1)', async () => {
+      const forwarded = await forwardPostToolUse({});
+      expect(forwarded.fork_agent_id).toBe('a407f25330fd9c1e0');
+      expect(String(forwarded.tool_response)).toHaveLength(300);
+      expect(String(forwarded.tool_response)).not.toContain('a407f25330fd9c1e0');
+      expect(forwarded).not.toHaveProperty('raw');
+    });
+
+    it.each([
+      ['a result with no agentId (denial)', { tool_response: { status: 'denied' } }],
+      ['a malformed text result', { tool_response: 'unexpected text result' }],
+      ['an absent result', { tool_response: undefined }],
+    ])('does not stamp fork_agent_id on an Agent agent.tool.end for %s (A2)', async (_case, overrides) => {
+      expect(await forwardPostToolUse(overrides)).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp fork_agent_id on an Agent failure, which carries no tool_response (A2)', async () => {
+      const { tool_response: _dropped, ...failureBase } = foregroundResult;
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ ...failureBase, hook_event_name: 'PostToolUseFailure', error: 'agent failed' })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      expect(forwardedEvents()[0]).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp fork_agent_id on an Agent agent.tool.start', async () => {
+      expect(await forwardPostToolUse({ hook_event_name: 'PreToolUse', tool_response: undefined })).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp the older Task tool (A2)', async () => {
+      expect(await forwardPostToolUse({ tool_name: 'Task' })).not.toHaveProperty('fork_agent_id');
+    });
   });
 
   it('stamps lines_added/lines_removed on agent.tool.end from the Edit structuredPatch', async () => {

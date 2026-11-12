@@ -11,6 +11,7 @@ import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/c
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { logger } from '@/utils/logger.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
+import { readDesktopGateway } from './connectors/desktop.js';
 import {
   collectClaudeAnalyticsStatus,
   collectCopilotAnalyticsStatus,
@@ -72,8 +73,12 @@ export const ANALYTICS_CONNECTORS: readonly AnalyticsConnector[] = [
   copilotConnector(COPILOT_CHAT_OTLP_AGENT_NAME),
 ];
 
-/** Whether any connector is connected. A check that fails counts as inactive; never throws. */
+/**
+ * Whether any connector is connected, or Claude Desktop is connected to a local gateway (its Cowork
+ * sessions go through the same delivery). A check that fails counts as inactive; never throws.
+ */
 export async function hasActiveAnalyticsConnector(): Promise<boolean> {
+  if (await readDesktopGateway()) return true;
   const results = await Promise.all(
     ANALYTICS_CONNECTORS.map(async (entry) => {
       try {

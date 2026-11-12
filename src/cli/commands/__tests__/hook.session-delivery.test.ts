@@ -1692,9 +1692,16 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
   });
 
+  /** A failing server's answer gives the attempt back only within the evidence retention, so these records are dated from now: two hours to one hour ago. */
+  function recentTimes(): { startTime: number; endTime: number } {
+    const now = Date.now();
+    return { startTime: now - 2 * 60 * 60 * SECOND, endTime: now - 60 * 60 * SECOND };
+  }
+
   /** A delivered end metric whose only pending request is one conversation payload. */
   function conversationOnlyRecord(): Session {
-    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z') });
+    const times = recentTimes();
+    const session = baseRecord({ status: 'completed', ...times, endMetricSentAt: times.endTime + SECOND });
     writeRecord(session);
     writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }]);
     writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), `${JSON.stringify({
@@ -1761,11 +1768,11 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readAuthMarker()?.baseUrl).toBe(API);
   });
 
-  /** A proxy's or WAF's own error page: HTML at a non-2xx status, a counted failure, not the SSO login page. */
+  /** A proxy's or WAF's own error page: HTML at a non-2xx status, a failing server's answer, not the SSO login page. */
   const gatewayErrorPage = (status: number) => (): Response =>
     new Response(`<html><body>${status} error</body></html>`, { status, headers: { 'content-type': 'text/html' } });
 
-  it('an undelivered record whose only pending request, a conversation, is answered 403 with an HTML block page spends an attempt and marks no credentials invalid', async () => {
+  it('an undelivered record whose only pending request, a conversation, is answered 403 with an HTML block page spends no attempt and marks no credentials invalid', async () => {
     const session = conversationOnlyRecord();
     respond = gatewayErrorPage(403);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1773,11 +1780,11 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, is answered 413 with an HTML proxy page spends an attempt and marks no credentials invalid', async () => {
+  it('an undelivered record whose only pending request, a conversation, is answered 413 with an HTML proxy page spends no attempt and marks no credentials invalid', async () => {
     const session = conversationOnlyRecord();
     respond = gatewayErrorPage(413);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1785,12 +1792,12 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('a start whose end metric is answered 403 with an HTML block page spends an attempt and marks no credentials invalid', async () => {
-    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+  it('a start whose end metric is answered 403 with an HTML block page spends no attempt and marks no credentials invalid', async () => {
+    const session = baseRecord({ status: 'completed', ...recentTimes() });
     writeRecord(session);
     respond = gatewayErrorPage(403);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1798,11 +1805,11 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(endMetrics().length).toBeGreaterThan(0);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, is answered 502 with an HTML gateway page spends an attempt and marks no credentials invalid', async () => {
+  it('an undelivered record whose only pending request, a conversation, is answered 502 with an HTML gateway page spends no attempt and marks no credentials invalid', async () => {
     const session = conversationOnlyRecord();
     respond = gatewayErrorPage(502);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1810,12 +1817,12 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('a start whose end metric is answered 502 with an HTML gateway page spends an attempt and marks no credentials invalid', async () => {
-    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+  it('a start whose end metric is answered 502 with an HTML gateway page spends no attempt and marks no credentials invalid', async () => {
+    const session = baseRecord({ status: 'completed', ...recentTimes() });
     writeRecord(session);
     respond = gatewayErrorPage(502);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1824,9 +1831,116 @@ describe('SessionEnd inside the agent hook process', () => {
 
     expect(endMetrics().length).toBeGreaterThan(0);
     const kept = readRecord(session.sessionId);
-    expect(kept.deliveryAttempts).toBe(1);
+    expect(kept.deliveryAttempts).toBeUndefined();
     expect(kept.endMetricSentAt).toBeUndefined();
     expect(readAuthMarker()).toBeUndefined();
+  });
+
+  const unavailable = (): Response =>
+    new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+  const isConversation = (body: Captured): boolean => 'history' in body;
+  const isMetadata = (body: Captured): boolean => 'llm_model' in body && !('name' in body);
+
+  /** An unsent end metric beside one pending conversation payload, the payload carrying `llmModel` when given. */
+  function endMetricAndConversationRecord(llmModel?: string): Session {
+    const session = baseRecord({ status: 'completed', ...recentTimes() });
+    writeRecord(session);
+    writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), `${JSON.stringify({
+      payloadId: 'payload-1',
+      timestamp: session.startTime + SECOND,
+      isTurnContinuation: false,
+      historyIndices: [0],
+      messageCount: 1,
+      payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hi', history_index: 0 }], ...(llmModel && { llmModel }) },
+      status: 'pending',
+    })}\n`);
+    return session;
+  }
+
+  it('a start whose conversation is answered 200 and whose end metric is answered 503 spends no attempt; the record stays live', async () => {
+    const session = endMetricAndConversationRecord();
+    respond = (body) => (isConversation(body) ? ok() : unavailable());
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(urls).toContain(`${API}/v1/conversations/conv-1/history`);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+  });
+
+  it('a start whose end metric is answered 503, its conversation 200 and the conversation metadata a JSON 422 spends no attempt', async () => {
+    const session = endMetricAndConversationRecord('claude-sonnet-5');
+    respond = (body) => {
+      if (isMetadata(body)) return new Response(JSON.stringify({ message: 'invalid' }), { status: 422, headers: { 'content-type': 'application/json' } });
+      return isConversation(body) ? ok() : unavailable();
+    };
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(urls).toContain(`${API}/v1/conversations/conv-1`);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
+  });
+
+  it('a start whose end metric is answered 503, its conversation 200 and the conversation metadata request a socket hang up spends no attempt', async () => {
+    const session = endMetricAndConversationRecord('claude-sonnet-5');
+    respond = (body) => {
+      if (isMetadata(body)) return Promise.reject(new Error('socket hang up'));
+      return isConversation(body) ? ok() : unavailable();
+    };
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(urls).toContain(`${API}/v1/conversations/conv-1`);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
+  });
+
+  it('an undelivered record whose only pending request, a conversation, is answered 500 with a body that cannot be read spends an attempt', async () => {
+    const session = conversationOnlyRecord();
+    respond = () => ({ ok: false, status: 500, statusText: 'Internal Server Error', headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('socket hang up')) }) as unknown as Response;
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(urls.filter((url) => !url.includes('/v1/conversations/'))).toEqual([]);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+  });
+
+  it('a stranded record whose delta sync is answered 503 gets its finalize attempt back; the record is kept', async () => {
+    const { startTime } = recentTimes();
+    const transcript = writeTranscript([new Date(startTime + 10 * 60 * SECOND).toISOString(), new Date(startTime + 12 * 60 * SECOND).toISOString()]);
+    const session = baseRecord({
+      startTime,
+      ownerPid: 999_999,
+      ownerStartedAt: startTime - 60 * 60 * SECOND,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    respond = (metric) => (metric.name === 'codemie_cli_session_total' && metric.attributes.status === 'completed' ? ok() : unavailable());
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(requests.length).toBeGreaterThan(endMetrics().length);
+    const kept = readRecord(session.sessionId);
+    expect(kept.status).toBe('completed');
+    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
+  });
+
+  it('a start whose requests are all answered 503 and whose 10 s deadline ends between two tries spends no attempt', async () => {
+    clearLogs();
+    const session = endMetricAndConversationRecord();
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    respond = () => unavailable();
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await onFakeClock(() => reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done);
+
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Stopped (deadline)'))).toBe(true);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
   });
 
   it('a /clear over a live active generation whose close fails its status write: that generation is closed locally before it moves, a fresh record its own', async () => {

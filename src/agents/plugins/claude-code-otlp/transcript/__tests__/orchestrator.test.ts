@@ -804,6 +804,17 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     expect(summary.git_branch).toBe('feature');
   });
 
+  it('counts typed prompts as turns, not an interrupt line or a task notification', async () => {
+    const summary = await runFinalSummary('session-turns-text-rule', [
+      userLine('first'),
+      userLine([{ type: 'text', text: '[Request interrupted by user]' }]),
+      userLine('<task-notification><task-id>t1</task-id></task-notification>'),
+      userLine('second'),
+    ]);
+
+    expect(summary.turns).toBe(2);
+  });
+
   it('leaves lines_* null when the transcript has no applied edit result', async () => {
     const summary = await runFinalSummary('session-no-edits', [
       userLine('hello'),

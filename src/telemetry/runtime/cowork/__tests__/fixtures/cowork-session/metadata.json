@@ -1,0 +1,10 @@
+{
+  "sessionId": "local_1a2b3c4d-1111-4222-8333-444455556666",
+  "cliSessionId": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+  "createdAt": 1794304800000,
+  "lastActivityAt": 1794304830000,
+  "model": "claude-opus-5",
+  "title": "Synthetic notes task",
+  "hostLoopMode": true,
+  "isArchived": false
+}
