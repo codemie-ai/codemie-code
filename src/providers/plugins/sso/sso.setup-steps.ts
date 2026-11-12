@@ -22,6 +22,7 @@ import type {
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { CodeMieSSO } from './sso.auth.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 import { SSOModelProxy } from './sso.models.js';
 import { fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
@@ -258,7 +259,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       return {
         valid: true,
-        expiresAt: credentials.expiresAt
+        expiresAt: effectiveExpiresAt(credentials)
       };
     } catch (error) {
       return {
@@ -334,7 +335,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       return {
         authenticated: true,
-        expiresAt: credentials.expiresAt,
+        expiresAt: effectiveExpiresAt(credentials),
         apiUrl: credentials.apiUrl
       };
     } catch (error) {
