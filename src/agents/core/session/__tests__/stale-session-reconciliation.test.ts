@@ -134,9 +134,11 @@ beforeEach(() => {
   vi.mocked(fsPromises.readFile).mockClear();
   vi.mocked(fsPromises.stat).mockClear();
   gate.waiting.clear();
+  vi.stubEnv('CODEMIE_EVIDENCE_RECORD_IDLE_DAYS', '90');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (previousHome === undefined) delete process.env.CODEMIE_HOME;
   else process.env.CODEMIE_HOME = previousHome;
   rmSync(home, { recursive: true, force: true });
@@ -292,6 +294,29 @@ describe('reconcileOtherSessions', () => {
     expect(hook.deliverSession).toHaveBeenCalledTimes(2);
     expect(load(recent.sessionId).deliveryAttempts).toBe(2);
     // Past the retention the marker can no longer appear: the attempt counts, so the record is dropped in the end
+    expect(load(expired.sessionId).deliveryAttempts).toBe(3);
+  });
+
+  it('gives back the attempt whose request met a failing server, within the evidence retention', async () => {
+    const DAY = 24 * HOUR;
+    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryAttempts: 2 });
+    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryAttempts: 2 });
+    save(recent);
+    save(expired);
+    // What the API clients do on an answer of a failing server: a JSON 503 noted on the attempt's signal
+    const hook = pipeline({
+      deliverSession: async (_id, config) => {
+        const request = boundedRequest(30_000, { abortSignal: config.abortSignal });
+        request.noteAnswer(503, true, false);
+        request.dispose();
+      },
+    });
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.deliverSession).toHaveBeenCalledTimes(2);
+    expect(load(recent.sessionId).deliveryAttempts).toBe(2);
+    // Past the retention a server that answers so for good spends the attempts, so the record is dropped in the end
     expect(load(expired.sessionId).deliveryAttempts).toBe(3);
   });
 
