@@ -6,11 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync,
+  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const spoolFault = vi.hoisted(() => ({ failures: 0 }));
 const readStateMock = vi.hoisted(() => vi.fn());
@@ -156,8 +156,9 @@ function warnings(): unknown[][] {
 }
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'cowork-home-')));
-  codemieHome = realpathSync(mkdtempSync(join(tmpdir(), 'cowork-codemie-')));
+  // The native resolver also expands a Windows 8.3 short name, which the JS one leaves in the path.
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-home-')));
+  codemieHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-codemie-')));
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
   vi.stubEnv('XDG_CONFIG_HOME', join(home, '.config'));
@@ -187,10 +188,12 @@ afterEach(async () => {
 describe('installCoworkFixture', () => {
   it('lays the fixture session out in the Claude Desktop layout', () => {
     const root = getClaudeDesktopLocalSessionsRoot();
-    const files = (readdirSync(root, { recursive: true }) as string[])
-      .filter((path) => statSync(join(root, path)).isFile())
-      .map((path) => path.split(sep).join('/'))
-      .sort();
+    const listFiles = (dir: string, prefix: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? listFiles(join(dir, entry.name), `${prefix}${entry.name}/`)
+          : [`${prefix}${entry.name}`]);
+    const files = listFiles(root, '').sort();
 
     expect(files).toEqual([
       '0f0f0f0f-aaaa-4bbb-8ccc-000000000001/00000000-0000-4000-8000-000000000001/1a2b3c4d/.claude/projects/session/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.jsonl',
