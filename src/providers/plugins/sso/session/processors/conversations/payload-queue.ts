@@ -8,9 +8,6 @@
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
 
-/** A failed record is retried until it has been attempted this many times */
-export const MAX_CONVERSATION_SYNC_ATTEMPTS = 3;
-
 /**
  * Identifier shared by every record queued for the same payload window.
  * Records without a payloadId fall back to the last processed message UUID,
@@ -23,12 +20,12 @@ export function getPayloadId(payload: ConversationPayloadRecord): string {
 }
 
 /**
- * Whether a record may still be sent: pending, or failed with retries left.
+ * Whether a record may still be sent: pending or failed, however many attempts it has
+ * (`syncAttempts` is diagnostic only; a `rejected` record is terminal).
  */
 export function isSendCandidate(payload: ConversationPayloadRecord): boolean {
   return payload.status === CONVERSATION_SYNC_STATUS.PENDING ||
-    (payload.status === CONVERSATION_SYNC_STATUS.FAILED &&
-      (payload.syncAttempts ?? 0) < MAX_CONVERSATION_SYNC_ATTEMPTS);
+    payload.status === CONVERSATION_SYNC_STATUS.FAILED;
 }
 
 /**

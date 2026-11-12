@@ -43,7 +43,7 @@ describe('ConversationApiClient request timers', () => {
       // Two retry back-offs (1 s, 2 s) between the three attempts.
       await vi.advanceTimersByTimeAsync(3_000);
 
-      expect(await result).toEqual({ success: false, message: 'Sync failed: fetch failed' });
+      expect(await result).toEqual({ success: false, message: 'Sync failed: fetch failed', outcome: 'outage' });
       expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -53,7 +53,7 @@ describe('ConversationApiClient request timers', () => {
 
       const result = await client.upsertConversation('conv-1', []);
 
-      expect(result).toEqual({ success: false, message: 'Sync failed: socket hang up' });
+      expect(result).toEqual({ success: false, message: 'Sync failed: socket hang up', outcome: 'outage' });
       expect(vi.getTimerCount()).toBe(0);
     });
   });
@@ -79,7 +79,33 @@ describe('ConversationApiClient request timers', () => {
       expect(await result).toEqual({
         success: false,
         message: 'API error: 403 Project access denied (user is not a member)',
+        outcome: 'auth',
       });
+    });
+
+    it('classifies a JSON 400 as rejected after one attempt', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 400, statusText: 'Bad Request', headers: jsonHeaders,
+        text: () => Promise.resolve('{"message":"bad history"}'),
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1' });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'rejected' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('classifies a JSON 404 as counted, not rejected', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 404, statusText: 'Not Found', headers: jsonHeaders,
+        text: () => Promise.resolve('{"message":"no such route"}'),
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', retryAttempts: 1 });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'counted' });
     });
 
     it('maps a successful upsert body to the result', async () => {
@@ -97,6 +123,7 @@ describe('ConversationApiClient request timers', () => {
         new_messages: 3,
         total_messages: 7,
         created: false,
+        outcome: 'ok',
       });
     });
   });

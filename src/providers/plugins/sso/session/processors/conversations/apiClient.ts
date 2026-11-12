@@ -20,7 +20,7 @@ import {
   RETRY_DELAY_MS
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 
@@ -132,12 +132,14 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           conversation_id: conversationId,
           new_messages: history.length,
           total_messages: history.length,
-          created: true
+          created: true,
+          outcome: 'ok'
         };
       }
 
       // Actual API call with retry
       let lastError: Error | null = null;
+      let lastOutcome: RequestOutcome = 'outage';
 
       for (let attempt = 0; attempt < apiConfig.retryAttempts; attempt++) {
         throwIfStopped(bounds);
@@ -170,7 +172,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             });
             body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
           } catch (error) {
-            request.noteOutcome(error);
+            lastOutcome = request.noteOutcome(error);
             const stopReason = request.stopReason();
             throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
@@ -182,7 +184,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             request.noteAnswer(response.status, false, false);
             await rejectCredentials(bounds.abortSignal, message);
             logger.error(`[ConversationApiClient] ${message}`);
-            return { success: false, message };
+            return { success: false, message, outcome: 'auth' };
           }
 
           if (!response.ok) {
@@ -196,7 +198,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               bodyIsJson = false;
               errorData = { message: errorText };
             }
-            request.noteAnswer(response.status, bodyIsJson, false);
+            lastOutcome = request.noteAnswer(response.status, bodyIsJson, false);
 
             const apiMessage = errorData?.error?.message
               || errorData?.message
@@ -213,7 +215,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               logger.error(`[ConversationApiClient] Non-retryable error (${response.status}):`, errorData);
               return {
                 success: false,
-                message
+                message,
+                outcome: lastOutcome
               };
             }
 
@@ -257,7 +260,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             conversation_id: data.conversation_id,
             new_messages: data.new_messages,
             total_messages: data.total_messages,
-            created: data.created
+            created: data.created,
+            outcome: 'ok'
           };
 
         } catch (error: any) {
@@ -280,7 +284,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       logger.error(`[ConversationApiClient] Sync failed after ${apiConfig.retryAttempts} attempts:`, lastError);
       return {
         success: false,
-        message: `Sync failed: ${lastError?.message || 'Unknown error'}`
+        message: `Sync failed: ${lastError?.message || 'Unknown error'}`,
+        outcome: lastOutcome
       };
     }
   };

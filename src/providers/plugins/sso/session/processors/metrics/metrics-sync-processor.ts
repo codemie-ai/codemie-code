@@ -25,15 +25,15 @@ import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import { awaitsDestination, legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
-import { noteAwaitingDestination } from '@/providers/plugins/sso/session/bounded-request.js';
+import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
-const MAX_SYNC_ATTEMPTS = 3;
-
-/** Whether a metric delta may still be sent: pending, or failed with retries left. */
+/**
+ * Whether a metric delta may still be sent: pending or failed, however many attempts it has
+ * (`syncAttempts` is diagnostic only; a `rejected` delta is terminal).
+ */
 export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
-  return delta.syncStatus === 'pending' ||
-    (delta.syncStatus === 'failed' && (delta.syncAttempts ?? 0) < MAX_SYNC_ATTEMPTS);
+  return delta.syncStatus === 'pending' || delta.syncStatus === 'failed';
 }
 
 /**
@@ -74,7 +74,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 1. Read all deltas from JSONL
       const allDeltas = await readJSONLTolerant<MetricDelta>(metricsFile, `[${this.name}]`);
 
-      // 2. Retry pending deltas and previously failed deltas until the attempt cap.
+      // 2. Retry pending and previously failed deltas; a rejected one is never resent.
       const pendingDeltas = allDeltas.filter(isDeltaSendCandidate);
 
       if (pendingDeltas.length === 0) {
@@ -218,6 +218,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
       const successfulRecordIds = new Set<string>();
       const failedByRecordId = new Map<string, string>();
+      const rejectedRecordIds = new Set<string>();
       let deferred = false;
       let processedBranches = 0;
 
@@ -259,8 +260,10 @@ export class MetricsSyncProcessor implements SessionProcessor {
           }
           const message = error instanceof Error ? error.message : String(error);
           logger.error(`[${this.name}] Sync threw for branch "${metric.attributes.branch}": ${message}`);
+          const rejected = (error as { outcome?: RequestOutcome } | null)?.outcome === 'rejected';
           for (const delta of branchDeltas) {
             failedByRecordId.set(delta.recordId, message);
+            if (rejected) rejectedRecordIds.add(delta.recordId);
           }
         }
       }
@@ -286,7 +289,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         if (syncError) {
           return {
             ...d,
-            syncStatus: 'failed',
+            syncStatus: rejectedRecordIds.has(d.recordId) ? 'rejected' : 'failed',
             syncAttempts: d.syncAttempts + 1,
             syncError,
           };

@@ -499,17 +499,16 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 
-  it('a line failed past its sync-attempt cap counts as done: renamed, marked dropped', async () => {
+  it('a line failed with many attempts is still sent: delivered, renamed, never marked dropped', async () => {
     const session = baseRecord();
     writeRecord(session);
     writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'failed', syncAttempts: 3 }]);
-    const before = Date.now();
 
     await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session));
 
     const done = readRecord(session.sessionId, 'completed_');
     expect(done.endMetricSentAt).toBeTypeOf('number');
-    expect(done.droppedAt).toBeGreaterThanOrEqual(before);
+    expect(done.droppedAt).toBeUndefined();
   });
 
   it('an end metric sent but a line left pending (sync stopped by the abort) keeps {id}.json', async () => {

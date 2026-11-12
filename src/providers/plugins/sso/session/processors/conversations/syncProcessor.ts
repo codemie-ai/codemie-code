@@ -99,7 +99,7 @@ export function createSyncProcessor(): SessionProcessor {
       const failedByPayloadId = new Map<string, string>();
       // payloadId -> syncError of the payloads sent this run whose outcome is not on disk yet, in send order;
       // a persisted outcome is never applied again, so a failed send counts one attempt
-      const unpersistedOutcomes = new Map<string, string | undefined>();
+      const unpersistedOutcomes = new Map<string, PayloadFailure | undefined>();
 
       for (const pendingPayload of pendingPayloads) {
         // Stop BEFORE sending the next payload when the caller's sync deadline
@@ -128,6 +128,7 @@ export function createSyncProcessor(): SessionProcessor {
         );
 
         let syncError: string | undefined;
+        let rejected = false;
         try {
 
           // Send to API
@@ -142,6 +143,7 @@ export function createSyncProcessor(): SessionProcessor {
           if (!response.success) {
             logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to sync conversation ${conversationId}: ${response.message}`);
             syncError = response.message;
+            rejected = response.outcome === 'rejected';
           } else {
             logger.info(`[${CONVERSATION_PROCESSOR_NAME}] Successfully synced conversation ${conversationId} (${response.new_messages} new, ${response.total_messages} total)`);
             successCount++;
@@ -168,13 +170,14 @@ export function createSyncProcessor(): SessionProcessor {
         // Persist the outcomes immediately (atomic full-file rewrite).
         // A kill mid-loop must never lose progress made so far. The file is re-read under its lock and
         // every outcome of this run applied by payloadId, so a payload appended during the network wait is kept.
-        applyPayloadOutcome(allPayloads, payloadId, syncError);
-        unpersistedOutcomes.set(payloadId, syncError);
+        const failure: PayloadFailure | undefined = syncError ? { error: syncError, rejected } : undefined;
+        applyPayloadOutcome(allPayloads, payloadId, failure);
+        unpersistedOutcomes.set(payloadId, failure);
         let rewritten: boolean;
         try {
           rewritten = await rewriteSessionFile<ConversationPayloadRecord>('conversation', session.sessionId, (current) => {
-            for (const [outcomeId, outcomeError] of unpersistedOutcomes) {
-              applyPayloadOutcome(current, outcomeId, outcomeError);
+            for (const [outcomeId, outcomeFailure] of unpersistedOutcomes) {
+              applyPayloadOutcome(current, outcomeId, outcomeFailure);
             }
             return current;
           }, context);
@@ -358,6 +361,12 @@ async function prepareSendList(
   return unsentPayloads.slice(0, MAX_CONVERSATION_PAYLOADS_PER_RUN);
 }
 
+/** A failed send: its error, and whether the server refused the payload for good (`rejected` is terminal). */
+interface PayloadFailure {
+  error: string;
+  rejected: boolean;
+}
+
 /**
  * Apply a payload's sync outcome to the in-memory records (in place).
  * Every not-yet-terminal (pending/failed) record sharing the sent payloadId gets
@@ -367,7 +376,7 @@ async function prepareSendList(
 function applyPayloadOutcome(
   allPayloads: ConversationPayloadRecord[],
   payloadId: string,
-  syncError: string | undefined
+  failure: PayloadFailure | undefined
 ): void {
   allPayloads.forEach((p, index) => {
     if (getPayloadId(p) !== payloadId) {
@@ -377,12 +386,12 @@ function applyPayloadOutcome(
       return;
     }
 
-    allPayloads[index] = syncError
+    allPayloads[index] = failure
       ? {
         ...p,
-        status: CONVERSATION_SYNC_STATUS.FAILED,
+        status: failure.rejected ? CONVERSATION_SYNC_STATUS.REJECTED : CONVERSATION_SYNC_STATUS.FAILED,
         syncAttempts: (p.syncAttempts ?? 0) + 1,
-        error: syncError,
+        error: failure.error,
       }
       : {
         ...p,

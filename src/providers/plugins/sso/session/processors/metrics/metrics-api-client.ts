@@ -31,7 +31,7 @@ import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../uti
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
@@ -41,6 +41,8 @@ interface MetricsRequestError extends Error {
   responseText?: string;
   /** True when the server rejected the provided credentials (401 or an HTML SSO login page) */
   isAuthFailure?: boolean;
+  /** What the request came to (see RequestOutcome); `rejected` makes the delta terminal */
+  outcome?: RequestOutcome;
 }
 
 /**
@@ -119,7 +121,10 @@ class MetricsApiClient {
       }
     }
 
-    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError });
+    throw Object.assign(
+      new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError }),
+      { outcome: (lastError as MetricsRequestError | undefined)?.outcome }
+    );
   }
 
   private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
@@ -197,10 +202,10 @@ class MetricsApiClient {
       try {
         data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
       } catch (error) {
-        request.noteAnswer(response.status, false, false);
+        (error as MetricsRequestError).outcome = request.noteAnswer(response.status, false, false);
         throw error;
       }
-      request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true);
+      const outcome = request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true);
 
       if (!response.ok) {
         if ('code' in data && 'details' in data) {
@@ -213,6 +218,7 @@ class MetricsApiClient {
           error.statusCode = response.status;
           error.response = data;
           error.isAuthFailure = response.status === 401;
+          error.outcome = outcome;
           throw error;
         }
 
@@ -221,6 +227,7 @@ class MetricsApiClient {
         error.statusCode = response.status;
         error.response = data;
         error.isAuthFailure = response.status === 401;
+        error.outcome = outcome;
         throw error;
       }
 
@@ -231,6 +238,7 @@ class MetricsApiClient {
         const error = new Error(`API returned malformed metrics response: missing boolean success`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
+        error.outcome = outcome;
         throw error;
       }
 
@@ -238,6 +246,7 @@ class MetricsApiClient {
         const error = new Error(`API reported failure: ${successData.message}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
+        error.outcome = outcome;
         throw error;
       }
 
@@ -245,7 +254,7 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
-      if (!answered) request.noteOutcome(error);
+      if (!answered) (error as MetricsRequestError).outcome = request.noteOutcome(error);
       if ((error as Error).name === 'AbortError') {
         const stopReason = request.stopReason();
         if (stopReason) {

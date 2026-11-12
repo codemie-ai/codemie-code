@@ -179,6 +179,52 @@ describe('createSyncProcessor — duplicate payload ids', () => {
     });
   });
 
+  describe('line model: no attempt cap, a rejected status', () => {
+    it('a failed record with syncAttempts 7 is still sent', async () => {
+      writeRecords([makeRecord({ status: 'failed', syncAttempts: 7, error: 'boom' })]);
+      upsertConversation.mockResolvedValue(okResponse);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(readRecords().map(r => [r.status, r.syncAttempts])).toEqual([['success', 8]]);
+    });
+
+    it('a rejected outcome marks the record rejected and it is never resent', async () => {
+      writeRecords([makeRecord()]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'API error: 400 bad', outcome: 'rejected' });
+
+      await runSync();
+      expect(readRecords().map(r => r.status)).toEqual(['rejected']);
+
+      upsertConversation.mockClear();
+      await runSync();
+      expect(upsertConversation).not.toHaveBeenCalled();
+    });
+
+    it('a counted outcome (a JSON 404) marks the record failed and resendable', async () => {
+      writeRecords([makeRecord()]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'API error: 404', outcome: 'counted' });
+
+      await runSync();
+      expect(readRecords().map(r => r.status)).toEqual(['failed']);
+
+      upsertConversation.mockClear();
+      await runSync();
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+    });
+
+    it('one run never sends the same payloadId twice', async () => {
+      const requeued = makeRecord({ timestamp: 1_700_000_000_500, historyIndices: [1], payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hello', history_index: 1 }] } });
+      writeRecords([makeRecord({ status: 'failed', syncAttempts: 9 }), requeued]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'boom', outcome: 'counted' });
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('healing on read (AC2)', () => {
     it('marks pending and retryable failed duplicates of a successful id success without sending', async () => {
       writeRecords([
