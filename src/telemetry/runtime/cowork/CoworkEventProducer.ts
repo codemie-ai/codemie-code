@@ -31,6 +31,7 @@ import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-de
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
 import { detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
@@ -296,8 +297,7 @@ export class CoworkEventProducer {
     const profile = this.options.profile;
     const [project, repository, repoRemote, cliVersion] = await Promise.all([
       ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
-        .then((config) => config.codeMieProject ?? '')
-        .catch(() => ''),
+        .then((config) => config.codeMieProject ?? ''),
       resolveRepositoryName(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
       getCurrentCliVersion().catch(() => null),
@@ -341,7 +341,7 @@ function spoolLines(events: Record<string, unknown>[]): string {
 /** `size:mtime` of a readable regular file; throws for anything else, so a broken session is reported. */
 async function fileFingerprint(path: string): Promise<string> {
   const info = await stat(path);
-  if (!info.isFile()) throw new Error(`not a regular file: ${basename(path)}`);
+  if (!info.isFile()) throw new AnalyticsSourceError(`not a regular file: ${basename(path)}`);
   await access(path, constants.R_OK);
   return `${info.size}:${info.mtimeMs}`;
 }

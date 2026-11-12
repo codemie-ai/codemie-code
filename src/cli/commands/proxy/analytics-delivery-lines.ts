@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import type { DaemonState } from './daemon-manager.js';
 import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
+import { getEffectiveClientType } from './client-type.js';
+import { readDesktopGateway } from './connectors/desktop.js';
 import { collectDeliveryHealth, DELIVERY_REASONS, formatDropLines, type DeliveryHealth } from './delivery-health.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 
@@ -39,4 +41,47 @@ function analyticsHeadline(delivery: DeliveryHealth): string[] {
     ];
   }
   return [`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`];
+}
+
+export interface DesktopCollection {
+  connected: true;
+  collecting: boolean;
+  reason?: string;
+  remedy?: string;
+}
+
+/**
+ * Whether the daemon collects what the connected Claude Desktop sends: Desktop mode, on the gateway's port; null when
+ * Claude Desktop has no CodeMie gateway.
+ */
+export async function collectDesktopCollection(state: DaemonState): Promise<DesktopCollection | null> {
+  const gateway = await readDesktopGateway();
+  return gateway ? describeDesktopCollection(state, gateway.port) : null;
+}
+
+function describeDesktopCollection(state: DaemonState, gatewayPort: number): DesktopCollection {
+  if (state.telemetryMode !== 'claude-desktop') {
+    return {
+      connected: true,
+      collecting: false,
+      reason: `the proxy runs as ${getEffectiveClientType(state)}`,
+      remedy: 'codemie proxy connect --claude-desktop replaces it',
+    };
+  }
+  if (gatewayPort !== state.port) {
+    return {
+      connected: true,
+      collecting: false,
+      reason: `Claude Desktop points at port ${gatewayPort}, the proxy listens on ${state.port}`,
+      remedy: 'run: codemie proxy connect --claude-desktop',
+    };
+  }
+  return { connected: true, collecting: true };
+}
+
+/** The `Desktop:` line for `proxy status`. */
+export function formatDesktopLine(desktop: DesktopCollection): string {
+  return desktop.collecting
+    ? '  Desktop: collecting'
+    : chalk.yellow(`  Desktop: NOT collecting — ${desktop.reason}; ${desktop.remedy}`);
 }

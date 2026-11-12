@@ -16,7 +16,13 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
-import { collectVisibleDeliveryHealth, formatAnalyticsLines } from './analytics-delivery-lines.js';
+import {
+  collectDesktopCollection,
+  collectVisibleDeliveryHealth,
+  formatAnalyticsLines,
+  formatDesktopLine,
+} from './analytics-delivery-lines.js';
+import { formatDaemonConflict } from './daemon-conflict.js';
 import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -28,7 +34,6 @@ import {
   type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
 import { getEffectiveClientType } from './client-type.js';
-import { readDesktopGateway } from './connectors/desktop.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -104,57 +109,6 @@ function parsePortOption(value: string | undefined, fallback: number): number {
   }
 
   return parsed;
-}
-
-function formatDaemonConflict(
-  state: NonNullable<Awaited<ReturnType<typeof readState>>>
-): string {
-  const details = [
-    'A proxy is already running with different settings:',
-    `  profile: ${state.profile}`,
-    `  port: ${state.port}`,
-  ];
-
-  if (state.clientType) {
-    details.push(`  client: ${state.clientType}`);
-  }
-  if (state.project) {
-    details.push(`  project: ${state.project}`);
-  }
-
-  details.push('', 'Stop it first:', '  codemie proxy stop');
-  return details.join('\n');
-}
-
-interface DesktopCollection {
-  connected: true;
-  collecting: boolean;
-  reason?: string;
-  remedy?: string;
-}
-
-/** Whether the daemon collects what the connected Claude Desktop sends: Desktop mode, on the gateway's port. */
-function describeDesktopCollection(
-  state: NonNullable<Awaited<ReturnType<typeof readState>>>,
-  gatewayPort: number
-): DesktopCollection {
-  if (state.telemetryMode !== 'claude-desktop') {
-    return {
-      connected: true,
-      collecting: false,
-      reason: `the proxy runs as ${getEffectiveClientType(state)}`,
-      remedy: 'codemie proxy connect --claude-desktop replaces it',
-    };
-  }
-  if (gatewayPort !== state.port) {
-    return {
-      connected: true,
-      collecting: false,
-      reason: `Claude Desktop points at port ${gatewayPort}, the proxy listens on ${state.port}`,
-      remedy: 'run: codemie proxy connect --claude-desktop',
-    };
-  }
-  return { connected: true, collecting: true };
 }
 
 export function createProxyCommand(): Command {
@@ -276,8 +230,7 @@ export function createProxyCommand(): Command {
         expectedPid: state.pid,
       });
       const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
-      const gateway = await readDesktopGateway();
-      const desktop = gateway ? describeDesktopCollection(state, gateway.port) : null;
+      const desktop = await collectDesktopCollection(state);
 
       const otlp = await checkClaudeCodeOtlpEndpoint(state);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
@@ -352,9 +305,7 @@ export function createProxyCommand(): Command {
       console.log(`  Uptime:  ${uptime}`);
 
       if (desktop) {
-        console.log(desktop.collecting
-          ? '  Desktop: collecting'
-          : chalk.yellow(`  Desktop: NOT collecting — ${desktop.reason}; ${desktop.remedy}`));
+        console.log(formatDesktopLine(desktop));
       }
 
       if (analytics) {

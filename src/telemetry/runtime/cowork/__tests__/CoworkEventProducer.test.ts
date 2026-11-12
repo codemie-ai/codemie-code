@@ -1,7 +1,8 @@
 /**
  * The Cowork producer end to end: `run(now)` over a temp Claude Desktop tree (HOME), a temp ~/.codemie (CODEMIE_HOME,
  * which holds the spool, the cursors and the CodeMie profile) and the synthetic fixture session; what lands in
- * `<spool>/<cliSessionId>.hooks.ndjson`. The spool write's `appendFile` is the one stubbed boundary.
+ * `<spool>/<cliSessionId>.hooks.ndjson`. The spool write's `appendFile` is the one stubbed boundary; the forwarder's
+ * send additionally stubs `fetch` and the daemon state it reads its destination from.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -12,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const spoolFault = vi.hoisted(() => ({ failures: 0 }));
+const readStateMock = vi.hoisted(() => vi.fn());
 
 // Real fs; `appendFile` on a spool hooks file can be told to reject (the bytes-landing step of appendSpool).
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -28,7 +30,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/cli/commands/proxy/daemon-manager.js')>()),
+  readState: readStateMock,
+}));
+
 import { logger } from '@/utils/logger.js';
+import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
@@ -331,6 +339,28 @@ describe('CoworkEventProducer.run', () => {
     expect(warnings()).toEqual([]);
   });
 
+  it('appends nothing and saves no cursor while the local config cannot be loaded, and appends the full set once after it is fixed', async () => {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ synthetic: true }));
+    const producer = newProducer();
+
+    await settle(producer, LAST_LINE_MS + 20_000);
+
+    expect(existsSync(spoolPath())).toBe(false);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(false);
+    expect(warnings().filter(([, meta]) => (meta as { cliSessionId?: string })?.cliSessionId === CLI).map(([, meta]) => (meta as { error: string }).error))
+      .toEqual([`context: Unrecognized config format at ${localConfig}. Expected multi-provider (version 2) format.`]);
+
+    rmSync(localConfig);
+    await producer.run(LAST_LINE_MS + 40_000);
+
+    const written = events();
+    expect(written.map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+    expect(new Set(written.map((event) => event['event_id'])).size).toBe(written.length);
+  });
+
   it.each([
     ['a corrupt preferences file', () => '{not json'],
     ['enabled: false', () => JSON.stringify({ enabled: false })],
@@ -630,6 +660,79 @@ describe('CoworkEventProducer.run', () => {
     expect(events().filter((event) => event['type'] === 'agent.session.end')).toHaveLength(1);
     expect(warnings()).toEqual([]);
     expect(readFileSync(spoolPath(), 'utf-8')).toBe(written);
+  });
+});
+
+describe('CoworkEventProducer and the forwarder\'s send', () => {
+  const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The events of every request sent from the `from`-th on, with each request's URL and project header. */
+  function sent(from = 0): Array<{ url: string; project: unknown; event: WireEvent }> {
+    return fetchMock.mock.calls.slice(from).flatMap(([url, init]) => {
+      const request = init as { headers: Record<string, string>; body: string };
+      return request.body.split('\n').filter((body) => body.length > 0)
+        .map((body) => ({ url: String(url), project: request.headers['X-CodeMie-Project'], event: JSON.parse(body) as WireEvent }));
+    });
+  }
+
+  async function forward(): Promise<void> {
+    await forwardSession(CLI, true, credentials as never);
+  }
+
+  it('sends the producer\'s events to event-hooks under the session\'s project', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    await forward();
+
+    const requests = sent();
+    expect(requests.length).toBeGreaterThan(0);
+    for (const { url, project, event } of requests) {
+      expect(url).toBe('https://api.example.com/v1/analytics/cli-analytics/event-hooks');
+      expect(project).toBe('synthetic-project');
+      expect(event).toMatchObject({ session_id: CLI, codemie_project_name: 'synthetic-project' });
+    }
+    const ids = requests.map(({ event }) => event['event_id']);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(events().map((event) => event['event_id']));
+  });
+
+  it('sends nothing on a second producer run and forward with the cursor kept', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    await forward();
+    const before = fetchMock.mock.calls.length;
+
+    await settle(newProducer(), LAST_LINE_MS + 60_000);
+    await forward();
+
+    expect(sent(before)).toEqual([]);
+  });
+
+  it('sends the same event_id set again after the cursor files were deleted', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    await forward();
+    const before = fetchMock.mock.calls.length;
+    const firstIds = new Set(sent().map(({ event }) => event['event_id']));
+
+    // The producer's cursor and the orchestrator's: with only the first gone the usage events stay deduplicated.
+    rmSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`));
+    rmSync(join(codemieHome, 'analytics', 'state', `${CLI}.json`));
+    await settle(newProducer(), LAST_LINE_MS + 40_000);
+    await forward();
+
+    const resent = sent(before).map(({ event }) => event['event_id']);
+    expect(new Set(resent)).toEqual(firstIds);
+    expect(resent).toHaveLength(firstIds.size);
   });
 });
 

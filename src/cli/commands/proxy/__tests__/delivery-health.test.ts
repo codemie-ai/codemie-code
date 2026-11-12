@@ -162,6 +162,23 @@ describe('collectDeliveryHealth', () => {
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 42 });
   });
 
+  it('carries the latest drop on a healthy result', async () => {
+    const latestDrop = { reason: 'no_project', stream: 'hooks', at: 5000, local: false };
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, latestDrop });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0, latestDrop });
+  });
+
+  it('carries the latest drop on an unhealthy result', async () => {
+    const latestDrop = { reason: 'disk_full', at: 6000, local: true };
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: true, latestDrop });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'send_failed',
+      pendingBytes: 7,
+      latestDrop,
+    });
+  });
+
   it('yields unknown when a dependency throws', async () => {
     summarizeSpoolDelivery.mockRejectedValue(new Error('boom'));
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
