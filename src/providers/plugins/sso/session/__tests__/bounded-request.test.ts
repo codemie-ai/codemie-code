@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { attemptNotServed, boundedRequest, isFailingServerAnswer, requestNeverLeft } from '../bounded-request.js';
+import {
+  attemptNotServed,
+  attemptOutcome,
+  boundedRequest,
+  classifyAnswer,
+  classifyError,
+  isExpiredCredentialAnswer,
+  isFailingServerAnswer,
+  requestNeverLeft,
+} from '../bounded-request.js';
 
 /** A fetch failure whose connection never opened, as Node's undici reports it. */
 const refused = () => new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
@@ -67,6 +76,93 @@ describe('isFailingServerAnswer', () => {
   ])('status %i, JSON body %s → %s', (status, bodyIsJson, expected) => {
     expect(isFailingServerAnswer(status, bodyIsJson)).toBe(expected);
   });
+});
+
+describe('classifyAnswer', () => {
+  it.each([
+    [200, true, true, 'ok'],
+    [401, true, false, 'auth'], [401, false, false, 'auth'],
+    [403, true, false, 'auth'], [403, false, false, 'auth'],
+    [400, true, false, 'rejected'], [422, true, false, 'rejected'],
+    [404, true, false, 'counted'], [408, true, false, 'counted'], [413, true, false, 'counted'],
+    [200, true, false, 'counted'],
+    [500, true, false, 'outage'], [503, false, false, 'outage'], [429, true, false, 'outage'],
+    [404, false, false, 'outage'], [400, false, false, 'outage'],
+    [502, true, false, 'outage'], [504, true, false, 'outage'],
+  ])('status %i, JSON body %s, success %s → %s', (status, bodyIsJson, success, expected) => {
+    expect(classifyAnswer(status, bodyIsJson, success)).toBe(expected);
+  });
+});
+
+describe('classifyError', () => {
+  it('a connection that never opened, an own timeout and a reset after send are outages', () => {
+    expect(classifyError(refused(), undefined)).toBe('outage');
+    expect(classifyError(new Error('Request timeout after 10000ms'), undefined)).toBe('outage');
+    expect(classifyError(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), undefined)).toBe('outage');
+  });
+
+  it('a stop by the caller is not an attempt', () => {
+    expect(classifyError(new Error('aborted'), 'deadline')).toBe('not-attempt');
+    expect(classifyError(new Error('aborted'), 'aborted')).toBe('not-attempt');
+  });
+});
+
+describe('attemptOutcome', () => {
+  const noted = (signal: AbortSignal, outcome: unknown | [number, boolean, boolean]) => {
+    const request = boundedRequest(30_000, { abortSignal: signal });
+    const result = Array.isArray(outcome)
+      ? request.noteAnswer(...(outcome as [number, boolean, boolean]))
+      : request.noteOutcome(outcome);
+    request.dispose();
+    return result;
+  };
+
+  it('is undefined before anything is noted', () => {
+    expect(attemptOutcome(new AbortController().signal)).toBeUndefined();
+  });
+
+  it('returns the outcome of each note and records the worst one under the signal', () => {
+    const signal = new AbortController().signal;
+    expect(noted(signal, refused())).toBe('outage');
+    expect(attemptOutcome(signal)).toBe('outage');
+    expect(noted(signal, [401, true, false])).toBe('auth');
+    expect(attemptOutcome(signal)).toBe('auth');
+    expect(noted(signal, [404, true, false])).toBe('counted');
+    expect(attemptOutcome(signal)).toBe('counted');
+    expect(noted(signal, [400, true, false])).toBe('rejected');
+    expect(attemptOutcome(signal)).toBe('rejected');
+    expect(noted(signal, [503, true, false])).toBe('outage');
+    expect(attemptOutcome(signal)).toBe('rejected');
+  });
+
+  it('three in-request retries under one signal give one outcome, the worst', () => {
+    const signal = new AbortController().signal;
+    noted(signal, [503, true, false]);
+    noted(signal, [200, true, true]);
+    noted(signal, [401, true, false]);
+    expect(attemptOutcome(signal)).toBe('auth');
+  });
+
+  it('a stop is the weakest outcome and a success records nothing', () => {
+    const stopped = AbortSignal.abort();
+    const request = boundedRequest(30_000, { abortSignal: stopped });
+    request.noteOutcome(new Error('x'));
+    request.dispose();
+    expect(attemptOutcome(stopped)).toBe('not-attempt');
+
+    const ok = new AbortController().signal;
+    expect(noted(ok, [200, true, true])).toBe('ok');
+    expect(attemptOutcome(ok)).toBeUndefined();
+  });
+});
+
+describe('isExpiredCredentialAnswer', () => {
+  it.each([[401, true, true], [401, false, true], [403, true, true], [403, false, true], [404, true, false], [429, false, false], [500, true, false], [200, true, false]])(
+    'status %i, JSON body %s → %s',
+    (status, bodyIsJson, expected) => {
+      expect(isExpiredCredentialAnswer(status, bodyIsJson, undefined)).toBe(expected);
+    },
+  );
 });
 
 describe('requestNeverLeft', () => {
