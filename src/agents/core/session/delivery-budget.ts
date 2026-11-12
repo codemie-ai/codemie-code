@@ -6,12 +6,11 @@
  * {@link MIN_REAL_ATTEMPTS} real attempts were made; the evidence retention is the outer bound. Outages, rejected
  * credentials and aborts never spend it.
  */
-import { readFile } from 'fs/promises';
 import type { DropReason, Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
 import { renameSessionFiles } from './session-generation.js';
 import { legacyMetricsWithheld } from './legacy-metrics-gate.js';
-import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
+import { getSessionConversationPath, getSessionMetricsPath } from './session-config.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { getPayloadId } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
 import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
@@ -110,20 +109,4 @@ export async function leaveQueue(
     logger.warn(`[delivery] ${s.sessionId}: leaves the delivery queue with data unsent (${reason}); marked dropped`);
   }
   return rename(s.sessionId);
-}
-
-/**
- * Writes the drop mark into the live `{id}.json` when its record holds data unsent, without moving any file. A bridge for
- * the hook paths that rename the files themselves.
- */
-export async function markDroppedIfUndelivered(sessionId: string, reason: DropReason = 'retry budget exhausted'): Promise<void> {
-  let record: Session;
-  try {
-    record = JSON.parse(await readFile(getSessionPath(sessionId), 'utf-8')) as Session;
-  } catch {
-    return;
-  }
-  if (!(await hasUndeliveredData(record))) return;
-  await new SessionStore().saveSession({ ...record, droppedAt: record.droppedAt ?? Date.now(), droppedReason: record.droppedReason ?? reason });
-  logger.warn(`[delivery] ${sessionId}: leaves the delivery queue with data unsent (${reason}); marked dropped`);
 }

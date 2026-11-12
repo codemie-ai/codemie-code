@@ -1187,7 +1187,7 @@ describe('DesktopTelemetryRuntime', () => {
       const { startTime } = readRecord(sessionId)!;
       // The CLI or an earlier attempt left counters; the resumed stretch starts clean
       const completedPath = join(sessionsDir(), `completed_${sessionId}.json`);
-      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, finalizeAttempts: 2, droppedAt: T0 }));
+      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, finalizeAttempts: 2, droppedAt: T0, droppedReason: 'retry budget exhausted', deliveryFailingSince: T0 - HOUR_MS, deliveryRealAttempts: 2 }));
       writeFileSync(join(sessionsDir(), `completed_${sessionId}_metrics.jsonl`), '');
 
       const daemon = await startDaemon(createAdapter());
@@ -1197,7 +1197,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
       const reopened = readRecord(sessionId)!;
       expect(reopened).toMatchObject({ status: 'active', ownerPid: process.pid, ownerStartedAt: processStartedAt(), startTime });
-      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'finalizeAttempts', 'droppedAt', 'endTime', 'reason']) {
+      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'finalizeAttempts', 'droppedAt', 'droppedReason', 'deliveryFailingSince', 'deliveryRealAttempts', 'endTime', 'reason']) {
         expect(reopened).not.toHaveProperty(field);
       }
 
@@ -1305,7 +1305,7 @@ describe('DesktopTelemetryRuntime', () => {
         status: 'completed',
         reason: 'interrupted',
         endTime: T0 - 40 * 60_000,
-        deliveryAttempts: 1
+        deliveryRealAttempts: 1
       });
       const wrapperFiles = [wrapperActive, wrapperCompleted].map(id => join(sessionsDir(), `${id}.json`));
       const before = wrapperFiles.map(path => readFileSync(path, 'utf-8'));
@@ -1322,7 +1322,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSync.mock.calls.map(([sessionId]) => sessionId)).not.toContain(wrapperCompleted);
       expect(wrapperFiles.map(path => readFileSync(path, 'utf-8'))).toEqual(before);
       expect(readRecord(wrapperActive)).toMatchObject({ status: 'active' });
-      expect(readRecord(wrapperCompleted)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(readRecord(wrapperCompleted)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
     });
 
     it('finalizes an ownerless record idle past 72 h locally, sending nothing; a 71 h one stays', async () => {
@@ -1372,7 +1372,7 @@ describe('DesktopTelemetryRuntime', () => {
       await expect(pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1)).resolves.toBeUndefined();
 
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
-      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
       expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
       const failedSends = mockSendSessionEnd.mock.calls.length;
       await pollTicks(daemon, 2);
@@ -1385,10 +1385,10 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
       const delivered = readRecord(sessionId)!;
       expect(delivered.endMetricSentAt).toEqual(expect.any(Number));
-      expect(delivered.deliveryAttempts).toBe(1);
+      expect(delivered.deliveryRealAttempts).toBe(1);
     });
 
-    it('spends one attempt per daemon start and renames unsent after the third', async () => {
+    it('counts one real attempt per daemon start and drops the record only once 24 h of failing have passed', async () => {
       const sessionId = writeRecord('ext-1', {
         status: 'completed',
         reason: 'desktop-inactive-timeout',
@@ -1397,18 +1397,20 @@ describe('DesktopTelemetryRuntime', () => {
       });
       mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
-      for (let start = 1; start <= 3; start++) {
+      for (let start = 1; start <= 4; start++) {
         const runtime = await startRuntime(createAdapter());
         await runtime.stop();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(start);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(start);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
-      mockSendSessionEnd.mockClear();
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+
+      vi.setSystemTime(T0 + 25 * HOUR_MS);
       const runtime = await startRuntime(createAdapter());
       await runtime.stop();
 
-      expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted' });
       expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
     });
 
@@ -1420,7 +1422,7 @@ describe('DesktopTelemetryRuntime', () => {
       await (runtime as any).redeliveryPass;
 
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1443,7 +1445,7 @@ describe('DesktopTelemetryRuntime', () => {
           endTime: T0 - 40 * 60_000,
           ownerPid: DEAD_PID
         });
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         expect(mockSync).not.toHaveBeenCalled();
         expect(mockSendSessionEnd).not.toHaveBeenCalled();
@@ -1451,7 +1453,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       it('leaves a completed record as it is at start and in a re-delivery pass, delivering one of this host', async () => {
         const completed = { status: 'completed' as const, reason: 'desktop-inactive-timeout', endTime: T0 - 40 * 60_000, ownerPid: DEAD_PID };
-        const foreign = writeRecord('ext-1', { ...completed, codemieUrl: 'https://other.example.com', deliveryAttempts: 1 });
+        const foreign = writeRecord('ext-1', { ...completed, codemieUrl: 'https://other.example.com', deliveryRealAttempts: 1 });
         const own = writeRecord('ext-2', { ...completed, codemieUrl: `${DAEMON_URL}/` });
         const foreignFile = join(sessionsDir(), `${foreign}.json`);
         const before = readFileSync(foreignFile, 'utf-8');
@@ -1569,7 +1571,7 @@ describe('DesktopTelemetryRuntime', () => {
         reason: 'desktop-inactive-timeout',
         endTime: T0 - 40 * 60_000,
         ownerPid: DEAD_PID,
-        deliveryAttempts: 1
+        deliveryRealAttempts: 1
       });
       const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
       const debug = vi.spyOn(logger, 'debug');
@@ -1579,7 +1581,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(debug).toHaveBeenCalledWith('[desktop-telemetry] Record held by another process; skipped', { sessionId });
     });
@@ -1647,7 +1649,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`, `completed_${sessionId}_conversation.jsonl`]);
       const record = readRecord(sessionId)!;
-      expect(record).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(record).toMatchObject({ status: 'completed' });
       expect(record).not.toHaveProperty('droppedAt');
     });
 
@@ -1721,20 +1723,20 @@ describe('DesktopTelemetryRuntime', () => {
 
     it('makes no request and spends no attempt at start while the analytics auth is marked invalid', async () => {
       await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
-      const undelivered = undeliveredRecord({ deliveryAttempts: 1 });
+      const undelivered = undeliveredRecord({ deliveryRealAttempts: 1 });
       const gone = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
 
       await startRuntime(createAdapter());
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(undelivered)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(readRecord(undelivered)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
       expect(readRecord(gone)).toMatchObject({
         status: 'completed',
         reason: 'desktop-daemon-restart',
         endTime: T0 - 40 * 60_000
       });
-      expect(readRecord(gone)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(gone)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${undelivered}.json`, `${gone}.json`].sort());
     });
 
@@ -1750,7 +1752,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1759,19 +1761,19 @@ describe('DesktopTelemetryRuntime', () => {
       ['an SSO login page on 200', loginPage]
     ])('gives back the attempt whose end metric was answered with %s and marks the auth invalid', async (_, response) => {
       const fetchMock = answerEndMetricWith(response);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
       await startRuntime(createAdapter());
 
       expect(fetchMock).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('never renames a record whose attempt at the cap meets rejected credentials', async () => {
       const fetchMock = answerEndMetricWith(unauthorized);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 2 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 2 });
 
       for (let start = 1; start <= 3; start++) {
         // A re-login the server rejects again
@@ -1781,13 +1783,13 @@ describe('DesktopTelemetryRuntime', () => {
       }
 
       expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('sends nothing in a re-delivery pass while the mark is set, and delivers uncounted once it is cleared', async () => {
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
       await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
       const daemon = await startDaemon(createAdapter());
 
@@ -1803,8 +1805,57 @@ describe('DesktopTelemetryRuntime', () => {
       await (daemon as any).redeliveryPass;
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+
+    describe('the delivery budget on a live re-delivery pass (EPMCDME-17068)', () => {
+      const FAILING_SINCE = T0 - 25 * HOUR_MS;
+
+      it('drops a record after a counted failure at 25 h with 3 real attempts, marked retry budget exhausted', async () => {
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 500'));
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(mockSendSessionEnd).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted', deliveryRealAttempts: 3 });
+        expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      });
+
+      it('keeps a record under 3 real attempts after a counted failure at 25 h, counting the pass', async () => {
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, deliveryFailingSince: FAILING_SINCE });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 500'));
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      });
+
+      it('never drops a record whose end metric is answered 503, however old its failing clock', async () => {
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' }
+        }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(fetchMock).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedReason');
+      }, 60_000);
     });
 
     describe('a separate sync path', () => {
@@ -1817,7 +1868,7 @@ describe('DesktopTelemetryRuntime', () => {
         ['syncCodeMieUrl', SYNC_CODEMIE_URL]
       ])('sends nothing and spends no attempt while the analytics auth of its %s is marked invalid', async (_, baseUrl) => {
         await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', baseUrl);
-        const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
         const runtime = await startRuntime(createAdapter(), syncConfig);
         await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
@@ -1825,7 +1876,7 @@ describe('DesktopTelemetryRuntime', () => {
 
         expect(mockSync).not.toHaveBeenCalled();
         expect(mockSendSessionEnd).not.toHaveBeenCalled();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         await runtime.stop();
       });
@@ -1843,13 +1894,13 @@ describe('DesktopTelemetryRuntime', () => {
 
     it('makes no request and spends no attempt without stored cookies', async () => {
       mockGetStoredCredentials.mockResolvedValue(null);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
       await startRuntime(createAdapter());
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1857,7 +1908,7 @@ describe('DesktopTelemetryRuntime', () => {
       realSessionSyncer = true;
       const fetchMock = vi.fn(async () => unauthorized());
       vi.stubGlobal('fetch', fetchMock);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1, endMetricSentAt: T0 - 30 * 60_000 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, endMetricSentAt: T0 - 30 * 60_000 });
       writeFileSync(join(sessionsDir(), `${sessionId}_metrics.jsonl`), JSON.stringify({
         recordId: 'record-1',
         sessionId,
@@ -1871,14 +1922,14 @@ describe('DesktopTelemetryRuntime', () => {
       await startRuntime(createAdapter());
 
       expect(fetchMock).toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
       expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
     });
 
-    it('never renames a record at the cap while there are no stored cookies, and renames it unsent once they are back', async () => {
+    it('keeps a record that spent its attempts while there are no stored cookies, and delivers it once they are back', async () => {
       mockGetStoredCredentials.mockResolvedValue(null);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 3 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 3, deliveryFailingSince: T0 - 25 * HOUR_MS });
 
       const gated = await startRuntime(createAdapter());
       await gated.stop();
@@ -1887,16 +1938,16 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(3);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(3);
 
       mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
       await clearAnalyticsAuthStatus();
       const runtime = await startRuntime(createAdapter());
       await runtime.stop();
 
-      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
-      expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
     });
 
     it('flushes a gone daemon\'s record locally while the analytics auth is marked invalid, and sends it once cleared', async () => {
@@ -1911,7 +1962,7 @@ describe('DesktopTelemetryRuntime', () => {
       const runtime = await startRuntime(adapter);
 
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();

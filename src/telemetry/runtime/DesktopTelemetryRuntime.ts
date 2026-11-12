@@ -461,6 +461,9 @@ export class DesktopTelemetryRuntime {
     delete existing.deliveryAttempts;
     delete existing.finalizeAttempts;
     delete existing.droppedAt;
+    delete existing.droppedReason;
+    delete existing.deliveryFailingSince;
+    delete existing.deliveryRealAttempts;
     // ponytail: the stretch start lags its first activity by up to one poll interval (and the reopen lock wait), and when
     // the previous stretch's end metric never left, the next end metric covers that stretch, the gap and the new one;
     // delivering the pending end metric at the reopen would make it exact
