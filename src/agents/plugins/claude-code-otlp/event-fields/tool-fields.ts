@@ -59,17 +59,23 @@ export function resolveToolDiffFields(toolName: string, toolInput: unknown, tool
 }
 
 /**
- * The fork a `Skill` call started, as `{ fork_agent_id }` for its `agent.tool.end`, or `{}` for any
- * other tool or a result without a non-empty string `agentId` (an inline skill's result has none).
- * The backend pairs a Skill call with its fork by this id; it is read here from the uncut result
- * because the base class cuts `tool_response` to {@link MAX_TOOL_FIELD_CHARS}, and a long skill name
- * pushes `agentId` past that cut. The hook's typed `agent_id` names the caller, never the fork.
+ * The agent a `Skill` or `Agent` call started, as `{ fork_agent_id }` for its `agent.tool.end`, or
+ * `{}` for any other tool or a result without a non-empty string `agentId` (an inline skill's result
+ * has none; neither has a failed or denied Agent call). The backend pairs a call with its agent by
+ * this id; it is read here from the uncut result because the base class cuts `tool_response` to
+ * {@link MAX_TOOL_FIELD_CHARS}, and a long skill name or an echoed Agent prompt pushes `agentId` past
+ * that cut. The hook's typed `agent_id` names the caller, never the started agent.
+ *
+ * A `Skill` result may arrive as an object or as JSON text. An `Agent` result is an object whose
+ * `agentId` is a top-level key (captured from a real foreground run), so JSON text is not read for it.
  */
-export function resolveSkillForkFields(toolName: string, toolResponse: unknown): { fork_agent_id?: string } {
-  if (toolName !== 'Skill') {
-    return {};
+export function resolveForkAgentFields(toolName: string, toolResponse: unknown): { fork_agent_id?: string } {
+  let agentId = '';
+  if (toolName === 'Skill') {
+    agentId = readString(parseJsonObject(toolResponse), 'agentId');
+  } else if (AGENT_RESULT_ID_TOOLS.has(toolName)) {
+    agentId = readString(toolResponse, 'agentId');
   }
-  const agentId = readString(parseJsonObject(toolResponse), 'agentId');
   return agentId ? { fork_agent_id: agentId.slice(0, MAX_TOOL_FIELD_CHARS) } : {};
 }
 
@@ -136,6 +142,13 @@ export function withoutSensitiveFileContent(hookInput: { tool_name: string; tool
 
 /** This CLI's own name for the subagent-dispatch tool is `Agent`; standard Claude Code uses `Task`. */
 const AGENT_DISPATCH_TOOLS = new Set(['Agent', 'Task']);
+
+/**
+ * Dispatch tools whose result carries the started agent's id, so `agent.tool.end` is stamped with it.
+ * `Task` is deliberately left out (decision A2): its results are not stamped or read, and its rows keep
+ * the backend's parent-window estimate.
+ */
+const AGENT_RESULT_ID_TOOLS: ReadonlySet<string> = new Set(['Agent']);
 
 function readField(record: unknown, key: string): unknown {
   return record && typeof record === 'object' ? (record as Record<string, unknown>)[key] : undefined;

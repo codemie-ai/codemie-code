@@ -8,7 +8,7 @@ import { boundedText, TEXT_FIELD_LIMITS, UNMASKED_FIELD_KEYS } from '@/agents/co
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
-import { resolveSkillForkFields, resolveToolContextFields } from '@/agents/plugins/claude-code-otlp/event-fields/tool-fields.js';
+import { resolveForkAgentFields, resolveToolContextFields } from '@/agents/plugins/claude-code-otlp/event-fields/tool-fields.js';
 import {
   collectEditLineStats,
   isGenuineUserTurn,
@@ -184,7 +184,7 @@ function toolEvents(line: CoworkLine, sessionId: string, state: CoworkEventState
       continue;
     }
     const { linesAdded, linesRemoved } = collectEditLineStats([line]);
-    const fork = toolName === 'Skill' ? resolveSkillForkFields('Skill', line.toolUseResult) : {};
+    const fork = toolName === 'Skill' ? resolveForkAgentFields('Skill', line.toolUseResult) : {};
     const namedAgent = toolName === 'Skill' ? fork.fork_agent_id ?? '' : AGENT_DISPATCH_TOOLS.has(toolName) ? readAgentId(line.toolUseResult) : '';
     events.push({
       type: 'agent.tool.end',

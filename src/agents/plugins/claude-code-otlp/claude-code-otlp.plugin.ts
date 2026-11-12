@@ -77,7 +77,7 @@ import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import {
-  resolveSkillForkFields,
+  resolveForkAgentFields,
   resolveToolContextFields,
   resolveToolDiffFields,
   withoutSensitiveFileContent,
@@ -709,7 +709,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
     // Line counts and the fork id are derived from the uncut input, before its content is dropped.
     const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
-    const forkFields = resolveSkillForkFields(hookInput.tool_name, hookInput.tool_response);
+    const forkFields = resolveForkAgentFields(hookInput.tool_name, hookInput.tool_response);
     return {
       decision: 'forward',
       payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields, ...diffFields, ...forkFields }],
