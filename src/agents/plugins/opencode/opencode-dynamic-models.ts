@@ -139,7 +139,7 @@ export async function fetchDynamicModelConfigs(
     const jwtToken = env.CODEMIE_JWT_TOKEN;
 
     if (jwtToken) {
-      rawModels = await fetchCodeMieLlmModels(baseUrl, jwtToken);
+      rawModels = await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
       logger.debug('[dynamic-models] Fetched model list via JWT auth');
     } else {
       const found = await getStoredPlatformCredentialsFromEnv(env);
@@ -147,7 +147,7 @@ export async function fetchDynamicModelConfigs(
         logger.debug('[dynamic-models] No SSO credentials found, using static model configs');
         return OPENCODE_MODEL_CONFIGS;
       }
-      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
       logger.debug('[dynamic-models] Fetched model list via SSO auth');
     }
 

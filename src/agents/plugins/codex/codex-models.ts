@@ -375,7 +375,7 @@ async function fetchCodeMieModelsForCodex(env: NodeJS.ProcessEnv): Promise<LlmMo
 
   if (jwtToken && baseUrl) {
     logger.debug('[codex-models] Fetching CodeMie model list via JWT auth');
-    return fetchCodeMieLlmModels(baseUrl, jwtToken);
+    return fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
   }
 
   const platformUrl = getPlatformUrlFromEnv(env);
@@ -388,7 +388,7 @@ async function fetchCodeMieModelsForCodex(env: NodeJS.ProcessEnv): Promise<LlmMo
     }
 
     logger.debug('[codex-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
   }
 
   return [];

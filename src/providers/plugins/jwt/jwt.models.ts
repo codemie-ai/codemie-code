@@ -30,7 +30,7 @@ export class JWTModelProxy implements ProviderModelFetcher {
       throw new Error('No baseUrl configured for bearer-auth provider.');
     }
 
-    const modelIds = await fetchCodeMieModels(apiUrl, token);
+    const modelIds = await fetchCodeMieModels(apiUrl, token, config.codeMieProject ?? undefined);
     return modelIds.map((id) => ({ id, name: id }));
   }
 }

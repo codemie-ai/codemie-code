@@ -811,7 +811,8 @@ describe('proxy connect vscode', () => {
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
       'local-key',
-      false
+      false,
+      'team-project'
     );
   });
 
@@ -854,7 +855,8 @@ describe('proxy connect vscode', () => {
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
       'local-key',
-      false
+      false,
+      'team-project'
     );
   });
 

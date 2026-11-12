@@ -88,20 +88,30 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
  * endpoint and return the IDs of usable Claude-family models. When both canonical
  * and `-vertex` registrations exist, canonical IDs are preferred. When only vertex
  * registrations exist, those IDs are returned so vertex-only tenants can connect.
+ *
+ * When `project` is set it is sent as `project_id`, so the backend narrows the list
+ * to the models that project allows (the project's Models tab).
  */
-export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): Promise<string[]> {
-  const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+export async function fetchClaudeModels(
+  proxyUrl: string,
+  gatewayKey: string,
+  project?: string
+): Promise<string[]> {
+  const endpointUrl = new URL('/v1/llm_models?include_all=true', proxyUrl);
+  if (project) endpointUrl.searchParams.set('project_id', project);
+  const endpoint = endpointUrl.toString();
   try {
     logger.info(
       '[proxy] Fetching Claude models from gateway',
       ...sanitizeLogArgs({
         endpoint,
+        project,
         inferenceGatewayBaseUrl: proxyUrl,
         inferenceGatewayApiKey: gatewayKey,
         preferredModels: [...PREFERRED_CLAUDE_MODELS],
       })
     );
-    const response = await fetch(new URL('/v1/llm_models?include_all=true', proxyUrl), {
+    const response = await fetch(endpointUrl, {
       headers: { Authorization: `Bearer ${gatewayKey}` },
     });
     if (!response.ok) {
@@ -130,7 +140,10 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
         response.status === 401
           ? `Local proxy model discovery was rejected with 401 Unauthorized at ${endpoint}. ` +
             'The local gateway key was not accepted by the proxy or was forwarded upstream incorrectly.'
-          : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
+          : response.status === 404 && project
+            ? `Local proxy model discovery failed at ${endpoint}: project "${project}" was not found. ` +
+              'Check the project in your CodeMie profile, then run `codemie proxy connect desktop` again.'
+            : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
       );
     }
     const contentType = response.headers.get('content-type') ?? '';
@@ -821,7 +834,8 @@ export async function writeDesktopConfig(
   gatewayKey: string,
   baseDir: string = getDesktopBaseDir(),
   orgMcpServers: ManagedMcpServerEntry[] | null = null,
-  managedStatePath: string = getManagedMcpStatePath()
+  managedStatePath: string = getManagedMcpStatePath(),
+  project?: string
 ): Promise<string> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
@@ -850,13 +864,16 @@ export async function writeDesktopConfig(
     }
   }
 
-  // Discover available Claude models from the gateway and curate down to the
-  // preferred set (a single opus, preferring 4.8) so the user doesn't have to
-  // type them manually in the GUI.
-  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey);
+  // Discover available Claude models from the gateway — narrowed to the profile's
+  // project when one is set — and curate down to the preferred set (one model per
+  // family, plus router aliases) so the user doesn't have to type them in the GUI.
+  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
   if (discoveredModels.length === 0) {
     throw new ConfigurationError(
-      `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
+      project
+        ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
+          'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
+        : `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
     );
   }
   const resolvedModels = selectDesktopClaudeModels(discoveredModels);

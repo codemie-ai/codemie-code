@@ -250,6 +250,36 @@ describe('fetchClaudeModels', () => {
     expect(init.headers.Authorization).toBe('Bearer my-key');
   });
 
+  it('omits project_id when no project is given', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => [] });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    await fetchClaudeModels('http://127.0.0.1:4001', 'my-key');
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.pathname).toBe('/v1/llm_models');
+    expect(url.searchParams.get('include_all')).toBe('true');
+    expect(url.searchParams.has('project_id')).toBe(false);
+  });
+
+  it('narrows discovery to the profile project via project_id', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => [] });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    await fetchClaudeModels('http://127.0.0.1:4001', 'my-key', 'demo project&x=1');
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.searchParams.get('include_all')).toBe('true');
+    expect(url.searchParams.get('project_id')).toBe('demo project&x=1');
+  });
+
+  it('names the project when the backend does not find it', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not Found', headers: mkHeaders('application/json'),
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'k', 'gone-project'))
+      .rejects.toThrow(/project "gone-project" was not found/);
+  });
+
   it('throws when fetch fails', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down')) as any;
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
@@ -547,6 +577,44 @@ describe('writeDesktopConfig', () => {
     expect(meta.appliedId).toBeDefined();
     expect(meta.entries).toEqual([{ id: meta.appliedId, name: 'CodeMie Proxy' }]);
     expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
+  });
+
+  it('writes only the models the profile project allows (routers-only project)', async () => {
+    const fetchSpy = vi.fn().mockImplementation(async (input: URL | string) => {
+      const url = new URL(String(input));
+      const all = [
+        { base_name: 'claude-opus-5-5' },
+        { base_name: 'claude-sonnet-5-5' },
+        { base_name: 'claude-haiku-5-5' },
+        { base_name: 'claude-router-standard' },
+        { base_name: 'claude-router-premium' },
+      ];
+      const body = url.searchParams.get('project_id') === 'router-demo'
+        ? all.filter((m) => m.base_name.includes('router'))
+        : all;
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => body };
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig(
+      'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, 'router-demo'
+    );
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(JSON.parse(config.inferenceModels)).toEqual([
+      { name: 'claude-router-standard', labelOverride: 'Router Standard' },
+      { name: 'claude-router-premium', labelOverride: 'Router Premium' },
+    ]);
+  });
+
+  it('explains when the profile project allows no Claude models', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'grok-4-6' }],
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'no-claude'))
+      .rejects.toThrow(/Project "no-claude" does not allow any Claude models/);
   });
 
   it('reuses appliedId from existing _meta.json when present', async () => {

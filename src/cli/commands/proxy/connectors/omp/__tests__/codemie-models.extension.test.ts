@@ -53,6 +53,25 @@ describe('codemie-models extension', () => {
     });
   });
 
+  it('asks for the daemon project\'s models via project_id', async () => {
+    writeFileSync(join(home, 'proxy-daemon.json'), JSON.stringify({
+      url: 'http://127.0.0.1:4555', gatewayKey: 'gk-test', project: 'router-demo',
+    }));
+    register();
+    vi.mocked(fetch).mockResolvedValue(response([model('claude-router-standard')]));
+    await providers.get('codemie')!.fetchDynamicModels(undefined);
+    const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]));
+    expect(url.searchParams.get('project_id')).toBe('router-demo');
+  });
+
+  it('omits project_id when the daemon has no project', async () => {
+    register();
+    vi.mocked(fetch).mockResolvedValue(response([]));
+    await providers.get('codemie')!.fetchDynamicModels(undefined);
+    const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]));
+    expect(url.searchParams.has('project_id')).toBe(false);
+  });
+
   it('uses daemon defaults when the state file is missing', async () => {
     rmSync(join(home, 'proxy-daemon.json'));
     register();

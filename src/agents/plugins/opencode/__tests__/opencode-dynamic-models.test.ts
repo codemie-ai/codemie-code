@@ -48,7 +48,7 @@ describe('fetchDynamicModelConfigs', () => {
     const result = await fetchDynamicModelConfigs(proxyUrl, { CODEMIE_PROFILE_CONFIG: profile });
 
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
-    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, undefined);
     expect(Object.keys(result)).toEqual(['live-model-1']);
   });
 
@@ -72,12 +72,23 @@ describe('fetchDynamicModelConfigs', () => {
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://workspace.example.com');
   });
 
+  it('narrows the catalog to CODEMIE_PROJECT', async () => {
+    fetchMock.mockResolvedValue([llmModel('jwt-model')]);
+
+    await fetchDynamicModelConfigs('https://jwt.example.com/api', {
+      CODEMIE_JWT_TOKEN: 'tok',
+      CODEMIE_PROJECT: 'router-demo',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('https://jwt.example.com/api', 'tok', 'router-demo');
+  });
+
   it('uses the JWT token against the given base URL when present', async () => {
     fetchMock.mockResolvedValue([llmModel('jwt-model')]);
 
     await fetchDynamicModelConfigs('https://jwt.example.com/api', { CODEMIE_JWT_TOKEN: 'tok' });
 
-    expect(fetchMock).toHaveBeenCalledWith('https://jwt.example.com/api', 'tok');
+    expect(fetchMock).toHaveBeenCalledWith('https://jwt.example.com/api', 'tok', undefined);
     expect(ssoMock.getStoredCredentials).not.toHaveBeenCalled();
   });
 

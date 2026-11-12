@@ -90,13 +90,13 @@ async function fetchCodeMieModelsForGemini(env: NodeJS.ProcessEnv): Promise<LlmM
   const baseUrl = env.CODEMIE_BASE_URL;
   if (jwtToken && baseUrl) {
     logger.debug('[gemini-models] Fetching CodeMie model list via JWT auth');
-    return await fetchCodeMieLlmModels(baseUrl, jwtToken);
+    return await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
   }
 
   const found = await getStoredPlatformCredentialsFromEnv(env);
   if (found) {
     logger.debug('[gemini-models] Fetching CodeMie model list via SSO auth');
-    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
   }
 
   return [];

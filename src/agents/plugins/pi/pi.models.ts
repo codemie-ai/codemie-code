@@ -270,7 +270,7 @@ async function fetchCodeMieModels(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
 
   if (jwtToken && baseUrl) {
     logger.debug('[pi-models] Fetching CodeMie model list via JWT auth');
-    return fetchCodeMieLlmModels(baseUrl, jwtToken);
+    return fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
   }
 
   const platformUrl = getPlatformUrlFromEnv(env);
@@ -280,7 +280,7 @@ async function fetchCodeMieModels(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
       throw new Error(`SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`);
     }
     logger.debug('[pi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
   }
 
   throw new Error('No CodeMie authentication available. Run codemie setup or set CODEMIE_JWT_TOKEN.');

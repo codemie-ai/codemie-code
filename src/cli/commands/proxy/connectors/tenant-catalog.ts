@@ -138,6 +138,16 @@ function logCatalogFetchThrew(endpoint: string, proxyUrl: string, error: unknown
   );
 }
 
+/**
+ * Model catalog URL on the local proxy. With a project, `project_id` makes the backend
+ * narrow the list to the models that project allows (its Models tab).
+ */
+export function buildProxyLlmModelsUrl(proxyUrl: string, project?: string): string {
+  const url = new URL('/v1/llm_models?include_all=true', proxyUrl);
+  if (project) url.searchParams.set('project_id', project);
+  return url.toString();
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
@@ -153,11 +163,12 @@ function isAbortError(error: unknown): boolean {
  */
 export async function fetchTenantModelDescriptors(
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  project?: string
 ): Promise<TenantModelDescriptor[]> {
   let endpoint: string;
   try {
-    endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+    endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   } catch (error) {
     throw new ConfigurationError(
       `Local proxy model discovery could not build a request URL from proxyUrl "${proxyUrl}". ` +
@@ -205,6 +216,10 @@ export async function fetchTenantModelDescriptors(
 }
 
 /** Every enabled deployment id the tenant's gateway exposes, in catalog order. */
-export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: string): Promise<string[]> {
-  return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey)).map((d) => d.id);
+export async function fetchTenantModelCatalog(
+  proxyUrl: string,
+  gatewayKey: string,
+  project?: string
+): Promise<string[]> {
+  return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey, project)).map((d) => d.id);
 }

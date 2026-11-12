@@ -37,6 +37,8 @@ interface OmpExtensionApi {
 interface DaemonConnection {
   url: string;
   gatewayKey: string;
+  /** Profile project the daemon was started with; narrows the catalog to that project's models. */
+  project?: string;
 }
 
 // Mirrors `codemie proxy start` / `connect` defaults (DEFAULT_DAEMON_PORT, daemon-manager gatewayKey).
@@ -53,15 +55,17 @@ function readDaemonConnection(): DaemonConnection {
     return {
       url: typeof state.url === 'string' && state.url ? state.url : DEFAULT_DAEMON_URL,
       gatewayKey: typeof state.gatewayKey === 'string' && state.gatewayKey ? state.gatewayKey : DEFAULT_GATEWAY_KEY,
+      ...(typeof state.project === 'string' && state.project ? { project: state.project } : {}),
     };
   } catch {
     return { url: DEFAULT_DAEMON_URL, gatewayKey: DEFAULT_GATEWAY_KEY };
   }
 }
 
-async function fetchRoster({ url, gatewayKey }: DaemonConnection): Promise<OmpModelRoster> {
+async function fetchRoster({ url, gatewayKey, project }: DaemonConnection): Promise<OmpModelRoster> {
   // Discovery uses the same connection snapshot as inference; a daemon port/key change needs an omp restart.
   const endpoint = new URL('/v1/llm_models?include_all=true', url);
+  if (project) endpoint.searchParams.set('project_id', project);
 
   let response: Response;
   try {

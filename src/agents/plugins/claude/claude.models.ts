@@ -158,7 +158,10 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
   const jwtToken = env.CODEMIE_JWT_TOKEN;
   const baseUrl = env.CODEMIE_BASE_URL;
   const platformUrl = getPlatformUrlFromEnv(env);
-  const cacheKey = jwtToken && baseUrl ? `jwt:${baseUrl}` : `sso:${platformUrl ?? ''}`;
+  const projectKey = env.CODEMIE_PROJECT || '';
+  const cacheKey = jwtToken && baseUrl
+    ? `jwt:${baseUrl}:${projectKey}`
+    : `sso:${platformUrl ?? ''}:${projectKey}`;
 
   if (
     cachedCatalog &&
@@ -171,7 +174,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
   let models: LlmModel[];
   if (jwtToken && baseUrl) {
     logger.debug('[claude-models] Fetching CodeMie model list via JWT auth');
-    models = await fetchCodeMieLlmModels(baseUrl, jwtToken);
+    models = await fetchCodeMieLlmModels(baseUrl, jwtToken, env.CODEMIE_PROJECT || undefined);
   } else if (platformUrl) {
     const found = await getStoredPlatformCredentialsFromEnv(env);
     if (!found) {
@@ -180,7 +183,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
       );
     }
     logger.debug('[claude-models] Fetching CodeMie model list via SSO auth');
-    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, env.CODEMIE_PROJECT || undefined);
   } else {
     models = [];
   }
