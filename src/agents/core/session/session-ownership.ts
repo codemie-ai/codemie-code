@@ -45,6 +45,23 @@ function displayedId(fileName: string): string {
   return base.startsWith(COMPLETED_PREFIX) ? base.slice(COMPLETED_PREFIX.length) : base;
 }
 
+/**
+ * Ranking among records matching one CodeMie id: an exact displayed-id match (the
+ * `<uuid>-<generation>` the user copied) first, then a record that has a usable native id,
+ * then the most recently modified file.
+ */
+function isBetterMatch(candidate: LoadedRecord, current: LoadedRecord, resumeId: string): boolean {
+  const candidateExact = displayedId(candidate.fileName) === resumeId;
+  const currentExact = displayedId(current.fileName) === resumeId;
+  if (candidateExact !== currentExact) return candidateExact;
+
+  const candidateUsable = usableNativeId(candidate.record) !== undefined;
+  const currentUsable = usableNativeId(current.record) !== undefined;
+  if (candidateUsable !== currentUsable) return candidateUsable;
+
+  return candidate.mtimeMs > current.mtimeMs;
+}
+
 function loadRecords(dir: string): LoadedRecord[] {
   let files: string[];
   try {
@@ -62,8 +79,16 @@ function loadRecords(dir: string): LoadedRecord[] {
   for (const fileName of files) {
     try {
       const path = join(dir, fileName);
-      const record = JSON.parse(readFileSync(path, 'utf-8')) as SessionRecordFile;
-      records.push({ fileName, record, mtimeMs: statSync(path).mtimeMs });
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+      if (parsed === null || typeof parsed !== 'object') {
+        logger.debug(`[session-ownership] Skipping non-object session file: ${fileName}`);
+        continue;
+      }
+      records.push({
+        fileName,
+        record: parsed as SessionRecordFile,
+        mtimeMs: statSync(path).mtimeMs,
+      });
     } catch {
       logger.debug(`[session-ownership] Skipping unreadable session file: ${fileName}`);
     }
@@ -104,11 +129,9 @@ export function resolveClaudeResumeSession(
     return { owned: false };
   }
 
-  const best =
-    codemieMatches.find(({ fileName }) => displayedId(fileName) === resumeId) ??
-    codemieMatches.reduce((newest, candidate) =>
-      candidate.mtimeMs > newest.mtimeMs ? candidate : newest,
-    );
+  const best = codemieMatches.reduce((top, candidate) =>
+    isBetterMatch(candidate, top, resumeId) ? candidate : top,
+  );
   return {
     owned: true,
     nativeId: usableNativeId(best.record),

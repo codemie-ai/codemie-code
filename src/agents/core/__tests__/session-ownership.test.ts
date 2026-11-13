@@ -161,4 +161,43 @@ describe('resolveClaudeResumeSession', () => {
     );
     expect(resolveClaudeResumeSession('cm-5', TMP).owned).toBe(false);
   });
+
+  it('skips a session file that parses to null instead of throwing, and still resolves another record', () => {
+    writeFileSync(join(TMP, 'completed_broken.json'), 'null');
+    writeRecord('completed_cm-8.json', { sessionId: 'cm-8', agentSessionId: 'native-8' });
+    expect(resolveClaudeResumeSession('cm-8', TMP).nativeId).toBe('native-8');
+    expect(resolveClaudeResumeSession('unknown-id', TMP)).toEqual({ owned: false });
+  });
+
+  it('skips session files that parse to a non-object', () => {
+    writeFileSync(join(TMP, 'a.json'), '42');
+    writeFileSync(join(TMP, 'b.json'), '"text"');
+    writeFileSync(join(TMP, 'c.json'), '[1,2]');
+    writeRecord('completed_cm-9.json', { sessionId: 'cm-9', agentSessionId: 'native-9' });
+    expect(resolveClaudeResumeSession('cm-9', TMP).nativeId).toBe('native-9');
+  });
+
+  it('prefers an older generation that has a native id over the newest one that has none', () => {
+    writeRecord('completed_cm-10-gen_a.json', { sessionId: 'cm-10', agentSessionId: 'n-old' });
+    writeRecord('completed_cm-10-gen_b.json', { sessionId: 'cm-10' });
+    utimesSync(join(TMP, 'completed_cm-10-gen_a.json'), new Date(2026, 0, 1), new Date(2026, 0, 1));
+    utimesSync(join(TMP, 'completed_cm-10-gen_b.json'), new Date(2026, 5, 1), new Date(2026, 5, 1));
+    expect(resolveClaudeResumeSession('cm-10', TMP).nativeId).toBe('n-old');
+  });
+
+  it('picks the newest of two files that share the same displayed id', () => {
+    writeRecord('cm-11.json', { sessionId: 'cm-11', agentSessionId: 'n-live' });
+    writeRecord('completed_cm-11.json', { sessionId: 'cm-11', agentSessionId: 'n-completed' });
+    utimesSync(join(TMP, 'cm-11.json'), new Date(2026, 0, 1), new Date(2026, 0, 1));
+    utimesSync(join(TMP, 'completed_cm-11.json'), new Date(2026, 5, 1), new Date(2026, 5, 1));
+    expect(resolveClaudeResumeSession('cm-11', TMP).nativeId).toBe('n-completed');
+  });
+
+  it('still prefers the exact <uuid>-<generation> match even when a newer generation has a native id', () => {
+    writeRecord('completed_cm-12-gen_a.json', { sessionId: 'cm-12', agentSessionId: 'n-a' });
+    writeRecord('completed_cm-12-gen_b.json', { sessionId: 'cm-12', agentSessionId: 'n-b' });
+    utimesSync(join(TMP, 'completed_cm-12-gen_a.json'), new Date(2026, 0, 1), new Date(2026, 0, 1));
+    utimesSync(join(TMP, 'completed_cm-12-gen_b.json'), new Date(2026, 5, 1), new Date(2026, 5, 1));
+    expect(resolveClaudeResumeSession('cm-12-gen_a', TMP).nativeId).toBe('n-a');
+  });
 });
