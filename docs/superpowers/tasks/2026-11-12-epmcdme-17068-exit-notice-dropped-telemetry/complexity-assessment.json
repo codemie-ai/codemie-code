@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Fix CLI shutdown analytics delivery notices and retry policy (EPMCDME-17068): honest exit messages identifying dropped sessions, a final attempt before any drop at a healthy start, a time-based failure budget replacing the 3-per-launch count, and reconciled per-line sync caps so delivered records are not marked dropped.",
+  "generated": "2026-11-12T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Five components across subsystems: agent-core session layer (exit-notice, stale-session-reconciliation, Session types, SessionStore merge), CLI hook delivery (hook/delivery.ts, hook.ts drop sites), SSO sync processors (metrics delta and conversation payload per-line caps), Desktop daemon delivery (DesktopSessionDelivery), and the BaseAgentAdapter exit step. A new time-based budget abstraction replaces MAX_ATTEMPTS, and three independent 3-strike counters must be reconciled. Base L, bumped to XL because the change affects several workflows (CLI wrapper exit, start-pass reconciliation, hooks, Desktop)." },
+    { "dimension": "requirements_clarity", "reason": "Outcome goals and the regression scenarios are clear and there is a confirmed repro. Several design decisions are still open: the length of the time budget window, how JSON 4xx rejections fit with the rule that a short outage loses nothing, whether the per-line caps are removed or folded into the record budget, the new identity/reason data the notice needs, and how existing on-disk records already at deliveryAttempts=3 are treated." },
+    { "dimension": "technical_risk", "reason": "The closest pattern is the existing settleAttempt give-back machinery, the bounded-request outcome signals and the reconcile locks, and it can be reused. There is no precedent for a time-based budget on sync-API records. Changing the rules risks data loss, or duplicate or endless retries, and it applies straight away to persisted records on users' disks. hasUndeliveredData and hasNoPendingData disagree by design. The existing error-path test templates (hook.session-delivery, stale-session-reconciliation) cover the enumerated edge cases, so the test-template auto-bump does not apply." },
+    { "dimension": "file_change_estimate", "reason": "About 6-9 source files (exit-notice, stale-session-reconciliation, types, SessionStore, hook/delivery, hook.ts, metrics-sync-processor, payload-queue/syncProcessor, DesktopSessionDelivery, possibly BaseAgentAdapter), plus 2-3 docs (ANALYTICS-REPORT.md, external-integrations.md, ARCHITECTURE-PROXY.md) and about 5 test files that assert current counts and literal message texts. That is roughly 13-15 modified across src/agents, src/cli, src/providers, src/telemetry and docs." },
+    { "dimension": "affected_layers", "reason": "Service (session reconciliation and the sync processors), DB-Persistence (the on-disk Session record gains new budget/identity fields and SessionStore needs a merge rule), Infrastructure (the Desktop telemetry daemon) and External (sync API outcome classification). That is 4 layers including a persisted-schema change, which meets the L criteria." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: affects multiple workflows (CLI wrapper exit, start-pass reconciliation, hook delivery, Desktop daemon delivery)"
+  ],
+  "split_recommendation": null
+}
