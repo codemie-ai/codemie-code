@@ -81,7 +81,8 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
   const turns = (session.messages as TurnRecord[]).filter((m) => m.type === 'assistant');
   const agentSessionId = context.agentSessionId ?? session.sessionId;
   const fallbackBranch = context.gitBranch ?? (session.metadata?.gitBranch as string | undefined);
-  const openingPrompt = session.metrics?.userPrompts?.[0];
+  const promptsDone = existing.reduce((n, d) => n + (d.userPrompts?.length ?? 0), 0);
+  const pendingPrompts = (session.metrics?.userPrompts ?? []).slice(promptsDone);
   const lastRecordAt = latestRecordTime(session.recordTimes, window.upperBound);
 
   // Activity not yet on disk: transcript totals minus what earlier runs wrote.
@@ -106,7 +107,7 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
       ...(Object.keys(pending.commandInvocations).length > 0 && { commandInvocations: pending.commandInvocations }),
     }),
     ...(model && { models: [model] }),
-    ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
+    ...(carry && pendingPrompts.length > 0 && { userPrompts: pendingPrompts }),
   });
 
   const deltas = runTurns.map(({ turn, recordId }, i) =>
