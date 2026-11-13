@@ -748,7 +748,7 @@ describe('reconcileOtherSessions', () => {
     expect(load(stranded.sessionId).droppedAt).toBeUndefined();
   });
 
-  it('a local finalize failure that repeats closes the record locally at the cap, never marked dropped; fewer in a row leave it for a later start', async () => {
+  it('a local finalize failure that repeats closes the record locally at the cap and is reported dropped (its data was never sent); fewer in a row leave it for a later start', async () => {
     const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
     const stuck = record();
     save(stuck);
@@ -763,8 +763,8 @@ describe('reconcileOtherSessions', () => {
     expect(existsSync(join(sessionsDir, `${stuck.sessionId}.json`))).toBe(false);
     const closed = load(stuck.sessionId, 'completed_');
     expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted' });
-    expect(closed.droppedAt).toBeUndefined();
-    expect(closed.droppedReason).toBeUndefined();
+    expect(closed.droppedAt).toBeTypeOf('number');
+    expect(closed.droppedReason).toBe('retry budget exhausted');
   });
 
   it('an abort that cuts a failing finalize is no local failure: the cap does not count it', async () => {
@@ -1329,7 +1329,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
   });
 
-  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the one past the cap of local failures is closed locally unmarked, correlation untouched', async () => {
+  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the one past the cap of local failures is closed locally and reported dropped, correlation untouched', async () => {
     const agentHome = join(home, 'copilot');
     mkdirSync(agentHome);
     const named = { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') };
@@ -1348,7 +1348,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
 
     expect(hook.processEvent.mock.calls).toEqual([]);
     expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
-    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeUndefined();
+    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
   });
 
   it.each([['no attempt', {}], ['its budget', spentBudget()]])('its named transcript gone while the stored root exists ends uncorrelated, %s spent', async (_case, spent) => {

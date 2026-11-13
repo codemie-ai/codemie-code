@@ -416,7 +416,7 @@ async function finalizeRecord(
 /**
  * A finalize that failed: closed locally, nothing sent, when this attempt's own counted failure spent the budget (the
  * evidence retention spends it at any outcome) or after {@link LOCAL_FINALIZE_FAILURE_CAP} failures of its own in a row
- * (never marked dropped); any other failure is rethrown and leaves the record for a later start.
+ * (marked dropped when it was to deliver); any other failure is rethrown and leaves the record for a later start.
  */
 async function closeAfterFinalizeFailure(
   record: Session,
@@ -437,7 +437,8 @@ async function closeAfterFinalizeFailure(
   }
   // A failure of its own (no request noted, no abort) that repeats must not hold one of the pass's slots until the retention ends
   if (attemptOutcome(signal) === undefined && !signal.aborted && (await localFinalizeFailuresSpent(id))) {
-    await closeExhaustedLocally(id, error, options, undefined);
+    // Closed with data it never sent: reported as dropped, not lost silently
+    await closeExhaustedLocally(id, error, options, deliver ? 'retry budget exhausted' : undefined);
     return;
   }
   throw error;

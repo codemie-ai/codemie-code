@@ -78,7 +78,7 @@ export function notDroppedBefore(s: Session, now: number): number {
 
 /**
  * Whether a closed record still holds data it was to send: an end metric neither sent nor skipped, or — for a matched
- * record — a metric line neither synced nor rejected, or a conversation payload neither sent nor superseded. A file
+ * record — a metric line still pending or failed, or a conversation payload neither sent nor superseded. A file
  * that cannot be read is not delivered; a torn line in it is skipped.
  */
 export async function hasUndeliveredData(record: Session): Promise<boolean> {
@@ -88,7 +88,8 @@ export async function hasUndeliveredData(record: Session): Promise<boolean> {
     // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
     if (!legacyMetricsWithheld(record)) {
       const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[delivery]');
-      if (deltas.some((delta) => delta.syncStatus !== 'synced' && delta.syncStatus !== 'rejected')) return true;
+      // The lines the metrics processor will send (pending/failed): a line it never resends cannot hold the record queued
+      if (deltas.some((delta) => delta.syncStatus === 'pending' || delta.syncStatus === 'failed')) return true;
     }
     const payloads = await readJSONLTolerant<ConversationPayloadRecord>(getSessionConversationPath(record.sessionId), '[delivery]');
     const sent = new Set(payloads.filter((p) => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).map(getPayloadId));

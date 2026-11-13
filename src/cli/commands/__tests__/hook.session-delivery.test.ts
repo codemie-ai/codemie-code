@@ -3701,7 +3701,7 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(session.sessionId).reason).toBe('logout');
   });
 
-  it('the read still failing: the own-record step rejects, starts spend nothing on the local failure, the fifth closes it locally unmarked with nothing of the transcript sent', async () => {
+  it('the read still failing: the own-record step rejects, starts spend nothing on the local failure, the fifth closes it locally, reported dropped, with nothing of the transcript sent', async () => {
     const { session, env, end } = copilotRun();
     const id = session.sessionId;
     const startedAt = Date.now();
@@ -3721,12 +3721,12 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
 
     await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
 
-    // Closed locally at the cap: never marked dropped, nothing sent, nothing for the exit notice to name
+    // Closed locally at the cap: nothing sent, so it is marked dropped and the exit notice names it
     expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted' });
-    expect(readRecord(id, 'completed_').droppedAt).toBeUndefined();
+    expect(readRecord(id, 'completed_').droppedAt).toBeTypeOf('number');
     expect(requests).toEqual([]);
     await noticeDeliveryAtExit('own', startedAt, true);
-    expect(stderr.mock.calls.flat().join()).not.toContain('were dropped');
+    expect(stderr.mock.calls.flat().join()).toContain('were dropped');
     expect(existsSync(spool(id, 'metrics', 'completed_'))).toBe(false);
     expect(existsSync(spool(id, 'conversation', 'completed_'))).toBe(false);
   });
@@ -3924,6 +3924,44 @@ describe('EPMCDME-17068 regressions', () => {
       expect(text).not.toContain(lostText);
       expect(stored(own.sessionId)?.droppedAt).toBeTypeOf('number');
     }
+  });
+
+  it('SessionEnd whose counted failure spends the budget drops the record: renamed completed_, droppedReason retry budget exhausted', async () => {
+    const session = baseRecord({ deliveryRealAttempts: 2, deliveryFailingSince: Date.now() - 25 * HOUR });
+    writeRecord(session);
+    respond = () => json(404, 'not found');
+
+    await processEvent({ ...syntheticEnd(), reason: 'exit' }, config(session));
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retry budget exhausted' });
+    expect(readRecord(session.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+  });
+
+  it('/clear whose counted failure spends the budget drops the previous generation instead of re-queueing it', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-one', agentSessionFile: transcript },
+      deliveryRealAttempts: 2,
+      deliveryFailingSince: Date.now() - 25 * HOUR
+    });
+    writeRecord(session);
+    respond = () => json(404, 'not found');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const dropped = readdirSync(sessionsDir).filter((n) => n.startsWith('completed_') && n.endsWith('.json'));
+    expect(dropped).toHaveLength(1);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, dropped[0]), 'utf-8')) as Session;
+    expect(previous.droppedReason).toBe('retry budget exhausted');
+    expect(previous.droppedAt).toBeTypeOf('number');
   });
 
   it('/clear during an outage keeps the previous generation queued and unmarked; the next healthy start delivers it', async () => {

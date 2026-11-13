@@ -200,6 +200,12 @@ describe('delivery budget', () => {
       expect(await hasUndeliveredData(s)).toBe(true);
     });
 
+    it('a syncing line is not counted: the metrics processor never resends it, so it cannot hold the record queued', async () => {
+      const { hasUndeliveredData } = await import('../delivery-budget.js');
+      writeDeltas('synced', 'syncing');
+      expect(await hasUndeliveredData(makeSession({ endMetricSentAt: NOW }))).toBe(false);
+    });
+
     it('counts an unsent end metric and ignores a legacy-withheld delta', async () => {
       const { hasUndeliveredData } = await import('../delivery-budget.js');
       expect(await hasUndeliveredData(makeSession())).toBe(true);
