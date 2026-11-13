@@ -134,6 +134,21 @@ describe('resolveClaudeResumeSession', () => {
     expect(resolveClaudeResumeSession('cm-4', TMP)).toEqual({ owned: false });
   });
 
+  it('does not resolve a native id that belongs to another agent', () => {
+    writeRecord('completed_cm-13.json', { sessionId: 'cm-13', agentName: 'opencode', agentSessionId: 'ses_oc-native' });
+    expect(resolveClaudeResumeSession('ses_oc-native', TMP)).toEqual({ owned: false });
+  });
+
+  it('resolves a native id from a claude-acp record and from a record with no agentName', () => {
+    writeRecord('completed_cm-14.json', { sessionId: 'cm-14', agentName: 'claude-acp', agentSessionId: 'n-acp' });
+    writeFileSync(
+      join(TMP, 'completed_cm-15.json'),
+      JSON.stringify({ sessionId: 'cm-15', correlation: { agentSessionId: 'n-legacy' } }),
+    );
+    expect(resolveClaudeResumeSession('n-acp', TMP).owned).toBe(true);
+    expect(resolveClaudeResumeSession('n-legacy', TMP).owned).toBe(true);
+  });
+
   it('returns owned: false for an unknown id', () => {
     writeRecord('completed_cm-1.json', { sessionId: 'cm-1', agentSessionId: 'native-1' });
     expect(resolveClaudeResumeSession('nope', TMP)).toEqual({ owned: false });

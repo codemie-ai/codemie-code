@@ -43,7 +43,6 @@ const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 interface CompletedSessionRecord {
   sessionId: string;
   origin?: string;
-  resumeSessionId?: string;
   correlation?: { agentSessionId?: string };
 }
 
@@ -137,7 +136,10 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('codemie-claude --resume w
 
     const secondRecord = readRecord(sessionsDir, secondPoll.sessionId!);
     expect(secondRecord.sessionId).not.toBe(codemieId);
-    expect(secondRecord.resumeSessionId, 'Session.resumeSessionId must hold the native id').toBe(nativeId);
+    expect(
+      secondRecord.correlation?.agentSessionId,
+      'the resumed run must continue the original native Claude session',
+    ).toBe(nativeId);
     expect(secondRecord.origin, 'a CodeMie id must not be treated as an external resume').not.toBe('external-resume');
   }, CLI_TIMEOUT_MS * 3 + 60_000);
 });

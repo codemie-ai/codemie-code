@@ -30,6 +30,11 @@ interface LoadedRecord {
   mtimeMs: number;
 }
 
+/** A record holds a Claude session unless it names another agent (older records name none). */
+function isClaudeRecord(record: SessionRecordFile): boolean {
+  return !record.agentName || CLAUDE_AGENT_NAMES.has(record.agentName);
+}
+
 /** A native id is usable unless it is missing, 'unknown', or the placeholder equal to the CodeMie id. */
 function usableNativeId(record: SessionRecordFile): string | undefined {
   const native = record.correlation?.agentSessionId;
@@ -102,6 +107,7 @@ function loadRecords(dir: string): LoadedRecord[] {
  * Accepts either the native Claude id (matches `correlation.agentSessionId`) or the CodeMie
  * session id shown by `codemie analytics` / `codemie log` (matches `record.sessionId` or the
  * displayed file id, which may carry a `-<generation>` suffix). A native-id match wins.
+ * Only Claude records are considered for either kind of id.
  */
 export function resolveClaudeResumeSession(
   resumeId: string,
@@ -109,7 +115,9 @@ export function resolveClaudeResumeSession(
 ): ResumeSessionMatch {
   const records = loadRecords(sessionsDir ?? getCodemiePath('sessions'));
 
-  const nativeMatch = records.find(
+  const claudeRecords = records.filter(({ record }) => isClaudeRecord(record));
+
+  const nativeMatch = claudeRecords.find(
     ({ record }) => usableNativeId(record) === resumeId,
   );
   if (nativeMatch) {
@@ -120,10 +128,9 @@ export function resolveClaudeResumeSession(
     };
   }
 
-  const codemieMatches = records.filter(
+  const codemieMatches = claudeRecords.filter(
     ({ fileName, record }) =>
-      (!record.agentName || CLAUDE_AGENT_NAMES.has(record.agentName)) &&
-      (record.sessionId === resumeId || displayedId(fileName) === resumeId),
+      record.sessionId === resumeId || displayedId(fileName) === resumeId,
   );
   if (codemieMatches.length === 0) {
     return { owned: false };
