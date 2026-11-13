@@ -5,7 +5,8 @@ import { GeminiSessionAdapter } from './gemini.session-adapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
-import { validateGeminiModel } from './gemini.models.js';
+import { isGeminiCompatibleModelName, validateGeminiModel } from './gemini.models.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
 
 /**
  * Supported Gemini CLI version
@@ -47,6 +48,7 @@ const metadata = {
 
   supportedProviders: ['ai-run-sso', 'litellm', 'bearer-auth'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
+  classifyModel: (id, ctx) => classifyWithPredicate(isGeminiCompatibleModelName, id, ctx),
   recommendedModels: ['gemini-3-pro'],
 
   ssoConfig: {

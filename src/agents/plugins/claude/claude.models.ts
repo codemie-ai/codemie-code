@@ -52,6 +52,22 @@ const CLAUDE_INCOMPATIBLE_MODEL_PATTERNS: RegExp[] = [
   /vision-only/i,
 ];
 
+const CLAUDE_FAMILY_PATTERNS: RegExp[] = [
+  /claude/i,
+  /anthropic/i,
+  /sonnet/i,
+  /opus/i,
+  /haiku/i,
+];
+
+/** A model name is Claude-compatible when it names the Claude family and is not a non-chat model. */
+export function isClaudeCompatibleModelName(modelName: string | undefined): modelName is string {
+  if (!modelName) return false;
+  if (CLAUDE_INCOMPATIBLE_MODEL_PATTERNS.some((p) => p.test(modelName))) return false;
+  return CLAUDE_FAMILY_PATTERNS.some((p) => p.test(modelName));
+}
+
+
 // `model` (the default tier) accepts any Claude-family model; the other tiers
 // must additionally match their own name.
 const TIER_PATTERN: Record<ClaudeModelTier, RegExp | null> = {
@@ -184,7 +200,7 @@ const ONE_MILLION_SUFFIX = '[1m]';
 const ONE_MILLION_SUFFIX_PATTERN = /\[1m\]$/i;
 const ONE_MILLION_TOKENS = 1_000_000;
 
-function stripOneMillionSuffix(id: string): string {
+export function stripOneMillionSuffix(id: string): string {
   return id.replace(ONE_MILLION_SUFFIX_PATTERN, '');
 }
 

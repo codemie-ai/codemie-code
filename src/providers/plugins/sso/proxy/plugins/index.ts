@@ -17,6 +17,7 @@ import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
 import { BackgroundRequestNormalizerPlugin } from './background-request-normalizer.plugin.js';
+import { ProfileModelFollowerPlugin } from './profile-model-follower.plugin.js';
 import { KimiRequestNormalizerPlugin } from './kimi-request-normalizer.plugin.js';
 import { CodexRequestNormalizerPlugin } from './codex-request-normalizer.plugin.js';
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
@@ -42,6 +43,7 @@ export function registerCorePlugins(): void {
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new SSOSessionExpiryPlugin()); // Priority 11 - relabels a rejected session (an oauth2-proxy redirect to /oauth2/start, or the backend's "Authentication failed" 401; acted on alone — see the plugin's own header comment for why) as a parseable 401 and triggers re-auth before any other onUpstreamResponse plugin sees it
+  registry.register(new ProfileModelFollowerPlugin()); // Priority 13 - applies `codemie models switch --agent` to a running Gemini/Copilot/Kimi/OpenWiki session
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new BackgroundRequestNormalizerPlugin()); // Priority 14 - forces cheap background calls (e.g. title-gen) onto haiku
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
@@ -74,6 +76,7 @@ export {
   ClaudeRequestNormalizerPlugin,
   BackgroundRequestNormalizerPlugin,
   KimiRequestNormalizerPlugin,
+  ProfileModelFollowerPlugin,
   CodexRequestNormalizerPlugin,
   CodexEncryptedContentSanitizerPlugin,
   CopilotEncryptedContentSanitizerPlugin,

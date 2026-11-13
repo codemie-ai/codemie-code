@@ -169,13 +169,16 @@ export function buildPaginationControls(
   return `${label} ${prevCursor}${prevText}    ${nextCursor}${nextText}\n\n`;
 }
 
-export function buildButtons(state: Pick<BaseSelectionState, 'areNavigationButtonsFocused' | 'focusedButton' | 'isSearchFocused' | 'isPaginationFocused'>): string {
+export function buildButtons(
+  state: Pick<BaseSelectionState, 'areNavigationButtonsFocused' | 'focusedButton' | 'isSearchFocused' | 'isPaginationFocused'>,
+  continueLabel: string = SHARED_TEXT.CONTINUE_BUTTON
+): string {
   const { areNavigationButtonsFocused, focusedButton, isSearchFocused, isPaginationFocused } = state;
   const buttonsActive = areNavigationButtonsFocused && !isSearchFocused && isPaginationFocused === null;
 
   const continueButton = buttonsActive && focusedButton === 'continue'
-    ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${SHARED_TEXT.CONTINUE_BUTTON} `)
-    : chalk.dim(`[${SHARED_TEXT.CONTINUE_BUTTON}]`);
+    ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${continueLabel} `)
+    : chalk.dim(`[${continueLabel}]`);
 
   const cancelButton = buttonsActive && focusedButton === 'cancel'
     ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${SHARED_TEXT.CANCEL_BUTTON} `)

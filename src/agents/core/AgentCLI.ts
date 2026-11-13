@@ -4,7 +4,13 @@ import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
-import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import {
+  ConfigLoader,
+  CodeMieConfigOptions,
+  resolveAgentModelSet,
+  resolveProfileModels,
+  withAgentModelView
+} from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -28,6 +34,7 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
+import { classifyModelForAgent } from './model-compat.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -222,7 +229,7 @@ export class AgentCLI {
       // exports is what its session records carry); `.env` and the agent itself stay in process.cwd().
       const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
       const configDir = await findNearestConfigDir(process.cwd());
-      const config = await ConfigLoader.load(configDir, {
+      const loadedConfig = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,
         model: options.model as string | undefined,
@@ -231,6 +238,17 @@ export class AgentCLI {
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
       }, process.cwd());
+
+      // An explicit --model or CODEMIE_MODEL is the user's own choice for this run: it beats the
+      // agent's persisted active model, and the persisted-model harness check does not apply to it.
+      // With --profile, ConfigLoader.load ignores CODEMIE_MODEL (profile protection), so an
+      // inherited value (e.g. from a parent codemie session) must not count as an override either.
+      const modelOverridden = Boolean(options.model) || (Boolean(process.env.CODEMIE_MODEL) && !options.profile);
+      // A per-agent profile launches with this agent's own active model and model list.
+      const config = withAgentModelView(loadedConfig, this.adapter.name);
+      if (modelOverridden) {
+        config.model = loadedConfig.model;
+      }
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
@@ -384,7 +402,7 @@ export class AgentCLI {
       }
 
       // Validate provider and model compatibility
-      if (!this.validateCompatibility(config)) {
+      if (!this.validateCompatibility(config, modelOverridden)) {
         process.exit(1);
       }
 
@@ -709,7 +727,7 @@ export class AgentCLI {
   /**
    * Validate provider and model compatibility
    */
-  private validateCompatibility(config: CodeMieConfigOptions): boolean {
+  private validateCompatibility(config: CodeMieConfigOptions, modelOverridden = false): boolean {
     const metadata = this.getAgentMetadata();
     if (!metadata) {
       logger.error(`Unknown agent '${this.adapter.name}'`);
@@ -751,6 +769,13 @@ export class AgentCLI {
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
         console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
         console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
+
+        // When the agent has 2+ models, point at the in-place switch
+        // command too — it's narrower than --model (only ever offers this
+        // profile's own list) and persists, unlike the one-off override above.
+        if (resolveProfileModels(config, this.adapter.name).length >= 2) {
+          console.log(chalk.white('  Or run: ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick a compatible model from this profile.'));
+        }
       } else {
         console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }
@@ -758,7 +783,54 @@ export class AgentCLI {
       return false;
     }
 
+    // Persisted active model vs the launching harness (EPMCDME-15641). Only a model that
+    // classifies as `incompatible` acts; `unverified` and unrestricted agents print nothing.
+    if (!modelOverridden && config.model) {
+      return this.checkHarnessCompatibility(config, config.model);
+    }
+
     return true;
+  }
+
+  /**
+   * A per-agent profile (`agentModels`, set up by `codemie setup`) blocks the launch on a mismatch;
+   * a legacy profile only gets a warning, because nothing was ever validated for it.
+   */
+  private checkHarnessCompatibility(config: CodeMieConfigOptions, model: string): boolean {
+    const agentSet = resolveAgentModelSet(config, this.adapter.name);
+    const opts = { confirmedModels: agentSet?.confirmedModels, provider: config.provider };
+    if (classifyModelForAgent(this.adapter.name, model, opts) !== 'incompatible') {
+      return true;
+    }
+
+    const name = this.adapter.displayName;
+    const siblings = resolveProfileModels(config, this.adapter.name).filter(
+      id => id !== model && classifyModelForAgent(this.adapter.name, id, opts) !== 'incompatible'
+    );
+    const isPerAgentProfile = Boolean(config.agentModels);
+
+    // stderr only: stdout is parsed by ACP/SDK/CI callers, and a legacy profile continues to launch.
+    if (isPerAgentProfile) {
+      logger.error(`Active model '${model}' is not compatible with ${name}`);
+    } else {
+      console.error(chalk.yellow(`\n⚠ Active model '${model}' does not look compatible with ${name}; it may fail at launch.`));
+    }
+
+    if (siblings.length > 0) {
+      console.error(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
+      console.error(chalk.white('Run ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick one.'));
+    } else {
+      console.error(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
+    }
+
+    return !isPerAgentProfile;
+  }
+
+  /** `codemie models switch`, scoped to this agent when the profile sets models per agent. */
+  private modelsSwitchCommand(config: CodeMieConfigOptions): string {
+    return resolveAgentModelSet(config, this.adapter.name)
+      ? `codemie models switch --agent ${this.adapter.name.replace(/-acp$/, '')}`
+      : 'codemie models switch';
   }
 
   private async promptExternalResume(

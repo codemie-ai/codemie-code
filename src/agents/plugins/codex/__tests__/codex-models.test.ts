@@ -261,6 +261,84 @@ describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
     await expect(resolveCodexModel({})).rejects.toThrow(/No CodeMie GPT\/Codex model is available/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  // CODEMIE_PROFILE_MODELS must narrow the on-disk catalog file (model_catalog_json) that
+  // native Codex's own /model picker renders from — CODEMIE_CODEX_AVAILABLE_MODELS (set by
+  // codex.plugin.ts via filterAvailableModelsToProfile) only gates --model flag validation
+  // and is never read by the picker. Devtest on EPMCDME-15639 found the catalog file left
+  // fully unfiltered despite a correctly-populated CODEMIE_PROFILE_MODELS.
+  describe('CODEMIE_PROFILE_MODELS narrowing the on-disk model_catalog_json', () => {
+    it('narrows the written catalog to the profile models', async () => {
+      fetchMock.mockResolvedValue([
+        model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'GPT-5 Codex' }),
+        model({ deployment_name: 'gpt-5-mini', base_name: 'gpt-5-mini', label: 'GPT-5 mini' }),
+        model({ deployment_name: 'gpt-6-luna', base_name: 'gpt-6-luna', label: 'GPT-6 Luna' }),
+      ]);
+
+      const r = await resolveCodexModel({
+        ...jwtEnv,
+        CODEMIE_MODEL: 'gpt-5-codex',
+        CODEMIE_PROFILE_MODELS: 'gpt-5-codex,gpt-6-luna',
+      });
+
+      const catalog = JSON.parse(readFileSync(r.catalogPath!, 'utf-8'));
+      const slugs = catalog.models.map((m: { slug: string }) => m.slug).sort();
+      expect(slugs).toEqual(['gpt-5-codex', 'gpt-6-luna']);
+      // The unfiltered id list (used for --model flag validation) stays unaffected.
+      expect(r.availableModels.sort()).toEqual(['gpt-5-codex', 'gpt-5-mini', 'gpt-6-luna']);
+    });
+
+    it('keeps the selected model in the catalog even when CODEMIE_PROFILE_MODELS excludes it (CR-003 parity)', async () => {
+      fetchMock.mockResolvedValue([
+        model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'GPT-5 Codex' }),
+        model({ deployment_name: 'gpt-5-mini', base_name: 'gpt-5-mini', label: 'GPT-5 mini' }),
+      ]);
+
+      const r = await resolveCodexModel({
+        ...jwtEnv,
+        CODEMIE_MODEL: 'gpt-5-mini',
+        CODEMIE_PROFILE_MODELS: 'gpt-5-codex',
+      });
+
+      expect(r.selectedModel).toBe('gpt-5-mini');
+      const catalog = JSON.parse(readFileSync(r.catalogPath!, 'utf-8'));
+      const slugs = catalog.models.map((m: { slug: string }) => m.slug).sort();
+      expect(slugs).toEqual(['gpt-5-codex', 'gpt-5-mini']);
+    });
+
+    it('falls back to the full catalog, with a user-visible notice, when CODEMIE_PROFILE_MODELS matches nothing (AC22 parity)', async () => {
+      const { logger } = await import('../../../../utils/logger.js');
+      const warnSpy = vi.spyOn(logger, 'notice').mockImplementation(() => {});
+
+      fetchMock.mockResolvedValue([
+        model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'GPT-5 Codex' }),
+        model({ deployment_name: 'gpt-5-mini', base_name: 'gpt-5-mini', label: 'GPT-5 mini' }),
+      ]);
+
+      const r = await resolveCodexModel({
+        ...jwtEnv,
+        CODEMIE_PROFILE_MODELS: 'does-not-exist',
+      });
+
+      const catalog = JSON.parse(readFileSync(r.catalogPath!, 'utf-8'));
+      expect(catalog.models.map((m: { slug: string }) => m.slug).sort()).toEqual(['gpt-5-codex', 'gpt-5-mini']);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/the \/model menu shows the full catalog/));
+
+      warnSpy.mockRestore();
+    });
+
+    it('leaves the catalog unfiltered when CODEMIE_PROFILE_MODELS is unset', async () => {
+      fetchMock.mockResolvedValue([
+        model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'GPT-5 Codex' }),
+        model({ deployment_name: 'gpt-5-mini', base_name: 'gpt-5-mini', label: 'GPT-5 mini' }),
+      ]);
+
+      const r = await resolveCodexModel({ ...jwtEnv });
+
+      const catalog = JSON.parse(readFileSync(r.catalogPath!, 'utf-8'));
+      expect(catalog.models.map((m: { slug: string }) => m.slug).sort()).toEqual(['gpt-5-codex', 'gpt-5-mini']);
+    });
+  });
 });
 
 describe('resolveCodexModel SSO lookup (profile baseUrl first)', () => {
