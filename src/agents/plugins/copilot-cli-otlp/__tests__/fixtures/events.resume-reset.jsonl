@@ -1,0 +1,7 @@
+{"type":"session.start","data":{"copilotVersion":"1.0.80","startTime":"2026-01-01T00:00:00.000Z"},"id":"e0","timestamp":"2026-01-01T00:00:00.000Z"}
+{"type":"assistant.message","data":{"messageId":"m1","model":"gpt-5.3-codex","outputTokens":10},"id":"e1","timestamp":"2026-01-01T00:00:01.000Z"}
+{"type":"assistant.message","data":{"messageId":"m2","model":"gpt-5.3-codex","outputTokens":10},"id":"e2","timestamp":"2026-01-01T00:00:02.000Z"}
+{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.3-codex":{"requests":{"count":2},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":0}}}},"id":"e3","timestamp":"2026-01-01T00:00:10.000Z"}
+{"type":"assistant.message","data":{"messageId":"m11","model":"gpt-5.3-codex","outputTokens":10},"id":"e4","timestamp":"2026-01-01T00:00:11.000Z"}
+{"type":"assistant.message","data":{"messageId":"m12","model":"gpt-5.3-codex","outputTokens":10},"id":"e5","timestamp":"2026-01-01T00:00:12.000Z"}
+{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.3-codex":{"requests":{"count":2},"usage":{"inputTokens":300,"outputTokens":20,"cacheReadTokens":0}}}},"id":"e6","timestamp":"2026-01-01T00:00:20.000Z"}

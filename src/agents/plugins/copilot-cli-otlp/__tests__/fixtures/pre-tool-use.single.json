@@ -1,0 +1,14 @@
+{
+  "sessionId": "aaaaaaaa-0000-4000-8000-000000000001",
+  "cwd": "<cwd>",
+  "codemieEventName": "preToolUse",
+  "toolCalls": [
+    {
+      "id": "call_0001",
+      "name": "view",
+      "args": {
+        "path": "<path>"
+      }
+    }
+  ]
+}
