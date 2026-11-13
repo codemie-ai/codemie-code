@@ -78,7 +78,9 @@ describe('encodeOrganization vectors', () => {
 const rec = (over: Record<string, unknown> = {}) =>
   ({
     schema: 1, session_id: 's1', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven',
-    organization: 'Яндекс', project_source: 'none', api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0, ...over,
+    organization: 'Яндекс', project_source: 'none', api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0,
+    // consented: these cases are about the org encoding of a Personal send, which needs explicit work consent
+    funding_route: 'subscription', consent_ref: '0123456789abcdef', ...over,
   }) as never;
 const SUPPORTED = { organizations: ['Other'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] };
 const UNSUPPORTED = { organizations: ['Other'], version: 'v1' };

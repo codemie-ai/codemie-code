@@ -53,6 +53,25 @@ export function classify(evidence: Evidence, policy: Policy | null): ClassResult
   return { class: 'personal', status: 'determinate', basis: 'org_no_match', policy_version };
 }
 
+export type WorkConsentNeed = 'none' | 'required' | 'unresolved';
+
+/**
+ * Native Claude privacy rule: without explicit work consent nothing is published for a session that is Personal, or
+ * Unknown with confirmed subscription funding. `required`: it is such a session now. `unresolved`: the classification
+ * can still become one of those once a policy is usable (never an upload meanwhile). `none`: free to publish.
+ * Evidence without a funding claim (older records) never confirms a subscription. Pure; consent is the caller's.
+ */
+export function workConsentNeed(r: ClassResult, funding: string | undefined): WorkConsentNeed {
+  if (r.class === 'personal') return 'required';
+  if (r.class !== 'unknown') return 'none';
+  const subscription = funding === 'subscription';
+  if (r.status === 'determinate') return subscription ? 'required' : 'none';
+  // Indeterminate and no policy read yet: the organization may still match (corporate) or not (personal).
+  if (!r.policy_version) return r.basis === 'policy_unavailable' || subscription ? 'unresolved' : 'none';
+  // Indeterminate under a usable policy (routing unproven, organization not listed): stays Unknown for good.
+  return subscription ? 'required' : 'none';
+}
+
 /** Default forwards everything (indeterminate is sent as `unknown`); only an injected consumer may suppress/withhold. */
 export function decide(r: ClassResult, consumer?: Consumer): Decision {
   return consumer ? consumer(r) : 'forward';
