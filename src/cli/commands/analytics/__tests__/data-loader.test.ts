@@ -349,12 +349,24 @@ describe('MetricsDataLoader.loadSessions — /clear generations', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function writeRecord(name: string): void {
+  function writeRecord(name: string, extra: Record<string, unknown> = {}): void {
     writeFileSync(
       join(dir, name),
-      JSON.stringify({ startTime: 1000, endTime: 2000, status: 'completed', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/p' })
+      JSON.stringify({ startTime: 1000, endTime: 2000, status: 'completed', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/p', ...extra })
     );
   }
+
+  it('--session <uuid> also selects a generation /clear re-keyed under a fresh id (its originSessionId)', () => {
+    const id = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const requeued = '5b0c0f4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+    writeRecord(`completed_${id}.json`);
+    writeRecord(`completed_${requeued}.json`, { sessionId: requeued, originSessionId: id });
+    writeRecord('completed_086cca74-d58d-4007-a529-fa73910c085e.json');
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId: id });
+
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([requeued, id].sort());
+  });
 
   it('--session <uuid> selects the uuid and its generations <uuid>-<gen>, nothing else', () => {
     const id = 'eddd66b2-0e73-4167-841c-9263207870ae';

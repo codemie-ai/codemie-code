@@ -7,7 +7,7 @@ import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
 import { loadAnalyticsCookies } from './analytics-cookies.js';
-import { noteAwaitingDestination } from '@/providers/plugins/sso/session/bounded-request.js';
+import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 
 /** Saves the end metric's outcome on the latest copy of the record. */
 async function markEndMetric(
@@ -17,6 +17,21 @@ async function markEndMetric(
 ): Promise<void> {
   const latest = await sessionStore.loadSession(sessionId);
   if (latest) await sessionStore.saveSession({ ...latest, ...outcome });
+}
+
+/**
+ * Marks an end metric the server refused for good (a JSON 400/422) as terminal: it is never re-sent, and the drop is
+ * stamped (an earlier one stays) so the exit notice reports it even when the record leaves the queue in this delivery.
+ */
+async function markEndMetricRejected(sessionStore: SessionStore, sessionId: string): Promise<void> {
+  const latest = await sessionStore.loadSession(sessionId);
+  if (!latest) return;
+  await sessionStore.saveSession({
+    ...latest,
+    endMetricSkipped: 'rejected',
+    droppedAt: latest.droppedAt ?? Date.now(),
+    droppedReason: latest.droppedAt !== undefined ? latest.droppedReason : 'rejected by the server',
+  });
 }
 
 /**
@@ -94,10 +109,11 @@ export async function sendSessionEndMetrics(
   config: HookProcessingConfig | undefined,
   options: SessionEndOptions
 ): Promise<void> {
+  let sessionStore: SessionStore | undefined;
   try {
     // Load session to get start / end time
     const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
-    const sessionStore = new SessionStore();
+    sessionStore = new SessionStore();
     const session = await sessionStore.loadSession(sessionId);
 
     if (!session) {
@@ -219,6 +235,12 @@ export async function sendSessionEndMetrics(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.warn(`[hook:SessionEnd] Failed to send metrics: ${errorMessage}`);
+    // A refusal for good is terminal; any other failure leaves the end metric unmarked for a later run
+    if (sessionStore && (error as { outcome?: RequestOutcome } | null)?.outcome === 'rejected') {
+      await markEndMetricRejected(sessionStore, sessionId).catch((markError: unknown) => {
+        logger.warn(`[hook:SessionEnd] Cannot mark the rejected end metric of ${sessionId}: ${markError instanceof Error ? markError.message : String(markError)}`);
+      });
+    }
     // Don't throw - metrics failures should not block agent execution
   }
 }

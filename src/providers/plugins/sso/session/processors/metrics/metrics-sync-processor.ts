@@ -163,12 +163,27 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 5. Aggregate pending deltas into metrics grouped by branch
       const clientType = context.clientType || 'codemie-cli';
       // A branch whose pending deltas name no model keeps the branch's, else the session's, last known one.
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, {
-        agentConfig,
-        fallbackModelByBranch: lastKnownModelByBranch(allDeltas, sessionMetadata)
-      });
+      // One metric per stored batch and branch: a resend of a batch keeps the delta id it was first sent under, however
+      // many batches joined the pending set since. The legacy lines without a batch id are one batch, under a hash of their ids.
+      const stored = new Map<string, MetricDelta[]>();
+      for (const delta of pendingDeltas) {
+        stored.set(delta.deltaId ?? '', [...(stored.get(delta.deltaId ?? '') ?? []), delta]);
+      }
+      const batchesById = new Map<string, MetricDelta[]>();
+      for (const [storedId, deltas] of stored) {
+        batchesById.set(storedId || deltaIdOf(deltas.map(d => d.recordId)), deltas);
+      }
+      const fallbackModelByBranch = lastKnownModelByBranch(allDeltas, sessionMetadata);
+      const metrics: Array<ReturnType<typeof aggregateDeltas>[number]> = [];
+      const deltasOfMetric = new Map<object, { batchId: string; deltas: MetricDelta[] }>();
+      for (const [batchId, batchDeltas] of batchesById) {
+        for (const metric of aggregateDeltas(batchDeltas, sessionMetadata, context.version, clientType, { agentConfig, fallbackModelByBranch })) {
+          metrics.push(metric);
+          deltasOfMetric.set(metric, { batchId, deltas: batchDeltas });
+        }
+      }
 
-      logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
+      logger.info(`[${this.name}] Aggregated ${metrics.length} batch and branch metrics from ${pendingDeltas.length} deltas`);
 
       if (logger.isDebugMode()) {
         for (const metric of metrics) {
@@ -233,13 +248,13 @@ export class MetricsSyncProcessor implements SessionProcessor {
         }
         processedBranches++;
 
-        const branchDeltas = pendingDeltas.filter((delta) =>
+        const owner = deltasOfMetric.get(metric)!;
+        const branchDeltas = owner.deltas.filter((delta) =>
           (delta.gitBranch || sessionMetadata.gitBranch || '') === metric.attributes.branch
         );
 
-        // The branch's id as written; a branch mixing batches (or a legacy line) gets a hash of the distinct ones
-        const storedIds = [...new Set(branchDeltas.map(d => d.deltaId ?? d.recordId))];
-        metric.attributes.delta_id = storedIds.length === 1 && branchDeltas[0].deltaId ? storedIds[0] : deltaIdOf(storedIds);
+        // The id of the batch as written: the same on every resend of it
+        metric.attributes.delta_id = owner.batchId;
 
         try {
           const response = await metricsSender.sendSessionMetric(metric);

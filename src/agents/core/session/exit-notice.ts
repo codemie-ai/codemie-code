@@ -27,6 +27,8 @@ export interface ExitDeliveryEntry {
   notDroppedBefore?: number;
   /** dropped: why the data left the queue */
   reason?: DropReason;
+  /** dropped: the record is still queued with its other data (lines the server rejected are the part dropped) */
+  partial?: boolean;
 }
 
 /** `d Mon HH:mm` in local time. */
@@ -73,20 +75,24 @@ function newestPerSession(entries: ExitDeliveryEntry[]): ExitDeliveryEntry[] {
 /**
  * What the sessions folder says about delivery since `since` (the wrapper's start): the wrapper's own record still
  * waiting (`pending`), earlier sessions tried since then and still live (`queued`), and records marked dropped at or
- * after `since`, own or earlier (`dropped`). A session is listed once per kind, with its newest generation's start.
+ * after `since`, own or earlier (`dropped`). A live record marked dropped by a rejected line is still queued, so it can
+ * be listed both as dropped and as pending or queued. A `/clear` generation re-keyed to stay queued is listed under the
+ * session id it was known by (`originSessionId`), and as the wrapper's own when that id is. A session is listed once per
+ * kind, with its newest generation's start.
  */
 export async function listExitDelivery(ownSessionId: string, since: number, now: number): Promise<ExitDeliveryEntry[]> {
   const pending: ExitDeliveryEntry[] = [];
   const queued: ExitDeliveryEntry[] = [];
   const dropped: ExitDeliveryEntry[] = [];
   for (const { name, record } of await readRecentRecords(since)) {
-    const base = { sessionId: record.sessionId, agent: record.agentName, startTime: record.startTime };
-    if (record.droppedAt !== undefined) {
-      if (record.droppedAt >= since) dropped.push({ ...base, kind: 'dropped', reason: record.droppedReason });
-      continue;
+    const sessionId = record.originSessionId ?? record.sessionId;
+    const base = { sessionId, agent: record.agentName, startTime: record.startTime };
+    const live = isLiveRecordFileName(name);
+    if (record.droppedAt !== undefined && record.droppedAt >= since) {
+      dropped.push({ ...base, kind: 'dropped', reason: record.droppedReason, partial: live && record.droppedReason === 'rejected by the server' });
     }
-    if (!isLiveRecordFileName(name)) continue;
-    if (record.sessionId === ownSessionId) {
+    if (!live || (record.droppedAt !== undefined && record.droppedReason !== 'rejected by the server')) continue;
+    if (sessionId === ownSessionId) {
       if (record.codemieUrl) pending.push({ ...base, kind: 'pending', notDroppedBefore: notDroppedBefore(record, now) });
     } else if (record.deliveryFailingSince !== undefined || (record.deliveryRealAttempts ?? 0) > 0) {
       queued.push({ ...base, kind: 'queued', notDroppedBefore: notDroppedBefore(record, now) });
@@ -98,7 +104,8 @@ export async function listExitDelivery(ownSessionId: string, since: number, now:
 function droppedLine(dropped: ExitDeliveryEntry[]): string {
   const ordered = [...dropped].sort((a, b) => a.startTime - b.startTime);
   const named = ordered.slice(0, MAX_NAMED_DROPS).map((e) =>
-    `${e.agent} ${e.sessionId.slice(0, 8)} (started ${formatDate(e.startTime)})${e.reason ? ` — ${e.reason}` : ''}`);
+    `${e.agent} ${e.sessionId.slice(0, 8)} (started ${formatDate(e.startTime)})${e.reason ? ` — ${e.reason}` : ''}` +
+    (e.partial ? ', the rest is still queued' : ''));
   const more = ordered.length > MAX_NAMED_DROPS ? `; … and ${ordered.length - MAX_NAMED_DROPS} more` : '';
   return `CodeMie: analytics of these sessions were dropped: ${named.join('; ')}${more}. ` +
     'Check the connection to CodeMie with `codemie doctor`.';

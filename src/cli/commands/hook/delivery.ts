@@ -80,7 +80,7 @@ export async function deliverSessionRecord(
 }
 
 /** A signal of this delivery alone, following the SessionEnd's own abort: the outcomes its requests note stay apart from other work's. */
-function attemptSignal(options: SessionEndOptions): { signal: AbortSignal; release: () => void } {
+export function attemptSignal(options: SessionEndOptions): { signal: AbortSignal; release: () => void } {
   const controller = new AbortController();
   const parent = options.abortSignal;
   const follow = (): void => controller.abort();
@@ -90,7 +90,7 @@ function attemptSignal(options: SessionEndOptions): { signal: AbortSignal; relea
 }
 
 /** Saves one more real attempt on the record before the send, so a kill during it spends it. */
-async function beginAttempt(sessionId: string): Promise<void> {
+export async function beginAttempt(sessionId: string): Promise<void> {
   try {
     const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
     const store = new SessionStore();
@@ -105,7 +105,7 @@ async function beginAttempt(sessionId: string): Promise<void> {
  * Reports the delivery's outcome to the delivery budget: the record is saved with the clock and the real-attempt counter
  * as `noteOutcome` leaves them. `spent` is why the budget lets a completed record leave the queue now.
  */
-async function reportOutcome(sessionId: string, outcome: RequestOutcome): Promise<{ record: Session; spent: DropReason | undefined } | undefined> {
+export async function reportOutcome(sessionId: string, outcome: RequestOutcome): Promise<{ record: Session; spent: DropReason | undefined } | undefined> {
   try {
     const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
     const store = new SessionStore();

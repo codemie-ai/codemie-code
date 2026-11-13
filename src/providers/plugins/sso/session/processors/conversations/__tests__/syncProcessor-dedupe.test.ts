@@ -476,4 +476,44 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(statuses.slice(10).every(st => st === 'success')).toBe(true);
     });
   });
+
+  describe('a timer run (stopAtFirstFailure)', () => {
+    const payload = (i: number): TestRecord => makeRecord({
+      payloadId: `conv-${i}@0`,
+      lastProcessedMessageUuid: `conv-${i}@0`,
+      payload: { conversationId: `conv-${i}`, history: [{ role: 'User', message: `m${i}`, history_index: 0 }] },
+    });
+
+    it('sends one payload against a failing server with no in-request retry, and leaves the rest pending', async () => {
+      const { createApiClient } = await import('../apiClient.js');
+      vi.mocked(createApiClient).mockClear();
+      upsertConversation.mockResolvedValue({ success: false, message: 'unavailable', outcome: 'outage' });
+      writeRecords([payload(0), payload(1), payload(2)]);
+
+      await runSync({ abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(createApiClient).mock.calls[0][0]).toMatchObject({ retryAttempts: 0 });
+      expect(readRecords().map(r => r.status)).toEqual(['failed', 'pending', 'pending']);
+    });
+
+    it('stops at a payload whose send threw', async () => {
+      upsertConversation.mockRejectedValue(new Error('socket hang up'));
+      writeRecords([payload(0), payload(1)]);
+
+      await runSync({ abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(readRecords().map(r => r.status)).toEqual(['failed', 'pending']);
+    });
+
+    it('without the flag every payload is sent', async () => {
+      upsertConversation.mockResolvedValue({ success: false, message: 'unavailable', outcome: 'outage' });
+      writeRecords([payload(0), payload(1)]);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(2);
+    });
+  });
 });

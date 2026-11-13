@@ -143,6 +143,7 @@ async function moveSetToGenerationUnlocked(sessionId: string, prefix: '' | 'comp
 /**
  * Re-keys the live set (`{id}.json` and its two sidecars) under a fresh session id, so the generation stays in the
  * delivery queue: the start pass lists live records by name (`<uuid>.json`), which a `completed_<id>-<generation>` name is not.
+ * The record keeps the id it was known by as `originSessionId` (the first one, across repeated re-keys).
  * The set moves under its metrics and conversation locks (taken within `bounds`) and under the new id's reconcile lock,
  * so no start pass reads the new record before its sidecars are there. The new `.json` is written first and the old one
  * removed last: a kill mid-move leaves the old record whole, and a later close queues it once more (an end metric may be
@@ -167,7 +168,9 @@ async function requeueSetUnlocked(sessionId: string): Promise<string | undefined
   const moved: Array<'metrics' | 'conversation'> = [];
   try {
     const tmp = `${to.json}.${process.pid}.tmp`;
-    await writeFile(tmp, JSON.stringify({ ...record, sessionId: newId }, null, 2), 'utf-8');
+    // The session id the user knows stays on the record: the exit notice and `--session` find the generation by it
+    const originSessionId = typeof record.originSessionId === 'string' ? record.originSessionId : sessionId;
+    await writeFile(tmp, JSON.stringify({ ...record, sessionId: newId, originSessionId }, null, 2), 'utf-8');
     await rename(tmp, to.json);
     try {
       for (const key of ['metrics', 'conversation'] as const) {

@@ -458,13 +458,13 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
     }));
     const oldest = [ids[2], ids[4]];
     const before = oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'));
-    // Fails each send, so the taken records stay live with their attempt spent
+    // Fails each send, so the taken records stay live (a failure no server verdict explains gives its attempt back)
     mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
     await startRuntime();
 
     expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
-    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryRealAttempts).toBe(1);
+    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryRealAttempts).toBe(0);
     expect(oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'))).toEqual(before);
   });
 

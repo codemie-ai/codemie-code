@@ -80,7 +80,7 @@ export function createSyncProcessor(): SessionProcessor {
         cookies: context.cookies,
         apiKey: context.apiKey,
         timeout: DEFAULT_API_TIMEOUT_MS,
-        retryAttempts: DEFAULT_RETRY_ATTEMPTS,
+        retryAttempts: context.stopAtFirstFailure ? 0 : DEFAULT_RETRY_ATTEMPTS, // a timer run ends at its first outcome that is not ok
         version: context.version,
         clientType: context.clientType,
         dryRun: context.dryRun,
@@ -184,6 +184,7 @@ export function createSyncProcessor(): SessionProcessor {
         } catch (writeError) {
           // Keep going: the next payload's rewrite applies this outcome; after the last one it stays pending on disk
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist payload outcome:`, writeError);
+          if (syncError && context.stopAtFirstFailure) break;
           continue;
         }
         if (!rewritten) {
@@ -192,6 +193,8 @@ export function createSyncProcessor(): SessionProcessor {
           break;
         }
         unpersistedOutcomes.clear();
+        // The first outcome that is not ok ends a timer run: the other payloads wait for the next tick
+        if (syncError && context.stopAtFirstFailure) break;
       }
 
       const syncedAt = Date.now();

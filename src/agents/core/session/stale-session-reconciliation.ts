@@ -33,7 +33,7 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptOutcome, awaitingDestination, sendWasAttempted, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptOutcome, authWasRejected, awaitingDestination, sendWasAttempted, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 
@@ -246,16 +246,19 @@ export interface ReconcilePass {
 }
 
 /**
- * What an attempt amounts to, once it ran to its end or threw: the worst outcome its requests noted; a legacy metric
- * awaiting its destination is no failure; an abort of the pass before any send is no attempt; a throw nothing noted,
- * or an abort after a send ran, counts; otherwise it went through.
+ * What an attempt amounts to, once it ran to its end or threw: rejected credentials first (they never spend the budget,
+ * whatever else its requests noted); else the worst outcome its requests noted; a legacy metric awaiting its
+ * destination is no failure; an abort of the pass before any send is no attempt, after a send ran it counts; a throw
+ * nothing noted is a local failure (a flush, a lookup, a file), no request reached a server: no attempt; otherwise it
+ * went through.
  */
 export function attemptResult(signal: AbortSignal, thrown: boolean): RequestOutcome {
+  if (authWasRejected(signal)) return 'auth';
   const noted = attemptOutcome(signal);
   if (noted) return noted;
   if (awaitingDestination(signal)) return 'ok';
   if (signal.aborted) return sendWasAttempted(signal) ? 'counted' : 'not-attempt';
-  return thrown ? 'counted' : 'ok';
+  return thrown ? 'not-attempt' : 'ok';
 }
 
 /** Why the live record's budget is spent if the attempt ended in `outcome`, or undefined; changes nothing on disk. */
@@ -383,8 +386,10 @@ async function finalizeRecord(
   try {
     await pipeline.processEvent(event, await recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
-    // Only a counted failure can spend the budget; any other outcome leaves the record for a later start
-    const reason = await budgetSpentAfter(id, attemptResult(signal, true));
+    // Only a counted failure can spend the budget; any other outcome (a local throw included) leaves the record for a later start
+    // A local failure (no request outcome) spends nothing new, but a budget earlier counted failures already spent closes it
+    const outcome = attemptResult(signal, true);
+    const reason = outcome === 'not-attempt' ? flushSpent : await budgetSpentAfter(id, outcome);
     if (!reason) throw error;
     await closeExhaustedLocally(id, error, options, deliver ? reason : undefined);
     return true;

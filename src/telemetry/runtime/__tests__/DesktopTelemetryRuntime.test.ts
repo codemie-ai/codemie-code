@@ -1372,7 +1372,8 @@ describe('DesktopTelemetryRuntime', () => {
       await expect(pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1)).resolves.toBeUndefined();
 
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
-      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
+      // A failure no server verdict explains spends nothing
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryRealAttempts: 0 });
       expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
       const failedSends = mockSendSessionEnd.mock.calls.length;
       await pollTicks(daemon, 2);
@@ -1385,10 +1386,10 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
       const delivered = readRecord(sessionId)!;
       expect(delivered.endMetricSentAt).toEqual(expect.any(Number));
-      expect(delivered.deliveryRealAttempts).toBe(1);
+      expect(delivered.deliveryRealAttempts).toBe(0);
     });
 
-    it('counts one real attempt per daemon start and drops the record only once 24 h of failing have passed', async () => {
+    it('spends no real attempt per daemon start on a failure no server verdict explains, and never drops the record for it', async () => {
       const sessionId = writeRecord('ext-1', {
         status: 'completed',
         reason: 'desktop-inactive-timeout',
@@ -1400,18 +1401,16 @@ describe('DesktopTelemetryRuntime', () => {
       for (let start = 1; start <= 4; start++) {
         const runtime = await startRuntime(createAdapter());
         await runtime.stop();
-        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(start);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
-      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
 
       vi.setSystemTime(T0 + 25 * HOUR_MS);
       const runtime = await startRuntime(createAdapter());
       await runtime.stop();
 
-      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
-      expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted' });
-      expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
     });
 
     it('never re-delivers a completed record without an owner', async () => {
@@ -1813,23 +1812,24 @@ describe('DesktopTelemetryRuntime', () => {
       const FAILING_SINCE = T0 - 25 * HOUR_MS;
 
       it('drops a record after a counted failure at 25 h with 3 real attempts, marked retry budget exhausted', async () => {
+        // A JSON 404: the application's own verdict, a counted failure
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
         const daemon = await startDaemon(createAdapter());
         const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
-        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 500'));
 
         await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
         await (daemon as any).redeliveryPass;
 
-        expect(mockSendSessionEnd).toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalled();
         expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
         expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted', deliveryRealAttempts: 3 });
         expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
       });
 
       it('keeps a record under 3 real attempts after a counted failure at 25 h, counting the pass', async () => {
+        answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
         const daemon = await startDaemon(createAdapter());
         const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, deliveryFailingSince: FAILING_SINCE });
-        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 500'));
 
         await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
         await (daemon as any).redeliveryPass;

@@ -125,10 +125,17 @@ describe('delivery budget', () => {
       expect(s.deliveryFailingSince).toBe(NOW - HOUR);
     });
 
-    it.each(['outage', 'auth', 'not-attempt'] as const)('a %s outcome starts the clock and gives the attempt back', async (outcome) => {
+    it.each(['outage', 'auth'] as const)('a %s outcome starts the clock and gives the attempt back', async (outcome) => {
       const { noteOutcome } = await import('../delivery-budget.js');
       const s = noteOutcome(makeSession({ deliveryRealAttempts: 2 }), outcome, NOW);
       expect(s.deliveryFailingSince).toBe(NOW);
+      expect(s.deliveryRealAttempts).toBe(1);
+    });
+
+    it('a not-attempt outcome (no request made) starts no clock and gives the attempt back', async () => {
+      const { noteOutcome } = await import('../delivery-budget.js');
+      const s = noteOutcome(makeSession({ deliveryRealAttempts: 2 }), 'not-attempt', NOW);
+      expect(s.deliveryFailingSince).toBeUndefined();
       expect(s.deliveryRealAttempts).toBe(1);
     });
 
@@ -153,6 +160,12 @@ describe('delivery budget', () => {
       const { notDroppedBefore } = await import('../delivery-budget.js');
       expect(notDroppedBefore(makeSession({ deliveryFailingSince: NOW - HOUR }), NOW)).toBe(NOW - HOUR + 24 * HOUR);
       expect(notDroppedBefore(makeSession(), NOW)).toBe(NOW + 24 * HOUR);
+    });
+
+    it('notDroppedBefore is the retention end when the evidence retention ends before the window', async () => {
+      const { notDroppedBefore } = await import('../delivery-budget.js');
+      const endTime = NOW - 90 * 24 * HOUR + 2 * HOUR;
+      expect(notDroppedBefore(makeSession({ startTime: endTime - HOUR, endTime, deliveryFailingSince: NOW - HOUR }), NOW)).toBe(NOW + 2 * HOUR);
     });
   });
 

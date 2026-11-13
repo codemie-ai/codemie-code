@@ -36,13 +36,14 @@ export function beginRealAttempt(s: Session): Session {
 }
 
 /**
- * The record after an attempt ended in `outcome`: the failing clock starts on the first outcome that is not `ok`, and
- * the attempt is given back unless the outcome is `counted`. A `rejected` outcome also stamps the drop (first one wins),
- * so the exit notice can report it; the record stays queued while other lines are undelivered.
+ * The record after an attempt ended in `outcome`: the failing clock starts on the first outcome that met a failing
+ * server or an outage (neither `ok` nor `not-attempt`: an attempt that made no request starts nothing), and the attempt
+ * is given back unless the outcome is `counted`. A `rejected` outcome also stamps the drop (first one wins), so the exit
+ * notice can report it; the record stays queued while other lines are undelivered.
  */
 export function noteOutcome(s: Session, outcome: RequestOutcome, now: number): Session {
   const next: Session = { ...s };
-  if (outcome !== 'ok') next.deliveryFailingSince = s.deliveryFailingSince ?? now;
+  if (outcome !== 'ok' && outcome !== 'not-attempt') next.deliveryFailingSince = s.deliveryFailingSince ?? now;
   if (outcome !== 'counted') next.deliveryRealAttempts = Math.max(0, (s.deliveryRealAttempts ?? 0) - 1);
   if (outcome === 'rejected' && next.droppedAt === undefined) {
     next.droppedAt = now;
@@ -62,9 +63,11 @@ export function budgetSpent(s: Session, lastOutcome: RequestOutcome, now: number
   return undefined;
 }
 
-/** The earliest moment the window alone could drop the record. */
+/** The earliest moment the record could be dropped: the end of its retry window, or of the evidence retention when that comes first. */
 export function notDroppedBefore(s: Session, now: number): number {
-  return (s.deliveryFailingSince ?? now) + retryWindowMs();
+  const windowEnd = (s.deliveryFailingSince ?? now) + retryWindowMs();
+  const at = s.endTime ?? s.startTime;
+  return at === undefined ? windowEnd : Math.min(windowEnd, at + evidenceRecordIdleDays() * DAY_MS);
 }
 
 /**

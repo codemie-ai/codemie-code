@@ -3157,6 +3157,33 @@ describe('the exit notice', () => {
     expect(lines).toEqual([`${PENDING}${dateText(since + 24 * 60 * 60 * 1000)}.`]);
   });
 
+  it('its own live record with a rejected line and other lines still pending: both the pending and the dropped line', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now(), droppedAt: startedAt + SECOND, droppedReason: 'rejected by the server' });
+    writeRecord(own);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(entries.map((e) => e.kind)).toEqual(['pending', 'dropped']);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain(PENDING);
+    expect(lines[1]).toContain(`claude ${own.sessionId.slice(0, 8)}`);
+    expect(lines[1]).toContain('rejected by the server');
+    expect(lines[1]).toContain('the rest is still queued');
+  });
+
+  it('its own /clear generation re-keyed under a fresh id: pending, named by the session id the user knows', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const requeued = baseRecord({ status: 'completed', endTime: Date.now(), originSessionId: own.sessionId });
+    writeRecord(requeued);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+
+    expect(entries).toEqual([expect.objectContaining({ kind: 'pending', sessionId: own.sessionId })]);
+  });
+
   it('five drops: three are named, then "and 2 more"; a session with a live and a completed_ file is listed once', async () => {
     const startedAt = Date.now();
     const own = baseRecord({ ownerPid: process.pid });
@@ -3655,12 +3682,14 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     await expect(finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND })).rejects.toMatchObject({ code: 'EISDIR' });
     expect(readRecord(id).deliveryRealAttempts).toBeUndefined();
 
-    for (const spent of [1, 2, 3]) {
+    for (let start = 0; start < 3; start++) {
       await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
-      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: spent });
+      // A local failure: no request reached a server, so nothing is spent
+      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0 });
     }
     expect(requests).toEqual([]);
-    writeRecord({ ...readRecord(id), deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
+    // The budget earlier counted failures spent
+    writeRecord({ ...readRecord(id), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
 
     await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
 
@@ -3888,6 +3917,10 @@ describe('EPMCDME-17068 regressions', () => {
     const previous = JSON.parse(readFileSync(join(sessionsDir, queued[0]), 'utf-8')) as Session;
     expect(previous.droppedAt).toBeUndefined();
     expect(previous.status).toBe('completed');
+    // The re-keyed record keeps its session's id, and the /clear close reported its outage to the budget
+    expect(previous.originSessionId).toBe(session.sessionId);
+    expect(previous.deliveryFailingSince).toBeTypeOf('number');
+    expect(previous.deliveryRealAttempts).toBe(0);
 
     respond = () => ok();
     requests = [];
@@ -3921,5 +3954,47 @@ describe('EPMCDME-17068 regressions', () => {
     respond = () => json(404, 'not found');
     await startPass();
     expect(readRecord(other.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
+  });
+
+  it('/clear during an outage over a generation whose stored budget is spent: no counted failure in this close, so it stays queued unmarked', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({
+      status: 'completed',
+      endTime: Date.parse('2026-10-01T10:30:00Z'),
+      deliveryRealAttempts: 3,
+      deliveryFailingSince: Date.now() - 25 * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-spent', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const queued = readdirSync(sessionsDir).filter((n) => isLiveRecordFileName(n) && n !== `${session.sessionId}.json`);
+    expect(queued).toHaveLength(1);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, queued[0]), 'utf-8')) as Session;
+    expect(previous.droppedAt).toBeUndefined();
+    expect(previous.originSessionId).toBe(session.sessionId);
+  });
+
+  it('an end metric the server rejects (JSON 400) is terminal: marked, the drop stamped, the record leaves the queue', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => json(400, 'bad request');
+
+    await startPass();
+
+    const done = readRecord(session.sessionId, 'completed_');
+    expect(done.endMetricSkipped).toBe('rejected');
+    expect(done.endMetricSentAt).toBeUndefined();
+    expect(done.droppedReason).toBe('rejected by the server');
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
   });
 });

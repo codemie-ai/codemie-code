@@ -215,6 +215,8 @@ export interface Session {
   droppedAt?: number;
   /** Why the record is dropped; set together with `droppedAt` */
   droppedReason?: DropReason;
+  /** The session id a `/clear` generation was kept under before it was re-keyed to stay in the delivery queue */
+  originSessionId?: string;
   /** Unix ms of the first delivery failure that was not an `ok`; the retry window runs from it */
   deliveryFailingSince?: number;
   /** Delivery attempts that reached the server or could not be told apart from that; counted toward the retry budget */

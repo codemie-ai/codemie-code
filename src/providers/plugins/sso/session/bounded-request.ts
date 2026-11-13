@@ -185,9 +185,9 @@ export function attemptOutcome(signal: AbortSignal): RequestOutcome | undefined 
 }
 
 /**
- * Records that a request under `signal` ended in a counted failure: a server may have served it — it timed out, failed
- * after its connection opened (a reset after the send, a body that could not be read), or got an answer that is
- * neither a success nor a failing server's (see {@link isFailingServerAnswer}).
+ * Records that a request under `signal` reached a server: it failed after its connection opened (a timeout, a reset
+ * after the send, a body that could not be read), or got an answer that is neither a success nor a failing server's (see
+ * {@link isFailingServerAnswer}). The outcome classifier ({@link classifyError}) treats a timeout or reset as an outage.
  */
 export function noteServerReached(signal: AbortSignal | undefined): void {
   if (signal) signalsReached.add(signal);

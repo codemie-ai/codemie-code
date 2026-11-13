@@ -1046,14 +1046,15 @@ describe('a failed flush through the real hook pipeline', () => {
     return urls;
   }
 
-  it('a stranded record whose flush fails stays active with its attempt spent: nothing sent, not renamed', async () => {
+  it('a stranded record whose flush fails stays active with its attempt given back (no request was made): nothing sent, not renamed', async () => {
     const stranded = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: await transcriptWithFailingDeltaWrite() } });
     save(stranded);
 
     const urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
 
     expect(urls).toEqual([]);
-    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1 });
+    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0 });
+    expect(load(stranded.sessionId).deliveryFailingSince).toBeUndefined();
     expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
@@ -1175,7 +1176,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     }
   }
 
-  it.skipIf(!canDeny)('a regular attempt leaves it active, correlation untouched, counter spent, nothing sent; the next candidate still runs', async () => {
+  it.skipIf(!canDeny)('a regular attempt leaves it active, correlation untouched, no attempt spent (a local failure), nothing sent; the next candidate still runs', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     const next = record({ startTime: stuck.startTime - HOUR });
@@ -1190,12 +1191,12 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       allow();
     }
 
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1, correlation });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
     expect(hook.processEvent.mock.calls.map(([event]) => event.session_id)).toEqual(['native-1']);
   });
 
-  it.skipIf(!canDeny)('repeated starts end it at the exhausted path: completed, correlation untouched under its native id, nothing of the transcript sent', async () => {
+  it.skipIf(!canDeny)('repeated starts spend nothing on the local failure; a budget spent by earlier counted failures ends it at the exhausted path: completed, correlation untouched under its native id, nothing of the transcript sent', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     save(stuck);
@@ -1204,13 +1205,14 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
 
     deny();
     try {
-      for (const attempts of [1, 2, 3]) {
+      for (let i = 0; i < 3; i++) {
         expect(await startPass(hook)).toEqual([]);
-        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: attempts, correlation });
+        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
+        expect(load(stuck.sessionId).deliveryFailingSince).toBeUndefined();
       }
       expect(hook.processEvent.mock.calls).toEqual([]);
-      // 24 h of failing later
-      save({ ...load(stuck.sessionId), deliveryFailingSince: Date.now() - 25 * HOUR });
+      // A budget earlier counted failures spent
+      save({ ...load(stuck.sessionId), ...spentBudget() });
 
       sent = await startPass(hook);
     } finally {
@@ -1240,7 +1242,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     try {
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
       expect(hook.processEvent.mock.calls).toEqual([]);
-      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1, correlation: named });
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
       save({ ...stuck, ...spentBudget() });
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
@@ -1260,7 +1262,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1, correlation });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
   });
 
@@ -1275,7 +1277,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1, correlation: named });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
     save({ ...stuck, ...spentBudget() });
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
@@ -1316,7 +1318,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     }
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 1, correlation: named });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
   });
 
   it.skipIf(!canDeny)('an exhausted record of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
@@ -1824,5 +1826,23 @@ describe('EPMCDME-17068 the start pass reports outcomes to the delivery budget',
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('attemptResult', () => {
+  it('a throw no request outcome explains is a local failure: no attempt', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    expect(attemptResult(new AbortController().signal, true)).toBe('not-attempt');
+  });
+
+  it('rejected credentials win over a counted answer of the same attempt', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const { noteAuthFailure } = await import('@/providers/plugins/sso/session/bounded-request.js');
+    const signal = new AbortController().signal;
+    const request = boundedRequest(1000, { abortSignal: signal });
+    request.noteAnswer(404, true, false);
+    request.dispose();
+    noteAuthFailure(signal);
+    expect(attemptResult(signal, false)).toBe('auth');
   });
 });
