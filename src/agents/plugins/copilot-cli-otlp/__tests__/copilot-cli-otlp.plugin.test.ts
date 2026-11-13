@@ -20,7 +20,7 @@ import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
-import { toolsStatePath } from '../copilot-cli-otlp.state.js';
+import { readSessionState, toolsStatePath } from '../copilot-cli-otlp.state.js';
 
 // Hook-side state files must never land in the developer's real ~/.codemie.
 process.env.CODEMIE_HOME = mkdtempSync(join(tmpdir(), 'cop-otlp-plugin-'));
@@ -508,5 +508,53 @@ describe('CopilotCliOtlpPlugin sub-agent agentStop', () => {
     expect(events).toHaveLength(1);
     expect(events.map((e) => e.type)).not.toContain('agent.usage.request');
     expect(events.map((e) => e.type)).not.toContain('agent.session.summary');
+  });
+});
+
+describe('CopilotCliOtlpPlugin sessionEnd without a session', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const forwardOtlpEventsToSpool = vi.fn(async (_events: Array<Record<string, unknown>>, _agent: string) => true);
+  const deps = { ensureOtlpProxy: vi.fn(async () => {}), forwardOtlpEventsToSpool };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
+  });
+
+  function makeSessionState(sessionId: string): void {
+    const dir = join(process.env.COPILOT_HOME as string, 'session-state', sessionId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'events.jsonl'), '');
+  }
+
+  // VS Code's headless Copilot runtime fires a lone sessionEnd on resume, and `copilot` + `/exit` writes no log:
+  // both would otherwise reach CLI Analytics as a session of one event.
+  it('forwards nothing for a sessionEnd of a session that has no session-state folder', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-only-bg', codemieEventName: 'sessionEnd', reason: 'user_exit' }), deps);
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('still forwards the sessionEnd of a session that has a session-state folder', async () => {
+    makeSessionState('end-real');
+
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-real', codemieEventName: 'sessionEnd', reason: 'user_exit' }), deps);
+
+    const events = forwardOtlpEventsToSpool.mock.calls[0][0];
+    expect(events.map((e) => e.type)).toEqual(['agent.session.end']);
+    expect(events[0].session_id).toBe('end-real');
+  });
+
+  it('forwards the lifecycle events that are not sessionEnd even when the session has no folder yet', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'start-early', codemieEventName: 'sessionStart', source: 'new' }), deps);
+
+    expect(forwardOtlpEventsToSpool.mock.calls[0][0].map((e) => e.type)).toEqual(['agent.session.start']);
+  });
+
+  it('does not record session state for the dropped sessionEnd', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-no-state', codemieEventName: 'sessionEnd' }), deps);
+
+    expect(readSessionState('end-no-state')).toEqual({});
   });
 });
