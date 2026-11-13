@@ -553,9 +553,11 @@ Omit `--task` to resume in interactive mode instead.
 
 **Finding a session id:**
 
+For `codemie-claude` you can pass either the CodeMie session id (the one `codemie analytics`, `codemie log list-sessions` and `codemie log session <id>` print) or Claude's own session id. CodeMie looks up a CodeMie id in its local session records and resumes the matching Claude session, tracked under CodeMie as usual.
+
 | Agent | Where to find it |
 |-------|------------------|
-| `codemie-claude` | the session filename in `~/.claude/projects/<project>/<id>.jsonl` |
+| `codemie-claude` | the CodeMie id from `codemie log list-sessions`, or Claude's session filename in `~/.claude/projects/<project>/<id>.jsonl` |
 | `codemie-codex` | the `<id>` in the rollout filename under `~/.codex/codemie/home/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` |
 | `codemie-opencode` | the `id` field from `opencode session list --format json` (e.g. `ses_…`) |
 
