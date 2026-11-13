@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Changed
+
+- `codemie proxy connect --claude-code-otlp` prints a shorter confirmation: the project name instead of the path, no configuration tables and no restart hint
+- `codemie proxy analytics status` uses sections, adds unsent data and retry details, and drops the current project; `--json` returns `delivery` and a `connectors` array
+
+### Fixed
+
+- Project names no longer include the drive letter (`C:\Repositories` is `Repositories`)
+
 ## [0.16.8] - 2026-11-12
 
 ### Added

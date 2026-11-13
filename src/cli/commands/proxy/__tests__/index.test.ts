@@ -1208,7 +1208,6 @@ describe('proxy status', () => {
       ['credentials_expired', 'credentials expired', 'codemie profile login'],
       ['auth_rejected', 'analytics auth rejected', 'codemie profile login'],
       ['identity_mismatch', 'analytics identity mismatch on this machine', 'codemie proxy restart'],
-      ['send_failed', 'sending to analytics failed on this machine', 'codemie proxy analytics status'],
     ])('prints a yellow unhealthy line and a Run tip for %s', async (reason, label, run) => {
       await arrange({
         connectorActive: true,
@@ -1221,6 +1220,20 @@ describe('proxy status', () => {
       const index = lines.indexOf(`Analytics: ${chalk.yellow(`unhealthy (${label})`)}`);
       expect(index).toBeGreaterThan(-1);
       expect(lines[index + 1]).toBe(`  Run: ${run}`);
+    });
+
+    it('prints a yellow unhealthy line and no Run tip for send_failed, which the user cannot act on', async () => {
+      await arrange({
+        connectorActive: true,
+        delivery: { status: 'unhealthy', reason: 'send_failed', pendingBytes: 10 },
+        reply: { credentials: 'ok' },
+      });
+
+      const lines = await runStatus(['status']);
+
+      const index = lines.indexOf(`Analytics: ${chalk.yellow('unhealthy (sending to analytics failed on this machine)')}`);
+      expect(index).toBeGreaterThan(-1);
+      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
     });
 
     it('prints a dim unknown line with no Run tip when the daemon sent no analytics block', async () => {
@@ -1263,14 +1276,24 @@ describe('proxy status', () => {
     it('adds analytics to the JSON payload when a connector is active', async () => {
       await arrange({
         connectorActive: true,
-        delivery: { status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 5 },
-        reply: { credentials: 'stale' },
+        delivery: {
+          status: 'unhealthy',
+          reason: 'send_failed',
+          pendingBytes: 5,
+          sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
+        },
+        reply: { credentials: 'ok' },
       });
 
       const lines = await runStatus(['status', '--json']);
 
       const payload = JSON.parse(lines.join('\n'));
-      expect(payload.analytics).toEqual({ status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 5 });
+      expect(payload.analytics).toEqual({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 5,
+        sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
+      });
       expect(payload.status).toBe('healthy');
       expect(payload.apiKey).toBe('local-key');
       expect(payload.level).toBe('shallow');

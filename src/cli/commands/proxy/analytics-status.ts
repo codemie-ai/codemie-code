@@ -1,40 +1,33 @@
 /**
  * `codemie proxy analytics status` — the view half of AC3: effective scope, tracked/excluded
- * projects, the enabled flag, and whether the current directory is tracked right now and why.
+ * projects and the enabled flag of one connector, rendered as a plain section.
  */
 
-import chalk from 'chalk';
 import {
   inferAllowlistScope,
   readAllowlistState,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import {
-  evaluateClaudeAnalyticsGate,
-  type ClaudeAnalyticsGateReason,
-} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js';
-import {
   getClaudeAnalyticsPreferencesPath,
   readClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { resolveRepositoryName } from '@/utils/processes.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
-import { adviceForReason, unaffectedChannels } from './analytics-hints.js';
+import { unaffectedChannels } from './analytics-hints.js';
+import { formatReportSection, type ReportRow } from './analytics-report.js';
 import {
   getCopilotAnalyticsPreferencesPath,
   readCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
-import {
-  evaluateCopilotAnalyticsGate,
-  type CopilotAnalyticsGateReason,
-} from '@/agents/core/copilot-analytics-gate.js';
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
-
-const LABEL_WIDTH = 'Collection: '.length;
 
 interface ConnectorSection {
   connectorId: string;
-  /** Headline label ("Hooks", "Connected"), its value, and whether that value is the healthy one. */
-  headline: { label: string; value: string; good: boolean };
+  /** Section heading: `Claude` or `Copilot`. */
+  title: string;
+  /** Headline label ("Hooks", "Connected") and its value. */
+  headline: { label: string; value: string };
   /** True when `connect` is the first thing to run (hooks missing / connector not connected). */
   needsConnect: boolean;
   scope: string;
@@ -43,49 +36,44 @@ interface ConnectorSection {
   excludedProjects: string[];
   preferencesCorrupt: boolean;
   preferencesPath: string;
-  current: { path: string; tracked: boolean; reason: string };
-  /** Gate reasons the Run line or the corrupt-preferences line already explains, so no advice is looked up. */
-  explainedReasons: readonly string[];
 }
 
-function detail(label: string, values: string[]): string[] {
-  return values.map((value, index) => `  ${(index === 0 ? label : '').padEnd(LABEL_WIDTH)}${value}`);
+/** A project list as rows: one analytics project name per line, or `none` when the list is empty. */
+async function projectListRow(label: string, paths: string[]): Promise<ReportRow> {
+  if (paths.length === 0) {
+    return { message: `${label} none` };
+  }
+  return { message: label, items: await Promise.all(paths.map((path) => resolveRepositoryName(path))) };
 }
 
 /**
- * One layout for every connector: a headline with a coloured value, aligned 2-space-indented details,
- * at most one `Run:` line, then the channels these settings do not control as a plain dim sentence.
+ * One layout for every connector: a headline, scope, tracked and excluded projects, the collection flag,
+ * at most one `Run:` hint (connecting), then the channels these settings do not control.
  */
-function renderConnectorSection(section: ConnectorSection): string {
-  const { current } = section;
-  const advice =
-    current.tracked || section.explainedReasons.includes(current.reason)
-      ? undefined
-      : adviceForReason(section.connectorId, current.reason, current.path);
-  const reason = advice?.action ? `${current.reason}: ${advice.action}` : current.reason;
-  const run = section.needsConnect ? `codemie proxy connect --${section.connectorId}` : advice?.command;
-
-  const { label, value, good } = section.headline;
-  const lines: string[] = [`${label}: ${good ? chalk.green(value) : chalk.yellow(value)}`];
-  lines.push(...detail('Scope:', [section.scope]));
+async function renderConnectorSection(section: ConnectorSection): Promise<string> {
+  const rows: ReportRow[] = [
+    {
+      message: `${section.headline.label}: ${section.headline.value}`,
+      ...(section.needsConnect ? { hint: `Run: codemie proxy connect --${section.connectorId}` } : {}),
+    },
+    { message: `Scope: ${section.scope}` },
+  ];
   if (section.scope === 'project') {
-    lines.push(...detail('Tracked:', section.trackedProjects.length > 0 ? section.trackedProjects : ['(none)']));
+    rows.push(await projectListRow('Tracked:', section.trackedProjects));
   }
-  lines.push(...detail('Collection:', [section.enabled ? 'enabled' : 'disabled']));
-  lines.push(...detail('Excluded:', section.excludedProjects.length > 0 ? section.excludedProjects : ['(none)']));
-  lines.push(...detail('Current:', [`${current.path}: ${current.tracked ? 'tracked' : `not tracked (${reason})`}`]));
-  if (run) {
-    lines.push(`  Run: ${run}`);
-  }
+  rows.push({ message: `Collection: ${section.enabled ? 'enabled' : 'disabled'}` });
+  rows.push(await projectListRow('Excluded:', section.excludedProjects));
   if (section.preferencesCorrupt) {
-    lines.push(
-      chalk.yellow(
-        `  Preferences file is corrupt — collection is stopped. Fix or delete ${section.preferencesPath}.`
-      )
-    );
+    rows.push({
+      message: 'Preferences file is corrupt — collection is stopped',
+      hint: `Fix or delete ${section.preferencesPath}.`,
+    });
   }
-  lines.push(chalk.dim(`These settings do not affect ${unaffectedChannels(section.connectorId)}.`));
-  return lines.join('\n');
+  return formatReportSection(
+    section.title,
+    rows,
+    `These settings do not affect ${unaffectedChannels(section.connectorId)}.`
+  ).join('\n');
 }
 
 export interface ClaudeAnalyticsStatus {
@@ -96,16 +84,13 @@ export interface ClaudeAnalyticsStatus {
   excludedProjects: string[];
   preferencesCorrupt: boolean;
   preferencesPath: string;
-  /** `hooks-not-installed`: the gate would track this directory, but no CodeMie hooks run at all. */
-  current: { path: string; tracked: boolean; reason: ClaudeAnalyticsGateReason | 'hooks-not-installed' };
 }
 
-export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeAnalyticsStatus> {
-  const [hooksInstalled, allowlistState, preferences, gateDecision] = await Promise.all([
+export async function collectClaudeAnalyticsStatus(): Promise<ClaudeAnalyticsStatus> {
+  const [hooksInstalled, allowlistState, preferences] = await Promise.all([
     hasClaudeCodeOtlpHooks(),
     readAllowlistState(),
     readClaudeAnalyticsPreferences(),
-    evaluateClaudeAnalyticsGate(cwd),
   ]);
 
   const scope = hooksInstalled
@@ -122,18 +107,14 @@ export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeA
     excludedProjects: preferences.kind === 'ok' ? preferences.value.excludedProjects : [],
     preferencesCorrupt: preferences.kind === 'corrupt',
     preferencesPath: getClaudeAnalyticsPreferencesPath(),
-    // The gate models opt-outs only; without installed hooks nothing is collected whatever it says.
-    current:
-      gateDecision.tracked && !hooksInstalled
-        ? { path: cwd, tracked: false, reason: 'hooks-not-installed' }
-        : { path: cwd, tracked: gateDecision.tracked, reason: gateDecision.reason },
   };
 }
 
-export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): string {
+export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): Promise<string> {
   return renderConnectorSection({
     connectorId: CLAUDE_CODE_OTLP_AGENT_NAME,
-    headline: { label: 'Hooks', value: status.hooksInstalled ? 'installed' : 'not installed', good: status.hooksInstalled },
+    title: 'Claude',
+    headline: { label: 'Hooks', value: status.hooksInstalled ? 'installed' : 'not installed' },
     needsConnect: !status.hooksInstalled,
     scope: status.scope,
     trackedProjects: status.trackedProjects,
@@ -141,8 +122,6 @@ export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): stri
     excludedProjects: status.excludedProjects,
     preferencesCorrupt: status.preferencesCorrupt,
     preferencesPath: status.preferencesPath,
-    current: status.current,
-    explainedReasons: ['preferences-corrupt', 'hooks-not-installed'],
   });
 }
 
@@ -155,14 +134,12 @@ export interface CopilotAnalyticsStatus {
   excludedProjects: string[];
   preferencesCorrupt: boolean;
   preferencesPath: string;
-  current: { path: string; tracked: boolean; reason: CopilotAnalyticsGateReason | 'tracked' };
 }
 
-export async function collectCopilotAnalyticsStatus(connectorId: string, cwd: string): Promise<CopilotAnalyticsStatus> {
-  const [connectorScope, preferences, gateDecision] = await Promise.all([
+export async function collectCopilotAnalyticsStatus(connectorId: string): Promise<CopilotAnalyticsStatus> {
+  const [connectorScope, preferences] = await Promise.all([
     readCopilotConnectorScope(connectorId),
     readCopilotAnalyticsPreferences(connectorId),
-    evaluateCopilotAnalyticsGate(connectorId, cwd),
   ]);
 
   let scope: CopilotAnalyticsStatus['scope'] = 'not-connected';
@@ -183,14 +160,14 @@ export async function collectCopilotAnalyticsStatus(connectorId: string, cwd: st
     excludedProjects: preferences.kind === 'ok' ? preferences.value.excludedProjects : [],
     preferencesCorrupt: preferences.kind === 'corrupt',
     preferencesPath: getCopilotAnalyticsPreferencesPath(),
-    current: { path: cwd, tracked: gateDecision.tracked, reason: gateDecision.tracked ? 'tracked' : gateDecision.reason },
   };
 }
 
-export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): string {
+export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): Promise<string> {
   return renderConnectorSection({
     connectorId: status.connector,
-    headline: { label: 'Connected', value: status.connected ? 'yes' : 'no', good: status.connected },
+    title: 'Copilot',
+    headline: { label: 'Connected', value: status.connected ? 'yes' : 'no' },
     needsConnect: status.scope === 'not-connected',
     scope: status.scope,
     trackedProjects: status.trackedProjects,
@@ -198,7 +175,5 @@ export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): st
     excludedProjects: status.excludedProjects,
     preferencesCorrupt: status.preferencesCorrupt,
     preferencesPath: status.preferencesPath,
-    current: status.current,
-    explainedReasons: ['scope-disabled', 'preferences-corrupt'],
   });
 }

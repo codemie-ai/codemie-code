@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 
 const { getAnalyticsAuthStatus, clearAnalyticsAuthStatus, getLastSignInAt, summarizeSpoolDelivery } = vi.hoisted(
@@ -52,6 +53,7 @@ const state = {
 } as DaemonState;
 
 const ok = { credentials: 'ok' } as const;
+const FAILURE = { nextAt: Date.parse('2026-11-13T14:32:10.000Z'), detail: 'http_503' };
 const marker = { detectedAt: 2000, reason: 'redirect', baseUrl: URL };
 
 describe('collectDeliveryHealth', () => {
@@ -59,7 +61,7 @@ describe('collectDeliveryHealth', () => {
     vi.clearAllMocks();
     getAnalyticsAuthStatus.mockResolvedValue(null);
     getLastSignInAt.mockResolvedValue(null);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false });
   });
 
   it('is healthy when the reply is ok and nothing else applies', async () => {
@@ -129,7 +131,7 @@ describe('collectDeliveryHealth', () => {
   });
 
   it('reports identity_mismatch when a session is held', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'identity_mismatch',
@@ -137,56 +139,76 @@ describe('collectDeliveryHealth', () => {
     });
   });
 
-  it('reports send_failed for a live delivery failure', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailed: true });
+  it('reports send_failed with the failure when the spool has a live delivery failure', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailure: FAILURE });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'send_failed',
       pendingBytes: 5,
+      sendFailure: FAILURE,
     });
+  });
+
+  it('carries the failure only when send_failed is the reason', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailure: FAILURE });
+    expect(await collectDeliveryHealth(state, { credentials: 'stale' })).not.toHaveProperty('sendFailure');
   });
 
   it('applies the precedence stale > marker > mismatch > send failed', async () => {
     getAnalyticsAuthStatus.mockResolvedValue(marker);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: true, sendFailed: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: true, sendFailure: FAILURE });
     expect((await collectDeliveryHealth(state, { credentials: 'stale' })).reason).toBe('credentials_expired');
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('auth_rejected');
     getAnalyticsAuthStatus.mockResolvedValue(null);
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('identity_mismatch');
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailed: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailure: FAILURE });
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
   });
 
   it('carries pending bytes on a healthy result', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, mismatchHeld: false, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, mismatchHeld: false });
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 42 });
   });
 
   it('carries the latest drop on a healthy result', async () => {
     const latestDrop = { reason: 'no_project', stream: 'hooks', at: 5000, local: false };
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, latestDrop });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, latestDrop });
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0, latestDrop });
   });
 
   it('carries the latest drop on an unhealthy result', async () => {
     const latestDrop = { reason: 'disk_full', at: 6000, local: true };
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: true, latestDrop });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailure: FAILURE, latestDrop });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'send_failed',
       pendingBytes: 7,
+      sendFailure: FAILURE,
       latestDrop,
     });
   });
 
-  it('yields unknown when a dependency throws', async () => {
+  it('yields unknown, with no unsent amount, when a dependency throws', async () => {
     summarizeSpoolDelivery.mockRejectedValue(new Error('boom'));
-    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown' });
   });
 
-  it('yields unknown when the marker read throws', async () => {
+  it('yields unknown, with no unsent amount, when the marker read throws', async () => {
     getAnalyticsAuthStatus.mockRejectedValue(new Error('boom'));
-    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown' });
+  });
+
+  it('leaves the unsent amount out when the spool could not be read completely', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, incomplete: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy' });
+  });
+
+  it('leaves the unsent amount out of an unhealthy result when the spool could not be read completely', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, incomplete: true });
+    expect(await collectDeliveryHealth(state, { credentials: 'stale' })).toEqual({
+      status: 'unhealthy',
+      reason: 'credentials_expired',
+    });
   });
 });
 
@@ -206,37 +228,85 @@ describe('DELIVERY_REASONS', () => {
 
 describe('formatDeliveryLines', () => {
   const strip = (lines: string[]): string[] => lines.map((l) => stripAnsi(l));
+  const NEXT_RETRY = '2026-11-13T14:32:10.000Z';
 
-  it('prints a healthy headline only', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0 }))).toEqual(['Delivery: healthy']);
+  it('prints healthy with no unsent data as plain rows flush left, with no heading', () => {
+    const lines = formatDeliveryLines({ status: 'healthy', pendingBytes: 0 });
+
+    expect(strip(lines)).toEqual(['Delivery: healthy', 'Unsent data: none']);
   });
 
-  it('prints pending bytes when there are any', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
-      'Delivery: healthy',
-      '  Pending: 2.00 KB (all sessions on this machine)',
+  it('prints unsent data as unknown, never none, when the amount could not be read', () => {
+    expect(strip(formatDeliveryLines({ status: 'unknown' }))).toEqual([
+      'Delivery: unknown (restart the proxy to enable all checks)',
+      'Unsent data: unknown',
     ]);
   });
 
-  it('prints the label, pending and remedy for an unhealthy reason', () => {
+  it('prints unsent data across all sessions as its own row', () => {
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
+      'Delivery: healthy',
+      'Unsent data: 2.00 KB (all sessions on this machine)',
+    ]);
+  });
+
+  it('prints the label with the remedy as a hint when the user can act', () => {
     const lines = strip(
       formatDeliveryLines({ status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 512 })
     );
     expect(lines).toEqual([
       `Delivery: unhealthy (${DELIVERY_REASONS.credentials_expired.label})`,
-      '  Pending: 512 B (all sessions on this machine)',
-      '  Run: codemie profile login',
+      '    Run: codemie profile login',
+      'Unsent data: 512 B (all sessions on this machine)',
     ]);
   });
 
-  it('prints no Run line for send_failed', () => {
-    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 0 }));
-    expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`]);
+  it('prints the next retry and the error code of a failing delivery, with no Run line', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 49_357,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'http_503' },
+      })
+    );
+    expect(lines).toEqual([
+      `Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`,
+      'Unsent data: 48.20 KB (all sessions on this machine)',
+      `Next retry: ${NEXT_RETRY}`,
+      'Error: http_503',
+    ]);
+  });
+
+  it('reads a failure without an HTTP response as the backend being unreachable', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 0,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'request_error' },
+      })
+    );
+    expect(lines.slice(-2)).toEqual([`Next retry: ${NEXT_RETRY}`, 'Error: backend unreachable']);
+  });
+
+  it('omits the error row when the failure records no detail', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 0,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY) },
+      })
+    );
+    expect(lines.at(-1)).toBe(`Next retry: ${NEXT_RETRY}`);
+    expect(lines.join('\n')).not.toContain('Error:');
   });
 
   it('prints no Run line for unknown', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
       'Delivery: unknown (restart the proxy to enable all checks)',
+      'Unsent data: none',
     ]);
   });
 
@@ -245,13 +315,60 @@ describe('formatDeliveryLines', () => {
     expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
   });
 
-  it('reports a stopped proxy for null', () => {
+  it('reports a stopped proxy for null, with no other rows', () => {
     expect(strip(formatDeliveryLines(null))).toEqual(['Delivery: proxy not running']);
+  });
+
+  it('prints the latest drop with the remedy of a session without a project', () => {
+    const latestDrop = { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-13T09:15:00.000Z'), local: true } as const;
+
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop }))).toEqual([
+      'Delivery: healthy',
+      'Unsent data: none',
+      'Last dropped: no_project (hooks, 2026-11-13T09:15:00.000Z)',
+      '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
+    ]);
   });
 
   it('prints a drop time outside the date range as the stored number', () => {
     const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: 9e15, local: false } as const;
     expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop })))
-      .toContain('  Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
+      .toContain('Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
+  });
+
+  it('colors only the Delivery status text: green when healthy, yellow otherwise', () => {
+    const delivery = (health: Parameters<typeof formatDeliveryLines>[0]): string => formatDeliveryLines(health)[0];
+    const row = (status: string): string => chalk.white(`Delivery: ${status}`);
+
+    expect(delivery({ status: 'healthy', pendingBytes: 0 })).toBe(row(chalk.green('healthy')));
+    expect(delivery({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 0 })).toBe(
+      row(chalk.yellow(`unhealthy (${DELIVERY_REASONS.auth_rejected.label})`))
+    );
+    expect(delivery({ status: 'unknown', pendingBytes: 0 })).toBe(
+      row(chalk.yellow('unknown (restart the proxy to enable all checks)'))
+    );
+    expect(delivery(null)).toBe(row(chalk.yellow('proxy not running')));
+  });
+
+  it('leaves every other row plain white', () => {
+    const lines = formatDeliveryLines({
+      status: 'unhealthy',
+      reason: 'send_failed',
+      pendingBytes: 0,
+      sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'http_503' },
+    });
+
+    expect(lines.slice(1)).toEqual([
+      chalk.white('Unsent data: none'),
+      chalk.white(`Next retry: ${NEXT_RETRY}`),
+      chalk.white('Error: http_503'),
+    ]);
+  });
+
+  it('uses no icons', () => {
+    const text = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 1 })).join('\n');
+    for (const glyph of ['✓', '○', '⚠', '✗']) {
+      expect(text).not.toContain(glyph);
+    }
   });
 });
