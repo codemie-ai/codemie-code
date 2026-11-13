@@ -134,6 +134,8 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
 
 macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script installs into a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
 
+For eligible user-owned global installs the package also installs shell completions. The bootstrap uses `/dev/tty` to ask before adding an optional Bash or Zsh completion block, even when the script is piped from curl. Declining or running without a terminal leaves startup files unchanged for completions; existing PATH handling is separate. CI, local installs and disabled lifecycle scripts are skipped. Open a new shell and see the [completion guide](../docs/COMMANDS.md#shell-completions) for shell prerequisites, direct npm recovery, and cleanup.
+
 ## Upgrading from an Older Installer
 
 Older installers set the npm `prefix` in the user `.npmrc` to `%LOCALAPPDATA%\CodeMie\npm-prefix` (Windows) or `$HOME/.codemie/npm-prefix` (macOS/Linux), which redirected every `npm install -g` into that folder and could break npm-installed tools such as Claude Code. Rerun the installer to remove the override; it lists the packages left in the old folder so you can reinstall them. `codemie doctor` reports the override and prints the manual fix:

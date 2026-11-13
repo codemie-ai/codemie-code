@@ -596,6 +596,20 @@ codemie codebase ui      # Start and open Codebase Memory graph UI
 codemie doctor           # Health check and diagnostics
 ```
 
+### Shell Completions
+
+User-owned global installs automatically install Bash, Zsh and Fish completion files for `codemie` and supported interactive launchers. Start a new shell after installation or upgrade. Bash needs bash-completion enabled; Zsh needs `compinit` and an appropriate `fpath`. Profiles and plugin names are looked up when completing them.
+
+The macOS/Linux bootstrap can ask permission to add a removable completion block to your shell startup file when needed. It never adds a completion block without consent; the existing PATH setup is separate. Direct npm installs cannot reliably prompt. To run setup interactively, replace the prefix if necessary and run:
+
+```bash
+node "$(npm config get prefix)/lib/node_modules/@codemieai/code/scripts/install-completions.mjs" --interactive --prefix "$(npm config get prefix)"
+```
+
+For Bash login shells, ensure your login startup file also loads `~/.bashrc`. Zsh needs its completion directory in `fpath` before `compinit`. Setup skips completion destinations outside your home, including external XDG directories. When multiple npm prefixes are installed, the first live prefix retains ownership of shared completion files; after its helper is removed, a later install can adopt intact managed files. On upgrading from an older release, remove any startup-file invocation of `codemie completion bash`, `codemie completion zsh` or `codemie completion fish`; that command no longer exists. If an older CodeMie completion block lists files individually, rerun interactive setup to authorize the upgrade-safe loader, then remove the old block yourself.
+
+For cleanup, inspect and remove only files marked `# CodeMie completion managed` in `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions`, `${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions`, the configured Zsh completion directory, and `$HOME/.codemie/completions`. Remove any `# >>> CodeMie completions ... >>>` through `# <<< CodeMie completions ... <<<` block from your startup file. npm uninstall does not reliably run cleanup hooks. For full prerequisites and recovery, see the [online completion guide](https://github.com/codemie-ai/codemie-code/blob/main/docs/COMMANDS.md#shell-completions).
+
 ### Analytics for a separate Claude Code profile
 
 If a command such as `claude-work` stores sessions in a separate config directory,
