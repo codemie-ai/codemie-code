@@ -812,36 +812,65 @@ Step-by-step guide for team leads and developers, troubleshooting and known gaps
 [ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
 
 ```bash
-# Lead: guided wizard to connect Teams/SharePoint and print install command
+# Lead: guided wizard — choose delivery target(s), set them up, print the install command
 codemie analytics sync bootstrap
 
-# Non-interactive mode (no TTY needed; test-send before printing install command)
+# Non-interactive mode (no TTY needed; test-send / test-push before printing install command)
 codemie analytics sync bootstrap --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
 codemie analytics sync bootstrap --webhook <url> --lookback-days 14 --include-external always
 
 # Same, with the trigger URL base64url-encoded (Windows: see below)
 codemie analytics sync bootstrap --webhook-b64 <value>
+
+# Git target only, or both targets at once
+codemie analytics sync bootstrap --git-repo git@github.com:acme/analytics.git --git-branch main --git-path reports
+codemie analytics sync bootstrap --webhook-b64 <value> --git-repo git@github.com:acme/analytics.git
 ```
 
-`bootstrap` connects a Teams channel and SharePoint folder to a Power Automate flow, then
-prints the `codemie analytics sync install` command for developers. Installs nothing on the
-lead's machine.
+`bootstrap` sets up where developer machines deliver their reports: a Power Automate webhook
+(Teams channel and SharePoint folder), a git repository, or both. It then prints the
+`codemie analytics sync install` command for developers. Installs nothing on the lead's machine.
 
-**Guided mode** (TTY, no `--webhook`): 8-step wizard — Teams channel, SharePoint folder, time
-zone, import flow, trigger URL, external sessions policy, lookback, print command. Answers
-save after each step, so interrupts resume with saved defaults. Re-run shows masked settings
-and offers quick reuse or restart.
+**Guided mode** (TTY, no target flag): step 1 is the delivery target — webhook, git, or both.
+The remaining steps are filtered to that choice and numbered "Step N of M" for it. Webhook
+targets: Teams channel, SharePoint folder, time zone, import flow, trigger URL. Git target: git
+repository. Always: external sessions policy, lookback, print command. Answers save after each
+step, so interrupts resume with saved defaults.
 
-**Non-interactive mode** (`--webhook`): no prompts, no TTY; validates options, test-sends a
-check file, prints command on success; fails with reason on any validation or network error.
+The **Git repository** step asks for the repository URL (SSH or HTTPS), then an optional branch
+and an optional path; leave either blank for `install`'s own defaults (the repository's default
+branch, the repository root). A URL with embedded credentials (`user:token@…`) is rejected and
+asked again; it is never stored or printed. The step then test-pushes a placeholder file to the
+repository using a temporary working copy, so it touches neither the lead's own sync working
+copy nor their sync settings. If no report email is configured (neither CodeMie CLI config nor
+`git config --global user.email`), the step prompts for one for the test; it is not saved. On
+failure it prints the likely cause and offers: try again, enter different repository details, or
+skip the test.
+
+**Saved setup:** a re-run shows masked settings and offers **Reuse** (re-checks every chosen
+target live, then prints the command), **Change targets** (add or turn off a target; saved data
+of a target turned off is kept for later, but is left out of the printed command and of reuse
+checks) or **Start over** (asks for the delivery targets again, offering the saved choice,
+then walks the steps with the saved answers as defaults). State files from earlier CLI versions read as webhook-only.
+
+**Non-interactive mode** (`--webhook`, `--webhook-b64` and/or `--git-repo`): no prompts, no
+TTY; validates options, checks every given target, prints command on success; fails with reason
+on any validation or network error. `--git-repo` alone prints a git-only command. With both
+targets, the webhook test send and the git test push run concurrently, each with its own
+timeout. A `--git-repo` with embedded credentials fails before any network call. A missing
+report email (see above) also fails without prompting. With no TTY and no target flag,
+bootstrap exits with a message naming `--webhook`/`--webhook-b64` and `--git-repo`.
 
 **Lead-to-developer workflow:** (1) Lead runs `bootstrap`. (2) Lead gets a printed install
 command containing the trigger signature. (3) Lead shares **only that command with developers
 — do not post to shared logs or tickets**; signature is a secret. (4) Each developer runs the
 command to register their daily job.
 
-**Options:** `--webhook <url>` (non-interactive), `--lookback-days <1–30>` (default: follows
-CLI), `--include-external <windows|always|never>` (default: never).
+**Options:** `--webhook <url>` / `--webhook-b64 <value>` (webhook target, non-interactive),
+`--git-repo <url>` (git target, non-interactive), `--git-branch <name>` (default: the
+repository's default branch), `--git-path <dir>` (default: the repository root; both apply
+to `--git-repo`), `--lookback-days <1–30>` (default: follows CLI), `--include-external
+<windows|always|never>` (default: never).
 
 **Windows and `--webhook`:** when `codemie` resolves to a `.cmd` shim, PowerShell cuts a raw
 trigger URL at `&` and cmd.exe expands its `%…%` runs, so `--webhook "<url>"` arrives broken.
@@ -855,7 +884,10 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($url)).TrimEnd('
 codemie analytics sync bootstrap --webhook-b64 $b64
 ```
 
-**Output:** Install command to stdout; everything else to stderr. The webhook is printed as
+**Output:** Install command to stdout; everything else to stderr. The printed command carries
+`--git-repo` (plus `--git-branch`/`--git-path` when set) and/or `--webhook-b64`, followed by a
+note that push access comes from each developer's own SSH key or credential helper, verified by
+`install`. The webhook is printed as
 `--webhook-b64 <value>` — the trigger URL encoded as base64url (`A-Z a-z 0-9 - _` only), so the
 command runs unchanged in bash/zsh, PowerShell (including through a `codemie.cmd` shim, which
 would otherwise split a raw URL at `&`) and cmd.exe (which would otherwise expand `%…%` runs in
@@ -865,7 +897,8 @@ line as secret**.
 **Minimum CLI version:** after the command, bootstrap prints the lead's own CLI version as the minimum developers need ("Developers need CodeMie CLI <version> or newer…"). Anyone on an older version, or who sees "unknown command", runs `codemie self-update`.
 
 **State:** Lead's answers saved in `~/.codemie/analytics-sync-bootstrap.json` (mode 600) for
-resuming; includes trigger signature. `--webhook` mode reads/writes nothing.
+resuming; includes the chosen targets, the trigger signature and, for a git target, the
+repository URL, branch and path (never a credential). Non-interactive mode reads/writes nothing.
 
 ### Scheduled delivery (`analytics sync`)
 

@@ -42,6 +42,18 @@ vi.mock('../flow-package.js', async () => {
   };
 });
 
+// The git test push really pushes to a remote; the guided flow's own wiring (ask, save,
+// loop on 'retry') is what these tests cover, so only `testGitCheck` is replaced.
+// `askGitDetails` stays real, so its validators drive the prompts.
+const testGitCheckMock = vi.hoisted(() => vi.fn());
+vi.mock('../git-step.js', async () => {
+  const actual = await vi.importActual<typeof import('../git-step.js')>('../git-step.js');
+  return {
+    ...actual,
+    testGitCheck: (...args: unknown[]) => testGitCheckMock(...args)
+  };
+});
+
 import { runGuided } from '../guided.js';
 
 const VALID_CHANNEL_LINK =
@@ -49,10 +61,13 @@ const VALID_CHANNEL_LINK =
 const MESSAGE_LINK = 'https://teams.microsoft.com/l/message/abc123?groupId=11111111-2222-3333-4444-555555555555';
 const VALID_FOLDER_URL = 'https://contoso.sharepoint.com/sites/Analytics/Shared%20Documents/CodeMie?id=%2Fsites%2FAnalytics%2FShared%20Documents%2FCodeMie';
 const VALID_TRIGGER_URL = 'https://example.invalid/triggers/invoke?api-version=1&sig=FAKESECRET';
+const VALID_GIT_REPO = 'git@github.com:contoso/analytics.git';
+const D8_NOTE = "Push access comes from each developer's own SSH key or credential helper, verified by install.";
 
 /** A fully-answered state (steps 1-7) `checkReuse` should accept as reusable. */
 const COMPLETE_STATE: BootstrapState = {
-  version: 1,
+  version: 2,
+  targets: { webhook: true, git: false },
   channelLink: VALID_CHANNEL_LINK,
   teamId: '11111111-2222-3333-4444-555555555555',
   channelId: '19:abc123@thread.tacv2',
@@ -135,7 +150,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     return createScriptedPrompt({
       input: overrides.input ?? [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
       confirm: overrides.confirm ?? [false, true, true, true, true],
-      select: overrides.select ?? ['windows', 'default']
+      select: overrides.select ?? ['webhook', 'windows', 'default']
     });
   }
 
@@ -145,23 +160,24 @@ describe('runGuided — steps 1-4 and start logic', () => {
       // already-imported:no, channel-confirm:no (retry), channel-confirm:yes, folder-confirm:yes,
       // open-browser:yes, press-enter:yes
       confirm: [false, false, true, true, true, true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
     await runGuided(deps);
 
     const lines = errLines(deps);
-    const headingLines = lines.filter((l) => /^Step \d of 8 · /.test(l));
+    const headingLines = lines.filter((l) => /^Step \d+ of \d+ · /.test(l));
     expect(headingLines).toEqual([
-      'Step 1 of 8 · Teams channel',
-      'Step 2 of 8 · SharePoint folder',
-      'Step 3 of 8 · Time zone',
-      'Step 4 of 8 · Import the flow',
-      'Step 5 of 8 · Trigger URL',
-      'Step 6 of 8 · External sessions',
-      'Step 7 of 8 · Lookback',
-      'Step 8 of 8 · Developers'
+      'Step 1 of 9 · Delivery target',
+      'Step 2 of 9 · Teams channel',
+      'Step 3 of 9 · SharePoint folder',
+      'Step 4 of 9 · Time zone',
+      'Step 5 of 9 · Import the flow',
+      'Step 6 of 9 · Trigger URL',
+      'Step 7 of 9 · External sessions',
+      'Step 8 of 9 · Lookback',
+      'Step 9 of 9 · Developers'
     ]);
   });
 
@@ -169,7 +185,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     const prompt = createScriptedPrompt({
       input: [MESSAGE_LINK, VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
       confirm: [false, true, true, true, true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -190,7 +206,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
         VALID_TRIGGER_URL
       ],
       confirm: [false, true, true, true, true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -214,7 +230,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
       // already-imported:no, channel-confirm:yes, folder-confirm:no (from paste), folder-confirm:yes
       // (manual), open-browser:yes, press-enter:yes
       confirm: [false, true, false, true, true, true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -229,7 +245,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'Not A Real Zone', 'UTC', VALID_TRIGGER_URL],
       confirm: [false, true, true, true, true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -305,7 +321,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
         true, // open browser
         true // press enter
       ],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -322,7 +338,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     resolveFlowTemplateDirMock.mockImplementationOnce(() => {
       throw new Error('Flow template directory not found: /fake/flow-template');
     });
-    const prompt = createScriptedPrompt({ confirm: [false] });
+    const prompt = createScriptedPrompt({ select: ['webhook'], confirm: [false] });
     const deps = createDeps(prompt);
 
     const exit = await runGuided(deps);
@@ -336,7 +352,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -345,19 +361,20 @@ describe('runGuided — steps 1-4 and start logic', () => {
     expect(exit).toBe(0);
     expect(deps.out).toHaveBeenCalledTimes(1);
     const lines = errLines(deps);
-    expect(lines).toContain('Step 5 of 8 · Trigger URL');
+    expect(lines).toContain('Step 6 of 9 · Trigger URL');
     expect(lines.some((l) => /not available yet/i.test(l))).toBe(false);
   });
 
   it('with a reusable saved state, shows the masked summary and accepting jumps to step 8', async () => {
     await saveBootstrapState(COMPLETE_STATE, statePath);
-    const prompt = createScriptedPrompt({ confirm: [true] });
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
     const deps = createDeps(prompt);
 
     const exit = await runGuided(deps);
 
     expect(prompt.input).not.toHaveBeenCalled();
-    expect(prompt.confirm).toHaveBeenCalledTimes(1);
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(prompt.select).toHaveBeenCalledTimes(1);
     expect(exit).toBe(0);
     expect(deps.out).toHaveBeenCalledTimes(1);
     const lines = errLines(deps);
@@ -369,8 +386,7 @@ describe('runGuided — steps 1-4 and start logic', () => {
     await saveBootstrapState({ ...COMPLETE_STATE, webhookUrl: 'https://example.invalid/no-sig' }, statePath);
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
-      confirm: [true],
-      select: ['windows', 'default']
+      select: ['reuse', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -390,13 +406,12 @@ describe('runGuided — steps 1-4 and start logic', () => {
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, 'UTC', VALID_TRIGGER_URL],
       confirm: [
-        false, // Reuse them? no
         true, // channel confirm
         true, // keep the saved SharePoint folder
         true, // open browser
         true // press enter
       ],
-      select: ['windows', 'default']
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -409,15 +424,15 @@ describe('runGuided — steps 1-4 and start logic', () => {
     await saveBootstrapState(COMPLETE_STATE, statePath);
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, 'UTC', VALID_TRIGGER_URL],
-      confirm: [false, true, true, true, true],
-      select: ['windows', 'default']
+      confirm: [true, true, true, true],
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
     const exit = await runGuided(deps);
 
     expect(exit).toBe(0);
-    expect(prompt.confirm).toHaveBeenNthCalledWith(3, expect.stringContaining(COMPLETE_STATE.siteUrl ?? ''), true);
+    expect(prompt.confirm).toHaveBeenNthCalledWith(2, expect.stringContaining(COMPLETE_STATE.siteUrl ?? ''), true);
     const inputMessages = (prompt.input as ReturnType<typeof vi.fn>).mock.calls.map(([message]: [string]) => message);
     expect(inputMessages.some((message) => message.includes('SharePoint folder'))).toBe(false);
     const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
@@ -429,9 +444,9 @@ describe('runGuided — steps 1-4 and start logic', () => {
     await saveBootstrapState({ ...COMPLETE_STATE, folderPath: 'Shared Documents/Old' }, statePath);
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
-      // reuse:no, channel:yes, keep saved folder:no, pasted folder confirm:yes, open browser, press enter
-      confirm: [false, true, false, true, true, true],
-      select: ['windows', 'default']
+      // channel:yes, keep saved folder:no, pasted folder confirm:yes, open browser, press enter
+      confirm: [true, false, true, true, true],
+      select: ['restart', 'webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -443,8 +458,8 @@ describe('runGuided — steps 1-4 and start logic', () => {
 
   it('declining reuse discards the saved webhook before steps 1-4 run again', async () => {
     await saveBootstrapState(COMPLETE_STATE, statePath);
-    // Reuse? no — then the scripted prompter runs dry at step 1, as if the lead quit there.
-    const prompt = createScriptedPrompt({ confirm: [false] });
+    // Start over — then the scripted prompter runs dry at step 1, as if the lead quit there.
+    const prompt = createScriptedPrompt({ select: ['restart', 'webhook'] });
     const deps = createDeps(prompt);
 
     await expect(runGuided(deps)).rejects.toThrow(/ran out/);
@@ -458,8 +473,8 @@ describe('runGuided — steps 1-4 and start logic', () => {
   it('a reuse check that resumes at step 4 discards the saved webhook', async () => {
     const { flowImported: _flowImported, ...notImported } = COMPLETE_STATE;
     await saveBootstrapState(notImported, statePath);
-    // Reuse? yes — resumes at step 4, then the prompter runs dry at "Open … in your browser?".
-    const prompt = createScriptedPrompt({ confirm: [true] });
+    // Reuse — resumes at step 4, then the prompter runs dry at "Open … in your browser?".
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
     const deps = createDeps(prompt);
 
     await expect(runGuided(deps)).rejects.toThrow(/ran out/);
@@ -471,11 +486,11 @@ describe('runGuided — steps 1-4 and start logic', () => {
 
   it('a state saved via the "already imported" shortcut is reusable on the next run', async () => {
     const first = createDeps(
-      createScriptedPrompt({ input: [VALID_TRIGGER_URL], confirm: [true], select: ['windows', 'default'] })
+      createScriptedPrompt({ input: [VALID_TRIGGER_URL], confirm: [true], select: ['webhook', 'windows', 'default'] })
     );
     expect(await runGuided(first)).toBe(0);
 
-    const prompt = createScriptedPrompt({ confirm: [true] });
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
     const second = createDeps(prompt);
 
     expect(await runGuided(second)).toBe(0);
@@ -509,10 +524,11 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     await rm(dir, { recursive: true, force: true });
   });
 
-  /** A fresh-state `BootstrapDeps`, with `prompt.confirm`'s first (and here only
-   * unconditional) answer wired to "already imported the flow?" so the run jumps straight
-   * to step 5 — no saved webhook, so steps 1-4 are skipped and no `input`/`select` answer
-   * is consumed before step 5's own prompts. */
+  /** A fresh-state `BootstrapDeps`. Every script here starts with the `'webhook'` target
+   * choice (the first `select` answer), then wires `prompt.confirm`'s first answer to
+   * "already imported the flow?" so the run jumps straight to the trigger-URL step — no
+   * saved state, so the webhook setup steps are skipped and no `input` answer is consumed
+   * before the trigger-URL step's own prompts. */
   function createDeps(prompt: BootstrapPrompter, overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
     return {
       isTTY: true,
@@ -537,7 +553,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [`<${VALID_TRIGGER_URL}>`],
       confirm: [true], // already imported? yes -> step 5
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -552,7 +568,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [`${VALID_TRIGGER_URL}”`, VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -572,7 +588,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt, { send });
 
@@ -588,7 +604,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -606,7 +622,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['skip', 'windows', 'default'] // test-send menu, then policy, then lookback
+      select: ['webhook', 'skip', 'windows', 'default'] // test-send menu, then policy, then lookback
     });
     const deps = createDeps(prompt, { send });
 
@@ -615,7 +631,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     expect(exit).toBe(0);
     expect(errLines(deps).some((l) => l.includes('Check that the flow is turned on'))).toBe(true);
     expect(prompt.select).toHaveBeenNthCalledWith(
-      1,
+      2,
       expect.any(String),
       expect.arrayContaining([
         expect.objectContaining({ value: 'retry', name: expect.stringContaining('Try again') }),
@@ -636,7 +652,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['retry', 'windows', 'default']
+      select: ['webhook', 'retry', 'windows', 'default']
     });
     const deps = createDeps(prompt, { send });
 
@@ -659,7 +675,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL, otherUrl],
       confirm: [true],
-      select: ['url', 'windows', 'default']
+      select: ['webhook', 'url', 'windows', 'default']
     });
     const deps = createDeps(prompt, { send });
 
@@ -672,7 +688,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
     expect(saved.webhookUrl).toBe(otherUrl);
     expect(saved.webhookTest).toBe('passed');
-    expect(errLines(deps).filter((l) => l === 'Step 5 of 8 · Trigger URL')).toHaveLength(1);
+    expect(errLines(deps).filter((l) => l === 'Step 6 of 9 · Trigger URL')).toHaveLength(1);
     expect(deps.out).toHaveBeenCalledWith(buildInstallCommand({ webhook: otherUrl, includeExternal: 'windows' }));
   });
 
@@ -680,14 +696,14 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['always', 'default']
+      select: ['webhook', 'always', 'default']
     });
     const deps = createDeps(prompt);
 
     await runGuided(deps);
 
     expect(prompt.select).toHaveBeenNthCalledWith(
-      1,
+      2,
       'When should developer machines include external sessions?',
       [
         { value: 'never', name: expect.stringContaining('Never (recommended)') },
@@ -705,7 +721,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['windows', 'default']
+      select: ['webhook', 'windows', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -719,7 +735,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL, '31', '14'],
       confirm: [true],
-      select: ['windows', 'fixed']
+      select: ['webhook', 'windows', 'fixed']
     });
     const deps = createDeps(prompt);
 
@@ -734,7 +750,7 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     const prompt = createScriptedPrompt({
       input: [VALID_TRIGGER_URL],
       confirm: [true],
-      select: ['always', 'default']
+      select: ['webhook', 'always', 'default']
     });
     const deps = createDeps(prompt);
 
@@ -746,5 +762,608 @@ describe('runGuided — steps 5-8 (trigger URL, external sessions, lookback, dev
     expect(outLine).toBe(buildInstallCommand({ webhook: VALID_TRIGGER_URL, includeExternal: 'always' }));
     const lines = errLines(deps);
     expect(lines[lines.length - 1]).toBe(updateHint('0.17.0'));
+  });
+});
+
+describe('runGuided — delivery target selection', () => {
+  let dir: string;
+  let statePath: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    testGitCheckMock.mockResolvedValue('passed');
+    dir = await mkdtemp(join(tmpdir(), 'guided-test-'));
+    statePath = join(dir, 'analytics-sync-bootstrap.json');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function createDeps(prompt: BootstrapPrompter, overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
+    return {
+      isTTY: true,
+      cwd: dir,
+      now: () => new Date('2026-11-04T21:33:07.123Z'),
+      cliVersion: async () => '0.17.0',
+      out: vi.fn(),
+      err: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      openUrl: vi.fn().mockResolvedValue(undefined),
+      prompt,
+      statePath,
+      ...overrides
+    };
+  }
+
+  function headings(deps: BootstrapDeps): string[] {
+    return errLines(deps).filter((l) => /^Step \d+ of \d+ · /.test(l));
+  }
+
+  it('the first prompt of a fresh run is the delivery target choice: webhook, git or both', async () => {
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    expect(prompt.select).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      [
+        expect.objectContaining({ value: 'webhook' }),
+        expect.objectContaining({ value: 'git' }),
+        expect.objectContaining({ value: 'both' })
+      ],
+      expect.anything()
+    );
+  });
+
+  it('saves the target choice right away: an interrupt after a git-only choice leaves it on disk (AC23)', async () => {
+    const prompt = createScriptedPrompt({ select: ['git'] });
+
+    await expect(runGuided(createDeps(prompt))).rejects.toThrow(/ran out of input/);
+
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved).toEqual({ version: 2, targets: { webhook: false, git: true } });
+  });
+
+  it('saves the target choice right away on a webhook run answered "not imported" (AC23)', async () => {
+    const prompt = createScriptedPrompt({ select: ['both'], confirm: [false] });
+
+    await expect(runGuided(createDeps(prompt))).rejects.toThrow(/ran out of input/);
+
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved).toEqual({ version: 2, targets: { webhook: true, git: true } });
+  });
+
+  it('a fresh git-only run asks the target, then only git-repo/external/lookback/developers, as "Step N of 5"', async () => {
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    const exit = await runGuided(deps);
+
+    expect(exit).toBe(0);
+    expect(headings(deps)).toEqual([
+      'Step 1 of 5 · Delivery target',
+      'Step 2 of 5 · Git repository',
+      'Step 3 of 5 · External sessions',
+      'Step 4 of 5 · Lookback',
+      'Step 5 of 5 · Developers'
+    ]);
+    // No "already imported the flow?" question: git-only has no flow.
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(testGitCheckMock).toHaveBeenCalledTimes(1);
+    expect(testGitCheckMock).toHaveBeenCalledWith(deps, { repoUrl: VALID_GIT_REPO }, undefined);
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.targets).toEqual({ webhook: false, git: true });
+    expect(saved.gitRepoUrl).toBe(VALID_GIT_REPO);
+    expect(saved.gitTest).toBe('passed');
+    expect(saved.webhookUrl).toBeUndefined();
+  });
+
+  it('empty branch and path produce no --git-branch / --git-path token in the install command', async () => {
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    expect(deps.out).toHaveBeenCalledTimes(1);
+    const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(outLine).toBe(buildInstallCommand({ gitRepo: VALID_GIT_REPO, includeExternal: 'windows' }));
+    expect(outLine).toContain('--git-repo');
+    expect(outLine).not.toContain('--git-branch');
+    expect(outLine).not.toContain('--git-path');
+    expect(outLine).not.toContain('--webhook-b64');
+  });
+
+  it('a git-only run prints the developer push-access note after the install command', async () => {
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    const lines = errLines(deps);
+    expect(lines).toContain(D8_NOTE);
+    expect(lines[lines.length - 1]).toBe(updateHint('0.17.0'));
+  });
+
+  it('a webhook-only run does not print the developer push-access note', async () => {
+    const prompt = createScriptedPrompt({
+      input: [VALID_TRIGGER_URL],
+      confirm: [true],
+      select: ['webhook', 'windows', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    expect(errLines(deps)).not.toContain(D8_NOTE);
+  });
+
+  it('a fresh webhook-only run numbers its steps "of 9", with the target step first', async () => {
+    const prompt = createScriptedPrompt({
+      input: [VALID_TRIGGER_URL],
+      confirm: [true],
+      select: ['webhook', 'windows', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    expect(headings(deps)).toEqual([
+      'Step 1 of 9 · Delivery target',
+      'Step 6 of 9 · Trigger URL',
+      'Step 7 of 9 · External sessions',
+      'Step 8 of 9 · Lookback',
+      'Step 9 of 9 · Developers'
+    ]);
+    expect(testGitCheckMock).not.toHaveBeenCalled();
+  });
+
+  it('a both-targets run asks the trigger URL, then the git repository, and prints both --webhook-b64 and --git-repo', async () => {
+    const prompt = createScriptedPrompt({
+      input: [VALID_TRIGGER_URL, VALID_GIT_REPO, 'main', 'reports/codemie'],
+      confirm: [true], // already imported the flow? yes
+      select: ['both', 'windows', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    const exit = await runGuided(deps);
+
+    expect(exit).toBe(0);
+    expect(headings(deps)).toEqual([
+      'Step 1 of 10 · Delivery target',
+      'Step 6 of 10 · Trigger URL',
+      'Step 7 of 10 · Git repository',
+      'Step 8 of 10 · External sessions',
+      'Step 9 of 10 · Lookback',
+      'Step 10 of 10 · Developers'
+    ]);
+    const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(outLine).toBe(
+      buildInstallCommand({
+        webhook: VALID_TRIGGER_URL,
+        gitRepo: VALID_GIT_REPO,
+        gitBranch: 'main',
+        gitPath: 'reports/codemie',
+        includeExternal: 'windows'
+      })
+    );
+    expect(outLine).toContain('--webhook-b64');
+    expect(outLine).toContain('--git-repo');
+    expect(errLines(deps)).toContain(D8_NOTE);
+  });
+
+  it('a fresh both-targets run without the shortcut walks all 10 steps in order', async () => {
+    const prompt = createScriptedPrompt({
+      input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL, VALID_GIT_REPO, '', ''],
+      confirm: [false, true, true, true, true],
+      select: ['both', 'windows', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)).toEqual([
+      'Step 1 of 10 · Delivery target',
+      'Step 2 of 10 · Teams channel',
+      'Step 3 of 10 · SharePoint folder',
+      'Step 4 of 10 · Time zone',
+      'Step 5 of 10 · Import the flow',
+      'Step 6 of 10 · Trigger URL',
+      'Step 7 of 10 · Git repository',
+      'Step 8 of 10 · External sessions',
+      'Step 9 of 10 · Lookback',
+      'Step 10 of 10 · Developers'
+    ]);
+  });
+
+  it('"Enter different repository details" asks for the git details again, printing the heading once', async () => {
+    testGitCheckMock.mockResolvedValueOnce('retry').mockResolvedValueOnce('passed');
+    const otherRepo = 'git@github.com:contoso/other.git';
+    const prompt = createScriptedPrompt({
+      input: [VALID_GIT_REPO, '', '', otherRepo, '', ''],
+      select: ['git', 'windows', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(testGitCheckMock).toHaveBeenCalledTimes(2);
+    expect(testGitCheckMock).toHaveBeenLastCalledWith(deps, { repoUrl: otherRepo }, undefined);
+    expect(errLines(deps).filter((l) => l === 'Step 2 of 5 · Git repository')).toHaveLength(1);
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.gitRepoUrl).toBe(otherRepo);
+    expect(saved.gitTest).toBe('passed');
+  });
+
+  it('saves the git details with gitTest cleared before the test push', async () => {
+    let stateAtTestTime: BootstrapState | undefined;
+    testGitCheckMock.mockImplementationOnce(async () => {
+      stateAtTestTime = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+      return 'skipped';
+    });
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, 'main', ''], select: ['git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    await runGuided(deps);
+
+    expect(stateAtTestTime?.gitRepoUrl).toBe(VALID_GIT_REPO);
+    expect(stateAtTestTime?.gitBranch).toBe('main');
+    expect(stateAtTestTime?.gitTest).toBeUndefined();
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.gitTest).toBe('skipped');
+  });
+
+  const GIT_ONLY_STATE: BootstrapState = {
+    version: 2,
+    targets: { webhook: false, git: true },
+    gitRepoUrl: VALID_GIT_REPO,
+    gitBranch: 'main',
+    gitTest: 'passed',
+    includeExternal: 'never',
+    lookbackDays: 'default'
+  };
+
+  it('a reusable saved git-only state is offered for reuse (not treated as fresh) and jumps to the install command', async () => {
+    await saveBootstrapState(GIT_ONLY_STATE, statePath);
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(prompt.select).toHaveBeenCalledTimes(1);
+    expect(prompt.input).not.toHaveBeenCalled();
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(deps.out).toHaveBeenCalledWith(
+      buildInstallCommand({ gitRepo: VALID_GIT_REPO, gitBranch: 'main', includeExternal: 'never' })
+    );
+    expect(headings(deps)).toEqual(['Step 5 of 5 · Developers']);
+  });
+
+  it('starting over on a saved git-only state re-asks the target, offering git, and keeps git-only when confirmed', async () => {
+    await saveBootstrapState(GIT_ONLY_STATE, statePath);
+    const prompt = createScriptedPrompt({
+      input: [VALID_GIT_REPO, '', ''],
+      select: ['restart', 'git', 'never', 'default']
+    });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(prompt.select).toHaveBeenNthCalledWith(2, expect.stringContaining('deliver'), expect.any(Array), 'git');
+    expect(headings(deps).slice(0, 2)).toEqual(['Step 1 of 5 · Delivery target', 'Step 2 of 5 · Git repository']);
+    // The stale git answers were discarded, so the saved branch is not offered back.
+    expect(prompt.input).toHaveBeenNthCalledWith(2, expect.stringContaining('Branch'), undefined);
+  });
+
+  it('starting over on a saved git-only state can add the webhook target, asking its steps from the first', async () => {
+    await saveBootstrapState(GIT_ONLY_STATE, statePath);
+    // Start over, choose both — then the prompter runs dry at the Teams channel step.
+    const prompt = createScriptedPrompt({ select: ['restart', 'both'] });
+    const deps = createDeps(prompt);
+
+    await expect(runGuided(deps)).rejects.toThrow(/ran out/);
+
+    expect(prompt.select).toHaveBeenNthCalledWith(2, expect.stringContaining('deliver'), expect.any(Array), 'git');
+    expect(headings(deps)).toEqual(['Step 1 of 10 · Delivery target', 'Step 2 of 10 · Teams channel']);
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.targets).toEqual({ webhook: true, git: true });
+  });
+
+  it('a saved git-only state with an untested repository resumes at the git step, discarding the stale git answers', async () => {
+    const { gitTest: _gitTest, ...untested } = GIT_ONLY_STATE;
+    await saveBootstrapState(untested, statePath);
+    // Reuse — resumes at git-repo, then the prompter runs dry at the repo URL prompt.
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
+    const deps = createDeps(prompt);
+
+    await expect(runGuided(deps)).rejects.toThrow(/ran out/);
+
+    const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+    expect(saved.gitRepoUrl).toBeUndefined();
+    expect(saved.gitBranch).toBeUndefined();
+    expect(saved.gitTest).toBeUndefined();
+    expect(saved.includeExternal).toBe('never');
+    expect(headings(deps)).toEqual(['Step 2 of 5 · Git repository']);
+  });
+});
+
+describe('runGuided — saved setup: Reuse / Change targets / Start over', () => {
+  let dir: string;
+  let statePath: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    testGitCheckMock.mockReset();
+    testGitCheckMock.mockResolvedValue('passed');
+    dir = await mkdtemp(join(tmpdir(), 'guided-test-'));
+    statePath = join(dir, 'analytics-sync-bootstrap.json');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function createDeps(prompt: BootstrapPrompter, overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
+    return {
+      isTTY: true,
+      cwd: dir,
+      now: () => new Date('2026-11-04T21:33:07.123Z'),
+      cliVersion: async () => '0.17.0',
+      out: vi.fn(),
+      err: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      openUrl: vi.fn().mockResolvedValue(undefined),
+      prompt,
+      statePath,
+      ...overrides
+    };
+  }
+
+  function headings(deps: BootstrapDeps): string[] {
+    return errLines(deps).filter((l) => /^Step \d+ of \d+ · /.test(l));
+  }
+
+  async function loadSaved(): Promise<BootstrapState> {
+    return JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
+  }
+
+  const GIT_ONLY: BootstrapState = {
+    version: 2,
+    targets: { webhook: false, git: true },
+    gitRepoUrl: VALID_GIT_REPO,
+    gitBranch: 'main',
+    gitTest: 'passed',
+    includeExternal: 'never',
+    lookbackDays: 'default'
+  };
+
+  const BOTH: BootstrapState = {
+    ...COMPLETE_STATE,
+    targets: { webhook: true, git: true },
+    gitRepoUrl: VALID_GIT_REPO,
+    gitBranch: 'main',
+    gitTest: 'passed'
+  };
+
+  it('a saved git-only setup opens with its summary and the three-way menu, not the flow-import question (AC21)', async () => {
+    await saveBootstrapState(GIT_ONLY, statePath);
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(prompt.select).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      [
+        expect.objectContaining({ value: 'reuse', name: expect.stringContaining('Reuse') }),
+        expect.objectContaining({ value: 'change', name: expect.stringContaining('Change targets') }),
+        expect.objectContaining({ value: 'restart', name: expect.stringContaining('Start over') })
+      ],
+      'reuse'
+    );
+    const lines = errLines(deps);
+    expect(lines).toContain('  Delivery targets: webhook off, git on');
+    expect(lines).toContain('  Git repository: github.com/… (path hidden)');
+    expect(lines.join('\n')).not.toContain('contoso/analytics');
+  });
+
+  it('Reuse live re-checks every chosen target before printing, saving each outcome', async () => {
+    await saveBootstrapState({ ...BOTH, webhookTest: 'skipped', gitTest: 'skipped' }, statePath);
+    const order: string[] = [];
+    const send = vi.fn().mockImplementation(async () => {
+      order.push('send');
+    });
+    testGitCheckMock.mockImplementation(async () => {
+      order.push('git');
+      return 'passed';
+    });
+    const prompt = createScriptedPrompt({ select: ['reuse'] });
+    const deps = createDeps(prompt, {
+      send,
+      out: vi.fn(() => {
+        order.push('out');
+      })
+    });
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(order).toEqual(['send', 'git', 'out']);
+    expect(send).toHaveBeenCalledWith(VALID_TRIGGER_URL, expect.anything(), 30_000);
+    expect(testGitCheckMock).toHaveBeenCalledWith(deps, { repoUrl: VALID_GIT_REPO, branch: 'main' }, undefined);
+    const saved = await loadSaved();
+    expect(saved.webhookTest).toBe('passed');
+    expect(saved.gitTest).toBe('passed');
+    expect(headings(deps)).toEqual(['Step 10 of 10 · Developers']);
+  });
+
+  it('Reuse: a skipped live webhook re-check still prints, saving webhookTest:"skipped"', async () => {
+    await saveBootstrapState(COMPLETE_STATE, statePath);
+    const send = vi.fn().mockRejectedValue(new SyncDeliveryError('HTTP 404', 404));
+    const prompt = createScriptedPrompt({ select: ['reuse', 'skip'] });
+    const deps = createDeps(prompt, { send });
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(deps.out).toHaveBeenCalledTimes(1);
+    expect((await loadSaved()).webhookTest).toBe('skipped');
+  });
+
+  it('Reuse: "Enter a different URL" on the live webhook re-check resumes at the Trigger URL step', async () => {
+    await saveBootstrapState(COMPLETE_STATE, statePath);
+    const otherUrl = 'https://example.invalid/triggers/invoke?api-version=1&sig=OTHERSECRET';
+    const send = vi.fn().mockRejectedValueOnce(new SyncDeliveryError('HTTP 404', 404)).mockResolvedValue(undefined);
+    const prompt = createScriptedPrompt({ input: [otherUrl], select: ['reuse', 'url', 'windows', 'default'] });
+    const deps = createDeps(prompt, { send });
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)[0]).toBe('Step 6 of 9 · Trigger URL');
+    expect(deps.out).toHaveBeenCalledWith(buildInstallCommand({ webhook: otherUrl, includeExternal: 'windows' }));
+    expect((await loadSaved()).webhookUrl).toBe(otherUrl);
+  });
+
+  it('Reuse: "Enter different repository details" on the live git re-check resumes at the Git repository step', async () => {
+    await saveBootstrapState(GIT_ONLY, statePath);
+    testGitCheckMock.mockResolvedValueOnce('retry').mockResolvedValue('passed');
+    const otherRepo = 'git@github.com:contoso/other.git';
+    const prompt = createScriptedPrompt({ input: [otherRepo, '', ''], select: ['reuse', 'never', 'default'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)[0]).toBe('Step 2 of 5 · Git repository');
+    expect(deps.out).toHaveBeenCalledWith(buildInstallCommand({ gitRepo: otherRepo, includeExternal: 'never' }));
+  });
+
+  it('Reuse on a both-targets setup with a credential-bearing saved git URL resumes at the Git repository step, never printing it (AR-2/D15)', async () => {
+    await saveBootstrapState({ ...BOTH, gitRepoUrl: 'https://tok@github.com/contoso/analytics.git' }, statePath);
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['reuse', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)[0]).toBe('Step 7 of 10 · Git repository');
+    expect(testGitCheckMock).toHaveBeenCalledTimes(1);
+    expect(testGitCheckMock).toHaveBeenCalledWith(deps, { repoUrl: VALID_GIT_REPO }, undefined);
+    const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(outLine).toContain('--git-repo');
+    expect([...errLines(deps), outLine].join('\n')).not.toContain('tok@');
+  });
+
+  it('Change targets, adding git over a retained credential-bearing git URL, never offers it as a prompt default (CR-003)', async () => {
+    await saveBootstrapState({ ...COMPLETE_STATE, gitRepoUrl: 'https://tok@github.com/contoso/analytics.git' }, statePath);
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['change', 'both'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    const gitPrompt = (prompt.input as ReturnType<typeof vi.fn>).mock.calls.find(([message]: [string]) =>
+      message.startsWith('Git repository URL')
+    );
+    expect(gitPrompt?.[1]).toBeUndefined();
+    expect((deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toContain('tok@');
+  });
+
+  it('Change targets, adding git to a saved webhook-only setup, asks only git questions and prints both targets (AC19)', async () => {
+    await saveBootstrapState(COMPLETE_STATE, statePath);
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, 'main', ''], select: ['change', 'both'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)).toEqual([
+      'Step 1 of 10 · Delivery target',
+      'Step 7 of 10 · Git repository',
+      'Step 10 of 10 · Developers'
+    ]);
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(deps.send).not.toHaveBeenCalled();
+    expect(testGitCheckMock).toHaveBeenCalledTimes(1);
+    expect(deps.out).toHaveBeenCalledWith(
+      buildInstallCommand({
+        webhook: VALID_TRIGGER_URL,
+        gitRepo: VALID_GIT_REPO,
+        gitBranch: 'main',
+        includeExternal: 'windows',
+        lookbackDays: 7
+      })
+    );
+    const saved = await loadSaved();
+    expect(saved.targets).toEqual({ webhook: true, git: true });
+    expect(saved.webhookUrl).toBe(VALID_TRIGGER_URL);
+    expect(saved.teamId).toBe(COMPLETE_STATE.teamId);
+  });
+
+  it('Change targets, adding the webhook to a saved git-only setup, runs only the webhook steps', async () => {
+    await saveBootstrapState(GIT_ONLY, statePath);
+    const prompt = createScriptedPrompt({
+      input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
+      confirm: [true, true, true, true],
+      select: ['change', 'both']
+    });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)).toEqual([
+      'Step 1 of 10 · Delivery target',
+      'Step 2 of 10 · Teams channel',
+      'Step 3 of 10 · SharePoint folder',
+      'Step 4 of 10 · Time zone',
+      'Step 5 of 10 · Import the flow',
+      'Step 6 of 10 · Trigger URL',
+      'Step 10 of 10 · Developers'
+    ]);
+    expect(testGitCheckMock).not.toHaveBeenCalled();
+    expect(deps.out).toHaveBeenCalledWith(
+      buildInstallCommand({
+        webhook: VALID_TRIGGER_URL,
+        gitRepo: VALID_GIT_REPO,
+        gitBranch: 'main',
+        includeExternal: 'never'
+      })
+    );
+  });
+
+  it('turning webhook off keeps webhookUrl on disk but omits it from the print and from the next Reuse check (AC20)', async () => {
+    await saveBootstrapState(BOTH, statePath);
+    const first = createDeps(createScriptedPrompt({ select: ['change', 'git'] }));
+
+    expect(await runGuided(first)).toBe(0);
+
+    const expected = buildInstallCommand({ gitRepo: VALID_GIT_REPO, gitBranch: 'main', includeExternal: 'windows', lookbackDays: 7 });
+    expect(first.out).toHaveBeenCalledWith(expected);
+    expect(first.send).not.toHaveBeenCalled();
+    let saved = await loadSaved();
+    expect(saved.targets).toEqual({ webhook: false, git: true });
+    expect(saved.webhookUrl).toBe(VALID_TRIGGER_URL);
+    expect(saved.teamId).toBe(COMPLETE_STATE.teamId);
+
+    const second = createDeps(createScriptedPrompt({ select: ['reuse'] }));
+    expect(await runGuided(second)).toBe(0);
+
+    expect(second.send).not.toHaveBeenCalled();
+    expect(second.out).toHaveBeenCalledWith(expected);
+    expect((second.out as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toContain('--webhook-b64');
+    expect(errLines(second)).toContain('  Delivery targets: webhook off, git on');
+    saved = await loadSaved();
+    expect(saved.webhookUrl).toBe(VALID_TRIGGER_URL);
+  });
+
+  it('Change targets that only removes a target still never prints a credential-bearing saved git URL', async () => {
+    await saveBootstrapState({ ...BOTH, gitRepoUrl: 'https://tok@github.com/contoso/analytics.git' }, statePath);
+    const prompt = createScriptedPrompt({ input: [VALID_GIT_REPO, '', ''], select: ['change', 'git', 'windows', 'default'] });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)).toContain('Step 2 of 5 · Git repository');
+    const outLine = (deps.out as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(outLine).not.toContain('tok@');
+    expect((await loadSaved()).webhookUrl).toBe(VALID_TRIGGER_URL);
   });
 });

@@ -100,7 +100,7 @@ describe('analytics sync CLI wiring — command surface', () => {
 
     const bootstrap = sync.commands.find((c) => c.name() === 'bootstrap')!;
     expect(bootstrap.description()).toBe(
-      'Lead: connect a Teams channel and SharePoint folder, then print the install command for your team (installs nothing on this machine)'
+      'Lead: choose where your team delivers reports (Teams webhook, git repository, or both), set it up, then print the install command for your team (installs nothing on this machine)'
     );
 
     const install = sync.commands.find((c) => c.name() === 'install')!;
@@ -115,6 +115,17 @@ describe('analytics sync CLI wiring — command surface', () => {
       const sub = sync.commands.find((c) => c.name() === name)!;
       expect(sub.description().length).toBeGreaterThan(0);
     }
+  });
+
+  it('"sync bootstrap --help" lists the git options next to --webhook', async () => {
+    const sync = findSync(await buildCommand());
+    const bootstrap = sync.commands.find((c) => c.name() === 'bootstrap')!;
+    const help = bootstrap.helpInformation();
+
+    expect(help).toContain('--webhook <url>');
+    expect(help).toContain('--git-repo <url>');
+    expect(help).toContain('--git-branch <name>');
+    expect(help).toContain('--git-path <dir>');
   });
 
   it('"sync install --help" lists the git options and --format next to --webhook', async () => {
@@ -184,6 +195,19 @@ describe('analytics sync CLI wiring — subcommand dispatch', () => {
 
     const [opts] = runBootstrapMock.mock.calls[0];
     expect(opts.lookbackDays).toBe('14');
+  });
+
+  it('"sync bootstrap" forwards --git-repo, --git-branch and --git-path to runBootstrap', async () => {
+    runBootstrapMock.mockResolvedValue(0);
+    await parse([
+      'sync', 'bootstrap', '--git-repo', 'git@h:o/r.git', '--git-branch', 'main', '--git-path', 'reports'
+    ]);
+
+    expect(runBootstrapMock).toHaveBeenCalledTimes(1);
+    const [opts] = runBootstrapMock.mock.calls[0];
+    expect(opts.gitRepo).toBe('git@h:o/r.git');
+    expect(opts.gitBranch).toBe('main');
+    expect(opts.gitPath).toBe('reports');
   });
 
   it('sets a non-zero exitCode when runBootstrap fails', async () => {
