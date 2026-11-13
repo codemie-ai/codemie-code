@@ -12,16 +12,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { OPENCODE_MODEL_CONFIGS } from '../opencode-model-configs.js';
 
 const processEvent = vi.fn();
 const startIncrementalSync = vi.fn();
 const stopIncrementalSync = vi.fn();
 const ensureSessionFile = vi.fn();
-// Real fetchDynamicModelConfigs would hit the network (falling back to the
-// static catalogue on any error); mocked here so the CODEMIE_PROFILE_MODELS
-// narrowing integration test below (CR-005) controls the exact catalogue
-// filterToAllowed sees, rather than depending on static-fallback content.
-const fetchDynamicModelConfigsMock = vi.fn().mockResolvedValue({});
+// Real fetchDynamicModelConfigs would hit the network; mocked here to resolve
+// synchronously with the same static catalogue it falls back to on a network
+// error, so these tests match real behavior without a live proxy. The
+// CODEMIE_PROFILE_MODELS narrowing integration tests below (CR-005) override
+// this per-test with their own small catalogue via mockResolvedValueOnce.
+const fetchDynamicModelConfigsMock = vi.fn().mockResolvedValue(OPENCODE_MODEL_CONFIGS);
 
 vi.mock('../../../../cli/commands/hook.js', () => ({ processEvent }));
 vi.mock('../opencode.incremental-sync.js', () => ({
