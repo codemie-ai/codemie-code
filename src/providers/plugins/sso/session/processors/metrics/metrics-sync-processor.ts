@@ -17,6 +17,7 @@ import { shouldStopSync, SyncStoppedError } from '../../../../../../agents/core/
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
+import { deltaIdOf } from './delta-id.js';
 import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
@@ -25,15 +26,15 @@ import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import { awaitsDestination, legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
-import { noteAwaitingDestination } from '@/providers/plugins/sso/session/bounded-request.js';
+import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { SessionFileLockTimeoutError } from '@/utils/errors.js';
 
-const MAX_SYNC_ATTEMPTS = 3;
-
-/** Whether a metric delta may still be sent: pending, or failed with retries left. */
+/**
+ * Whether a metric delta may still be sent: pending or failed, however many attempts it has
+ * (`syncAttempts` is diagnostic only; a `rejected` delta is terminal).
+ */
 export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
-  return delta.syncStatus === 'pending' ||
-    (delta.syncStatus === 'failed' && (delta.syncAttempts ?? 0) < MAX_SYNC_ATTEMPTS);
+  return delta.syncStatus === 'pending' || delta.syncStatus === 'failed';
 }
 
 /**
@@ -59,6 +60,23 @@ export class MetricsSyncProcessor implements SessionProcessor {
     return true;
   }
 
+  /**
+   * Writes the id of the legacy lines (no `deltaId` of their own) onto them before they are sent, so every resend of them
+   * reuses it, whatever lines join the pending set later. A failure is logged: the lines are then sent under the id of
+   * the moment.
+   */
+  private async persistLegacyBatchId(sessionId: string, legacy: MetricDelta[] | undefined, context: ProcessingContext): Promise<void> {
+    if (!legacy || legacy.length === 0) return;
+    const deltaId = deltaIdOf(legacy.map(d => d.recordId));
+    const recordIds = new Set(legacy.map(d => d.recordId));
+    try {
+      await rewriteSessionFile<MetricDelta>('metrics', sessionId, (current) =>
+        current.map((d): MetricDelta => (recordIds.has(d.recordId) && !d.deltaId ? { ...d, deltaId } : d)), context);
+    } catch (error) {
+      logger.warn(`[${this.name}] Cannot store the delta id of ${legacy.length} legacy line(s) of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
@@ -74,7 +92,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 1. Read all deltas from JSONL
       const allDeltas = await readJSONLTolerant<MetricDelta>(metricsFile, `[${this.name}]`);
 
-      // 2. Retry pending deltas and previously failed deltas until the attempt cap.
+      // 2. Retry pending and previously failed deltas; a rejected one is never resent.
       const pendingDeltas = allDeltas.filter(isDeltaSendCandidate);
 
       if (pendingDeltas.length === 0) {
@@ -162,12 +180,28 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 5. Aggregate pending deltas into metrics grouped by branch
       const clientType = context.clientType || 'codemie-cli';
       // A branch whose pending deltas name no model keeps the branch's, else the session's, last known one.
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, {
-        agentConfig,
-        fallbackModelByBranch: lastKnownModelByBranch(allDeltas, sessionMetadata)
-      });
+      // One metric per stored batch and branch: a resend of a batch keeps the delta id it was first sent under, however
+      // many batches joined the pending set since. The legacy lines without a batch id are one batch, under a hash of their ids.
+      const stored = new Map<string, MetricDelta[]>();
+      for (const delta of pendingDeltas) {
+        stored.set(delta.deltaId ?? '', [...(stored.get(delta.deltaId ?? '') ?? []), delta]);
+      }
+      const batchesById = new Map<string, MetricDelta[]>();
+      for (const [storedId, deltas] of stored) {
+        batchesById.set(storedId || deltaIdOf(deltas.map(d => d.recordId)), deltas);
+      }
+      await this.persistLegacyBatchId(session.sessionId, stored.get(''), context);
+      const fallbackModelByBranch = lastKnownModelByBranch(allDeltas, sessionMetadata);
+      const metrics: Array<ReturnType<typeof aggregateDeltas>[number]> = [];
+      const deltasOfMetric = new Map<object, { batchId: string; deltas: MetricDelta[] }>();
+      for (const [batchId, batchDeltas] of batchesById) {
+        for (const metric of aggregateDeltas(batchDeltas, sessionMetadata, context.version, clientType, { agentConfig, fallbackModelByBranch })) {
+          metrics.push(metric);
+          deltasOfMetric.set(metric, { batchId, deltas: batchDeltas });
+        }
+      }
 
-      logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
+      logger.info(`[${this.name}] Aggregated ${metrics.length} batch and branch metrics from ${pendingDeltas.length} deltas`);
 
       if (logger.isDebugMode()) {
         for (const metric of metrics) {
@@ -206,7 +240,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         cookies: context.cookies,
         apiKey: context.apiKey,
         timeout: 30000,
-        retryAttempts: 3,
+        retryAttempts: context.stopAtFirstFailure ? 0 : 3, // a timer run ends at its first outcome that is not ok
         version: context.version,
         clientType,
         dryRun: context.dryRun,
@@ -218,6 +252,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
       const successfulRecordIds = new Set<string>();
       const failedByRecordId = new Map<string, string>();
+      const rejectedRecordIds = new Set<string>();
       let deferred = false;
       let processedBranches = 0;
 
@@ -231,9 +266,13 @@ export class MetricsSyncProcessor implements SessionProcessor {
         }
         processedBranches++;
 
-        const branchDeltas = pendingDeltas.filter((delta) =>
+        const owner = deltasOfMetric.get(metric)!;
+        const branchDeltas = owner.deltas.filter((delta) =>
           (delta.gitBranch || sessionMetadata.gitBranch || '') === metric.attributes.branch
         );
+
+        // One id per emitted metric: the batch as written and the branch, the same on every resend of it
+        metric.attributes.delta_id = `${owner.batchId}:${metric.attributes.branch}`;
 
         try {
           const response = await metricsSender.sendSessionMetric(metric);
@@ -243,6 +282,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
             for (const delta of branchDeltas) {
               failedByRecordId.set(delta.recordId, response.message);
             }
+            if (context.stopAtFirstFailure) break;
             continue;
           }
 
@@ -259,9 +299,13 @@ export class MetricsSyncProcessor implements SessionProcessor {
           }
           const message = error instanceof Error ? error.message : String(error);
           logger.error(`[${this.name}] Sync threw for branch "${metric.attributes.branch}": ${message}`);
+          const rejected = (error as { outcome?: RequestOutcome } | null)?.outcome === 'rejected';
           for (const delta of branchDeltas) {
             failedByRecordId.set(delta.recordId, message);
+            if (rejected) rejectedRecordIds.add(delta.recordId);
           }
+          // The first outcome that is not ok ends a timer run: the other branches wait for the next tick
+          if (context.stopAtFirstFailure) break;
         }
       }
 
@@ -286,7 +330,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         if (syncError) {
           return {
             ...d,
-            syncStatus: 'failed',
+            syncStatus: rejectedRecordIds.has(d.recordId) ? 'rejected' : 'failed',
             syncAttempts: d.syncAttempts + 1,
             syncError,
           };

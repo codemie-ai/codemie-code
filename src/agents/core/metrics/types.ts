@@ -98,6 +98,8 @@ export interface MetricDelta {
   syncedAt?: number;
   syncAttempts: number;
   syncError?: string;
+  /** Stable id of the batch this delta was written in (see deltaIdOf); sent unchanged on every resend */
+  deltaId?: string;
 }
 
 /**

@@ -125,4 +125,43 @@ describe('SessionSyncer', () => {
     expect(result.message).toBe('sync stopped early (aborted), 1 processors skipped');
     expect(mockConvProcess).not.toHaveBeenCalled();
   });
+
+  describe('a timer run (stopAtFirstFailure)', () => {
+    it('ends at the metrics request answered 503: the conversation processor is not run', async () => {
+      mockLoadSession.mockResolvedValue(makeSession());
+      const { boundedRequest } = await import('../bounded-request.js');
+      mockMetricsProcess.mockImplementationOnce(async (_session: unknown, ctx: ProcessingContext) => {
+        const request = boundedRequest(1000, { abortSignal: ctx.abortSignal });
+        request.noteAnswer(503, false, false);
+        request.dispose();
+        return { success: false, message: 'Sync failed: 503' };
+      });
+
+      const { SessionSyncer } = await import('../SessionSyncer.js');
+      const result = await new SessionSyncer().sync('session-1', { ...context, abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(mockMetricsProcess).toHaveBeenCalledTimes(1);
+      expect(mockConvProcess).not.toHaveBeenCalled();
+      expect(result.failedProcessors).toEqual(['metrics-sync']);
+      expect(result.processorResults['conversation-sync']).toBeUndefined();
+    });
+
+    it('a request the caller stopped (not-attempt) does not end the run', async () => {
+      mockLoadSession.mockResolvedValue(makeSession());
+      const { boundedRequest } = await import('../bounded-request.js');
+      mockMetricsProcess.mockImplementationOnce(async (_session: unknown, ctx: ProcessingContext) => {
+        // The request's own deadline cut it: a stop, no attempt
+        const request = boundedRequest(1000, { abortSignal: ctx.abortSignal, deadlineMs: Date.now() - 1 });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        request.noteOutcome(new Error('aborted'));
+        request.dispose();
+        return { success: true, message: 'Sync deferred' };
+      });
+
+      const { SessionSyncer } = await import('../SessionSyncer.js');
+      await new SessionSyncer().sync('session-1', { ...context, abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(mockConvProcess).toHaveBeenCalledTimes(1);
+    });
+  });
 });

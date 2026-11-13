@@ -1,0 +1,651 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "14 of 15 resolved; CR-001 (ticket key in commit subject) fixed at commit step by rewording b93b45ec"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User requested a fix-up of all 15 findings; CR-014 decision: send one metric per stored delta batch so resends keep their id"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "14 of 15 resolved; CR-001 (ticket key in commit subject) fixed at commit step by rewording b93b45ec"
+    }
+  ],
+  "reviewed_head": "9ff066a96479841fa9b593c8264bb21487520e7d",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "14 of 15 prior blocking findings are resolved on current source and tests (CR-014 via the recorded per-batch decision); CR-001 (ticket key in the commit subject) is unresolved because it is not a code change and awaits the commit step. No new findings are discovered on this round; defers were not re-checked.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "breaking-change"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 13,
+    "moot": 0,
+    "decided": 1,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commit:b93b45ec",
+      "title": "Commit subject carries the ticket key",
+      "problem": "git-workflow.md Anti-Patterns forbid a ticket key in the commit subject when the scope already conveys context and direct it to the body footer; the subject 'test(analytics): pin EPMCDME-17068 delivery regression scenarios' embeds EPMCDME-17068 alongside the analytics scope.",
+      "impact": "The project's documented commit-format standard is not met for every commit in the review range; the noise lands in history unless squashed under a conforming PR title.",
+      "recommendation": "Reword the subject to `test(analytics): pin delivery regression scenarios` and move EPMCDME-17068 to the body footer, or make sure the squash-merge PR title follows the format without the key.",
+      "status": "wont-fix",
+      "check_notes": "Subject of b93b45ec still embeds the ticket key; no source change can resolve it. Reword at commit/squash time.",
+      "fix": {
+        "change": "not changed: a commit subject cannot be reworded without git, which this round may not run; reword b93b45ec or use a conforming squash title",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "Not a code change. Fixed at the commit step by rewording the subject of the unpushed commit b93b45ec to drop the ticket key.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "docs/ANALYTICS-REPORT.md",
+      "line": 52,
+      "title": "Budget docs contradict the shipped classifier",
+      "problem": "docs/ANALYTICS-REPORT.md:52 says an attempt counts when a request timed out or was reset after it was sent; docs/ARCHITECTURE-PROXY.md:172 lists the same as a counted failure, says a hanging outage still drops a record through 3 counted deliveries, and says a live daemon retries every 10 minutes without spending attempts. The code classifies every non-stop error (timeouts and resets included) as outage (bounded-request.ts:163 classifyError), and DesktopSessionDelivery.deliverLocked calls beginRealAttempt on every delivery, live passes included. The bounded-request.ts:187 doc comment repeats the stale timeout/reset wording.",
+      "impact": "AC17 requires the docs to describe the new rule; operators and maintainers are told hanging requests eventually drop data and live retries are free, which is the opposite of the shipped and tested behaviour.",
+      "recommendation": "Rewrite docs/ANALYTICS-REPORT.md:52 and docs/ARCHITECTURE-PROXY.md:172 (and the bounded-request.ts:187 comment) to match the code: a timeout or a reset after send is an outage and gives the attempt back, a hanging server never drops a record, and a live Desktop re-delivery pass is a real attempt given back unless counted. If the documented behaviour is the intended one, change classifyError and its tests instead.",
+      "status": "resolved",
+      "check_notes": "ANALYTICS-REPORT.md, ARCHITECTURE-PROXY.md and the bounded-request.ts comment now say timeouts/resets are outages and hangs never drop.",
+      "fix": {
+        "change": "docs/ANALYTICS-REPORT.md, docs/ARCHITECTURE-PROXY.md and the bounded-request.ts comment now say a timeout or reset is an outage, a hang never drops a record, a live Desktop pass is a real attempt given back unless counted",
+        "test": "n/a"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/session/delivery-budget.ts",
+      "line": 45,
+      "title": "Not-attempt outcome starts the failing clock",
+      "problem": "noteOutcome sets deliveryFailingSince for every outcome other than ok, including not-attempt, which attemptResult returns for a pass aborted before any request left (stale-session-reconciliation.ts:257) and classifyError returns for a caller deadline/abort. The spec says a path that makes no request starts nothing; delivery-budget.test.ts pins the opposite with it.each(['outage','auth','not-attempt']).",
+      "impact": "A record that never met a failing server gets a running 24h window, so its later drop comes earlier than the rule allows and the exit notice's 'not dropped before' date moves earlier than it should.",
+      "recommendation": "Start deliveryFailingSince only for outcomes that reached a server or an outage (outage, auth, counted, rejected), not for not-attempt; update the delivery-budget.test.ts case accordingly.",
+      "status": "resolved",
+      "check_notes": "noteOutcome skips the clock for not-attempt; test updated.",
+      "fix": {
+        "change": "noteOutcome starts the failing clock only for outcomes other than ok and not-attempt",
+        "test": "delivery-budget.test.ts: not-attempt starts no clock"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/delivery-budget.ts",
+      "line": 66,
+      "title": "Not-dropped-before date ignores retention",
+      "problem": "notDroppedBefore returns deliveryFailingSince (or now) + retryWindowMs, while budgetSpent returns 'retention expired' before checking the window or the outcome once the record is older than evidenceRecordIdleDays.",
+      "impact": "For a record near the 90-day evidence retention the exit notice promises 'not dropped before <date>' and the record is dropped earlier, a false statement in the notice this ticket exists to make honest.",
+      "recommendation": "Return the earlier of the window end and the retention end, e.g. Math.min((s.deliveryFailingSince ?? now) + retryWindowMs(), (s.endTime ?? s.startTime) + evidenceRecordIdleDays() * DAY_MS), guarding an undefined start time.",
+      "status": "resolved",
+      "check_notes": "notDroppedBefore takes the earlier of window end and retention end; test added.",
+      "fix": {
+        "change": "notDroppedBefore returns the earlier of the window end and the retention end",
+        "test": "delivery-budget.test.ts: retention end before the window"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/session/exit-notice.ts",
+      "line": 84,
+      "title": "Rejected line hides own pending data",
+      "problem": "noteOutcome stamps droppedAt/droppedReason on the first rejected outcome while the record stays queued with other lines undelivered. listExitDelivery then continues past any record with droppedAt, before the live-name and own-session checks, so the own session's pending line is never produced and the session is reported only as dropped.",
+      "impact": "When pending and dropped data coexist in the own session, the notice says the session's analytics were dropped and omits that the rest will be retried, failing the ticket's 'pending and dropped coexist, each reported accurately' requirement.",
+      "recommendation": "Do not skip a live record just because it carries droppedAt: report the drop when droppedAt >= since and still evaluate the live record for the pending/queued line while hasUndeliveredData holds; word the dropped line so a rejected-line drop is not read as the whole session being dropped.",
+      "status": "resolved",
+      "check_notes": "listExitDelivery reports the partial drop and still lists the live record as pending/queued.",
+      "fix": {
+        "change": "listExitDelivery keeps evaluating a live record carrying a rejected-line drop for the pending/queued line; the dropped line says the rest is still queued",
+        "test": "hook.session-delivery.test.ts: rejected line and other lines still pending"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/exit-notice.ts",
+      "line": 91,
+      "title": "Requeued /clear generation missing from exit notice",
+      "problem": "A /clear generation requeued under a fresh uuid is not ownSessionId, so it is never pending, and it is listed as queued only with a failing clock or real attempts. The /clear close reports no outcome (CR-009), so the requeued record carries neither.",
+      "impact": "The wrapper's own undelivered generation is silently omitted, and a silent notice tells the user everything was delivered.",
+      "recommendation": "List a live record re-keyed from this launch's own session as pending/queued even without a failing clock or attempts, e.g. by stamping an origin session id or owner pid on the requeued record in requeueSetUnlocked and matching it here.",
+      "status": "resolved",
+      "check_notes": "Requeued generation matched by originSessionId and listed as pending.",
+      "fix": {
+        "change": "a re-keyed /clear generation is listed under its originSessionId and counts as the wrapper's own",
+        "test": "hook.session-delivery.test.ts: own /clear generation re-keyed"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/session-generation.ts",
+      "line": 163,
+      "title": "Requeued generation loses its session identity",
+      "problem": "requeueSetUnlocked rewrites the record under randomUUID() and keeps no link to the original id. The exit notice then names it by an 8-char id the user never saw, docs/ANALYTICS-REPORT.md:58 still says earlier generations are kept as completed_<id>-<gen>.json and that --session <uuid> selects a session and its generations, and the moved _metrics.jsonl lines still carry the old sessionId field.",
+      "impact": "A requeued generation can no longer be found by its session id in the report or the notice, and the docs describe a naming that no longer holds. Reachability of a wrong session id in the sent payloads was not confirmed.",
+      "recommendation": "Keep a link to the original session on the requeued record (e.g. an originSessionId used by the exit notice and --session selection), confirm which id the metric and conversation payloads carry after the re-key, and update the docs/ANALYTICS-REPORT.md:58 generation term.",
+      "status": "resolved",
+      "check_notes": "originSessionId kept on re-key; data-loader --session and docs updated. Payload id on resend not separately confirmed.",
+      "fix": {
+        "change": "requeueSetUnlocked stamps originSessionId; the analytics loader selects re-keyed generations by it; docs term updated",
+        "test": "data-loader.test.ts: --session also selects a re-keyed generation"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/session/stale-session-reconciliation.ts",
+      "line": 258,
+      "title": "Local throw spends a real attempt",
+      "problem": "attemptResult returns 'counted' when the attempt threw and no request outcome was noted. attemptRecord reports attemptResult(signal, thrown) in its finally (line 428) and Desktop feeds sendRecord's thrown flag into it, so a local flush, transcript-lookup or file error starts deliveryFailingSince and spends a real attempt; the copilot-cli stuck-lookup test shows deliveryRealAttempts going 1, 2, 3 with processEvent never called.",
+      "impact": "A record whose failure never reached a server can be dropped as 'retry budget exhausted', violating the spec rule that only a counted server verdict spends the budget and that a path making no request starts nothing.",
+      "recommendation": "When the attempt threw and no request outcome was noted, return 'not-attempt' so a local failure neither starts the clock nor spends a real attempt; update the copilot-cli stuck-lookup test that expects 1, 2, 3.",
+      "status": "resolved",
+      "check_notes": "A local throw with no noted outcome is now not-attempt; tests updated.",
+      "fix": {
+        "change": "attemptResult returns not-attempt for a throw no request explains; finalizeRecord still closes locally when the stored budget was already spent",
+        "test": "stale-session-reconciliation.test.ts: attemptResult and copilot-cli stuck-lookup tests"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1488,
+      "title": "/clear close skips outcome reporting",
+      "problem": "closeGenerationLocked passes holdsReconcileLock: true to deliverSessionRecord, which disables its outcome reporting (hook/delivery.ts:43), and calls no beginRealAttempt/noteOutcome itself. markIfBudgetSpent (line 1192) and setGenerationAside (line 1203) then decide with a hard-coded budgetSpent(record, 'counted', now) instead of the close's real outcome.",
+      "impact": "A /clear delivery starts no clock, spends no attempt and stamps no 'rejected by the server'; a generation whose stored budget is spent is marked 'retry budget exhausted' and moved aside even when this close met an outage, auth answer or deadline cut, i.e. dropped without a counted failure.",
+      "recommendation": "Give the /clear close its own attempt signal and report its real outcome to the budget (beginRealAttempt before the send, noteOutcome after); have markIfBudgetSpent and setGenerationAside decide from that outcome instead of a hard-coded 'counted', so an outage/auth/deadline close never marks or moves the generation as dropped.",
+      "status": "resolved",
+      "check_notes": "closeGenerationLocked begins an attempt, reports the real outcome, and markIfBudgetSpent/setGenerationAside use it.",
+      "fix": {
+        "change": "the /clear close is one real attempt: beginAttempt before the send, reportOutcome after; markIfBudgetSpent, setGenerationAside and closeUnclosedLocally decide from that outcome",
+        "test": "hook.session-delivery.test.ts: /clear during an outage (stays queued, clock started, attempt given back; spent stored budget does not drop it)"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook/delivery.ts",
+      "line": 59,
+      "title": "CLI auth outcome loses to counted answers",
+      "problem": "The CLI paths (hook/delivery.ts:59 and stale-session-reconciliation.ts:428) take attemptResult alone, and OUTCOME_SEVERITY ranks counted above auth (bounded-request.ts:168), so an attempt with a 401 plus any counted answer counts. DesktopSessionDelivery.ts:117 checks authWasRejected(signal) first; the removed settleAttempt did the same on the CLI.",
+      "impact": "A record waiting for a re-login can spend its budget on the CLI but not on Desktop, against AC6 and the Desktop-parity requirement. Whether a counted answer can follow a 401 in one live attempt was not confirmed.",
+      "recommendation": "Apply the Desktop rule on the CLI paths: authWasRejected(signal) ? 'auth' : attemptResult(signal, thrown) in hook/delivery.ts and stale-session-reconciliation.ts attemptRecord.",
+      "status": "resolved",
+      "check_notes": "attemptResult checks authWasRejected first, covering the CLI paths.",
+      "fix": {
+        "change": "attemptResult checks authWasRejected first, so every CLI and Desktop path gives rejected credentials the auth outcome",
+        "test": "stale-session-reconciliation.test.ts: rejected credentials win over a counted answer"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/hook/end-metric.ts",
+      "line": 219,
+      "title": "Rejected end metric never becomes terminal",
+      "problem": "When the end metric is answered JSON 400/422 the send's catch only logs; no endMetricSkipped or other terminal mark is written. hasUndeliveredData (delivery-budget.ts:76) keeps counting the unmarked end metric, noteOutcome gives the rejected attempt back, and budgetSpent (line 58) acts only on counted, while droppedAt is already stamped.",
+      "impact": "The record is re-sent and re-rejected at every start until the 90-day retention, holding one of the RECONCILE_PER_START slots, and AC5's 'dropped at once' does not hold for the end metric.",
+      "recommendation": "When the end-metric send fails with outcome 'rejected', persist a terminal mark (e.g. markEndMetric(..., { endMetricSkipped: 'rejected' })) so hasUndeliveredData stops counting it and the record can leave the queue once its other data is delivered.",
+      "status": "resolved",
+      "check_notes": "markEndMetricRejected writes endMetricSkipped on an outcome 'rejected' error; request client sets error.outcome; regression test added.",
+      "fix": {
+        "change": "an end metric answered JSON 400/422 is marked endMetricSkipped 'rejected' and the drop stamped",
+        "test": "hook.session-delivery.test.ts: end metric the server rejects is terminal"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/SessionSyncer.ts",
+      "line": 276,
+      "title": "SessionSyncer timer break has no test",
+      "problem": "Regression gap: the new stopAtFirstFailure break between processors is never exercised. The only stopAtFirstFailure test calls MetricsSyncProcessor.process directly (metrics-sync-processor.stop.test.ts:107), the plugin test mocks SessionSyncer.sync, and SessionSyncer.test.ts / SessionSyncer-lock.test.ts never set the flag.",
+      "impact": "If the break is removed or inverted, the 10-minute proxy timer run (sso.session-sync.plugin.ts:262-269) keeps sending conversations against an outage and no test fails.",
+      "recommendation": "Add a SessionSyncer.sync test with stopAtFirstFailure: true and a per-run signal, pending metric deltas and a pending conversation payload, the metrics request answered 503: assert no /v1/conversations/ request is sent and the skipped processor is reported; add a not-attempt case that does not stop the run.",
+      "status": "resolved",
+      "check_notes": "SessionSyncer timer-run tests added for 503 stop and not-attempt continue.",
+      "fix": {
+        "change": "test added for the SessionSyncer stopAtFirstFailure break and for a not-attempt that does not stop the run",
+        "test": "SessionSyncer.test.ts: a timer run (stopAtFirstFailure)"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts",
+      "line": 83,
+      "title": "Conversation sync ignores stopAtFirstFailure",
+      "problem": "Missing adoption: only the metrics processor reads stopAtFirstFailure (metrics-sync-processor.ts:210/252/275). The conversation processor keeps retryAttempts: DEFAULT_RETRY_ATTEMPTS and loops over up to 50 payloads per run without checking the flag; SessionSyncer only stops between processors.",
+      "impact": "A timer run against a failing server sends every pending conversation payload with in-request retries, against AC13 and the documented 'one request per run' contract of ProcessingContext.stopAtFirstFailure.",
+      "recommendation": "Honour context.stopAtFirstFailure in the conversation processor: build its client with 0 retries on a timer run and break the payload loop at the first outcome that is not ok on context.abortSignal, matching the metrics processor; add a syncProcessor test mirroring metrics-sync-processor.stop.test.ts.",
+      "status": "resolved",
+      "check_notes": "Conversation processor uses 0 retries and breaks at the first non-ok on a timer run; tests added.",
+      "fix": {
+        "change": "the conversation processor builds its client with 0 retries and breaks at the first failed payload on a timer run",
+        "test": "syncProcessor-dedupe.test.ts: a timer run (stopAtFirstFailure)"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/session/processors/metrics/metrics-sync-processor.ts",
+      "line": 242,
+      "title": "Delta id changes between resends of a batch",
+      "problem": "A branch whose pending deltas span several write batches is sent under deltaIdOf(distinct ids). Batches keep joining the pending set during an outage, so a failed batch A resent after batch B was appended carries hash(A,B), not A's id, contrary to the MetricDelta.deltaId / delta_id stability comments.",
+      "impact": "Any server-side dedupe keyed on delta_id cannot match an earlier served-then-failed send, so the aggregate may be double counted. The backend is out of scope, so whether anything dedupes on delta_id today was not confirmed.",
+      "recommendation": "Decide what delta_id must identify: either send one metric per stored deltaId group so a resend of a batch keeps its id, or document that delta_id identifies the aggregate set and that the backend must not dedupe a grown set against an earlier send.",
+      "status": "decided",
+      "check_notes": "Decision mapped in fix_evidence; processor sends one metric per stored batch under its own delta id; test added.",
+      "fix": {
+        "change": "one metric per stored delta batch, each under its own delta_id",
+        "test": "metrics-sync-processor.stop.test.ts: one metric per stored batch"
+      },
+      "decision": {
+        "outcome": "Send one metric per stored delta batch so a resend keeps its original delta id",
+        "rationale": "The user chose per-batch metrics: metrics-sync-processor aggregates each stored deltaId group separately (legacy lines without an id form one group under a hash of their ids), so delta_id never changes between resends of a batch."
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/metrics/metrics-sync-processor.ts",
+      "line": 242,
+      "title": "Mixed-batch delta_id branch has no test",
+      "problem": "Regression gap: only the single-batch branch of the delta_id assignment is exercised (stop.test.ts seeds every delta with 'delta-stable'); a branch mixing two appendDeltas batches, the normal state between syncs, and a legacy line without deltaId are never sent in a test.",
+      "impact": "If the condition is weakened (e.g. to branchDeltas[0].deltaId), an aggregate is sent under the first batch's id and a delta_id-deduping backend would drop newer deltas, with no failing test. Consumer: MetricsSender.sendSessionMetric attributes.delta_id.",
+      "recommendation": "Add a metrics-sync-processor test seeding one branch with deltaId 'd-1' and 'd-2' plus a legacy delta without deltaId; assert attributes.delta_id equals deltaIdOf of the distinct ids and differs from a single-batch id.",
+      "status": "resolved",
+      "check_notes": "Mixed-batch and legacy-line delta_id test added.",
+      "fix": {
+        "change": "test seeding batches d-1, d-2 and legacy lines asserts each delta_id",
+        "test": "metrics-sync-processor.stop.test.ts: one metric per stored batch"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "One owner in src/agents/core/session/ notes outcomes, decides budget, holds the only undelivered predicate, earliest drop time, leaveQueue",
+      "status": "pass",
+      "notes": "delivery-budget.ts noteOutcome/budgetSpent/hasUndeliveredData/notDroppedBefore/leaveQueue; isDeliveryDone uses hasUndeliveredData"
+    },
+    {
+      "kind": "spec",
+      "item": "attemptRecord, finalizeRecord/closeExhaustedLocally and hook/delivery.ts only report outcomes to the owner",
+      "status": "pass",
+      "notes": "reportOutcome/attemptResult; closeExhaustedLocally uses leaveQueue"
+    },
+    {
+      "kind": "spec",
+      "item": "closeGenerationLocked (hook.ts) and closeUnclosedLocally only report outcomes to the owner",
+      "status": "fail",
+      "notes": "holdsReconcileLock:true disables reporting; markIfBudgetSpent uses a hard-coded 'counted' outcome (CR-009)"
+    },
+    {
+      "kind": "spec",
+      "item": "DesktopSessionDelivery reports outcomes; its own copy of the cap check goes",
+      "status": "pass",
+      "notes": "MAX_ATTEMPTS/countAttempt removed; beginRealAttempt + reportOutcome"
+    },
+    {
+      "kind": "spec",
+      "item": "On /clear an undelivered generation stays queued under a listed name and is not marked dropped",
+      "status": "partial",
+      "notes": "requeued under a fresh uuid, but markIfBudgetSpent/setGenerationAside can drop it with no counted failure in this close (CR-009)"
+    },
+    {
+      "kind": "spec",
+      "item": "A stranded record is flushed unless the verdict says its budget is spent",
+      "status": "pass",
+      "notes": "flushSpent = budgetSpent(record,'counted'); old finalizeAttempts ignored"
+    },
+    {
+      "kind": "spec",
+      "item": "Classifier: auth = 401 or expired-credential 403; data kept until re-login",
+      "status": "pass",
+      "notes": "isExpiredCredentialAnswer treats 401/403 as auth"
+    },
+    {
+      "kind": "spec",
+      "item": "Classifier: rejected = JSON 400/422; line dropped at once with 'rejected by the server'",
+      "status": "partial",
+      "notes": "lines pass; a rejected end metric is never made terminal and is resent every start (CR-011)"
+    },
+    {
+      "kind": "spec",
+      "item": "Classifier: outage = no connection, 5xx, 429, non-JSON 4xx, proxy 502/504, timeout or reset after send",
+      "status": "pass",
+      "notes": "classifyError -> outage; isFailingServerAnswer"
+    },
+    {
+      "kind": "spec",
+      "item": "Classifier: counted = 2xx success:false or other JSON 4xx",
+      "status": "pass",
+      "notes": "classifyAnswer falls through to counted"
+    },
+    {
+      "kind": "spec",
+      "item": "Only a counted outcome is a real attempt; never-left, aborted-before-send, caller stop are not attempts",
+      "status": "pass",
+      "notes": "noteOutcome gives attempt back unless counted"
+    },
+    {
+      "kind": "spec",
+      "item": "Clock starts at the first failed outcome; a path that makes no request starts nothing",
+      "status": "fail",
+      "notes": "a local throw becomes counted (CR-008); not-attempt also starts the clock (CR-003)"
+    },
+    {
+      "kind": "spec",
+      "item": "Drop as 'retry budget exhausted' only after counted failure, 24h AND >=3 real attempts; 90-day outer bound; env override",
+      "status": "pass",
+      "notes": "budgetSpent + retryWindowMs; /clear exception tracked in CR-009"
+    },
+    {
+      "kind": "spec",
+      "item": "Line status pending|failed|synced|rejected; syncAttempts diagnostic only; 3-send caps removed",
+      "status": "pass",
+      "notes": "MAX_SYNC_ATTEMPTS/MAX_CONVERSATION_SYNC_ATTEMPTS removed"
+    },
+    {
+      "kind": "spec",
+      "item": "A line is dropped only when rejected or when its record leaves the queue",
+      "status": "pass",
+      "notes": "leaveQueue stamps the record reason"
+    },
+    {
+      "kind": "spec",
+      "item": "A line is sent at most once per start pass, exit or timer run",
+      "status": "pass",
+      "notes": "dedupe tests for metrics and conversations"
+    },
+    {
+      "kind": "spec",
+      "item": "A timer run uses its own signal and stops at its first failure that is not ok",
+      "status": "partial",
+      "notes": "metrics processor complies; conversation processor ignores stopAtFirstFailure (CR-013)"
+    },
+    {
+      "kind": "spec",
+      "item": "Deltas carry a stable id built from their record ids",
+      "status": "pass",
+      "notes": "deltaIdOf + MetricsWriter; mixed-batch resend identity open as CR-014"
+    },
+    {
+      "kind": "spec",
+      "item": "Fields deliveryFailingSince (earliest), deliveryRealAttempts (larger), droppedReason with droppedAt",
+      "status": "pass",
+      "notes": "SessionStore.mergeCompleted"
+    },
+    {
+      "kind": "spec",
+      "item": "deliveryRealAttempts incremented before the send, given back unless counted",
+      "status": "pass",
+      "notes": "beginRealAttempt saved before send on all paths except /clear (CR-009)"
+    },
+    {
+      "kind": "spec",
+      "item": "deliveryAttempts/finalizeAttempts no longer read; merge, restoreCounter, Desktop reopen updated",
+      "status": "pass",
+      "notes": "reopen clears new fields"
+    },
+    {
+      "kind": "spec",
+      "item": "Exit notice: a lister returns entries and a formatter prints them",
+      "status": "pass",
+      "notes": "listExitDelivery + formatExitDelivery"
+    },
+    {
+      "kind": "spec",
+      "item": "Pending line: retried at later starts, not dropped before <clock + window>; never 'Nothing is lost'",
+      "status": "pass",
+      "notes": "date ignores retention (CR-004); own pending hidden by a rejected line (CR-005)"
+    },
+    {
+      "kind": "spec",
+      "item": "Earlier sessions tried this run still queued: one line with count and earliest drop time",
+      "status": "pass",
+      "notes": "queued entries; requeued own generation missed (CR-006)"
+    },
+    {
+      "kind": "spec",
+      "item": "Dropped this run: own rejected + earlier, dedup, agent + 8-char id + start, max 3 then 'and N more', reason, doctor",
+      "status": "pass",
+      "notes": "droppedLine + newestPerSession"
+    },
+    {
+      "kind": "spec",
+      "item": "Delivered sessions get no line",
+      "status": "pass",
+      "notes": "formatExitDelivery([]) -> []"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: 503 over >=4 launches then healthy start: nothing dropped, delivered in RECONCILE_PER_START batches",
+      "status": "pass",
+      "notes": "regression tests 'repro'"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: outage >24h with 3+ starts drops nothing; delivered after recovery",
+      "status": "pass",
+      "notes": "classifyError -> outage; tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: past 24h with <3 real attempts not dropped; dropped at the counted failure reaching 3",
+      "status": "pass",
+      "notes": "budgetSpent test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: healthy start sends every reconciled record before any drop, including old-cap records",
+      "status": "pass",
+      "notes": "old fields not read"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: JSON 400/422 drops the line at once with 'rejected by the server'; JSON 404/408 does not",
+      "status": "partial",
+      "notes": "end metric JSON 400 never terminal (CR-011)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: credentials expiring during delivery keep data and spend no real attempt",
+      "status": "pass",
+      "notes": "tests pass; CLI auth precedence gap CR-010"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: a send cut by the exit deadline spends no real attempt",
+      "status": "pass",
+      "notes": "classifyError(stopReason) -> not-attempt"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: /clear during a 503 outage keeps the previous generation queued and unmarked",
+      "status": "pass",
+      "notes": "requeueSetUnderNewId; drop-decision gap tracked in CR-009"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: no notice says 'Nothing is lost'; pending date is clock + window",
+      "status": "pass",
+      "notes": "exit notice tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: earlier sessions tried this run and still queued get one count line",
+      "status": "pass",
+      "notes": "exit notice test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: pending and dropped on separate lines; dropped named; >3 summarized; all-delivered prints nothing",
+      "status": "pass",
+      "notes": "own pending + own rejected coexistence hidden (CR-005)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: an all-delivered record is never marked dropped; done and undelivered from one predicate",
+      "status": "pass",
+      "notes": "leaveQueue marks only with undelivered data"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: during an outage a timer run stops at its first failure; no line sent twice in one pass",
+      "status": "partial",
+      "notes": "conversation processor ignores stopAtFirstFailure (CR-013)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: Desktop delivery, live re-delivery included, applies the same verdict, reasons and timing",
+      "status": "pass",
+      "notes": "Desktop reportOutcome"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: repro ~/repro-17068.mjs 503 and json400 modes drop nothing wrongly; no 'Nothing is lost'",
+      "status": "pending-stage-7",
+      "notes": "external repro run is Stage 7 evidence"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: regression tests cover the four ticket scenarios, repro, /clear outage, expiry 403, >24h outage",
+      "status": "pass",
+      "notes": "EPMCDME-17068 regressions describe block"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC17: docs/ANALYTICS-REPORT.md and external-integrations.md describe the new rule and texts",
+      "status": "partial",
+      "notes": "docs say timeouts/resets count and hangs still drop; code says outage (CR-002)"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: OTLP pipeline (otlp-spool/) not changed",
+      "status": "pass",
+      "notes": "only imports evidenceRecordIdleDays"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no change to canDeliver, gating or RECONCILE_PER_START = 5",
+      "status": "pass",
+      "notes": "unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no codemie doctor listing of dropped sessions",
+      "status": "pass",
+      "notes": "no doctor change"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: local-by-design closes never marked dropped",
+      "status": "pass",
+      "notes": "leaveQueue with undefined reason"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no change to EXIT_NETWORK_BUDGET_MS",
+      "status": "pass",
+      "notes": "not touched"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no backend change",
+      "status": "pass",
+      "notes": "client-only; optional delta_id attribute added"
+    },
+    {
+      "kind": "spec",
+      "item": "Decision: records under old counters start the new clock at their first new-rule attempt",
+      "status": "pass",
+      "notes": "new fields start undefined"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "9 subjects use allowed type/scope, imperative, under 100 chars; one breaks the git-workflow.md rule against a ticket key in the subject: test(analytics): pin EPMCDME-17068 delivery regression..."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "New exports have explicit return types and JSDoc; .js imports; import type; no console.log/any; kebab-case files. hook.ts and metrics-api-client.ts already exceed 500 lines (guideline, not adjudicated)."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No auth header/token/sanitize changes; logs carry session ids and reasons only; reads confined to getCodemiePath('sessions'); CODEMIE_DELIVERY_RETRY_WINDOW_MS validated finite and positive."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and the standards audit ran and every candidate was verified against source: 15 blocking findings (7 critical), including spec failures on /clear outcome reporting, local throws spending the budget, a rejected end metric resent for 90 days, the exit notice hiding pending data, conversation sync ignoring stopAtFirstFailure and docs contradicting the classifier; commit-format is partial (ticket key in a subject). One decision_needed remains (CR-014, delta_id identity across resends); 0 deferred; 17 candidates dismissed as handled, spec-intended or below the emission floor.",
+    "confidence": "low",
+    "risk_flags": [
+      "breaking-change"
+    ]
+  }
+}

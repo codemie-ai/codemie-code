@@ -182,6 +182,41 @@ describe('SessionStore.saveSession', () => {
     expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).deliveryAttempts).toBe(3);
   });
 
+  it('keeps the earliest failing clock, the larger real-attempt count and the reason paired with droppedAt when merging into completed_', async () => {
+    writeFileSync(livePath(), JSON.stringify(makeSession()));
+    await renameToCompletedDuringWrite(
+      makeSession({
+        status: 'completed', deliveryFailingSince: 1_790_000_000_500, deliveryRealAttempts: 4,
+        droppedAt: 1_790_000_900_000, droppedReason: 'rejected by the server',
+      })
+    );
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(
+      makeSession({ status: 'completed', deliveryFailingSince: 1_790_000_005_000, deliveryRealAttempts: 2 })
+    );
+
+    const completed = JSON.parse(readFileSync(completedPath(), 'utf-8'));
+    expect(completed.deliveryFailingSince).toBe(1_790_000_000_500);
+    expect(completed.deliveryRealAttempts).toBe(4);
+    expect(completed.droppedAt).toBe(1_790_000_900_000);
+    expect(completed.droppedReason).toBe('rejected by the server');
+  });
+
+  it('honours an explicit clear of the failing clock when merging into completed_, and keeps the other copy\'s clock otherwise', async () => {
+    writeFileSync(livePath(), JSON.stringify(makeSession()));
+    await renameToCompletedDuringWrite(
+      makeSession({ status: 'completed', deliveryFailingSince: 1_790_000_000_500, deliveryRealAttempts: 4 })
+    );
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ status: 'completed', deliveryFailingSince: null, deliveryRealAttempts: 2 }));
+
+    const completed = JSON.parse(readFileSync(completedPath(), 'utf-8'));
+    expect(completed.deliveryFailingSince ?? null).toBeNull();
+    expect(completed.deliveryRealAttempts).toBe(4);
+  });
+
   it('leaves a newer generation\'s {id}.json written after the completed_ merge in place', async () => {
     writeFileSync(livePath(), JSON.stringify(makeSession()));
     await renameToCompletedDuringWrite(

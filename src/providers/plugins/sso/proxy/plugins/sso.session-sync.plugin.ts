@@ -29,6 +29,12 @@ import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
 import { CredentialRefresher } from './credential-refresh.js';
 import { buildCookieHeader, droppedCookieKeys, sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import { attemptOutcome } from '../../session/bounded-request.js';
+import { readFile } from 'fs/promises';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { getSessionPath } from '@/agents/core/session/session-config.js';
+import { stampRejection } from '@/agents/core/session/delivery-budget.js';
+import type { Session } from '@/agents/core/session/types.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -206,7 +212,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
 
     // Start background timer
     this.syncTimer = setInterval(() => {
-      this.syncSessions().catch(error => {
+      this.syncSessions(undefined, true).catch(error => {
         logger.error(`[${this.name}] Sync failed:`, error);
       });
     }, this.syncInterval);
@@ -238,9 +244,10 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Sync sessions to API using SessionSyncer
+   * Sync sessions to API using SessionSyncer. `stopAtFirstFailure` is for the interval timer only: the final sync of
+   * `onProxyStop` is a full pass.
    */
-  private async syncSessions(deadlineMs?: number): Promise<void> {
+  private async syncSessions(deadlineMs?: number, stopAtFirstFailure = false): Promise<void> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
       logger.debug(`[${this.name}] Sync already in progress, skipping`);
@@ -259,11 +266,14 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
         this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
       }
 
-      // Use SessionSyncer service
-      const result = await this.syncer.sync(
-        this.sessionId,
-        deadlineMs === undefined ? this.context : { ...this.context, syncDeadlineMs: deadlineMs }
-      );
+      // Each run owns its controller: its outcomes are read from this signal alone
+      const run = new AbortController();
+      const result = await this.syncer.sync(this.sessionId, {
+        ...this.context,
+        abortSignal: run.signal,
+        stopAtFirstFailure,
+        ...(deadlineMs !== undefined && { syncDeadlineMs: deadlineMs })
+      });
 
       if (result.success) {
         logger.info(`[${this.name}] ${result.message}`);
@@ -271,10 +281,29 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
         logger.warn(`[${this.name}] Sync had failures: ${result.message}`);
       }
 
+      // A line the server refused for good (a JSON 400/422) is terminal on disk now; stamp the drop, or the record
+      // later leaves the queue unmarked and the exit notice never names it.
+      if (attemptOutcome(run.signal) === 'rejected') {
+        await this.stampRejection();
+      }
+
     } catch (error) {
       logger.error(`[${this.name}] Sync failed:`, error);
     } finally {
       this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Stamps the drop of a server rejection on the session's live record (`{id}.json` only: a record already renamed has
+   * left the queue and is never re-created here). Spends no attempt; a failure is logged, never thrown.
+   */
+  private async stampRejection(): Promise<void> {
+    try {
+      const live = JSON.parse(await readFile(getSessionPath(this.sessionId), 'utf-8')) as Session;
+      await new SessionStore().saveSession(stampRejection(live, Date.now()));
+    } catch (error) {
+      logger.warn(`[${this.name}] Cannot stamp the rejected data of session ${this.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

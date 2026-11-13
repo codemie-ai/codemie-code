@@ -73,7 +73,10 @@ export const CONTINUE_SESSION_ENV_KEY = 'CODEMIE_CONTINUE_SESSION';
 /**
  * Sync status (used by all processors)
  */
-export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'rejected';
+
+/** Why a record left the delivery queue with data unsent. */
+export type DropReason = 'rejected by the server' | 'retry budget exhausted' | 'retention expired' | 'local errors';
 
 /**
  * Conversations sync state (ConversationsProcessor)
@@ -206,10 +209,20 @@ export interface Session {
   startMetricDeferred?: string;
   /** Delivery attempts of a completed but undelivered record */
   deliveryAttempts?: number;
-  /** Finalization attempts of a stranded or legacy record */
-  finalizeAttempts?: number;
+  /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), in a row */
+  localFinalizeFailures?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;
+  /** Why the record is dropped; set together with `droppedAt` */
+  droppedReason?: DropReason;
+  /** The session id a `/clear` generation was kept under before it was re-keyed to stay in the delivery queue */
+  originSessionId?: string;
+  /** Unix ms of the first delivery failure that was not an `ok` since the last successful attempt; the retry window runs from it. `null`: cleared by a successful attempt */
+  deliveryFailingSince?: number | null;
+  /** Unix ms the latest real delivery attempt began; the exit notice counts a record as queued only when it was attempted since the wrapper started */
+  deliveryAttemptedAt?: number;
+  /** Delivery attempts that reached the server or could not be told apart from that; counted toward the retry budget */
+  deliveryRealAttempts?: number;
   /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */
   clientType?: string;
   /** The agent session id the launch named (e.g. `--session <ses_>`), selected exactly by the agent's transcript lookup */

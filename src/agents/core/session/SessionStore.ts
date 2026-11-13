@@ -41,7 +41,14 @@ function larger(a: number | undefined, b: number | undefined): number | undefine
   return a === undefined ? b : b === undefined ? a : Math.max(a, b);
 }
 
-/** The saving copy wins, except delivery marks it lacks and attempt counters lower than the other copy's. */
+function earlier(a: number | undefined, b: number | undefined): number | undefined {
+  return a === undefined ? b : b === undefined ? a : Math.min(a, b);
+}
+
+/**
+ * The saving copy wins, except delivery marks it lacks, attempt counters lower than the other copy's, and an earlier
+ * failing-since clock (unless the saving copy cleared it); `droppedReason` travels with the `droppedAt` it pairs with.
+ */
 function mergeCompleted(saving: Session, other: Session): Session {
   return {
     ...saving,
@@ -50,8 +57,15 @@ function mergeCompleted(saving: Session, other: Session): Session {
     legacyMetricsConsent: saving.legacyMetricsConsent ?? other.legacyMetricsConsent,
     legacyMetricsWithheld: saving.legacyMetricsWithheld ?? other.legacyMetricsWithheld,
     droppedAt: saving.droppedAt ?? other.droppedAt,
+    droppedReason: saving.droppedAt !== undefined ? saving.droppedReason : other.droppedReason,
+    // `null` is an explicit clear (a successful attempt ended the failing streak): the other copy's older clock must not return
+    deliveryFailingSince: saving.deliveryFailingSince === null
+      ? undefined
+      : earlier(saving.deliveryFailingSince, other.deliveryFailingSince ?? undefined),
+    deliveryRealAttempts: larger(saving.deliveryRealAttempts, other.deliveryRealAttempts),
+    deliveryAttemptedAt: larger(saving.deliveryAttemptedAt, other.deliveryAttemptedAt),
     deliveryAttempts: larger(saving.deliveryAttempts, other.deliveryAttempts),
-    finalizeAttempts: larger(saving.finalizeAttempts, other.finalizeAttempts),
+    localFinalizeFailures: larger(saving.localFinalizeFailures, other.localFinalizeFailures),
   };
 }
 

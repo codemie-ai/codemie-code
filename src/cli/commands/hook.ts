@@ -9,12 +9,10 @@ import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } 
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import {
   lastRecordedActivityAt,
-  markDroppedIfUndelivered,
   maxDeltaTimestamp,
   readLiveRecord,
   reconcileLockPath,
 } from '@/agents/core/session/stale-session-reconciliation.js';
-import { sameHost } from '@/agents/core/session/send-path.js';
 import { syntheticSessionEnd } from '@/agents/core/session/synthetic-session-end.js';
 import { nextRecordStart } from '@/agents/core/session/next-record-start.js';
 import { isClosedGeneration, moveSetToGeneration } from '@/agents/core/session/session-generation.js';
@@ -25,6 +23,7 @@ import { isSessionFileLockTimeout } from '@/utils/errors.js';
 import { buildProcessingContext } from './hook/processing-context.js';
 import { loadAnalyticsCookies } from './hook/analytics-cookies.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
+import { closeUnclosedLocally, GENERATION_CLOSE_BUDGET_MS, markIfBudgetSpent, moveUnclosedGeneration, runCloseAttempt, sendsThroughThisLaunch, setGenerationAside } from './hook/generation-close.js';
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { existsSync } from 'fs';
@@ -148,9 +147,6 @@ export interface HookProcessingConfig {
   /** Finalize the record locally only: no end metric, no sync, no rename */
   localOnly?: boolean;
 }
-
-/** How long a new generation's close may spend delivering the generation it closes before moving it aside. */
-const GENERATION_CLOSE_BUDGET_MS = 2_000;
 
 /**
  * Read JSON from stdin
@@ -1150,60 +1146,7 @@ async function setAsideUnclosed(
   if (live.status !== 'completed' && !isOtherGeneration(live, nativeSessionId)) return { outcome: 'own' };
   const previousEnd = live.status === 'completed' ? live.endTime : await closeUnclosedLocally(live, config);
   if (live.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
-  return (await moveUnclosedGeneration(sessionId, options)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
-}
-
-/**
- * Closes a generation its full close left unclosed: `completed`, `interrupted`, ending at its last
- * recorded activity, nothing flushed or sent here (the flush is what failed). The save alone is the
- * close: a failed dropped mark is only logged. Returns the end written; undefined when the save failed.
- */
-async function closeUnclosedLocally(live: Session, config: HookProcessingConfig | undefined): Promise<number | undefined> {
-  let endTime: number;
-  try {
-    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
-    endTime = await lastRecordedActivityAt(live);
-    await new SessionStore().saveSession({ ...live, status: 'completed', reason: 'interrupted', endTime });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`[hook] New generation: the previous generation of ${live.sessionId} could not be closed locally; the fresh record is not written: ${errorMessage}`);
-    return undefined;
-  }
-  logger.warn(`[hook] New generation: the previous generation of ${live.sessionId} was still active; closed locally at its last recorded activity, not flushed here`);
-  if (sendsThroughThisLaunch(live, config)) {
-    await markDroppedIfUndelivered(live.sessionId).catch((error: unknown) => {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.warn(`[hook] New generation: the previous generation of ${live.sessionId} could not be marked dropped: ${errorMessage}`);
-    });
-  }
-  return endTime;
-}
-
-/** Whether this launch delivers the record: it has a send path and the record is of its CodeMie host. */
-function sendsThroughThisLaunch(record: Session, config: HookProcessingConfig | undefined): boolean {
-  return !!configSendPathApiUrl(config) && sameHost(record, { CODEMIE_URL: getConfigValue('CODEMIE_URL', config) });
-}
-
-/**
- * Moves a completed `{id}.json` set the previous generation's close left in place to its generation
- * name as it is, delivered or not, its file locks waited for within {@link GENERATION_CLOSE_BUDGET_MS}
- * and the SessionEnd's bounds. False when the move failed or a lock stayed held: the set is kept and no
- * fresh record is written.
- */
-async function moveUnclosedGeneration(sessionId: string, options: SessionEndOptions): Promise<boolean> {
-  try {
-    const moved = await moveSetToGeneration(sessionId, '', {
-      deadlineMs: Math.min(Date.now() + GENERATION_CLOSE_BUDGET_MS, options.deadlineMs ?? Infinity),
-      signal: options.abortSignal,
-      pidOnlyLiveness: options.hookProcess === true,
-    });
-    logger.warn(`[hook] New generation: the previous generation of ${sessionId} could not be closed; it stays local as ${moved}, unsent`);
-    return true;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`[hook] New generation: the previous generation of ${sessionId} could not be closed; the fresh record is not written: ${errorMessage}`);
-    return false;
-  }
+  return (await moveUnclosedGeneration(sessionId, live, config, options)) ? { outcome: 'closed', previousEnd } : { outcome: 'kept' };
 }
 
 /**
@@ -1420,6 +1363,19 @@ async function waitReconcileLock(sessionId: string, options: SessionEndOptions, 
   });
 }
 
+/** The close itself: the synthetic end of an active previous generation, the delivery of a completed one of this launch. */
+async function closePreviousGeneration(live: Session, ours: boolean, config: HookProcessingConfig | undefined, bounded: SessionEndOptions): Promise<void> {
+  const sessionId = live.sessionId;
+  if (live.status === 'active') {
+    logger.info(`[hook] New generation: closing the active previous generation of ${sessionId}`);
+    const event = await syntheticSessionEnd(live, { flush: true });
+    await handleSessionEnd(event, sessionId, config, bounded);
+  } else if (live.status === 'completed' && ours) {
+    logger.info(`[hook] New generation: delivering the undelivered previous generation of ${sessionId}`);
+    await deliverSessionRecord(sessionId, nativeSessionId(live), live.reason, config, bounded);
+  }
+}
+
 /**
  * Closes the previous generation under the reconcile lock the caller holds, delivering within
  * {@link GENERATION_CLOSE_BUDGET_MS}: a record still `active` (its SessionEnd never came or was cut)
@@ -1431,7 +1387,9 @@ async function waitReconcileLock(sessionId: string, options: SessionEndOptions, 
  * of it wrote it first) is its own, not closed (`own`); no `{id}.json` leaves nothing to close.
  * `closed` carries the end the close wrote.
  *
- * ponytail: a generation whose delivery does not finish inside the budget leaves the queue (local only)
+ * A generation of this launch whose delivery does not finish inside the budget stays queued (re-keyed under a
+ * fresh session id the start pass lists) and is not marked, unless this close ended in a counted failure that spends
+ * its delivery budget (or the evidence retention has run out).
  */
 async function closeGenerationLocked(
   sessionId: string,
@@ -1449,28 +1407,21 @@ async function closeGenerationLocked(
       return { outcome: 'own' };
     }
     // Another host's generation, or one this launch cannot send, is finalized locally and moved aside unsent, not marked dropped
-    const ours = !!live && sendsThroughThisLaunch(live, config);
-    const bounded: SessionEndOptions = { ...options, deadlineMs, holdsReconcileLock: true, localOnly: !ours };
-    if (live?.status === 'active') {
-      logger.info(`[hook] New generation: closing the active previous generation of ${sessionId}`);
-      const event = await syntheticSessionEnd(live, { flush: true });
-      await handleSessionEnd(event, sessionId, config, bounded);
-    } else if (live?.status === 'completed' && ours) {
-      logger.info(`[hook] New generation: delivering the undelivered previous generation of ${sessionId}`);
-      await deliverSessionRecord(sessionId, nativeSessionId(live), live.reason, config, bounded);
-    }
+    const ours = sendsThroughThisLaunch(live, config);
+    // A close that sends is one delivery attempt: saved before the send, its outcome reported to the budget after it
+    const outcome = await runCloseAttempt(sessionId, ours, options, deadlineMs, (bounded) => closePreviousGeneration(live, ours, config, bounded));
     // A close whose status write failed completed nothing and left the record live: closed locally before any move
     const after = await loadSessionRecord(sessionId);
-    previousEnd = after && after.status !== 'completed' ? await closeUnclosedLocally(after, config) : after?.endTime;
+    previousEnd = after && after.status !== 'completed' ? await closeUnclosedLocally(after, config, outcome) : after?.endTime;
     if (after && after.status !== 'completed' && previousEnd === undefined) return { outcome: 'kept' };
     if (Date.now() >= deadlineMs) {
-      logger.info(`[hook] New generation: delivery budget spent; moving the previous generation aside as it is`);
+      logger.info(`[hook] New generation: delivery budget spent; setting the previous generation aside as it is`);
     }
     await moveSetToGeneration(sessionId, 'completed_');
     if (ours && after?.status === 'completed') {
-      await markDroppedIfUndelivered(sessionId);
+      await markIfBudgetSpent(sessionId, outcome);
     }
-    await moveSetToGeneration(sessionId, '', { deadlineMs, signal: options.abortSignal, pidOnlyLiveness: options.hookProcess === true });
+    await setGenerationAside(sessionId, ours, { deadlineMs, signal: options.abortSignal, pidOnlyLiveness: options.hookProcess === true }, outcome);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook] New generation: failed to close the previous generation: ${errorMessage}`);

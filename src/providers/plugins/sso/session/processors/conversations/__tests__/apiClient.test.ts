@@ -6,6 +6,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 import { createApiClient } from '../apiClient.js';
 import { SyncStoppedError } from '@/agents/core/session/BaseProcessor.js';
+import { attemptOutcome } from '../../../bounded-request.js';
 
 const fetchMock = vi.fn();
 const jsonHeaders = new Headers({ 'content-type': 'application/json' });
@@ -43,7 +44,7 @@ describe('ConversationApiClient request timers', () => {
       // Two retry back-offs (1 s, 2 s) between the three attempts.
       await vi.advanceTimersByTimeAsync(3_000);
 
-      expect(await result).toEqual({ success: false, message: 'Sync failed: fetch failed' });
+      expect(await result).toEqual({ success: false, message: 'Sync failed: fetch failed', outcome: 'outage' });
       expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -53,7 +54,7 @@ describe('ConversationApiClient request timers', () => {
 
       const result = await client.upsertConversation('conv-1', []);
 
-      expect(result).toEqual({ success: false, message: 'Sync failed: socket hang up' });
+      expect(result).toEqual({ success: false, message: 'Sync failed: socket hang up', outcome: 'outage' });
       expect(vi.getTimerCount()).toBe(0);
     });
   });
@@ -79,7 +80,33 @@ describe('ConversationApiClient request timers', () => {
       expect(await result).toEqual({
         success: false,
         message: 'API error: 403 Project access denied (user is not a member)',
+        outcome: 'auth',
       });
+    });
+
+    it('classifies a JSON 400 as rejected after one attempt', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 400, statusText: 'Bad Request', headers: jsonHeaders,
+        text: () => Promise.resolve('{"message":"bad history"}'),
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1' });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'rejected' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('classifies a JSON 404 as counted, not rejected', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 404, statusText: 'Not Found', headers: jsonHeaders,
+        text: () => Promise.resolve('{"message":"no such route"}'),
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', retryAttempts: 1 });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'counted' });
     });
 
     it('maps a successful upsert body to the result', async () => {
@@ -97,6 +124,7 @@ describe('ConversationApiClient request timers', () => {
         new_messages: 3,
         total_messages: 7,
         created: false,
+        outcome: 'ok',
       });
     });
   });
@@ -151,6 +179,43 @@ describe('ConversationApiClient request timers', () => {
 
       expect(result.success).toBe(false);
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 503 that a retry of the same payload answers with a success leaves no outage noted on the attempt signal', async () => {
+      const attempt = new AbortController();
+      fetchMock.mockResolvedValueOnce(unavailable())
+        .mockResolvedValueOnce(okResponse({ conversation_id: 'conv-1', new_messages: 1, total_messages: 1, created: false }));
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: attempt.signal });
+
+      const result = client.upsertConversation('conv-1', []);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect((await result).success).toBe(true);
+      expect(attemptOutcome(attempt.signal)).toBeUndefined();
+    });
+
+    it('a payload whose every try gets a 503 leaves one outage noted on the attempt signal', async () => {
+      const attempt = new AbortController();
+      fetchMock.mockResolvedValue(unavailable());
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: attempt.signal });
+
+      const result = client.upsertConversation('conv-1', []);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect((await result).success).toBe(false);
+      expect(attemptOutcome(attempt.signal)).toBe('outage');
+    });
+
+    it('retryAttempts: 0 means the default of 3 attempts, so a caller wanting no retry must pass 1', async () => {
+      fetchMock.mockResolvedValue(unavailable());
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', retryAttempts: 0 });
+
+      const result = client.upsertConversation('conv-1', []);
+      // Two retry back-offs (1 s, 2 s) between the three attempts.
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect((await result).success).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
     it('aborts a request still in flight at the deadline and starts no second attempt', async () => {

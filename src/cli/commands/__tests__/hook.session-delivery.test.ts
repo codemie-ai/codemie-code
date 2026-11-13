@@ -51,8 +51,8 @@ vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal
 const { processEvent, createHookCommand } = await import('../hook.js');
 const { deliverSessionRecord } = await import('../hook/delivery.js');
 const { renameSessionFiles } = await import('../../../agents/core/session/session-generation.js');
-const { finalizeOwnRecord, reconcileOtherSessions } = await import('../../../agents/core/session/stale-session-reconciliation.js');
-const { noticeDeliveryAtExit } = await import('../../../agents/core/session/exit-notice.js');
+const { finalizeOwnRecord, reconcileOtherSessions, isLiveRecordFileName } = await import('../../../agents/core/session/stale-session-reconciliation.js');
+const { noticeDeliveryAtExit, listExitDelivery, formatExitDelivery } = await import('../../../agents/core/session/exit-notice.js');
 const { logger } = await import('@/utils/logger.js');
 const { ensureSessionFile } = await import('../../../agents/core/session/ensure-session.js');
 const { exec } = await import('@/utils/exec.js');
@@ -499,17 +499,77 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 
-  it('a line failed past its sync-attempt cap counts as done: renamed, marked dropped', async () => {
+  it('a line failed with many attempts is still sent: delivered, renamed, never marked dropped', async () => {
     const session = baseRecord();
     writeRecord(session);
     writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'failed', syncAttempts: 3 }]);
-    const before = Date.now();
 
     await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session));
 
     const done = readRecord(session.sessionId, 'completed_');
     expect(done.endMetricSentAt).toBeTypeOf('number');
-    expect(done.droppedAt).toBeGreaterThanOrEqual(before);
+    expect(done.droppedAt).toBeUndefined();
+  });
+
+  describe('the SessionEnd delivery reports its outcome to the delivery budget', () => {
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    function payloadAtThreeAttempts(session: Session): void {
+      writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), `${JSON.stringify({
+        payloadId: 'payload-1',
+        timestamp: session.startTime + SECOND,
+        isTurnContinuation: false,
+        historyIndices: [0],
+        messageCount: 1,
+        payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hi', history_index: 0 }] },
+        status: 'failed',
+        syncAttempts: 3,
+      })}\n`);
+    }
+
+    it('an end metric sent plus one payload at syncAttempts 3 that fails with a counted answer, then succeeds: kept with the clock and one real attempt, never droppedAt, delivered at the next start', async () => {
+      const session = baseRecord({ endTime: Date.now() - 60 * 60 * SECOND, startTime: Date.now() - 2 * 60 * 60 * SECOND, endMetricSentAt: Date.now() - 60 * 60 * SECOND });
+      writeRecord(session);
+      writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }]);
+      payloadAtThreeAttempts(session);
+      respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(session));
+
+      const kept = readRecord(session.sessionId);
+      expect(kept.droppedAt).toBeUndefined();
+      expect(kept.deliveryRealAttempts).toBe(1);
+      expect(kept.deliveryFailingSince).toBeTypeOf('number');
+
+      respond = () => ok();
+      await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+      const done = readRecord(session.sessionId, 'completed_');
+      expect(done.droppedAt).toBeUndefined();
+      expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+    });
+
+    it('a 503 starts the clock and spends no real attempt; a delivery that goes through starts neither', async () => {
+      const failing = baseRecord();
+      writeRecord(failing);
+      writeDeltas(failing.sessionId, [{ timestamp: failing.startTime + SECOND }]);
+      respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(failing));
+
+      expect(readRecord(failing.sessionId)).toMatchObject({ deliveryRealAttempts: 0, deliveryFailingSince: expect.any(Number) });
+
+      const healthy = baseRecord();
+      writeRecord(healthy);
+      writeDeltas(healthy.sessionId, [{ timestamp: healthy.startTime + SECOND }]);
+      respond = () => ok();
+
+      await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(healthy));
+
+      const done = readRecord(healthy.sessionId, 'completed_');
+      expect(done.deliveryFailingSince).toBeUndefined();
+      expect(done.droppedAt).toBeUndefined();
+    });
   });
 
   it('an end metric sent but a line left pending (sync stopped by the abort) keeps {id}.json', async () => {
@@ -1365,7 +1425,15 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next' } });
   });
 
-  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered, the server down (503): A moved aside marked dropped', async () => {
+  /** The live-named record files (as the start pass lists them) of a generation set aside under a name other than `ownId`'s. */
+  function queuedGenerations(ownId: string, agentSessionId: string): Session[] {
+    return readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${ownId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session)
+      .filter((record) => record.correlation.agentSessionId === agentSessionId);
+  }
+
+  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered, the server down (503): A stays queued under a name the start pass lists, unmarked; the next healthy start delivers it', async () => {
     const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
     const id = a.sessionId;
     writeRecord(a);
@@ -1376,10 +1444,25 @@ describe('SessionEnd inside the agent hook process', () => {
     await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
 
     expect(endMetrics().map((m) => m.attributes.session_id)).toContain('gen-a');
-    const movedA = JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')) as Session;
-    expect(movedA.endMetricSentAt).toBeUndefined();
-    expect(movedA.droppedAt).toEqual(expect.any(Number));
+    expect(existsSync(join(sessionsDir, `completed_${id}-gen-a.json`))).toBe(false);
+    const [queued, ...rest] = queuedGenerations(id, 'gen-a');
+    expect(rest).toEqual([]);
+    expect(queued).toMatchObject({ status: 'completed', startTime: a.startTime });
+    expect(queued.endMetricSentAt).toBeUndefined();
+    expect(queued.droppedAt).toBeUndefined();
+    expect(readDeltas(queued.sessionId).map((d) => d.syncStatus)).toEqual(['pending']);
     expect(readRecord(id)).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'claude-native-next' } });
+
+    respond = () => ok();
+    requests = [];
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: id }).done;
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toContain('gen-a');
+    const delivered = readRecord(queued.sessionId, 'completed_');
+    expect(delivered.endMetricSentAt).toBeTypeOf('number');
+    expect(delivered.droppedAt).toBeUndefined();
+    expect(readDeltas(queued.sessionId, 'completed_').map((d) => d.syncStatus)).toEqual(['synced']);
   });
 
   /** B's live record with its sidecars, and A's closed set under `completed_<id><aSuffix>.json` (its generation name by default). */
@@ -1558,7 +1641,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(conversationPuts).toEqual([]);
   });
 
-  it('a start whose request the server never answers spends its attempt; the start after the 3rd renames unsent', async () => {
+  it('a start whose request the server never answers spends no real attempt; no later start renames the record unsent', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);
     // The server never answers; only the attempt's 10 s deadline ends a request
@@ -1585,9 +1668,9 @@ describe('SessionEnd inside the agent hook process', () => {
       const attempts: Array<number | undefined> = [];
       for (let start = 0; start < 3; start++) {
         await runStart();
-        attempts.push(readRecord(session.sessionId).deliveryAttempts);
+        attempts.push(readRecord(session.sessionId).deliveryRealAttempts);
       }
-      expect(attempts).toEqual([1, 2, 3]);
+      expect(attempts).toEqual([0, 0, 0]);
       expect(endMetrics().length).toBeGreaterThanOrEqual(3);
 
       requests = [];
@@ -1596,9 +1679,9 @@ describe('SessionEnd inside the agent hook process', () => {
       vi.useRealTimers();
     }
 
-    expect(requests).toEqual([]);
-    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
-    expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeUndefined();
+    expect(requests.length).toBeGreaterThan(0);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+    expect(readRecord(session.sessionId).droppedAt).toBeUndefined();
   });
 
   it('a start with no stored credentials leaves an undelivered record in place: no request, no attempt, never renamed unsent', async () => {
@@ -1611,7 +1694,7 @@ describe('SessionEnd inside the agent hook process', () => {
     try {
       for (let start = 0; start < 4; start++) {
         await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
-        attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryAttempts : 'renamed');
+        attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryRealAttempts : 'renamed');
       }
     } finally {
       vi.mocked(getStoredAnalyticsCredentials).mockImplementation(async () => ({ credentials: { cookies: { session: 'abc' } } }) as Awaited<ReturnType<typeof getStoredAnalyticsCredentials>>);
@@ -1658,7 +1741,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(kept.endMetricSentAt).toBeUndefined();
   });
 
-  it('a start whose end metric meets a permission denial (403) spends an attempt and marks no credentials invalid', async () => {
+  it('a start whose end metric meets a permission denial (403) spends no real attempt and marks no credentials invalid', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);
     respond = () => new Response(JSON.stringify({ message: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
@@ -1667,7 +1750,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(endMetrics().length).toBeGreaterThan(0);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
     expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(false);
   });
 
@@ -1689,7 +1772,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(requests.length).toBeGreaterThan(endMetrics().length);
     const kept = readRecord(session.sessionId);
     expect(kept.status).toBe('completed');
-    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(kept.localFinalizeFailures).toBeUndefined();
     expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
   });
 
@@ -1745,7 +1828,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readAuthMarker()).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, meets a permission denial (403) spends an attempt and marks no credentials invalid', async () => {
+  it('an undelivered record whose only pending request, a conversation, meets a permission denial (403) spends no real attempt and marks no credentials invalid', async () => {
     const session = conversationOnlyRecord();
     respond = () => new Response(JSON.stringify({ message: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1753,7 +1836,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
     expect(readAuthMarker()).toBeUndefined();
   });
 
@@ -1898,7 +1981,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
   });
 
-  it('an undelivered record whose only pending request, a conversation, is answered 500 with a body that cannot be read spends an attempt', async () => {
+  it('an undelivered record whose only pending request, a conversation, is answered 500 with a body that cannot be read spends no real attempt', async () => {
     const session = conversationOnlyRecord();
     respond = () => ({ ok: false, status: 500, statusText: 'Internal Server Error', headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('socket hang up')) }) as unknown as Response;
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
@@ -1906,7 +1989,7 @@ describe('SessionEnd inside the agent hook process', () => {
     await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
 
     expect(urls.filter((url) => !url.includes('/v1/conversations/'))).toEqual([]);
-    expect(readRecord(session.sessionId).deliveryAttempts).toBe(1);
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(0);
   });
 
   it('a stranded record whose delta sync is answered 503 gets its finalize attempt back; the record is kept', async () => {
@@ -1927,7 +2010,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(requests.length).toBeGreaterThan(endMetrics().length);
     const kept = readRecord(session.sessionId);
     expect(kept.status).toBe('completed');
-    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(kept.localFinalizeFailures).toBeUndefined();
     expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
   });
 
@@ -1956,10 +2039,14 @@ describe('SessionEnd inside the agent hook process', () => {
     await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-next', transcript_path: join(home, 'next.jsonl'), permission_mode: 'default', cwd: home, source: 'clear' }, a);
 
     expect(seen.statusWrites).toBe(1);
-    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail.json`), 'utf-8')) as Session;
-    expect(moved).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, droppedAt: expect.any(Number) });
+    expect(existsSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail.json`))).toBe(false);
+    const [queued] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${a.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(queued).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, correlation: { agentSessionId: 'gen-status-fail' } });
+    expect(queued.droppedAt).toBeUndefined();
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
-    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('marked dropped'))).toHaveLength(1);
+    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('marked dropped'))).toHaveLength(0);
     expect(readRecord(a.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
   });
 
@@ -2235,7 +2322,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
   });
 
-  it('an active generation the full close leaves unclosed is closed locally (its dropped mark from that close), moved aside; a fresh record its own, starting at the /clear', async () => {
+  it('an active generation the full close leaves unclosed is closed locally, left queued unmarked under a name the start pass lists; a fresh record its own, starting at the /clear', async () => {
     clearLogs();
     const lastDelta = Date.parse('2026-10-01T10:40:00Z');
     const session = baseRecord({
@@ -2257,11 +2344,15 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(seen.statusWrites).toBe(1);
     expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
-    const old = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed.json`), 'utf-8')) as Session;
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed.json`))).toBe(false);
+    const [old] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${session.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(old.correlation.agentSessionId).toBe('gen-unclosed');
     expect(old.status).toBe('completed');
     expect(old.endTime).toBe(lastDelta);
-    expect(old.droppedAt).toEqual(expect.any(Number));
-    const oldLines = readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed_metrics.jsonl`), 'utf-8').trim().split('\n');
+    expect(old.droppedAt).toBeUndefined();
+    const oldLines = readFileSync(join(sessionsDir, `${old.sessionId}_metrics.jsonl`), 'utf-8').trim().split('\n');
     expect(oldLines.map((l) => JSON.parse(l).recordId)).toEqual([`rec-${session.sessionId}-0`, `rec-${session.sessionId}-1`]);
     expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(false);
   });
@@ -2405,7 +2496,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
   });
 
-  it('a delivery slower than the 2 s budget is cut, the generation moved anyway and logged', async () => {
+  it('a delivery slower than the 2 s budget is cut, the generation set aside anyway, queued unmarked, and logged', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-slow' } });
     writeRecord(session);
     // The server never answers the end metric; only the budget's abort ends that request
@@ -2422,8 +2513,13 @@ describe('SessionStart source=clear closes the previous generation', () => {
     await processEvent(clearStart(), config(session));
 
     expect(Date.now() - startedAt).toBeLessThan(4 * SECOND);
-    const movedPath = join(sessionsDir, `completed_${session.sessionId}-gen-slow.json`);
-    expect((JSON.parse(readFileSync(movedPath, 'utf-8')) as Session).droppedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-slow.json`))).toBe(false);
+    const [queued, ...rest] = readdirSync(sessionsDir)
+      .filter((name) => isLiveRecordFileName(name) && name !== `${session.sessionId}.json`)
+      .map((name) => JSON.parse(readFileSync(join(sessionsDir, name), 'utf-8')) as Session);
+    expect(rest).toEqual([]);
+    expect(queued).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'gen-slow' } });
+    expect(queued.droppedAt).toBeUndefined();
     expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('delivery budget spent'))).toBe(true);
     expect(stderr).not.toHaveBeenCalled();
   });
@@ -2925,8 +3021,18 @@ describe('the own-record step at exit', () => {
 });
 
 describe('the exit notice', () => {
-  const PENDING = "CodeMie: this session's analytics are not delivered yet; they will be sent at the next codemie start. Nothing is lost.";
-  const DROPPED_ONE = 'CodeMie: analytics of 1 session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.';
+  const PENDING = "CodeMie: this session's analytics are not delivered yet; they will be retried at later `codemie` starts and are not dropped before ";
+  const DROPPED = 'CodeMie: analytics of these sessions were dropped: ';
+  const DOCTOR = 'Check the connection to CodeMie with `codemie doctor`.';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /** `d Mon HH:mm` in local time, as the notice prints it. */
+  function dateText(ms: number): string {
+    const d = new Date(ms);
+    return `${d.getDate()} ${MONTHS[d.getMonth()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  const droppedRecord = (overrides: Partial<Session> = {}): Session =>
+    baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: Date.now() + SECOND, droppedReason: 'retry budget exhausted', ...overrides });
+  const droppedLine = (s: Session): string => `${DROPPED}claude ${s.sessionId.slice(0, 8)} (started ${dateText(s.startTime)}) — retry budget exhausted`;
   const wrapperEnv = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
 
   function stderrLines(spy: { mock: { calls: unknown[][] } }): string[] {
@@ -2966,26 +3072,30 @@ describe('the exit notice', () => {
     expect(stderr).not.toHaveBeenCalled();
   });
 
-  it('a record the start pass dropped at its attempt cap: droppedAt on its completed_ record, one dropped line', async () => {
+  it('a record the start pass dropped with its retry budget spent: droppedAt on its completed_ record, one dropped line', async () => {
     const startedAt = Date.now();
-    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryAttempts: 3 });
+    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
     writeRecord(capped);
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
+    // A failure that counts: the server answers 404 in JSON
+    respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
     expect(readRecord(capped.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(readRecord(capped.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
+    respond = () => ok();
     await exitStep(own.sessionId, startedAt);
 
-    expect(stderrLines(stderr)).toEqual([expect.stringContaining(DROPPED_ONE)]);
+    expect(stderrLines(stderr)).toEqual([expect.stringContaining(droppedLine(capped))]);
   });
 
   it.each([
     { lines: ['failed'], dropped: true },
     { lines: ['pending', 'success'], dropped: false },
-  ])('a capped record whose conversation payload lines are $lines: dropped $dropped at the rename', async ({ lines, dropped }) => {
-    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now(), deliveryAttempts: 3 });
+  ])('a record with its budget spent whose conversation payload lines are $lines: dropped $dropped at the rename', async ({ lines, dropped }) => {
+    const capped = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.now(), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
     writeRecord(capped);
     writeDeltas(capped.sessionId, [{ timestamp: capped.startTime + SECOND, syncStatus: 'synced' }]);
     writeFileSync(join(sessionsDir, `${capped.sessionId}_conversation.jsonl`), lines.map((status) => `${JSON.stringify({
@@ -2999,6 +3109,7 @@ describe('the exit notice', () => {
     })}\n`).join(''));
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
+    respond = () => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
 
     await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
 
@@ -3008,14 +3119,136 @@ describe('the exit notice', () => {
   it('a record dropped before this wrapper started is not counted', async () => {
     const startedAt = Date.now();
     writeRecord(baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: startedAt - 60 * 60 * SECOND }), 'completed_');
-    writeRecord(baseRecord({ status: 'completed', endMetricSkipped: 'no-send-path', droppedAt: startedAt + SECOND }), 'completed_');
+    const recent = droppedRecord({ droppedAt: startedAt + SECOND });
+    writeRecord(recent, 'completed_');
     const own = baseRecord({ ownerPid: process.pid });
     writeRecord(own);
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await exitStep(own.sessionId, startedAt);
 
-    expect(stderrLines(stderr)).toEqual([expect.stringContaining(DROPPED_ONE)]);
+    expect(stderrLines(stderr)).toEqual([expect.stringContaining(droppedLine(recent))]);
+  });
+
+  it('pending own data and an earlier drop are shown on separate lines; the pending date is now + window without a clock', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now() });
+    writeRecord(own);
+    const earlier = droppedRecord();
+    writeRecord(earlier, 'completed_');
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(lines).toEqual([
+      `${PENDING}${dateText(startedAt + 24 * 60 * 60 * 1000)}.`,
+      `${droppedLine(earlier)}. ${DOCTOR}`,
+    ]);
+  });
+
+  it('the pending date is the failing clock + window when a clock has started', async () => {
+    const startedAt = Date.now();
+    const since = startedAt - 5 * 60 * 60 * 1000;
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now(), deliveryFailingSince: since, deliveryRealAttempts: 1 });
+    writeRecord(own);
+
+    const lines = formatExitDelivery(await listExitDelivery(own.sessionId, startedAt, startedAt));
+
+    expect(lines).toEqual([`${PENDING}${dateText(since + 24 * 60 * 60 * 1000)}.`]);
+  });
+
+  it('its own live record with a rejected line and other lines still pending: both the pending and the dropped line', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid, status: 'completed', endTime: Date.now(), droppedAt: startedAt + SECOND, droppedReason: 'rejected by the server' });
+    writeRecord(own);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(entries.map((e) => e.kind)).toEqual(['pending', 'dropped']);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain(PENDING);
+    expect(lines[1]).toContain(`claude ${own.sessionId.slice(0, 8)}`);
+    expect(lines[1]).toContain('rejected by the server');
+    expect(lines[1]).toContain('the rest is still queued');
+  });
+
+  it('its own /clear generation re-keyed under a fresh id: pending, named by the session id the user knows', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const requeued = baseRecord({ status: 'completed', endTime: Date.now(), originSessionId: own.sessionId });
+    writeRecord(requeued);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+
+    expect(entries).toEqual([expect.objectContaining({ kind: 'pending', sessionId: own.sessionId })]);
+  });
+
+  it('five drops: three are named, then "and 2 more"; a session with a live and a completed_ file is listed once', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const drops = [1, 2, 3, 4, 5].map((i) => droppedRecord({ startTime: Date.parse('2026-10-01T10:00:00Z') + i * 60_000 }));
+    drops.forEach((d) => writeRecord(d, 'completed_'));
+    // The first also keeps a live copy (an older generation of the same session)
+    writeRecord({ ...drops[0], startTime: drops[0].startTime - 1000 });
+
+    const entries = await listExitDelivery(own.sessionId, startedAt, startedAt);
+    const lines = formatExitDelivery(entries);
+
+    expect(entries.filter((e) => e.kind === 'dropped')).toHaveLength(5);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].match(/ claude [0-9a-f]{8} \(started /g)).toHaveLength(3);
+    expect(lines[0]).toContain('and 2 more');
+    expect(lines[0]).toContain(DOCTOR);
+    expect(lines[0]).not.toContain('Nothing is lost');
+  });
+
+  it('earlier sessions tried this run and still queued get one count line with the earliest drop time', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const a = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 3 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    const b = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 2, deliveryAttemptedAt: startedAt });
+    writeRecord(a);
+    writeRecord(b);
+
+    const lines = formatExitDelivery(await listExitDelivery(own.sessionId, startedAt - 1000, startedAt));
+
+    expect(lines).toEqual([
+      `CodeMie: analytics of 2 earlier session(s) are still queued for retry; none is dropped before ${dateText(a.deliveryFailingSince! + 24 * 60 * 60 * 1000)}.`,
+    ]);
+  });
+
+  it('a record this launch did not attempt (no attempt stamp since its start), or another wrapper\'s active one, is not counted as queued', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const clock = startedAt - 3 * 60 * 60 * 1000;
+    // Rewritten since the start (by a hook, say) but never attempted by it
+    writeRecord(baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: clock, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt - 60 * SECOND }));
+    writeRecord(baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: clock }));
+    // Another live wrapper's session, mid-attempt
+    writeRecord(baseRecord({ status: 'active', ownerPid: process.pid, deliveryFailingSince: clock, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt }));
+
+    const entries = await listExitDelivery(own.sessionId, startedAt - 1000, startedAt);
+
+    expect(entries.filter((e) => e.kind === 'queued')).toEqual([]);
+  });
+
+  it('generations of one session re-keyed under fresh ids are one queued entry with the earliest drop time', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const origin = '11111111-1111-4111-8111-111111111111';
+    const early = baseRecord({ startTime: Date.now() - 10 * 60_000, status: 'completed', endTime: Date.now(), originSessionId: origin, deliveryFailingSince: startedAt - 5 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    const late = baseRecord({ startTime: Date.now() - 5 * 60_000, status: 'completed', endTime: Date.now(), originSessionId: origin, deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    writeRecord(early);
+    writeRecord(late);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt - 1000, startedAt);
+
+    expect(entries).toEqual([expect.objectContaining({ kind: 'queued', sessionId: origin, notDroppedBefore: early.deliveryFailingSince! + 24 * 60 * 60 * 1000 })]);
+  });
+
+  it('a run whose data was all delivered prints no delivery line', () => {
+    expect(formatExitDelivery([])).toEqual([]);
   });
 
   it('a clean exit with everything delivered prints nothing', async () => {
@@ -3468,28 +3701,32 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(session.sessionId).reason).toBe('logout');
   });
 
-  it('the read still failing: the own-record step rejects, three starts spend their attempts, the fourth ends it completed with nothing of the transcript sent', async () => {
+  it('the read still failing: the own-record step rejects, starts spend nothing on the local failure, the fifth closes it locally, reported dropped, with nothing of the transcript sent', async () => {
     const { session, env, end } = copilotRun();
     const id = session.sessionId;
     const startedAt = Date.now();
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../../../agents/core/session/stale-session-reconciliation.js');
 
     await end();
     await expect(finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND })).rejects.toMatchObject({ code: 'EISDIR' });
-    expect(readRecord(id).finalizeAttempts).toBeUndefined();
+    expect(readRecord(id).deliveryRealAttempts).toBeUndefined();
 
-    for (const spent of [1, 2, 3]) {
+    for (let start = 1; start < LOCAL_FINALIZE_FAILURE_CAP; start++) {
       await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
-      expect(readRecord(id)).toMatchObject({ status: 'active', finalizeAttempts: spent });
+      // A local failure: no request reached a server, so nothing is spent
+      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, localFinalizeFailures: start });
     }
     expect(requests).toEqual([]);
 
     await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
 
-    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit', droppedAt: expect.any(Number) });
-    expect(requests.map((r) => r.name)).toEqual(['codemie_cli_session_total']);
+    // Closed locally at the cap: nothing sent, so it is marked dropped and the exit notice names it
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted' });
+    expect(readRecord(id, 'completed_').droppedAt).toBeTypeOf('number');
+    expect(requests).toEqual([]);
     await noticeDeliveryAtExit('own', startedAt, true);
-    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    expect(stderr.mock.calls.flat().join()).toContain('were dropped');
     expect(existsSync(spool(id, 'metrics', 'completed_'))).toBe(false);
     expect(existsSync(spool(id, 'conversation', 'completed_'))).toBe(false);
   });
@@ -3526,5 +3763,306 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
 
     expect(endMetrics()).toHaveLength(1);
     expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
+  });
+});
+
+describe('EPMCDME-17068 regressions', () => {
+  const HOUR = 60 * 60 * SECOND;
+  const wrapperEnv = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+  const json = (status: number, message = 'x'): Response => new Response(JSON.stringify({ message }), { status, headers: { 'content-type': 'application/json' } });
+  const lostText = 'Nothing is lost';
+
+  function stderrLines(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map((args) => args.map(String).join(' '));
+  }
+  /** One launch's exit step: its own record, then the notice. */
+  async function exitStep(sessionId: string, startedAt: number): Promise<void> {
+    await finalizeOwnRecord(sessionId, { env: wrapperEnv, deadlineMs: Date.now() + 10 * SECOND });
+    await noticeDeliveryAtExit(sessionId, startedAt, true);
+  }
+  /** A launch whose agent ran its SessionEnd hook (delivery attempted, failing or not), then the wrapper's exit notice. */
+  async function launchEnds(own: Session, startedAt: number): Promise<void> {
+    await processEvent(syntheticEnd(), config(own));
+    await noticeDeliveryAtExit(own.sessionId, startedAt, true);
+  }
+  function startPass(): Promise<void> {
+    return reconcileOtherSessions({ env: wrapperEnv, ownSessionId: 'own' }).done;
+  }
+  function stored(id: string): Session | undefined {
+    for (const prefix of ['', 'completed_']) {
+      if (existsSync(join(sessionsDir, `${prefix}${id}.json`))) return readRecord(id, prefix);
+    }
+    return undefined;
+  }
+  const spentRecord = (): Session => baseRecord({
+    status: 'completed',
+    endTime: Date.parse('2026-10-01T10:30:00Z'),
+    deliveryRealAttempts: 3,
+    deliveryFailingSince: Date.now() - 25 * HOUR,
+  });
+
+  it('delivery fails at exit: the data stays, no drop is reported, and the next start delivers it', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord();
+    writeRecord(own);
+    respond = () => json(503, 'unavailable');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await launchEnds(own, startedAt);
+
+    expect(stored(own.sessionId)?.droppedAt).toBeUndefined();
+    expect(stderrLines(stderr).join('\n')).not.toContain(lostText);
+    respond = () => ok();
+    requests = [];
+    await startPass();
+
+    expect(endMetrics()).toHaveLength(1);
+    expect(readRecord(own.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(own.sessionId, 'completed_').droppedAt).toBeUndefined();
+  });
+
+  it('pending own data and a drop of an earlier session in one run are each reported accurately', async () => {
+    const startedAt = Date.now();
+    const capped = spentRecord();
+    writeRecord(capped);
+    const own = baseRecord({ ownerPid: process.pid });
+    writeRecord(own);
+    respond = () => json(404, 'not found');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+    respond = () => json(503, 'unavailable');
+    await exitStep(own.sessionId, startedAt);
+
+    const lines = stderrLines(stderr);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('not delivered yet');
+    expect(lines[1]).toContain(`claude ${capped.sessionId.slice(0, 8)}`);
+    expect(lines[1]).toContain('retry budget exhausted');
+    expect(lines.join('\n')).not.toContain(lostText);
+    expect(stored(own.sessionId)?.droppedAt).toBeUndefined();
+  });
+
+  it.each([401, 403])('credentials expire mid-delivery (%i): a record past its window with 3 attempts is not discarded and spends no attempt', async (status) => {
+    const capped = spentRecord();
+    writeRecord(capped);
+    respond = () => json(status, 'expired');
+
+    await startPass();
+
+    expect(endMetrics().length).toBeGreaterThan(0);
+    const kept = stored(capped.sessionId)!;
+    expect(kept.droppedAt).toBeUndefined();
+    expect(kept.deliveryRealAttempts).toBe(3);
+    expect(existsSync(join(sessionsDir, `${capped.sessionId}.json`))).toBe(true);
+    await clearAnalyticsAuthStatus();
+    respond = () => ok();
+    requests = [];
+    await startPass();
+    expect(readRecord(capped.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+  });
+
+  it('a permanent drop is reported with its reason and the notice never says "Nothing is lost"', async () => {
+    const startedAt = Date.now();
+    const capped = spentRecord();
+    writeRecord(capped);
+    const own = baseRecord({ ownerPid: process.pid });
+    writeRecord(own);
+    respond = () => json(404, 'not found');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+    respond = () => ok();
+    await exitStep(own.sessionId, startedAt);
+
+    const text = stderrLines(stderr).join('\n');
+    expect(text).toContain('analytics of these sessions were dropped');
+    expect(text).toContain('retry budget exhausted');
+    expect(text).not.toContain(lostText);
+  });
+
+  it('repro: four launches fail with 503, then a healthy fifth delivers everything and nothing is dropped', async () => {
+    const ids: string[] = [];
+    respond = () => json(503, 'unavailable');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i < 4; i++) {
+      const startedAt = Date.now();
+      const own = baseRecord({ startTime: Date.parse('2026-10-01T10:00:00Z') + i * 60_000 });
+      ids.push(own.sessionId);
+      writeRecord(own);
+      await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: own.sessionId }).done;
+      await launchEnds(own, startedAt);
+    }
+    for (const id of ids) expect(stored(id)?.droppedAt).toBeUndefined();
+
+    respond = () => ok();
+    requests = [];
+    await startPass();
+
+    expect(endMetrics()).toHaveLength(4);
+    for (const id of ids) {
+      expect(readRecord(id, 'completed_').endMetricSentAt).toBeTypeOf('number');
+      expect(readRecord(id, 'completed_').droppedAt).toBeUndefined();
+    }
+    expect(stderrLines(stderr).join('\n')).not.toContain(lostText);
+  }, 150_000);
+
+  it('json400: each rejection is reported as a drop at its own launch', async () => {
+    respond = () => json(400, 'bad request');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i < 2; i++) {
+      stderr.mockClear();
+      const startedAt = Date.now();
+      const own = baseRecord();
+      writeRecord(own);
+
+      await launchEnds(own, startedAt);
+
+      const text = stderrLines(stderr).join('\n');
+      expect(text).toContain(`claude ${own.sessionId.slice(0, 8)}`);
+      expect(text).toContain('rejected by the server');
+      expect(text).not.toContain(lostText);
+      expect(stored(own.sessionId)?.droppedAt).toBeTypeOf('number');
+    }
+  });
+
+  it('SessionEnd whose counted failure spends the budget drops the record: renamed completed_, droppedReason retry budget exhausted', async () => {
+    const session = baseRecord({ deliveryRealAttempts: 2, deliveryFailingSince: Date.now() - 25 * HOUR });
+    writeRecord(session);
+    respond = () => json(404, 'not found');
+
+    await processEvent({ ...syntheticEnd(), reason: 'exit' }, config(session));
+
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retry budget exhausted' });
+    expect(readRecord(session.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+  });
+
+  it('/clear whose counted failure spends the budget drops the previous generation instead of re-queueing it', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-one', agentSessionFile: transcript },
+      deliveryRealAttempts: 2,
+      deliveryFailingSince: Date.now() - 25 * HOUR
+    });
+    writeRecord(session);
+    respond = () => json(404, 'not found');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const dropped = readdirSync(sessionsDir).filter((n) => n.startsWith('completed_') && n.endsWith('.json'));
+    expect(dropped).toHaveLength(1);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, dropped[0]), 'utf-8')) as Session;
+    expect(previous.droppedReason).toBe('retry budget exhausted');
+    expect(previous.droppedAt).toBeTypeOf('number');
+  });
+
+  it('/clear during an outage keeps the previous generation queued and unmarked; the next healthy start delivers it', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-one', agentSessionFile: transcript } });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const queued = readdirSync(sessionsDir).filter((n) => n.endsWith('.json') && !n.startsWith('completed_') && !n.endsWith('-codemie-marker.json') && n !== `${session.sessionId}.json`);
+    expect(queued).toHaveLength(1);
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith('completed_') && n.endsWith('.json'))).toEqual([]);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, queued[0]), 'utf-8')) as Session;
+    expect(previous.droppedAt).toBeUndefined();
+    expect(previous.status).toBe('completed');
+    // The re-keyed record keeps its session's id, and the /clear close reported its outage to the budget
+    expect(previous.originSessionId).toBe(session.sessionId);
+    expect(previous.deliveryFailingSince).toBeTypeOf('number');
+    expect(previous.deliveryRealAttempts).toBe(0);
+
+    respond = () => ok();
+    requests = [];
+    await reconcileOtherSessions({ env: wrapperEnv, ownSessionId: session.sessionId }).done;
+
+    expect(endMetrics().length).toBeGreaterThanOrEqual(1);
+    expect(readRecord(previous.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(previous.sessionId, 'completed_').droppedAt).toBeUndefined();
+  });
+
+  it('an outage longer than the window (CODEMIE_DELIVERY_RETRY_WINDOW_MS) with 3+ starts drops nothing; a counted failure after it does', async () => {
+    vi.stubEnv('CODEMIE_DELIVERY_RETRY_WINDOW_MS', '50');
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+    for (let i = 0; i < 4; i++) {
+      await startPass();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    expect(stored(session.sessionId)?.droppedAt).toBeUndefined();
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+
+    respond = () => ok();
+    requests = [];
+    await startPass();
+    expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+    expect(readRecord(session.sessionId, 'completed_').droppedAt).toBeUndefined();
+
+    const other = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 200 });
+    writeRecord(other);
+    respond = () => json(404, 'not found');
+    await startPass();
+    expect(readRecord(other.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
+  });
+
+  it('/clear during an outage over a generation whose stored budget is spent: no counted failure in this close, so it stays queued unmarked', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({
+      status: 'completed',
+      endTime: Date.parse('2026-10-01T10:30:00Z'),
+      deliveryRealAttempts: 3,
+      deliveryFailingSince: Date.now() - 25 * HOUR,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-spent', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    respond = () => json(503, 'unavailable');
+
+    await processEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-native-next',
+      transcript_path: join(home, 'next-transcript.jsonl'),
+      permission_mode: 'default',
+      cwd: home,
+      source: 'clear',
+    }, config(session));
+
+    const queued = readdirSync(sessionsDir).filter((n) => isLiveRecordFileName(n) && n !== `${session.sessionId}.json`);
+    expect(queued).toHaveLength(1);
+    const previous = JSON.parse(readFileSync(join(sessionsDir, queued[0]), 'utf-8')) as Session;
+    expect(previous.droppedAt).toBeUndefined();
+    expect(previous.originSessionId).toBe(session.sessionId);
+  });
+
+  it('an end metric the server rejects (JSON 400) is terminal: marked, the drop stamped, the record leaves the queue', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => json(400, 'bad request');
+
+    await startPass();
+
+    const done = readRecord(session.sessionId, 'completed_');
+    expect(done.endMetricSkipped).toBe('rejected');
+    expect(done.endMetricSentAt).toBeUndefined();
+    expect(done.droppedReason).toBe('rejected by the server');
+    expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
   });
 });

@@ -10,17 +10,20 @@
  * - `legacy` — an `active` record without `ownerPid` (written before owners were recorded), idle
  *   longer than {@link LEGACY_IDLE_MS}: finalized locally, nothing sent.
  *
- * Every record is handled under its `{id}.reconcile.lock`, re-checked under it, and its attempt
- * counter is saved before the attempt, so a crash spends the attempt and a later start goes on.
+ * Every record is handled under its `{id}.reconcile.lock`, re-checked under it, and its real-attempt
+ * counter is saved before the send, so a crash spends the attempt and a later start goes on. The attempt
+ * sends first; its outcome is then reported to the delivery budget (`delivery-budget.ts`), which alone says
+ * when a record may leave the queue with data unsent.
  */
 import { readdir, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { BaseHookEvent } from '../types.js';
-import type { Session } from './types.js';
+import type { DropReason, Session } from './types.js';
 import { SessionStore } from './SessionStore.js';
 import { awaitsDestination, isLegacyGatedProvider, legacyMetricsVerdict, legacyMetricsWithheld } from './legacy-metrics-gate.js';
-import { getSessionConversationPath, getSessionMetricsPath, getSessionPath } from './session-config.js';
+import { getSessionMetricsPath, getSessionPath } from './session-config.js';
+import { beginRealAttempt, budgetSpent, leaveQueue, noteOutcome } from './delivery-budget.js';
 import { latestRecordTime } from './BaseSessionAdapter.js';
 import { syntheticSessionEnd } from './synthetic-session-end.js';
 import { nextRecordStart, SESSION_UUID_PATTERN } from './next-record-start.js';
@@ -30,13 +33,9 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptNotServed, authWasRejected, awaitingDestination, failingServerAnswered, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
-import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
+import { attemptOutcome, authWasRejected, awaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
-import { getPayloadId } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
-import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 
 /**
  * A record without an owner is finalized once idle this long.
@@ -50,14 +49,6 @@ export const LEGACY_IDLE_MS = 72 * 60 * 60 * 1000;
  * their `undelivered` sends by it and finalize a predecessor's records uncapped.
  */
 export const RECONCILE_PER_START = 5;
-
-/**
- * Attempts per record: past them a stranded record is finalized without its flush, an undelivered one renamed unsent.
- * An attempt is not counted when no request of it was served: a request failed before the connection opened (a
- * connection refused, an unresolved host or an unreachable network) or got a failing server's answer (a 5xx, a 429 or
- * a non-JSON 4xx), and none ended in a counted failure; see {@link settleAttempt}.
- */
-export const MAX_ATTEMPTS = 3;
 
 /** How long `abandon()` waits for the attempt in hand to stop and roll its own counter back. */
 export const ABANDON_WAIT_MS = 500;
@@ -134,39 +125,6 @@ export async function maxDeltaTimestamp(sessionId: string): Promise<number | und
 export async function lastRecordedActivityAt(record: Session): Promise<number> {
   const times = [record.startTime, record.activityStartedAt ?? 0, (await maxDeltaTimestamp(record.sessionId)) ?? 0];
   return Math.max(...times.filter((time) => Number.isFinite(time)));
-}
-
-/**
- * Whether a closed record still holds data it was to send: an end metric neither sent nor skipped,
- * or — for a matched record — a metric line not synced or a conversation payload neither sent nor
- * superseded. A file that cannot be read is not delivered; a torn line in it is skipped.
- */
-async function hasUndeliveredData(record: Session): Promise<boolean> {
-  if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return true;
-  if (record.correlation?.status !== 'matched') return false;
-  try {
-    // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
-    if (!legacyMetricsWithheld(record)) {
-      const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[reconcile]');
-      if (deltas.some((delta) => delta.syncStatus !== 'synced')) return true;
-    }
-    const payloads = await readJSONLTolerant<ConversationPayloadRecord>(getSessionConversationPath(record.sessionId), '[reconcile]');
-    const sent = new Set(payloads.filter((p) => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).map(getPayloadId));
-    return payloads.some((p) =>
-      (p.status === CONVERSATION_SYNC_STATUS.PENDING || p.status === CONVERSATION_SYNC_STATUS.FAILED) && !sent.has(getPayloadId(p)));
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[reconcile] ${record.sessionId}: cannot read its pending data; counted undelivered: ${msg}`);
-    return true;
-  }
-}
-
-/** Writes `droppedAt` into the live `{id}.json` when it leaves the delivery queue with data still unsent. */
-export async function markDroppedIfUndelivered(sessionId: string): Promise<void> {
-  const record = await readLiveRecord(sessionId);
-  if (!record || !(await hasUndeliveredData(record))) return;
-  await new SessionStore().saveSession({ ...record, droppedAt: Date.now() });
-  logger.warn(`[reconcile] ${sessionId}: leaves the delivery queue with data unsent; marked dropped`);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,86 +245,58 @@ export interface ReconcilePass {
   abandon(): Promise<void>;
 }
 
-export interface Attempt {
-  sessionId: string;
-  field: 'finalizeAttempts' | 'deliveryAttempts';
-  before: number | undefined;
-  signal: AbortSignal;
+/**
+ * What an attempt amounts to, once it ran to its end or threw: rejected credentials first (they never spend the budget,
+ * whatever else its requests noted); else the worst outcome its requests noted; a legacy metric awaiting its
+ * destination is no failure; an abort of the pass or the exit deadline is never an attempt, whether or not a request
+ * ran before it (a cut is no server verdict); a throw nothing noted is a local failure (a flush, a lookup, a file), no
+ * request reached a server: no attempt; otherwise it went through.
+ */
+export function attemptResult(signal: AbortSignal, thrown: boolean): RequestOutcome {
+  if (authWasRejected(signal)) return 'auth';
+  const noted = attemptOutcome(signal);
+  if (noted) return noted;
+  if (awaitingDestination(signal)) return 'ok';
+  if (signal.aborted) return 'not-attempt';
+  return thrown ? 'not-attempt' : 'ok';
 }
 
-/** Saves the record with its counter + 1 BEFORE the attempt; returns the attempt to roll back. */
-async function beginAttempt(
-  record: Session,
-  field: Attempt['field'],
-  signal: AbortSignal
-): Promise<{ attempt: Attempt; exhausted: boolean }> {
-  const before = record[field];
-  const exhausted = (before ?? 0) >= MAX_ATTEMPTS;
-  await new SessionStore().saveSession({ ...record, [field]: (before ?? 0) + 1 });
-  return { attempt: { sessionId: record.sessionId, field, before, signal }, exhausted };
-}
-
-/** An attempt stopped by the pass's abort before any send is not an attempt: its counter goes back. */
-async function rollBackAttempt(attempt: Attempt): Promise<void> {
-  if (sendWasAttempted(attempt.signal)) return;
-  await restoreCounter(attempt, 'attempt stopped before any send');
+/** Why the live record's budget is spent if the attempt ended in `outcome`, or undefined; changes nothing on disk. */
+async function budgetSpentAfter(sessionId: string, outcome: RequestOutcome): Promise<DropReason | undefined> {
+  const live = await readLiveRecord(sessionId);
+  if (!live) return undefined;
+  const now = Date.now();
+  return budgetSpent(noteOutcome(live, outcome, now), outcome, now);
 }
 
 /**
- * Settles an attempt that ran to its end or threw, first match wins: rejected credentials anywhere in it; a request
- * of it that no server served — one never left or got a failing server's answer (a 5xx, a 429 or a non-JSON 4xx) —
- * with none ending in a counted failure, a successful request beside it changing nothing (see
- * {@link attemptNotServed}), a failing server's answer only while the record is within the
- * evidence retention; a legacy metric awaiting its destination within that retention; an abort of the pass before
- * any send — each puts its counter back. Any other outcome keeps it counted: a timeout, a reset after the send, a
- * JSON 4xx other than 401 or a 2xx that is not a success in any of its requests, an attempt that made no request
- * noting an outcome, and the attempt's own deadline expiring with a request in flight or none made, so a record that
- * always runs past it reaches its last attempt. The conversation metadata request notes no outcome, the delivery
- * ignoring its failure.
+ * Reports the attempt's outcome to the delivery budget: the live record is saved with the clock and the real-attempt
+ * counter as `noteOutcome` leaves them, and a closed record whose budget is spent leaves the queue, marked dropped
+ * only when `marks` (this launch was to deliver it). A record already renamed needs nothing.
  */
-export async function settleAttempt(attempt: Attempt, aborted: boolean): Promise<void> {
-  const failingServer = failingServerAnswered(attempt.signal);
-  if (authWasRejected(attempt.signal)) {
-    // Rejected credentials are no attempt: the record waits for a re-login
-    await restoreCounter(attempt, 'credentials rejected by the server');
-  } else if (attemptNotServed(attempt.signal) && (!failingServer || (await withinEvidenceRetention(attempt.sessionId)))) {
-    await restoreCounter(attempt, failingServer
-      ? 'answered by a failing server (5xx, 429 or a non-JSON 4xx)'
-      : 'request never reached the server');
-  } else if (awaitingDestination(attempt.signal) && (await withinEvidenceRetention(attempt.sessionId))) {
-    // A legacy metric withheld until the backend confirms the destination (EPMCDME-17054) spends no attempt
-    await restoreCounter(attempt, 'legacy metrics wait for the destination confirmation');
-  } else if (aborted) {
-    await rollBackAttempt(attempt);
+async function reportOutcome(
+  sessionId: string,
+  outcome: RequestOutcome,
+  options: AttemptOptions,
+  signal: AbortSignal,
+  marks: boolean
+): Promise<void> {
+  const live = await readLiveRecord(sessionId);
+  if (!live) return;
+  const now = Date.now();
+  const next = noteOutcome(live, outcome, now);
+  const reason = live.status === 'completed' ? budgetSpent(next, outcome, now) : undefined;
+  if (!reason) {
+    await new SessionStore().saveSession(next);
+    return;
   }
-}
-
-const DAY_MS = 86_400_000;
-
-/**
- * Whether the record's session ended (or, unended, started) within the evidence record's retention: while it does, an
- * attempt that awaited the destination or met a failing server is given back; past it such attempts count again, so
- * the record is dropped in the end.
- */
-async function withinEvidenceRetention(sessionId: string): Promise<boolean> {
-  const record = await new SessionStore().loadSession(sessionId);
-  const at = record?.endTime ?? record?.startTime;
-  return at !== undefined && Date.now() - at < evidenceRecordIdleDays() * DAY_MS;
-}
-
-/** Puts the attempt's counter back to its value before the attempt. */
-async function restoreCounter(attempt: Attempt, why: string): Promise<void> {
-  const store = new SessionStore();
-  const record = await store.loadSession(attempt.sessionId);
-  if (!record) return;
-  const restored: Session = { ...record };
-  if (attempt.before === undefined) {
-    delete restored[attempt.field];
+  const renamed = await leaveQueue(next, marks ? reason : undefined, now, (id) =>
+    options.pipeline.renameSessionFiles(id, { deadlineMs: options.deadlineMs, signal }));
+  if (renamed) {
+    logger.warn(`[reconcile] ${sessionId}: ${reason}; renamed without sending`);
   } else {
-    restored[attempt.field] = attempt.before;
+    logger.warn(`[reconcile] ${sessionId}: ${reason}; not renamed, the record is still live as ${sessionId}.json`);
   }
-  await store.saveSession(restored);
-  logger.info(`[reconcile] ${attempt.sessionId}: ${why}; ${attempt.field} rolled back`);
 }
 
 interface AttemptOptions {
@@ -379,22 +309,23 @@ interface AttemptOptions {
 }
 
 /**
- * A record past its attempts whose finalize still fails is closed here, nothing sent: `completed`,
- * `interrupted`, ending at its latest recorded activity, renamed — so it never holds a slot of the cap.
+ * A record whose budget is spent and whose finalize still fails is closed here, nothing sent: `completed`,
+ * `interrupted`, ending at its latest recorded activity, renamed, so it never holds a slot of the cap. `reason` is
+ * undefined for a record this launch was not to deliver (it is never marked dropped).
  */
-async function closeExhaustedLocally(sessionId: string, error: unknown, options: AttemptOptions, deliver: boolean): Promise<void> {
+async function closeExhaustedLocally(sessionId: string, error: unknown, options: AttemptOptions, reason: DropReason | undefined): Promise<void> {
   const current = await readLiveRecord(sessionId);
   if (!current) throw error;
   const endTime = await lastRecordedActivityAt(current);
-  await new SessionStore().saveSession({ ...current, status: 'completed', reason: 'interrupted', endTime });
-  // A record this launch was not to deliver (another host, no send path, legacy) is never marked
-  if (deliver) await markDroppedIfUndelivered(sessionId);
-  const renamed = await options.pipeline.renameSessionFiles(sessionId, { deadlineMs: options.deadlineMs, signal: options.parent });
+  const closed: Session = { ...current, status: 'completed', reason: 'interrupted', endTime };
+  await new SessionStore().saveSession(closed);
+  const renamed = await leaveQueue(closed, reason, Date.now(), (id) =>
+    options.pipeline.renameSessionFiles(id, { deadlineMs: options.deadlineMs, signal: options.parent }));
   const msg = error instanceof Error ? error.message : String(error);
   if (renamed) {
-    logger.warn(`[reconcile] ${sessionId}: finalize failed past ${MAX_ATTEMPTS} attempts (${msg}); closed locally, nothing sent`);
+    logger.warn(`[reconcile] ${sessionId}: finalize failed with its retry budget spent (${msg}); closed locally, nothing sent`);
   } else {
-    logger.warn(`[reconcile] ${sessionId}: finalize failed past ${MAX_ATTEMPTS} attempts (${msg}); not renamed, the record is still live as ${sessionId}.json`);
+    logger.warn(`[reconcile] ${sessionId}: finalize failed with its retry budget spent (${msg}); not renamed, the record is still live as ${sessionId}.json`);
   }
 }
 
@@ -408,7 +339,9 @@ async function closeWithoutAttempt(record: Session, options: AttemptOptions): Pr
     return true;
   }
   if (options.kind === 'unqueued') {
-    if (await options.pipeline.renameSessionFiles(id, { deadlineMs: options.deadlineMs, signal: options.parent })) {
+    // Local by design: no host to deliver to, so never marked dropped
+    if (await leaveQueue(record, undefined, Date.now(), (name) =>
+      options.pipeline.renameSessionFiles(name, { deadlineMs: options.deadlineMs, signal: options.parent }))) {
       logger.info(`[reconcile] ${id}: completed record with no CodeMie host; renamed, nothing sent`);
     } else {
       logger.warn(`[reconcile] ${id}: completed record with no CodeMie host; not renamed, the record is still live as ${id}.json`);
@@ -419,42 +352,96 @@ async function closeWithoutAttempt(record: Session, options: AttemptOptions): Pr
 }
 
 /**
- * Marks a copilot-cli record closing past its attempts with its transcript unsent: its lookup could not
+ * Marks a copilot-cli record closing with its budget spent with its transcript unsent: its lookup could not
  * conclude, or a transcript is there and this close does not flush it. No pending data shows this, since the
  * failed passes wrote none. A record left uncorrelated had no transcript to lose.
  */
-async function markTranscriptUnsent(sessionId: string): Promise<void> {
+async function markTranscriptUnsent(sessionId: string, reason: DropReason): Promise<void> {
   const record = await readLiveRecord(sessionId);
   if (!record || record.correlation?.status === 'failed') return;
-  await new SessionStore().saveSession({ ...record, droppedAt: Date.now() });
-  logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent; marked dropped`);
+  await new SessionStore().saveSession({ ...record, droppedAt: record.droppedAt ?? Date.now(), droppedReason: record.droppedReason ?? reason });
+  logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent (${reason}); marked dropped`);
+}
+
+/** Local failures of its own (a file, a transcript) in a row after which a record is closed locally and, when it was to deliver, reported dropped ('local errors'). */
+export const LOCAL_FINALIZE_FAILURE_CAP = 5;
+
+/** Counts one more local finalize failure on the live record; true once the cap is reached. A failed save counts as not reached. */
+async function localFinalizeFailuresSpent(sessionId: string): Promise<boolean> {
+  try {
+    const live = await readLiveRecord(sessionId);
+    if (!live) return false;
+    const localFinalizeFailures = (live.localFinalizeFailures ?? 0) + 1;
+    await new SessionStore().saveSession({ ...live, localFinalizeFailures });
+    return localFinalizeFailures >= LOCAL_FINALIZE_FAILURE_CAP;
+  } catch (error) {
+    logger.warn(`[reconcile] ${sessionId}: cannot count its local finalize failure: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
 
 /**
- * The synthetic end of a stranded / legacy record, delivered when this launch can. True when a
- * finalize past its attempts failed and the record was closed locally instead.
+ * The synthetic end of a stranded / legacy record, delivered when `deliver`. `flushSpent` is why the record may leave the
+ * queue before this attempt sends anything (the evidence retention ended): the end then goes without the flush. True
+ * when the finalize failed and the record was closed locally instead: with its budget spent by this attempt's own
+ * counted failure, or after {@link LOCAL_FINALIZE_FAILURE_CAP} local failures in a row (reported dropped as 'local errors' when it was to deliver).
  */
-async function finalizeRecord(record: Session, options: AttemptOptions, signal: AbortSignal, exhausted: boolean): Promise<boolean> {
+async function finalizeRecord(
+  record: Session,
+  options: AttemptOptions,
+  signal: AbortSignal,
+  deliver: boolean,
+  flushSpent: DropReason | undefined
+): Promise<boolean> {
   const { kind, launch, pipeline, deadlineMs } = options;
   const id = record.sessionId;
-  const deliver = kind === 'stranded' && (await canDeliver(record, launch));
-  if (exhausted) {
-    logger.warn(`[reconcile] ${id}: ${kind} after ${MAX_ATTEMPTS} attempts; finalized without the flush`);
+  if (flushSpent) {
+    logger.warn(`[reconcile] ${id}: ${kind} past the evidence retention (${flushSpent}); finalized without the flush`);
   }
   logger.info(`[reconcile] ${id}: ${kind} ${record.agentName} record; finalizing${deliver ? ' and delivering' : ' locally'}`);
-  const event = await syntheticSessionEnd(record, { flush: !exhausted });
-  if (exhausted && deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id);
   try {
+    const event = await syntheticSessionEnd(record, { flush: !flushSpent });
+    if (flushSpent && deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id, flushSpent);
     await pipeline.processEvent(event, await recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
-    if (!exhausted) throw error;
-    await closeExhaustedLocally(id, error, options, deliver);
+    await closeAfterFinalizeFailure(record, error, options, signal, deliver, flushSpent);
     return true;
   }
   if (kind === 'legacy') {
     await pipeline.renameSessionFiles(id, { deadlineMs, signal });
   }
   return false;
+}
+
+/**
+ * A finalize that failed: closed locally, nothing sent, when this attempt's own counted failure spent the budget (the
+ * evidence retention spends it at any outcome) or after {@link LOCAL_FINALIZE_FAILURE_CAP} failures of its own in a row
+ * (marked dropped as 'local errors' when it was to deliver); any other failure is rethrown and leaves the record for a later start.
+ */
+async function closeAfterFinalizeFailure(
+  record: Session,
+  error: unknown,
+  options: AttemptOptions,
+  signal: AbortSignal,
+  deliver: boolean,
+  flushSpent: DropReason | undefined
+): Promise<void> {
+  const id = record.sessionId;
+  const outcome = attemptResult(signal, true);
+  const reason = outcome === 'not-attempt' ? flushSpent : await budgetSpentAfter(id, outcome);
+  if (reason) {
+    // The close sends nothing of the transcript: a copilot-cli record's transcript is lost with it, which no pending data shows
+    if (deliver && record.agentName === 'copilot-cli') await markTranscriptUnsent(id, reason);
+    await closeExhaustedLocally(id, error, options, deliver ? reason : undefined);
+    return;
+  }
+  // A failure of its own (no request noted, no abort) that repeats must not hold one of the pass's slots until the retention ends
+  if (attemptOutcome(signal) === undefined && !signal.aborted && (await localFinalizeFailuresSpent(id))) {
+    // Closed with data it never sent: reported as dropped (its own reason; no request spent a budget), not lost silently
+    await closeExhaustedLocally(id, error, options, deliver ? 'local errors' : undefined);
+    return;
+  }
+  throw error;
 }
 
 /** One attempt on a record whose lock the caller holds. */
@@ -469,28 +456,26 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
   if (parent.aborted) controller.abort();
 
   try {
-    const field = kind === 'undelivered' ? 'deliveryAttempts' : 'finalizeAttempts';
-    const { attempt, exhausted } = await beginAttempt(record, field, controller.signal);
+    const deliver = kind === 'undelivered' || (kind === 'stranded' && (await canDeliver(record, launch)));
+    // No drop is decided before a send: a stranded record is flushed unless the evidence retention already ended. The retry
+    // budget (a counted failure after the window) is judged on this attempt's own outcome, never assumed from earlier starts
+    const flushSpent = kind === 'undelivered' ? undefined : budgetSpent(record, 'not-attempt', Date.now());
+    await new SessionStore().saveSession(beginRealAttempt(record));
     let closedLocally = false;
+    let thrown = false;
     try {
       if (kind === 'undelivered') {
-        if (exhausted) {
-          await markDroppedIfUndelivered(id);
-          if (await pipeline.renameSessionFiles(id, { deadlineMs, signal: controller.signal })) {
-            logger.warn(`[reconcile] ${id}: undelivered after ${MAX_ATTEMPTS} attempts; renamed without sending`);
-          } else {
-            logger.warn(`[reconcile] ${id}: undelivered after ${MAX_ATTEMPTS} attempts; not renamed, the record is still live as ${id}.json`);
-          }
-        } else {
-          logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
-          await pipeline.deliverSession(id, await recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
-        }
+        logger.info(`[reconcile] ${id}: undelivered … redeliver`);
+        await pipeline.deliverSession(id, await recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
       } else {
-        closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
+        closedLocally = await finalizeRecord(record, options, controller.signal, deliver, flushSpent);
       }
+    } catch (error) {
+      thrown = true;
+      throw error;
     } finally {
-      // Also on a throw: a flush cut by the pass's abort, met by rejected credentials or that no server served is no attempt
-      if (!closedLocally) await settleAttempt(attempt, controller.signal.aborted);
+      // Also on a throw: the outcome of the attempt's requests decides what it cost
+      if (!closedLocally) await reportOutcome(id, attemptResult(controller.signal, thrown), options, controller.signal, deliver);
     }
   } finally {
     parent.removeEventListener('abort', follow);

@@ -58,10 +58,10 @@ vi.mock('../legacy-metrics-gate.js', async (importOriginal) => {
 const {
   reconcileOtherSessions,
   finalizeOwnRecord,
-  markDroppedIfUndelivered,
   LEGACY_IDLE_MS,
   ABANDON_WAIT_MS,
 } = await import('../stale-session-reconciliation.js');
+const { leaveQueue } = await import('../delivery-budget.js');
 const { nextRecordStart, nextRecordStarts } = await import('../next-record-start.js');
 const { noticeDeliveryAtExit } = await import('../exit-notice.js');
 const { processEvent } = await import('@/cli/commands/hook.js');
@@ -69,6 +69,24 @@ const { processEvent } = await import('@/cli/commands/hook.js');
 const HOUR = 60 * 60 * 1000;
 const DEAD_PID = 999_999;
 const HOST = 'https://codemie.example.com';
+
+/** A record that has failed for 25 h over 3 real attempts: its next counted failure spends the budget. */
+function spentBudget(): Partial<Session> {
+  return { deliveryFailingSince: Date.now() - 25 * HOUR, deliveryRealAttempts: 3 };
+}
+
+/** A record past the evidence retention (90 days): the one budget that may close a record before its attempt sends anything. */
+function pastRetention(): Partial<Session> {
+  return { startTime: Date.now() - 100 * 24 * HOUR };
+}
+
+/** A pipeline whose attempt meets a server's JSON 404 (a counted failure) and fails. */
+async function countedFailure(_event: BaseHookEvent, config: HookProcessingConfig): Promise<void> {
+  const request = boundedRequest(1000, { abortSignal: config.abortSignal });
+  request.noteAnswer(404, true, false);
+  request.dispose();
+  throw new Error('server refused');
+}
 
 let home: string;
 let sessionsDir: string;
@@ -162,7 +180,9 @@ describe('reconcileOtherSessions', () => {
       cwd: '/repo',
     });
     expect(config).toMatchObject({ agentName: 'claude', sessionId: id, ssoUrl: HOST, apiBaseUrl: 'http://127.0.0.1:4000' });
-    expect(load(id).finalizeAttempts).toBe(1);
+    // The synthetic end went through: the attempt is given back and no clock started
+    expect(load(id).deliveryRealAttempts).toBe(0);
+    expect(load(id).deliveryFailingSince).toBeUndefined();
     expect(existsSync(join(home, 'sessions', `${id}.reconcile.lock`))).toBe(false);
   });
 
@@ -238,13 +258,13 @@ describe('reconcileOtherSessions', () => {
     expect(load(desktop.sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-gone', endTime: start + 60_000 });
   });
 
-  it('delivers an undelivered record of this host once, with deliveryAttempts 1 saved before the call', async () => {
+  it('delivers an undelivered record of this host once, with deliveryRealAttempts 1 saved before the call', async () => {
     const undelivered = record({ status: 'completed', endTime: Date.now() - HOUR / 2 });
     save(undelivered);
     let attemptsSeenByDelivery: number | undefined;
     const hook = pipeline({
       deliverSession: async (sessionId) => {
-        attemptsSeenByDelivery = load(sessionId).deliveryAttempts;
+        attemptsSeenByDelivery = load(sessionId).deliveryRealAttempts;
       },
     });
 
@@ -254,13 +274,13 @@ describe('reconcileOtherSessions', () => {
     expect(attemptsSeenByDelivery).toBe(1);
   });
 
-  it('gives back the attempt whose end metric was refused at the connection; a timed-out one is counted', async () => {
+  it('gives back the attempt whose end metric was refused at the connection or timed out, and starts the failing clock', async () => {
     const refused = record({
-      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - HOUR,
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryRealAttempts: 1, startTime: Date.now() - HOUR,
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-refused' },
     });
     const timedOut = record({
-      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryAttempts: 1, startTime: Date.now() - 2 * HOUR,
+      status: 'completed', endTime: Date.now() - HOUR / 2, deliveryRealAttempts: 1, startTime: Date.now() - 2 * HOUR,
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-timeout' },
     });
     save(refused);
@@ -276,14 +296,16 @@ describe('reconcileOtherSessions', () => {
       fetchSpy.mockRestore();
     }
 
-    expect(load(refused.sessionId).deliveryAttempts).toBe(1);
-    expect(load(timedOut.sessionId).deliveryAttempts).toBe(2);
+    for (const id of [refused.sessionId, timedOut.sessionId]) {
+      expect(load(id).deliveryRealAttempts).toBe(1);
+      expect(load(id).deliveryFailingSince).toBeTypeOf('number');
+    }
   });
 
   it('gives back the attempt whose legacy metrics wait for the destination confirmation, within the evidence retention', async () => {
     const DAY = 24 * HOUR;
-    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryAttempts: 2 });
-    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryAttempts: 2 });
+    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryRealAttempts: 2 });
+    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryRealAttempts: 2 });
     save(recent);
     save(expired);
     // What the end-metric / metrics-sync senders do on a destination-unconfirmed verdict: nothing sent, the signal flagged
@@ -292,15 +314,16 @@ describe('reconcileOtherSessions', () => {
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.deliverSession).toHaveBeenCalledTimes(2);
-    expect(load(recent.sessionId).deliveryAttempts).toBe(2);
-    // Past the retention the marker can no longer appear: the attempt counts, so the record is dropped in the end
-    expect(load(expired.sessionId).deliveryAttempts).toBe(3);
+    expect(load(recent.sessionId).deliveryRealAttempts).toBe(2);
+    expect(load(recent.sessionId).deliveryFailingSince).toBeUndefined();
+    // Past the retention the marker can no longer appear: the record is dropped in the end
+    expect(load(expired.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retention expired' });
   });
 
   it('gives back the attempt whose request met a failing server, within the evidence retention', async () => {
     const DAY = 24 * HOUR;
-    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryAttempts: 2 });
-    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryAttempts: 2 });
+    const recent = record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - 2 * HOUR, deliveryRealAttempts: 2 });
+    const expired = record({ status: 'completed', endTime: Date.now() - 91 * DAY, startTime: Date.now() - 92 * DAY, deliveryRealAttempts: 2 });
     save(recent);
     save(expired);
     // What the API clients do on an answer of a failing server: a JSON 503 noted on the attempt's signal
@@ -315,9 +338,10 @@ describe('reconcileOtherSessions', () => {
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.deliverSession).toHaveBeenCalledTimes(2);
-    expect(load(recent.sessionId).deliveryAttempts).toBe(2);
-    // Past the retention a server that answers so for good spends the attempts, so the record is dropped in the end
-    expect(load(expired.sessionId).deliveryAttempts).toBe(3);
+    expect(load(recent.sessionId).deliveryRealAttempts).toBe(2);
+    expect(load(recent.sessionId).deliveryFailingSince).toBeTypeOf('number');
+    // Past the retention a server that answers so for good no longer holds the record: it is dropped in the end
+    expect(load(expired.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retention expired' });
   });
 
   it('records whose legacy metrics wait for the destination never hold the cap from an older ready record', async () => {
@@ -416,8 +440,8 @@ describe('reconcileOtherSessions', () => {
 
     const handled = hook.processEvent.mock.calls.map(([, config]) => config.sessionId);
     expect(handled).toEqual(records.slice(0, 5).map((r) => r.sessionId));
-    expect(load(records[5].sessionId).finalizeAttempts).toBeUndefined();
-    expect(load(records[6].sessionId).finalizeAttempts).toBeUndefined();
+    expect(load(records[5].sessionId).deliveryRealAttempts).toBeUndefined();
+    expect(load(records[6].sessionId).deliveryRealAttempts).toBeUndefined();
   });
 
   it('a launch with no send path (CODEMIE_BASE_URL an upstream LLM host, no proxy) spends no slot on undelivered records: an older stranded one is finalized locally', async () => {
@@ -432,7 +456,7 @@ describe('reconcileOtherSessions', () => {
 
     expect(hook.deliverSession).not.toHaveBeenCalled();
     expect(hook.processEvent.mock.calls.map(([, config]) => [config.sessionId, config.localOnly])).toEqual([[stranded.sessionId, true]]);
-    expect(undelivered.map((r) => load(r.sessionId).deliveryAttempts)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(undelivered.map((r) => load(r.sessionId).deliveryRealAttempts)).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 
   it('a stranded record whose transcript was deleted ends at its latest delta, is delivered and renamed', async () => {
@@ -481,27 +505,29 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: killed.sessionId, transcript_path: '' });
   });
 
-  it('an exhausted copilot-cli record whose named transcript exists keeps its correlation and ends under the native id', async () => {
+  it('a copilot-cli record with its retry budget spent whose attempt fails with a counted answer: its named transcript exists, it keeps its correlation, ends under the native id and is marked dropped', async () => {
     const native = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
     const transcript = join(home, 'events.jsonl');
     writeFileSync(transcript, '{}\n');
     const exhausted = record({
-      agentName: 'copilot-cli', finalizeAttempts: 3,
+      agentName: 'copilot-cli', ...spentBudget(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript },
     });
     save(exhausted);
-    const hook = pipeline();
+    const hook = pipeline({ processEvent: countedFailure });
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
-    expect(load(exhausted.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript });
-    expect(load(exhausted.sessionId).droppedAt).toBeTypeOf('number');
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(load(exhausted.sessionId, 'completed_').correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript });
+    expect(load(exhausted.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retry budget exhausted' });
+    expect(load(exhausted.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+    // No drop is decided before the send: the transcript is flushed
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: transcript });
   });
 
   it.each([
-    ['another host, past its attempts', { finalizeAttempts: 3, codemieUrl: 'https://other.example.com' }],
-    ['a regular attempt', { finalizeAttempts: 2 }],
+    ['another host, past its budget', { ...spentBudget(), codemieUrl: 'https://other.example.com' }],
+    ['a regular attempt', { deliveryRealAttempts: 2 }],
   ])('a copilot-cli record whose transcript exists is not marked dropped on %s', async (_case, overrides) => {
     const transcript = join(home, 'events.jsonl');
     writeFileSync(transcript, '{}\n');
@@ -526,12 +552,12 @@ describe('reconcileOtherSessions', () => {
     const transcript = join(home, 'events.jsonl');
     writeFileSync(transcript, '{}\n');
     const failing = record({
-      agentName: 'copilot-cli', finalizeAttempts: 3,
+      agentName: 'copilot-cli', ...spentBudget(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: transcript },
       ...overrides,
     });
     save(failing);
-    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+    const hook = pipeline({ processEvent: countedFailure });
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
     const startedAt = Date.now();
 
@@ -539,7 +565,7 @@ describe('reconcileOtherSessions', () => {
     await noticeDeliveryAtExit('own', startedAt, true);
 
     expect(load(failing.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(startedAt);
-    expect(stderr.mock.calls.flat().join()).toContain('analytics of 1 session(s) could not be delivered');
+    expect(stderr.mock.calls.flat().join()).toContain('analytics of these sessions were dropped: copilot-cli');
     stderr.mockRestore();
   });
 
@@ -554,7 +580,7 @@ describe('reconcileOtherSessions', () => {
 
   it('an exhausted copilot-cli record whose named transcript is gone ends uncorrelated under its CodeMie id', async () => {
     const exhausted = record({
-      agentName: 'copilot-cli', finalizeAttempts: 3,
+      agentName: 'copilot-cli', ...spentBudget(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: join(home, 'gone.jsonl') },
     });
     save(exhausted);
@@ -567,9 +593,9 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: exhausted.sessionId, transcript_path: '' });
   });
 
-  it('an exhausted record of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
+  it('a record past the evidence retention of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
     const exhausted = record({
-      agentName: 'pi', finalizeAttempts: 3,
+      agentName: 'pi', ...pastRetention(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-pi' },
     });
     save(exhausted);
@@ -585,10 +611,10 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-pi', transcript_path: '' });
   });
 
-  describe('an exhausted resumed copilot-cli record naming no transcript', () => {
+  describe('a resumed copilot-cli record past the evidence retention naming no transcript', () => {
     const resumed = 'efefefef-efef-4fef-8fef-efefefefefef';
     const exhaustedRecord = () => record({
-      agentName: 'copilot-cli', finalizeAttempts: 3,
+      agentName: 'copilot-cli', ...pastRetention(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: resumed },
     });
     const finalize = async () => {
@@ -694,10 +720,10 @@ describe('reconcileOtherSessions', () => {
     }
   });
 
-  it('finalizes a record past its 3rd attempt without the flush', async () => {
+  it('finalizes a record past the evidence retention without the flush', async () => {
     const transcript = join(home, 'transcript.jsonl');
     writeFileSync(transcript, '{}\n');
-    save(record({ finalizeAttempts: 3, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } }));
+    save(record({ ...pastRetention(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } }));
     const hook = pipeline();
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
@@ -706,17 +732,69 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0].transcript_path).toBe('');
   });
 
-  it('closes locally a record whose finalize still fails past its 3rd attempt; the next pass reaches an older record', async () => {
+  it('a retry budget spent at an earlier start decides no drop before this start sends: the record is flushed and, finalized without a counted failure, not marked dropped', async () => {
+    const transcript = join(home, 'transcript.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const copilot = record({ agentName: 'copilot-cli', ...spentBudget(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: transcript } });
+    const stranded = record({ ...spentBudget(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } });
+    save(copilot);
+    save(stranded);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent.mock.calls.map(([event]) => event.transcript_path)).toEqual([transcript, transcript]);
+    expect(load(copilot.sessionId).droppedAt).toBeUndefined();
+    expect(load(stranded.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('a local finalize failure that repeats closes the record locally at the cap and is reported dropped (its data was never sent); fewer in a row leave it for a later start', async () => {
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    const stuck = record();
+    save(stuck);
+    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+
+    for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', localFinalizeFailures: i });
+    }
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(existsSync(join(sessionsDir, `${stuck.sessionId}.json`))).toBe(false);
+    const closed = load(stuck.sessionId, 'completed_');
+    expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted' });
+    expect(closed.droppedAt).toBeTypeOf('number');
+    expect(closed.droppedReason).toBe('local errors');
+  });
+
+  it('an abort that cuts a failing finalize is no local failure: the cap does not count it', async () => {
+    const stuck = record();
+    save(stuck);
+    let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
+    const hook = pipeline({
+      processEvent: async () => {
+        void pass!.abandon();
+        throw new Error('cut');
+      },
+    });
+
+    pass = reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook });
+    await pass.done;
+
+    expect(load(stuck.sessionId).localFinalizeFailures).toBeUndefined();
+  });
+
+  it('closes locally a record whose finalize fails with a counted answer with its budget spent; the next pass reaches an older record', async () => {
     const start = Date.parse('2026-10-01T10:00:00Z');
     const failing = Array.from({ length: 5 }, (_, i) =>
-      record({ startTime: start + i * HOUR, activityStartedAt: start + i * HOUR + 60_000, finalizeAttempts: 3 }));
+      record({ startTime: start + i * HOUR, activityStartedAt: start + i * HOUR + 60_000, ...spentBudget() }));
     failing.forEach((r) => save(r));
     const older = record({ startTime: start - HOUR });
     save(older);
     const failingIds = failing.map((r) => r.sessionId);
     const hook = pipeline({
-      processEvent: async (_event, config) => {
-        if (failingIds.includes(config.sessionId)) throw new Error('metrics file unwritable');
+      processEvent: async (event, config) => {
+        if (failingIds.includes(config.sessionId)) await countedFailure(event, config);
       },
     });
 
@@ -727,18 +805,19 @@ describe('reconcileOtherSessions', () => {
     expect(failing.map((r) => existsSync(join(sessionsDir, `${r.sessionId}.json`)))).toEqual([false, false, false, false, false]);
     expect(hook.deliverSession).not.toHaveBeenCalled();
     expect(load(failing[0].sessionId, 'completed_')).toMatchObject({
-      status: 'completed', reason: 'interrupted', endTime: Date.parse('2026-10-01T10:01:00Z'), finalizeAttempts: 4,
+      status: 'completed', reason: 'interrupted', endTime: Date.parse('2026-10-01T10:01:00Z'), deliveryRealAttempts: 4,
+      droppedReason: 'retry budget exhausted',
     });
   });
 
-  it('a close past its 3rd attempt whose pass was abandoned renames nothing: a warn names the record still live, no "closed locally" line', async () => {
-    const stranded = record({ finalizeAttempts: 3 });
+  it('a close with the budget spent whose pass was abandoned after a send renames nothing: a warn names the record still live, no "closed locally" line', async () => {
+    const stranded = record({ ...spentBudget() });
     save(stranded);
     let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
     const hook = pipeline({
-      processEvent: async () => {
+      processEvent: async (event, config) => {
         void pass!.abandon();
-        throw new Error('metrics file unwritable');
+        await countedFailure(event, config);
       },
     });
     vi.mocked(logger.warn).mockClear();
@@ -753,23 +832,25 @@ describe('reconcileOtherSessions', () => {
     expect(warns).toContainEqual(expect.stringMatching(new RegExp(`${stranded.sessionId}.*still live`)));
   });
 
-  it('a finalize failing past its 3rd attempt marks a record of this host dropped; one of another host closed locally by design is not', async () => {
-    const own = record({ finalizeAttempts: 3 });
-    const foreign = record({ finalizeAttempts: 3, codemieUrl: 'https://other.example.com' });
+  it('a finalize failing with a counted answer with the budget spent marks a record of this host dropped; one of another host closed locally by design is not', async () => {
+    const own = record({ ...spentBudget() });
+    const foreign = record({ ...spentBudget(), codemieUrl: 'https://other.example.com' });
     save(own);
     save(foreign);
-    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+    const hook = pipeline({ processEvent: countedFailure });
     const before = Date.now();
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(load(own.sessionId, 'completed_').droppedAt).toBeGreaterThanOrEqual(before);
+    expect(load(own.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
     expect(load(foreign.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted' });
     expect(load(foreign.sessionId, 'completed_').droppedAt).toBeUndefined();
+    expect(load(foreign.sessionId, 'completed_').droppedReason).toBeUndefined();
   });
 
-  it('a pass abandoned during an attempt that sent nothing rolls the counter back; the lock goes once the attempt stops', async () => {
-    const stranded = record({ finalizeAttempts: 1 });
+  it('a pass abandoned during an attempt that sent nothing gives the attempt back; the lock goes once the attempt stops', async () => {
+    const stranded = record({ deliveryRealAttempts: 1 });
     save(stranded);
     const lockPath = join(sessionsDir, `${stranded.sessionId}.reconcile.lock`);
     let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
@@ -786,14 +867,14 @@ describe('reconcileOtherSessions', () => {
     await pass.done;
 
     expect(holderAfterAbandon).toBe(process.pid);
-    expect(load(stranded.sessionId).finalizeAttempts).toBe(1);
+    expect(load(stranded.sessionId).deliveryRealAttempts).toBe(1);
     expect(existsSync(lockPath)).toBe(false);
   });
 
   it('abandon during an attempt still saving leaves the record to the attempt: its write lands, its rollback is the one', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const stranded = record({ finalizeAttempts: 1 });
+      const stranded = record({ deliveryRealAttempts: 1 });
       save(stranded);
       let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
       let entered!: () => void;
@@ -806,7 +887,7 @@ describe('reconcileOtherSessions', () => {
           await abandoning;
           // The attempt's own status save, after the exit step gave up waiting for it
           const current = load(config.sessionId);
-          counterWhileSaving = current.finalizeAttempts;
+          counterWhileSaving = current.deliveryRealAttempts;
           save({ ...current, status: 'completed', endTime: current.startTime + 1000 });
         },
       });
@@ -817,13 +898,13 @@ describe('reconcileOtherSessions', () => {
       await pass.done;
 
       expect(counterWhileSaving).toBe(2);
-      expect(load(stranded.sessionId)).toMatchObject({ status: 'completed', endTime: stranded.startTime + 1000, finalizeAttempts: 1 });
+      expect(load(stranded.sessionId)).toMatchObject({ status: 'completed', endTime: stranded.startTime + 1000, deliveryRealAttempts: 1 });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('an abandoned pass keeps the counter of the record whose send ran, and never reaches the others', async () => {
+  it('an abandoned pass gives back the attempt of the record whose send ran (a cut is no server verdict), and never reaches the others', async () => {
     const records = [0, 1, 2].map((i) => record({ startTime: Date.now() - (i + 1) * HOUR }));
     records.forEach((r) => save(r));
     let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
@@ -838,9 +919,9 @@ describe('reconcileOtherSessions', () => {
     await pass.done;
 
     expect(hook.processEvent).toHaveBeenCalledTimes(1);
-    expect(load(records[0].sessionId).finalizeAttempts).toBe(1);
-    expect(load(records[1].sessionId).finalizeAttempts).toBeUndefined();
-    expect(load(records[2].sessionId).finalizeAttempts).toBeUndefined();
+    expect(load(records[0].sessionId).deliveryRealAttempts).toBe(0);
+    expect(load(records[1].sessionId).deliveryRealAttempts).toBeUndefined();
+    expect(load(records[2].sessionId).deliveryRealAttempts).toBeUndefined();
     expect(readdirSync(sessionsDir).filter((name) => name.endsWith('.reconcile.lock'))).toEqual([]);
   });
 
@@ -920,8 +1001,8 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
     return doneAt - flushedAt;
   }
 
-  it('past its 3rd attempt (closed locally): returns at the deadline', async () => {
-    const exhausted = record({ finalizeAttempts: 3 });
+  it('with its budget spent (closed locally): returns at the deadline', async () => {
+    const exhausted = record({ ...spentBudget() });
     saveWithHeldMetricsLock(exhausted);
 
     const spent = await passTimeAfterSlowFlush(async () => { throw new Error('metrics file unwritable'); });
@@ -1030,20 +1111,21 @@ describe('a failed flush through the real hook pipeline', () => {
     return urls;
   }
 
-  it('a stranded record whose flush fails stays active with its attempt spent: nothing sent, not renamed', async () => {
+  it('a stranded record whose flush fails stays active with its attempt given back (no request was made): nothing sent, not renamed', async () => {
     const stranded = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: await transcriptWithFailingDeltaWrite() } });
     save(stranded);
 
     const urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
 
     expect(urls).toEqual([]);
-    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1 });
+    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0 });
+    expect(load(stranded.sessionId).deliveryFailingSince).toBeUndefined();
     expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
-  it('a stranded record whose slow flush runs past the attempt deadline, nothing sent, is counted', async () => {
+  it('a stranded record whose slow flush runs past the attempt deadline, nothing sent, spends nothing: the flush went through', async () => {
     const transcript = await transcriptWithSlowDeltaWrite();
-    const stranded = record({ finalizeAttempts: 1, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: transcript } });
+    const stranded = record({ deliveryRealAttempts: 1, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: transcript } });
     save(stranded);
     // The clock passes the attempt's 10 s deadline at the delta write; the flush still succeeds
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1057,17 +1139,17 @@ describe('a failed flush through the real hook pipeline', () => {
 
     expect(urls).toEqual([]);
     const counted = load(stranded.sessionId);
-    expect(counted).toMatchObject({ status: 'completed', finalizeAttempts: 2 });
+    expect(counted).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
     expect(counted.endTime).toBeTypeOf('number');
     expect(counted.droppedAt).toBeUndefined();
     expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
-  it('at its 4th start, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
+  it('past the evidence retention, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
+    vi.stubEnv('CODEMIE_EVIDENCE_RECORD_IDLE_DAYS', '1');
     const start = Date.parse('2026-10-01T10:00:00Z');
     const stranded = record({
       startTime: start,
-      finalizeAttempts: 3,
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: unparseableTranscript() },
     });
     save(stranded);
@@ -1098,6 +1180,7 @@ describe('a failed flush through the real hook pipeline', () => {
     const closed = load(stranded.sessionId, 'completed_');
     expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: start + 300_000 });
     expect(closed.droppedAt).toBeTypeOf('number');
+    expect(closed.droppedReason).toBe('retention expired');
   });
 
   it('a hook process (no config) whose flush fails logs the failure, returns normally and still ends the record', async () => {
@@ -1158,7 +1241,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     }
   }
 
-  it.skipIf(!canDeny)('a regular attempt leaves it active, correlation untouched, counter spent, nothing sent; the next candidate still runs', async () => {
+  it.skipIf(!canDeny)('a regular attempt leaves it active, correlation untouched, no attempt spent (a local failure), nothing sent; the next candidate still runs', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     const next = record({ startTime: stuck.startTime - HOUR });
@@ -1173,43 +1256,42 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       allow();
     }
 
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
     expect(hook.processEvent.mock.calls.map(([event]) => event.session_id)).toEqual(['native-1']);
   });
 
-  it.skipIf(!canDeny)('repeated starts end it at the exhausted path: completed, correlation untouched under its native id, nothing of the transcript sent', async () => {
+  it.skipIf(!canDeny)('repeated starts spend no attempt on the local failure; at the cap of them it is closed locally, unmarked: completed, correlation untouched, nothing sent', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     save(stuck);
     const hook = { processEvent: vi.fn(processEvent) };
-    let sent: string[];
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    const sent: string[] = [];
 
     deny();
     try {
-      for (const attempts of [1, 2, 3]) {
-        expect(await startPass(hook)).toEqual([]);
-        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: attempts, correlation });
+      for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
+        sent.push(...await startPass(hook));
+        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, localFinalizeFailures: i, correlation });
+        expect(load(stuck.sessionId).deliveryFailingSince).toBeUndefined();
       }
       expect(hook.processEvent.mock.calls).toEqual([]);
-
-      sent = await startPass(hook);
+      sent.push(...await startPass(hook));
     } finally {
       allow();
     }
 
-    expect(sent.map((body) => JSON.parse(body).name)).toEqual(['codemie_cli_session_total']);
-    expect(sent[0]).not.toContain(join(home, 'copilot'));
-
+    expect(sent).toEqual([]);
     const ended = load(stuck.sessionId, 'completed_');
     expect(ended.status).toBe('completed');
     expect(ended.correlation).toEqual(correlation);
-    expect(ended.droppedAt).toBeTypeOf('number');
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(ended.droppedAt).toBeUndefined();
+    expect(hook.processEvent.mock.calls).toEqual([]);
     expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
   });
 
-  it.skipIf(!canDeny)('its named transcript that cannot be checked is not gone: an attempt throws, the exhausted one keeps the file named', async () => {
+  it.skipIf(!canDeny)('its named transcript that cannot be checked is not gone: an attempt throws, the one past the cap of local failures keeps the file named', async () => {
     const dir = join(home, 'named');
     mkdirSync(dir);
     const named = { ...correlation, agentSessionFile: join(dir, 'events.jsonl') };
@@ -1221,16 +1303,18 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     try {
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
       expect(hook.processEvent.mock.calls).toEqual([]);
-      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
-      save({ ...stuck, finalizeAttempts: 3 });
+      const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+      save({ ...stuck, localFinalizeFailures: LOCAL_FINALIZE_FAILURE_CAP - 1 });
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
     } finally {
       chmodSync(dir, 0o755);
     }
 
-    expect(load(stuck.sessionId).correlation).toEqual(named);
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
+    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it('a stored home that is gone: a regular attempt leaves it active, correlation untouched', async () => {
@@ -1241,11 +1325,11 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
   });
 
-  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the exhausted one ends it, correlation untouched', async () => {
+  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the one past the cap of local failures is closed locally and reported dropped, correlation untouched', async () => {
     const agentHome = join(home, 'copilot');
     mkdirSync(agentHome);
     const named = { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') };
@@ -1256,20 +1340,22 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
-    save({ ...stuck, finalizeAttempts: 3 });
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    save({ ...stuck, localFinalizeFailures: LOCAL_FINALIZE_FAILURE_CAP - 1 });
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
-    expect(load(stuck.sessionId).correlation).toEqual(named);
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
+    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
   });
 
-  it.each([[0], [3]])('its named transcript gone while the stored root exists ends uncorrelated, %i attempts spent', async (finalizeAttempts) => {
+  it.each([['no attempt', {}], ['its budget', spentBudget()]])('its named transcript gone while the stored root exists ends uncorrelated, %s spent', async (_case, spent) => {
     const agentHome = join(home, 'copilot');
     mkdirSync(join(agentHome, 'session-state'), { recursive: true });
     const stuck = record({
-      agentName: 'copilot-cli', agentHome, finalizeAttempts,
+      agentName: 'copilot-cli', agentHome, ...spent,
       correlation: { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') },
     });
     save(stuck);
@@ -1297,13 +1383,13 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     }
 
     expect(hook.processEvent.mock.calls).toEqual([]);
-    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1, correlation: named });
+    expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
   });
 
-  it.skipIf(!canDeny)('an exhausted record of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
+  it.skipIf(!canDeny)('a record past the evidence retention of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const unknown = { ...correlation, agentSessionId: 'unknown' };
-    const stuck = record({ ...copilot, finalizeAttempts: 3, correlation: unknown });
+    const stuck = record({ ...copilot, ...pastRetention(), correlation: unknown });
     save(stuck);
     const hook = pipeline();
 
@@ -1396,15 +1482,16 @@ describe('finalizeOwnRecord', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: own.sessionId, transcript_path: '' });
   });
 
-  it('delivers an own completed but undelivered record and counts the attempt', async () => {
+  it('delivers an own completed but undelivered record, the attempt saved before the send', async () => {
     const own = record({ status: 'completed', ownerPid: process.pid });
     save(own);
-    const hook = pipeline();
+    let seen: number | undefined;
+    const hook = pipeline({ deliverSession: async (id) => { seen = load(id).deliveryRealAttempts; } });
 
     await finalizeOwnRecord(own.sessionId, { env: launchEnv, deadlineMs: Date.now() + 10_000, pipeline: hook });
 
     expect(hook.deliverSession).toHaveBeenCalledTimes(1);
-    expect(load(own.sessionId).deliveryAttempts).toBe(1);
+    expect(seen).toBe(1);
   });
 
   it('leaves an own completed record undelivered when the launch has no send path: no delivery, no attempt counted', async () => {
@@ -1419,7 +1506,7 @@ describe('finalizeOwnRecord', () => {
     });
 
     expect(hook.deliverSession).not.toHaveBeenCalled();
-    expect(load(own.sessionId).deliveryAttempts).toBeUndefined();
+    expect(load(own.sessionId).deliveryRealAttempts).toBeUndefined();
   });
 
   it('does nothing for an own record already completed_', async () => {
@@ -1662,9 +1749,9 @@ describe('EPMCDME-17054 a legacy gate skip counts as delivered', () => {
   it('a record skipped for no work consent leaves the queue with its pending deltas but no droppedAt', async () => {
     const closed = completedWithPendingDeltas('no-work-consent');
 
-    await markDroppedIfUndelivered(closed.sessionId);
+    await leaveQueue(closed, 'retry budget exhausted', Date.now());
 
-    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+    expect(load(closed.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it('an end metric sent before a final gate verdict withheld the deltas: no droppedAt', async () => {
@@ -1672,25 +1759,180 @@ describe('EPMCDME-17054 a legacy gate skip counts as delivered', () => {
     save(closed);
     writeFileSync(join(sessionsDir, `${closed.sessionId}_metrics.jsonl`), `${JSON.stringify({ recordId: 'r-1', syncStatus: 'pending', syncAttempts: 0 })}\n`);
 
-    await markDroppedIfUndelivered(closed.sessionId);
+    await leaveQueue(closed, 'retry budget exhausted', Date.now());
 
-    expect(load(closed.sessionId).droppedAt).toBeUndefined();
+    expect(load(closed.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it('a record skipped for another reason with pending deltas is still marked dropped', async () => {
     const closed = completedWithPendingDeltas('no-analytics-config');
 
-    await markDroppedIfUndelivered(closed.sessionId);
+    await leaveQueue(closed, 'retry budget exhausted', Date.now());
 
-    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
+    expect(load(closed.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
   });
 
   it('a gate-skipped record with a pending conversation payload is still marked dropped', async () => {
     const closed = completedWithPendingDeltas('destination-held');
     writeFileSync(join(sessionsDir, `${closed.sessionId}_conversation.jsonl`), `${JSON.stringify({ status: 'pending', payload: { conversationId: 'c', history: [] }, timestamp: 1 })}\n`);
 
-    await markDroppedIfUndelivered(closed.sessionId);
+    await leaveQueue(closed, 'retry budget exhausted', Date.now());
 
-    expect(load(closed.sessionId).droppedAt).toBeTypeOf('number');
+    expect(load(closed.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+  });
+});
+
+describe('EPMCDME-17068 the start pass reports outcomes to the delivery budget', () => {
+  /** What the API clients note on the attempt's signal for one answer of the server. */
+  function answering(status: number, bodyIsJson = true) {
+    return pipeline({
+      deliverSession: async (_id, config) => {
+        const request = boundedRequest(30_000, { abortSignal: config.abortSignal });
+        request.noteAnswer(status, bodyIsJson, false);
+        request.dispose();
+      },
+    });
+  }
+
+  const pass = (hook: ReturnType<typeof pipeline>) => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+  it('4 launches of 503 then a healthy start: 0 dropped, 5 delivered', async () => {
+    const records = Array.from({ length: 5 }, (_, i) => record({ status: 'completed', endTime: Date.now() - HOUR, startTime: Date.now() - (i + 1) * HOUR }));
+    records.forEach((r) => save(r));
+
+    for (let launch = 0; launch < 4; launch++) await pass(answering(503));
+
+    for (const r of records) {
+      expect(load(r.sessionId).droppedAt).toBeUndefined();
+      expect(load(r.sessionId).deliveryRealAttempts).toBe(0);
+    }
+    const { renameSessionFiles } = await import('../session-generation.js');
+    const healthy = pipeline({ deliverSession: async (id) => { await renameSessionFiles(id); } });
+    await pass(healthy);
+
+    expect(healthy.deliverSession).toHaveBeenCalledTimes(5);
+    for (const r of records) expect(load(r.sessionId, 'completed_').droppedAt).toBeUndefined();
+  });
+
+  it('old-cap records are sent at the next healthy start', async () => {
+    const transcript = join(home, 'transcript.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const capped = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryAttempts: 3, startTime: Date.now() - HOUR });
+    const stranded = record({ localFinalizeFailures: 3, startTime: Date.now() - 2 * HOUR, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } });
+    save(capped);
+    save(stranded);
+    const hook = pipeline();
+
+    await pass(hook);
+
+    expect(hook.deliverSession.mock.calls.map(([id]) => id)).toEqual([capped.sessionId]);
+    expect(hook.processEvent.mock.calls[0][0].transcript_path).toBe(transcript);
+    expect(load(capped.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('25 h of failing with 2 counted attempts keeps the record; the 3rd counted attempt drops it', async () => {
+    const failing = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryFailingSince: Date.now() - 25 * HOUR, deliveryRealAttempts: 1 });
+    save(failing);
+
+    await pass(answering(404));
+    expect(load(failing.sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+    expect(load(failing.sessionId).droppedAt).toBeUndefined();
+
+    await pass(answering(404));
+    expect(load(failing.sessionId, 'completed_')).toMatchObject({ deliveryRealAttempts: 3, droppedReason: 'retry budget exhausted' });
+    expect(load(failing.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+  });
+
+  it('a >24h 503 outage over 3 starts keeps the record, whatever the retry window is', async () => {
+    vi.stubEnv('CODEMIE_DELIVERY_RETRY_WINDOW_MS', '1000');
+    const outage = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryFailingSince: Date.now() - 48 * HOUR });
+    save(outage);
+
+    for (let launch = 0; launch < 3; launch++) await pass(answering(503));
+
+    expect(load(outage.sessionId)).toMatchObject({ deliveryRealAttempts: 0 });
+    expect(load(outage.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it.each([['401', 401], ['an expiry 403', 403]])('%s is no real attempt and the record stays queued', async (_case, status) => {
+    const waiting = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryRealAttempts: 2, deliveryFailingSince: Date.now() - 30 * HOUR });
+    save(waiting);
+
+    await pass(answering(status, false));
+
+    expect(load(waiting.sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+    expect(load(waiting.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('a send cut by the deadline leaves deliveryRealAttempts unchanged', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const cut = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryRealAttempts: 1 });
+      save(cut);
+      let entered!: () => void;
+      const requestSent = new Promise<void>((resolve) => { entered = resolve; });
+      const hook = pipeline({
+        deliverSession: async (_id, config) => {
+          const request = boundedRequest(60_000, { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal });
+          entered();
+          await new Promise((resolve) => request.signal.addEventListener('abort', resolve, { once: true }));
+          request.noteOutcome(new DOMException('This operation was aborted', 'AbortError'));
+          request.dispose();
+        },
+      });
+
+      const running = reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook });
+      await requestSent;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await running.done;
+
+      expect(load(cut.sessionId).deliveryRealAttempts).toBe(1);
+      expect(load(cut.sessionId).droppedAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('attemptResult', () => {
+  it('a throw no request outcome explains is a local failure: no attempt', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    expect(attemptResult(new AbortController().signal, true)).toBe('not-attempt');
+  });
+
+  it('rejected credentials win over a counted answer of the same attempt', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const { noteAuthFailure } = await import('@/providers/plugins/sso/session/bounded-request.js');
+    const signal = new AbortController().signal;
+    const request = boundedRequest(1000, { abortSignal: signal });
+    request.noteAnswer(404, true, false);
+    request.dispose();
+    noteAuthFailure(signal);
+    expect(attemptResult(signal, false)).toBe('auth');
+  });
+
+  it('an abort after a send that noted no failing outcome is no attempt: a deadline or an abandon never spends budget', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const controller = new AbortController();
+    noteSendAttempt(controller.signal);
+    const request = boundedRequest(1000, { abortSignal: controller.signal });
+    request.noteAnswer(200, true, true);
+    request.dispose();
+    controller.abort();
+    expect(attemptResult(controller.signal, false)).toBe('not-attempt');
+    expect(attemptResult(controller.signal, true)).toBe('not-attempt');
+  });
+
+  it('a 403 and a JSON 404 under one signal are an auth answer: the permission denial outranks the counted failure', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    for (const order of [[403, 404], [404, 403]]) {
+      const signal = new AbortController().signal;
+      for (const status of order) {
+        const request = boundedRequest(1000, { abortSignal: signal });
+        request.noteAnswer(status, true, false);
+        request.dispose();
+      }
+      expect(attemptResult(signal, false)).toBe('auth');
+    }
   });
 });
