@@ -7,7 +7,9 @@ import {
   classifyError,
   isExpiredCredentialAnswer,
   isFailingServerAnswer,
+  newRequestGroup,
   requestNeverLeft,
+  type RequestGroup,
 } from '../bounded-request.js';
 
 /** A fetch failure whose connection never opened, as Node's undici reports it. */
@@ -125,10 +127,13 @@ describe('attemptOutcome', () => {
     const signal = new AbortController().signal;
     expect(noted(signal, refused())).toBe('outage');
     expect(attemptOutcome(signal)).toBe('outage');
-    expect(noted(signal, [401, true, false])).toBe('auth');
-    expect(attemptOutcome(signal)).toBe('auth');
     expect(noted(signal, [404, true, false])).toBe('counted');
     expect(attemptOutcome(signal)).toBe('counted');
+    expect(noted(signal, [401, true, false])).toBe('auth');
+    expect(attemptOutcome(signal)).toBe('auth');
+    // A permission denial outranks a counted failure whichever came first
+    expect(noted(signal, [404, true, false])).toBe('counted');
+    expect(attemptOutcome(signal)).toBe('auth');
     expect(noted(signal, [400, true, false])).toBe('rejected');
     expect(attemptOutcome(signal)).toBe('rejected');
     expect(noted(signal, [503, true, false])).toBe('outage');
@@ -141,6 +146,28 @@ describe('attemptOutcome', () => {
     noted(signal, [200, true, true]);
     noted(signal, [401, true, false]);
     expect(attemptOutcome(signal)).toBe('auth');
+  });
+
+  it('the tries of one logical request note only the last try outcome; other requests under the signal keep theirs', () => {
+    const signal = new AbortController().signal;
+    const tryOf = (group: RequestGroup, status: number, success: boolean) => {
+      const request = boundedRequest(30_000, { abortSignal: signal }, group);
+      request.noteAnswer(status, true, success);
+      request.dispose();
+    };
+    const first = newRequestGroup();
+    tryOf(first, 503, false);
+    expect(attemptOutcome(signal)).toBe('outage');
+    tryOf(first, 200, true);
+    expect(attemptOutcome(signal)).toBeUndefined();
+
+    const second = newRequestGroup();
+    tryOf(second, 503, false);
+    tryOf(second, 503, false);
+    expect(attemptOutcome(signal)).toBe('outage');
+    // Another logical request that succeeds does not erase the outage of the one that failed
+    tryOf(newRequestGroup(), 200, true);
+    expect(attemptOutcome(signal)).toBe('outage');
   });
 
   it('a stop is the weakest outcome and a success records nothing', () => {

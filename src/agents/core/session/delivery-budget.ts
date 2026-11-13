@@ -31,32 +31,38 @@ export function retryWindowMs(): number {
 }
 
 /** The record with one more real attempt; the caller saves it before the send. */
-export function beginRealAttempt(s: Session): Session {
-  return { ...s, deliveryRealAttempts: (s.deliveryRealAttempts ?? 0) + 1 };
+export function beginRealAttempt(s: Session, now: number = Date.now()): Session {
+  return { ...s, deliveryRealAttempts: (s.deliveryRealAttempts ?? 0) + 1, deliveryAttemptedAt: now };
 }
 
 /**
  * The record after an attempt ended in `outcome`: the failing clock starts on the first outcome that met a failing
  * server or an outage (neither `ok` nor `not-attempt`: an attempt that made no request starts nothing), and the attempt
- * is given back unless the outcome is `counted`. A `rejected` outcome also stamps the drop (first one wins), so the exit
+ * is given back unless the outcome is `counted`. An `ok` outcome clears the clock (the next failure starts a new one). A `rejected` outcome also stamps the drop (first one wins), so the exit
  * notice can report it; the record stays queued while other lines are undelivered.
  */
 export function noteOutcome(s: Session, outcome: RequestOutcome, now: number): Session {
   const next: Session = { ...s };
   if (outcome !== 'ok' && outcome !== 'not-attempt') next.deliveryFailingSince = s.deliveryFailingSince ?? now;
+  // A successful attempt ends the failing streak: the window runs from the first failure after it (null survives a merge)
+  else if (outcome === 'ok' && s.deliveryFailingSince != null) next.deliveryFailingSince = null;
   if (outcome !== 'counted') next.deliveryRealAttempts = Math.max(0, (s.deliveryRealAttempts ?? 0) - 1);
-  if (outcome === 'rejected' && next.droppedAt === undefined) {
-    next.droppedAt = now;
-    next.droppedReason = 'rejected by the server';
-  }
-  return next;
+  return outcome === 'rejected' ? stampRejection(next, now) : next;
+}
+
+/**
+ * The record with the drop of a server rejection (a JSON 400/422) stamped, so the exit notice reports it; an earlier
+ * stamp stays. Spends no attempt and starts no clock: for a rejection met outside an attempt (a timer run).
+ */
+export function stampRejection(s: Session, now: number): Session {
+  return s.droppedAt !== undefined ? s : { ...s, droppedAt: now, droppedReason: 'rejected by the server' };
 }
 
 /** Why the record may leave the queue now, or undefined while it must stay. */
 export function budgetSpent(s: Session, lastOutcome: RequestOutcome, now: number): DropReason | undefined {
   const at = s.endTime ?? s.startTime;
   if (at !== undefined && now - at >= evidenceRecordIdleDays() * DAY_MS) return 'retention expired';
-  if (lastOutcome !== 'counted' || s.deliveryFailingSince === undefined) return undefined;
+  if (lastOutcome !== 'counted' || s.deliveryFailingSince == null) return undefined;
   // A clock in the future (a skewed system time) counts as no time elapsed
   const elapsed = Math.max(0, now - s.deliveryFailingSince);
   if (elapsed >= retryWindowMs() && (s.deliveryRealAttempts ?? 0) >= MIN_REAL_ATTEMPTS) return 'retry budget exhausted';
@@ -99,7 +105,8 @@ export async function hasUndeliveredData(record: Session): Promise<boolean> {
  * Takes the record out of the delivery queue (renames its files; `rename` replaces the plain rename when the caller
  * bounds it by a deadline or an abort signal, and returns whether the files moved). With a `reason` and data still unsent it
  * first writes `droppedAt` and `droppedReason` (an earlier drop mark stays); without a reason the close is
- * local-by-design and is never marked.
+ * local-by-design and is never marked. When the files did not move the record stays queued: `s` is saved as given, so
+ * the mark just written is cleared and the caller's state (clock, counters) is kept.
  */
 export async function leaveQueue(
   s: Session,
@@ -107,9 +114,17 @@ export async function leaveQueue(
   now: number,
   rename: (sessionId: string) => Promise<boolean> = (sessionId) => renameSessionFiles(sessionId)
 ): Promise<boolean> {
+  const store = new SessionStore();
   if (reason && (await hasUndeliveredData(s))) {
-    await new SessionStore().saveSession({ ...s, droppedAt: s.droppedAt ?? now, droppedReason: s.droppedReason ?? reason });
+    await store.saveSession({ ...s, droppedAt: s.droppedAt ?? now, droppedReason: s.droppedReason ?? reason });
     logger.warn(`[delivery] ${s.sessionId}: leaves the delivery queue with data unsent (${reason}); marked dropped`);
   }
-  return rename(s.sessionId);
+  const renamed = await rename(s.sessionId);
+  if (!renamed) {
+    // The record stays queued: it keeps the state the caller computed (clock, counters) and no mark just written, so the exit notice stays true
+    await store.saveSession(s).catch((error: unknown) => {
+      logger.warn(`[delivery] ${s.sessionId}: not renamed and its state cannot be saved: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  return renamed;
 }

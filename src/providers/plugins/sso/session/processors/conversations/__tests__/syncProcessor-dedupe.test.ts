@@ -493,7 +493,8 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       await runSync({ abortSignal: new AbortController().signal, stopAtFirstFailure: true });
 
       expect(upsertConversation).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(createApiClient).mock.calls[0][0]).toMatchObject({ retryAttempts: 0 });
+      // TOTAL attempts: 1 is no retry; 0 would be read by the client as its default of 3
+      expect(vi.mocked(createApiClient).mock.calls[0][0]).toMatchObject({ retryAttempts: 1 });
       expect(readRecords().map(r => r.status)).toEqual(['failed', 'pending', 'pending']);
     });
 

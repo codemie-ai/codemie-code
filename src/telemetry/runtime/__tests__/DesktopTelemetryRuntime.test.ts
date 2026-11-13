@@ -97,6 +97,7 @@ import { processStartedAt } from '@/utils/processes.js';
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { MetricsRetryExhaustedError } from '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js';
 import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
 import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
@@ -1411,6 +1412,35 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+    });
+
+    it('an end metric the server refuses for good (a JSON 400) is terminal: skipped as rejected, stamped dropped, and the record leaves the queue', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      mockSendSessionEnd.mockRejectedValue(
+        new MetricsRetryExhaustedError(0, Object.assign(new Error('API returned 400: bad request'), { outcome: 'rejected' }))
+      );
+
+      const runtime = await startRuntime(createAdapter());
+      await runtime.stop();
+
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(readRecord(sessionId)).toMatchObject({
+        endMetricSkipped: 'rejected',
+        droppedReason: 'rejected by the server',
+        droppedAt: expect.any(Number)
+      });
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+      const refusals = mockSendSessionEnd.mock.calls.length;
+
+      // Never re-sent: a later start finds the record out of the queue
+      const next = await startRuntime(createAdapter());
+      await next.stop();
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(refusals);
     });
 
     it('never re-delivers a completed record without an owner', async () => {

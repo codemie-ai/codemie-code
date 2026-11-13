@@ -217,8 +217,10 @@ export interface Session {
   droppedReason?: DropReason;
   /** The session id a `/clear` generation was kept under before it was re-keyed to stay in the delivery queue */
   originSessionId?: string;
-  /** Unix ms of the first delivery failure that was not an `ok`; the retry window runs from it */
-  deliveryFailingSince?: number;
+  /** Unix ms of the first delivery failure that was not an `ok` since the last successful attempt; the retry window runs from it. `null`: cleared by a successful attempt */
+  deliveryFailingSince?: number | null;
+  /** Unix ms the latest real delivery attempt began; the exit notice counts a record as queued only when it was attempted since the wrapper started */
+  deliveryAttemptedAt?: number;
   /** Delivery attempts that reached the server or could not be told apart from that; counted toward the retry budget */
   deliveryRealAttempts?: number;
   /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */

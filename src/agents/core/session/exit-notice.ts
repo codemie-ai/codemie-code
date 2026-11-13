@@ -72,13 +72,23 @@ function newestPerSession(entries: ExitDeliveryEntry[]): ExitDeliveryEntry[] {
   return [...byId.values()];
 }
 
+/** Keeps one entry per session id: the one that can be dropped first, so the notice never promises more time than a generation has. */
+function earliestPerSession(entries: ExitDeliveryEntry[]): ExitDeliveryEntry[] {
+  const byId = new Map<string, ExitDeliveryEntry>();
+  for (const entry of entries) {
+    const known = byId.get(entry.sessionId);
+    if (!known || (entry.notDroppedBefore ?? Infinity) < (known.notDroppedBefore ?? Infinity)) byId.set(entry.sessionId, entry);
+  }
+  return [...byId.values()];
+}
+
 /**
  * What the sessions folder says about delivery since `since` (the wrapper's start): the wrapper's own record still
- * waiting (`pending`), earlier sessions tried since then and still live (`queued`), and records marked dropped at or
+ * waiting (`pending`), earlier sessions' closed records this launch attempted since then and still live (`queued`), and records marked dropped at or
  * after `since`, own or earlier (`dropped`). A live record marked dropped by a rejected line is still queued, so it can
  * be listed both as dropped and as pending or queued. A `/clear` generation re-keyed to stay queued is listed under the
  * session id it was known by (`originSessionId`), and as the wrapper's own when that id is. A session is listed once per
- * kind, with its newest generation's start.
+ * kind: a pending or queued one with its earliest `notDroppedBefore`, a dropped one with its newest generation's start.
  */
 export async function listExitDelivery(ownSessionId: string, since: number, now: number): Promise<ExitDeliveryEntry[]> {
   const pending: ExitDeliveryEntry[] = [];
@@ -94,11 +104,16 @@ export async function listExitDelivery(ownSessionId: string, since: number, now:
     if (!live || (record.droppedAt !== undefined && record.droppedReason !== 'rejected by the server')) continue;
     if (sessionId === ownSessionId) {
       if (record.codemieUrl) pending.push({ ...base, kind: 'pending', notDroppedBefore: notDroppedBefore(record, now) });
-    } else if (record.deliveryFailingSince !== undefined || (record.deliveryRealAttempts ?? 0) > 0) {
+    } else if (
+      // Queued only when this launch's own pass tried a closed record: another wrapper's live record, or one only
+      // rewritten since the start, is not this launch's to report
+      record.status === 'completed' && (record.deliveryAttemptedAt ?? 0) >= since &&
+      (record.deliveryFailingSince != null || (record.deliveryRealAttempts ?? 0) > 0)
+    ) {
       queued.push({ ...base, kind: 'queued', notDroppedBefore: notDroppedBefore(record, now) });
     }
   }
-  return [...newestPerSession(pending), ...newestPerSession(queued), ...newestPerSession(dropped)];
+  return [...earliestPerSession(pending), ...earliestPerSession(queued), ...newestPerSession(dropped)];
 }
 
 function droppedLine(dropped: ExitDeliveryEntry[]): string {

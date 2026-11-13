@@ -60,6 +60,23 @@ export class MetricsSyncProcessor implements SessionProcessor {
     return true;
   }
 
+  /**
+   * Writes the id of the legacy lines (no `deltaId` of their own) onto them before they are sent, so every resend of them
+   * reuses it, whatever lines join the pending set later. A failure is logged: the lines are then sent under the id of
+   * the moment.
+   */
+  private async persistLegacyBatchId(sessionId: string, legacy: MetricDelta[] | undefined, context: ProcessingContext): Promise<void> {
+    if (!legacy || legacy.length === 0) return;
+    const deltaId = deltaIdOf(legacy.map(d => d.recordId));
+    const recordIds = new Set(legacy.map(d => d.recordId));
+    try {
+      await rewriteSessionFile<MetricDelta>('metrics', sessionId, (current) =>
+        current.map((d): MetricDelta => (recordIds.has(d.recordId) && !d.deltaId ? { ...d, deltaId } : d)), context);
+    } catch (error) {
+      logger.warn(`[${this.name}] Cannot store the delta id of ${legacy.length} legacy line(s) of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
@@ -173,6 +190,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       for (const [storedId, deltas] of stored) {
         batchesById.set(storedId || deltaIdOf(deltas.map(d => d.recordId)), deltas);
       }
+      await this.persistLegacyBatchId(session.sessionId, stored.get(''), context);
       const fallbackModelByBranch = lastKnownModelByBranch(allDeltas, sessionMetadata);
       const metrics: Array<ReturnType<typeof aggregateDeltas>[number]> = [];
       const deltasOfMetric = new Map<object, { batchId: string; deltas: MetricDelta[] }>();
@@ -253,8 +271,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
           (delta.gitBranch || sessionMetadata.gitBranch || '') === metric.attributes.branch
         );
 
-        // The id of the batch as written: the same on every resend of it
-        metric.attributes.delta_id = owner.batchId;
+        // One id per emitted metric: the batch as written and the branch, the same on every resend of it
+        metric.attributes.delta_id = `${owner.batchId}:${metric.attributes.branch}`;
 
         try {
           const response = await metricsSender.sendSessionMetric(metric);

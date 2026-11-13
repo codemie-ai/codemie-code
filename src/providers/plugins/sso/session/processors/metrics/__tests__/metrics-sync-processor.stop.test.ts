@@ -130,7 +130,57 @@ describe('MetricsSyncProcessor', () => {
       await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
       await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
 
-      expect(ids).toEqual(['delta-stable', 'delta-stable']);
+      expect(ids).toEqual(['delta-stable:main', 'delta-stable:main']);
+    });
+
+    it('one batch spanning two branches sends each branch metric under its own delta id, the same on every resend of it', async () => {
+      seed(['main', 'feature']);
+      const ids: unknown[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        ids.push((JSON.parse(String((init as RequestInit).body)) as { attributes: { delta_id?: string } }).attributes.delta_id);
+        return new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+
+      await new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, {
+        sessionId: SESSION_ID, apiBaseUrl: 'http://127.0.0.1:4999', cookies: 'session=abc',
+        clientType: 'codemie-claude', version: '0.0.0', dryRun: false, abortSignal: new AbortController().signal,
+      } as never);
+
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
+      expect(ids).toEqual(expect.arrayContaining(['delta-stable:main', 'delta-stable:feature']));
+    });
+
+    it('persists the id of the legacy lines on their first send, so a line that joins them later does not change it', async () => {
+      seed(['main']);
+      const line = (recordId: string): string => `${JSON.stringify({
+        recordId, sessionId: SESSION_ID, agentSessionId: 'claude-native', timestamp: Date.parse('2026-10-01T10:02:00Z'),
+        gitBranch: 'main', tools: { Read: 1 }, toolStatus: { Read: { success: 1, failure: 0 } }, fileOperations: [],
+        syncStatus: 'pending', syncAttempts: 0,
+      })}
+`;
+      const metricsFile = join(sessionsDir, `${SESSION_ID}_metrics.jsonl`);
+      writeFileSync(metricsFile, line('legacy-1') + line('legacy-2'));
+      const ids: unknown[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        ids.push((JSON.parse(String((init as RequestInit).body)) as { attributes: { delta_id?: string } }).attributes.delta_id);
+        return new Response('unavailable', { status: 503, headers: { 'content-type': 'text/plain' } });
+      });
+      const run = (): Promise<unknown> => new MetricsSyncProcessor().process({ sessionId: SESSION_ID, agentName: 'claude' } as never, context(new AbortController().signal));
+      const { deltaIdOf } = await import('../delta-id.js');
+
+      await run();
+      const stored = readFileSync(metricsFile, 'utf-8').trim().split(/\r?\n/).map((l) => JSON.parse(l) as { deltaId?: string });
+      expect(stored.map((d) => d.deltaId)).toEqual([deltaIdOf(['legacy-1', 'legacy-2']), deltaIdOf(['legacy-1', 'legacy-2'])]);
+
+      writeFileSync(metricsFile, readFileSync(metricsFile, 'utf-8') + line('legacy-3'));
+      await run();
+
+      const first = `${deltaIdOf(['legacy-1', 'legacy-2'])}:main`;
+      expect(ids[0]).toBe(first);
+      // The old pair resends under its first id; the newcomer is a batch of its own
+      expect(ids.slice(1)).toEqual(expect.arrayContaining([first]));
+      expect(ids.slice(1)).not.toContain(`${deltaIdOf(['legacy-1', 'legacy-2', 'legacy-3'])}:main`);
     });
 
     it('sends one metric per stored batch (the legacy lines as one), each under its own id, whatever joined the pending set since', async () => {
@@ -153,7 +203,7 @@ describe('MetricsSyncProcessor', () => {
         clientType: 'codemie-claude', version: '0.0.0', dryRun: false, abortSignal: new AbortController().signal,
       } as never);
 
-      expect(ids).toEqual(['d-1', 'd-2', deltaIdOf(['legacy-1', 'legacy-2'])]);
+      expect(ids).toEqual(['d-1:main', 'd-2:main', `${deltaIdOf(['legacy-1', 'legacy-2'])}:main`]);
     });
   });
 });

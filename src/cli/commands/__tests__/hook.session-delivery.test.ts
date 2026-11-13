@@ -3206,8 +3206,8 @@ describe('the exit notice', () => {
   it('earlier sessions tried this run and still queued get one count line with the earliest drop time', async () => {
     const startedAt = Date.now();
     const own = baseRecord({ ownerPid: process.pid });
-    const a = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 3 * 60 * 60 * 1000, deliveryRealAttempts: 1 });
-    const b = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 2 });
+    const a = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 3 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    const b = baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 2, deliveryAttemptedAt: startedAt });
     writeRecord(a);
     writeRecord(b);
 
@@ -3216,6 +3216,35 @@ describe('the exit notice', () => {
     expect(lines).toEqual([
       `CodeMie: analytics of 2 earlier session(s) are still queued for retry; none is dropped before ${dateText(a.deliveryFailingSince! + 24 * 60 * 60 * 1000)}.`,
     ]);
+  });
+
+  it('a record this launch did not attempt (no attempt stamp since its start), or another wrapper\'s active one, is not counted as queued', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const clock = startedAt - 3 * 60 * 60 * 1000;
+    // Rewritten since the start (by a hook, say) but never attempted by it
+    writeRecord(baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: clock, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt - 60 * SECOND }));
+    writeRecord(baseRecord({ status: 'completed', endTime: Date.now(), deliveryFailingSince: clock }));
+    // Another live wrapper's session, mid-attempt
+    writeRecord(baseRecord({ status: 'active', ownerPid: process.pid, deliveryFailingSince: clock, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt }));
+
+    const entries = await listExitDelivery(own.sessionId, startedAt - 1000, startedAt);
+
+    expect(entries.filter((e) => e.kind === 'queued')).toEqual([]);
+  });
+
+  it('generations of one session re-keyed under fresh ids are one queued entry with the earliest drop time', async () => {
+    const startedAt = Date.now();
+    const own = baseRecord({ ownerPid: process.pid });
+    const origin = '11111111-1111-4111-8111-111111111111';
+    const early = baseRecord({ startTime: Date.now() - 10 * 60_000, status: 'completed', endTime: Date.now(), originSessionId: origin, deliveryFailingSince: startedAt - 5 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    const late = baseRecord({ startTime: Date.now() - 5 * 60_000, status: 'completed', endTime: Date.now(), originSessionId: origin, deliveryFailingSince: startedAt - 1 * 60 * 60 * 1000, deliveryRealAttempts: 1, deliveryAttemptedAt: startedAt });
+    writeRecord(early);
+    writeRecord(late);
+
+    const entries = await listExitDelivery(own.sessionId, startedAt - 1000, startedAt);
+
+    expect(entries).toEqual([expect.objectContaining({ kind: 'queued', sessionId: origin, notDroppedBefore: early.deliveryFailingSince! + 24 * 60 * 60 * 1000 })]);
   });
 
   it('a run whose data was all delivered prints no delivery line', () => {
@@ -3672,31 +3701,32 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     expect(readRecord(session.sessionId).reason).toBe('logout');
   });
 
-  it('the read still failing: the own-record step rejects, three starts spend their attempts, the fourth after 24 h of failing ends it completed with nothing of the transcript sent', async () => {
+  it('the read still failing: the own-record step rejects, starts spend nothing on the local failure, the fifth closes it locally unmarked with nothing of the transcript sent', async () => {
     const { session, env, end } = copilotRun();
     const id = session.sessionId;
     const startedAt = Date.now();
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../../../agents/core/session/stale-session-reconciliation.js');
 
     await end();
     await expect(finalizeOwnRecord(id, { env, deadlineMs: Date.now() + 10 * SECOND })).rejects.toMatchObject({ code: 'EISDIR' });
     expect(readRecord(id).deliveryRealAttempts).toBeUndefined();
 
-    for (let start = 0; start < 3; start++) {
+    for (let start = 1; start < LOCAL_FINALIZE_FAILURE_CAP; start++) {
       await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
       // A local failure: no request reached a server, so nothing is spent
-      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0 });
+      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, finalizeAttempts: start });
     }
     expect(requests).toEqual([]);
-    // The budget earlier counted failures spent
-    writeRecord({ ...readRecord(id), deliveryRealAttempts: 3, deliveryFailingSince: Date.now() - 25 * 60 * 60 * SECOND });
 
     await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
 
-    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit', droppedAt: expect.any(Number) });
-    expect(requests.map((r) => r.name)).toEqual(['codemie_cli_session_total']);
+    // Closed locally at the cap: never marked dropped, nothing sent, nothing for the exit notice to name
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', reason: 'interrupted' });
+    expect(readRecord(id, 'completed_').droppedAt).toBeUndefined();
+    expect(requests).toEqual([]);
     await noticeDeliveryAtExit('own', startedAt, true);
-    expect(stderr.mock.calls.flat().join()).toContain('analytics of these sessions were dropped: copilot-cli');
+    expect(stderr.mock.calls.flat().join()).not.toContain('were dropped');
     expect(existsSync(spool(id, 'metrics', 'completed_'))).toBe(false);
     expect(existsSync(spool(id, 'conversation', 'completed_'))).toBe(false);
   });

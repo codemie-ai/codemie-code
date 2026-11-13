@@ -146,6 +146,18 @@ describe('delivery budget', () => {
       expect(s.deliveryRealAttempts).toBe(0);
     });
 
+    it('an ok outcome clears a running failing clock explicitly and keeps the real-attempt count', async () => {
+      const { noteOutcome, budgetSpent, notDroppedBefore } = await import('../delivery-budget.js');
+      const s = noteOutcome(makeSession({ deliveryRealAttempts: 4, deliveryFailingSince: NOW - 30 * HOUR }), 'ok', NOW);
+      expect(s.deliveryFailingSince).toBeNull();
+      expect(s.deliveryRealAttempts).toBe(3);
+      // the next failure starts a fresh clock, not the old one
+      const next = noteOutcome(s, 'counted', NOW + HOUR);
+      expect(next.deliveryFailingSince).toBe(NOW + HOUR);
+      expect(budgetSpent({ ...s, deliveryRealAttempts: 9 }, 'counted', NOW)).toBeUndefined();
+      expect(notDroppedBefore(s, NOW)).toBe(NOW + 24 * HOUR);
+    });
+
     it('a rejected outcome stamps the drop reason once', async () => {
       const { noteOutcome } = await import('../delivery-budget.js');
       const first = noteOutcome(makeSession({ deliveryRealAttempts: 1 }), 'rejected', NOW);
@@ -216,6 +228,30 @@ describe('delivery budget', () => {
       const done = JSON.parse(readFileSync(join(sessionsDir, `completed_${ID}.json`), 'utf-8')) as Session;
       expect(done.droppedAt).toBeUndefined();
       expect(done.droppedReason).toBeUndefined();
+    });
+
+    it('leaveQueue that cannot rename saves the record as given and clears the mark it just wrote', async () => {
+      const { leaveQueue } = await import('../delivery-budget.js');
+      const s = makeSession({ endMetricSentAt: NOW, deliveryRealAttempts: 3, deliveryFailingSince: NOW - 25 * HOUR });
+      writeFileSync(livePath(), JSON.stringify(makeSession({ endMetricSentAt: NOW })));
+      writeDeltas('pending');
+      expect(await leaveQueue(s, 'retry budget exhausted', NOW, async () => false)).toBe(false);
+      const live = JSON.parse(readFileSync(livePath(), 'utf-8')) as Session;
+      expect(live.droppedAt).toBeUndefined();
+      expect(live.droppedReason).toBeUndefined();
+      expect(live.deliveryRealAttempts).toBe(3);
+      expect(live.deliveryFailingSince).toBe(NOW - 25 * HOUR);
+    });
+
+    it('leaveQueue that cannot rename keeps an earlier drop mark of the record', async () => {
+      const { leaveQueue } = await import('../delivery-budget.js');
+      const s = makeSession({ endMetricSentAt: NOW, droppedAt: NOW - HOUR, droppedReason: 'rejected by the server' });
+      writeFileSync(livePath(), JSON.stringify(s));
+      writeDeltas('pending');
+      await leaveQueue(s, 'retry budget exhausted', NOW, async () => false);
+      const live = JSON.parse(readFileSync(livePath(), 'utf-8')) as Session;
+      expect(live.droppedAt).toBe(NOW - HOUR);
+      expect(live.droppedReason).toBe('rejected by the server');
     });
 
     it('leaveQueue with no reason leaves local closes unmarked even with data unsent', async () => {

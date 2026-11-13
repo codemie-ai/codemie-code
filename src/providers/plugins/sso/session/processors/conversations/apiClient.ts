@@ -20,7 +20,7 @@ import {
   RETRY_DELAY_MS
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 
@@ -140,11 +140,13 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       // Actual API call with retry
       let lastError: Error | null = null;
       let lastOutcome: RequestOutcome = 'outage';
+      // The tries of this payload are one logical request: only the last try's outcome counts for the caller's attempt
+      const group = newRequestGroup();
 
       for (let attempt = 0; attempt < apiConfig.retryAttempts; attempt++) {
         throwIfStopped(bounds);
         try {
-          const request = boundedRequest(apiConfig.timeout, bounds);
+          const request = boundedRequest(apiConfig.timeout, bounds, group);
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',

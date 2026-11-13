@@ -75,6 +75,19 @@ function spentBudget(): Partial<Session> {
   return { deliveryFailingSince: Date.now() - 25 * HOUR, deliveryRealAttempts: 3 };
 }
 
+/** A record past the evidence retention (90 days): the one budget that may close a record before its attempt sends anything. */
+function pastRetention(): Partial<Session> {
+  return { startTime: Date.now() - 100 * 24 * HOUR };
+}
+
+/** A pipeline whose attempt meets a server's JSON 404 (a counted failure) and fails. */
+async function countedFailure(_event: BaseHookEvent, config: HookProcessingConfig): Promise<void> {
+  const request = boundedRequest(1000, { abortSignal: config.abortSignal });
+  request.noteAnswer(404, true, false);
+  request.dispose();
+  throw new Error('server refused');
+}
+
 let home: string;
 let sessionsDir: string;
 const previousHome = process.env.CODEMIE_HOME;
@@ -492,7 +505,7 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: killed.sessionId, transcript_path: '' });
   });
 
-  it('an exhausted copilot-cli record whose named transcript exists keeps its correlation and ends under the native id', async () => {
+  it('a copilot-cli record with its retry budget spent whose attempt fails with a counted answer: its named transcript exists, it keeps its correlation, ends under the native id and is marked dropped', async () => {
     const native = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
     const transcript = join(home, 'events.jsonl');
     writeFileSync(transcript, '{}\n');
@@ -501,14 +514,15 @@ describe('reconcileOtherSessions', () => {
       correlation: { status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript },
     });
     save(exhausted);
-    const hook = pipeline();
+    const hook = pipeline({ processEvent: countedFailure });
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
-    expect(load(exhausted.sessionId).correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript });
-    expect(load(exhausted.sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted' });
-    expect(load(exhausted.sessionId).droppedAt).toBeTypeOf('number');
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(load(exhausted.sessionId, 'completed_').correlation).toEqual({ status: 'matched', retryCount: 0, agentSessionId: native, agentSessionFile: transcript });
+    expect(load(exhausted.sessionId, 'completed_')).toMatchObject({ droppedReason: 'retry budget exhausted' });
+    expect(load(exhausted.sessionId, 'completed_').droppedAt).toBeTypeOf('number');
+    // No drop is decided before the send: the transcript is flushed
+    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: transcript });
   });
 
   it.each([
@@ -543,7 +557,7 @@ describe('reconcileOtherSessions', () => {
       ...overrides,
     });
     save(failing);
-    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+    const hook = pipeline({ processEvent: countedFailure });
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
     const startedAt = Date.now();
 
@@ -579,9 +593,9 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: exhausted.sessionId, transcript_path: '' });
   });
 
-  it('an exhausted record of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
+  it('a record past the evidence retention of another agent whose adapter can locate its transcript stores nothing: correlation unchanged', async () => {
     const exhausted = record({
-      agentName: 'pi', ...spentBudget(),
+      agentName: 'pi', ...pastRetention(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-pi' },
     });
     save(exhausted);
@@ -597,10 +611,10 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-pi', transcript_path: '' });
   });
 
-  describe('an exhausted resumed copilot-cli record naming no transcript', () => {
+  describe('a resumed copilot-cli record past the evidence retention naming no transcript', () => {
     const resumed = 'efefefef-efef-4fef-8fef-efefefefefef';
     const exhaustedRecord = () => record({
-      agentName: 'copilot-cli', ...spentBudget(),
+      agentName: 'copilot-cli', ...pastRetention(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: resumed },
     });
     const finalize = async () => {
@@ -706,10 +720,10 @@ describe('reconcileOtherSessions', () => {
     }
   });
 
-  it('finalizes a record whose retry budget is spent without the flush', async () => {
+  it('finalizes a record past the evidence retention without the flush', async () => {
     const transcript = join(home, 'transcript.jsonl');
     writeFileSync(transcript, '{}\n');
-    save(record({ ...spentBudget(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } }));
+    save(record({ ...pastRetention(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } }));
     const hook = pipeline();
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
@@ -718,7 +732,59 @@ describe('reconcileOtherSessions', () => {
     expect(hook.processEvent.mock.calls[0][0].transcript_path).toBe('');
   });
 
-  it('closes locally a record whose finalize still fails with its budget spent; the next pass reaches an older record', async () => {
+  it('a retry budget spent at an earlier start decides no drop before this start sends: the record is flushed and, finalized without a counted failure, not marked dropped', async () => {
+    const transcript = join(home, 'transcript.jsonl');
+    writeFileSync(transcript, '{}\n');
+    const copilot = record({ agentName: 'copilot-cli', ...spentBudget(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd', agentSessionFile: transcript } });
+    const stranded = record({ ...spentBudget(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } });
+    save(copilot);
+    save(stranded);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent.mock.calls.map(([event]) => event.transcript_path)).toEqual([transcript, transcript]);
+    expect(load(copilot.sessionId).droppedAt).toBeUndefined();
+    expect(load(stranded.sessionId).droppedAt).toBeUndefined();
+  });
+
+  it('a local finalize failure that repeats closes the record locally at the cap, never marked dropped; fewer in a row leave it for a later start', async () => {
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    const stuck = record();
+    save(stuck);
+    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+
+    for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: i });
+    }
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(existsSync(join(sessionsDir, `${stuck.sessionId}.json`))).toBe(false);
+    const closed = load(stuck.sessionId, 'completed_');
+    expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted' });
+    expect(closed.droppedAt).toBeUndefined();
+    expect(closed.droppedReason).toBeUndefined();
+  });
+
+  it('an abort that cuts a failing finalize is no local failure: the cap does not count it', async () => {
+    const stuck = record();
+    save(stuck);
+    let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
+    const hook = pipeline({
+      processEvent: async () => {
+        void pass!.abandon();
+        throw new Error('cut');
+      },
+    });
+
+    pass = reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook });
+    await pass.done;
+
+    expect(load(stuck.sessionId).finalizeAttempts).toBeUndefined();
+  });
+
+  it('closes locally a record whose finalize fails with a counted answer with its budget spent; the next pass reaches an older record', async () => {
     const start = Date.parse('2026-10-01T10:00:00Z');
     const failing = Array.from({ length: 5 }, (_, i) =>
       record({ startTime: start + i * HOUR, activityStartedAt: start + i * HOUR + 60_000, ...spentBudget() }));
@@ -727,8 +793,8 @@ describe('reconcileOtherSessions', () => {
     save(older);
     const failingIds = failing.map((r) => r.sessionId);
     const hook = pipeline({
-      processEvent: async (_event, config) => {
-        if (failingIds.includes(config.sessionId)) throw new Error('metrics file unwritable');
+      processEvent: async (event, config) => {
+        if (failingIds.includes(config.sessionId)) await countedFailure(event, config);
       },
     });
 
@@ -749,10 +815,9 @@ describe('reconcileOtherSessions', () => {
     save(stranded);
     let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
     const hook = pipeline({
-      processEvent: async (_event, config) => {
-        noteSendAttempt(config.abortSignal);
+      processEvent: async (event, config) => {
         void pass!.abandon();
-        throw new Error('metrics file unwritable');
+        await countedFailure(event, config);
       },
     });
     vi.mocked(logger.warn).mockClear();
@@ -767,12 +832,12 @@ describe('reconcileOtherSessions', () => {
     expect(warns).toContainEqual(expect.stringMatching(new RegExp(`${stranded.sessionId}.*still live`)));
   });
 
-  it('a finalize failing with the budget spent marks a record of this host dropped; one of another host closed locally by design is not', async () => {
+  it('a finalize failing with a counted answer with the budget spent marks a record of this host dropped; one of another host closed locally by design is not', async () => {
     const own = record({ ...spentBudget() });
     const foreign = record({ ...spentBudget(), codemieUrl: 'https://other.example.com' });
     save(own);
     save(foreign);
-    const hook = pipeline({ processEvent: async () => { throw new Error('metrics file unwritable'); } });
+    const hook = pipeline({ processEvent: countedFailure });
     const before = Date.now();
 
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
@@ -839,7 +904,7 @@ describe('reconcileOtherSessions', () => {
     }
   });
 
-  it('an abandoned pass keeps the counter of the record whose send ran, and never reaches the others', async () => {
+  it('an abandoned pass gives back the attempt of the record whose send ran (a cut is no server verdict), and never reaches the others', async () => {
     const records = [0, 1, 2].map((i) => record({ startTime: Date.now() - (i + 1) * HOUR }));
     records.forEach((r) => save(r));
     let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
@@ -854,7 +919,7 @@ describe('reconcileOtherSessions', () => {
     await pass.done;
 
     expect(hook.processEvent).toHaveBeenCalledTimes(1);
-    expect(load(records[0].sessionId).deliveryRealAttempts).toBe(1);
+    expect(load(records[0].sessionId).deliveryRealAttempts).toBe(0);
     expect(load(records[1].sessionId).deliveryRealAttempts).toBeUndefined();
     expect(load(records[2].sessionId).deliveryRealAttempts).toBeUndefined();
     expect(readdirSync(sessionsDir).filter((name) => name.endsWith('.reconcile.lock'))).toEqual([]);
@@ -1080,11 +1145,11 @@ describe('a failed flush through the real hook pipeline', () => {
     expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
-  it('with its budget spent, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
+  it('past the evidence retention, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
+    vi.stubEnv('CODEMIE_EVIDENCE_RECORD_IDLE_DAYS', '1');
     const start = Date.parse('2026-10-01T10:00:00Z');
     const stranded = record({
       startTime: start,
-      ...spentBudget(),
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: unparseableTranscript() },
     });
     save(stranded);
@@ -1115,7 +1180,7 @@ describe('a failed flush through the real hook pipeline', () => {
     const closed = load(stranded.sessionId, 'completed_');
     expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: start + 300_000 });
     expect(closed.droppedAt).toBeTypeOf('number');
-    expect(closed.droppedReason).toBe('retry budget exhausted');
+    expect(closed.droppedReason).toBe('retention expired');
   });
 
   it('a hook process (no config) whose flush fails logs the failure, returns normally and still ends the record', async () => {
@@ -1196,41 +1261,37 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(hook.processEvent.mock.calls.map(([event]) => event.session_id)).toEqual(['native-1']);
   });
 
-  it.skipIf(!canDeny)('repeated starts spend nothing on the local failure; a budget spent by earlier counted failures ends it at the exhausted path: completed, correlation untouched under its native id, nothing of the transcript sent', async () => {
+  it.skipIf(!canDeny)('repeated starts spend no attempt on the local failure; at the cap of them it is closed locally, unmarked: completed, correlation untouched, nothing sent', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     save(stuck);
     const hook = { processEvent: vi.fn(processEvent) };
-    let sent: string[];
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    const sent: string[] = [];
 
     deny();
     try {
-      for (let i = 0; i < 3; i++) {
-        expect(await startPass(hook)).toEqual([]);
-        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation });
+      for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
+        sent.push(...await startPass(hook));
+        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, finalizeAttempts: i, correlation });
         expect(load(stuck.sessionId).deliveryFailingSince).toBeUndefined();
       }
       expect(hook.processEvent.mock.calls).toEqual([]);
-      // A budget earlier counted failures spent
-      save({ ...load(stuck.sessionId), ...spentBudget() });
-
-      sent = await startPass(hook);
+      sent.push(...await startPass(hook));
     } finally {
       allow();
     }
 
-    expect(sent.map((body) => JSON.parse(body).name)).toEqual(['codemie_cli_session_total']);
-    expect(sent[0]).not.toContain(join(home, 'copilot'));
-
+    expect(sent).toEqual([]);
     const ended = load(stuck.sessionId, 'completed_');
     expect(ended.status).toBe('completed');
     expect(ended.correlation).toEqual(correlation);
-    expect(ended.droppedAt).toBeTypeOf('number');
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(ended.droppedAt).toBeUndefined();
+    expect(hook.processEvent.mock.calls).toEqual([]);
     expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
   });
 
-  it.skipIf(!canDeny)('its named transcript that cannot be checked is not gone: an attempt throws, the exhausted one keeps the file named', async () => {
+  it.skipIf(!canDeny)('its named transcript that cannot be checked is not gone: an attempt throws, the one past the cap of local failures keeps the file named', async () => {
     const dir = join(home, 'named');
     mkdirSync(dir);
     const named = { ...correlation, agentSessionFile: join(dir, 'events.jsonl') };
@@ -1244,14 +1305,16 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       expect(hook.processEvent.mock.calls).toEqual([]);
       expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
-      save({ ...stuck, ...spentBudget() });
+      const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+      save({ ...stuck, finalizeAttempts: LOCAL_FINALIZE_FAILURE_CAP - 1 });
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
     } finally {
       chmodSync(dir, 0o755);
     }
 
-    expect(load(stuck.sessionId).correlation).toEqual(named);
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
+    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it('a stored home that is gone: a regular attempt leaves it active, correlation untouched', async () => {
@@ -1266,7 +1329,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(load(stuck.sessionId).correlation.agentSessionFile).toBeUndefined();
   });
 
-  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the exhausted one ends it, correlation untouched', async () => {
+  it('its named transcript under a stored home with no session-state: an attempt leaves it active, the one past the cap of local failures is closed locally unmarked, correlation untouched', async () => {
     const agentHome = join(home, 'copilot');
     mkdirSync(agentHome);
     const named = { ...correlation, agentSessionFile: join(agentHome, 'session-state', native, 'events.jsonl') };
@@ -1279,11 +1342,13 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(hook.processEvent.mock.calls).toEqual([]);
     expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
-    save({ ...stuck, ...spentBudget() });
+    const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
+    save({ ...stuck, finalizeAttempts: LOCAL_FINALIZE_FAILURE_CAP - 1 });
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
-    expect(load(stuck.sessionId).correlation).toEqual(named);
-    expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: native, transcript_path: '' });
+    expect(hook.processEvent.mock.calls).toEqual([]);
+    expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
+    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it.each([['no attempt', {}], ['its budget', spentBudget()]])('its named transcript gone while the stored root exists ends uncorrelated, %s spent', async (_case, spent) => {
@@ -1321,10 +1386,10 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
   });
 
-  it.skipIf(!canDeny)('an exhausted record of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
+  it.skipIf(!canDeny)('a record past the evidence retention of "unknown" native id ends under its CodeMie id, correlation untouched', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const unknown = { ...correlation, agentSessionId: 'unknown' };
-    const stuck = record({ ...copilot, ...spentBudget(), correlation: unknown });
+    const stuck = record({ ...copilot, ...pastRetention(), correlation: unknown });
     save(stuck);
     const hook = pipeline();
 
@@ -1844,5 +1909,30 @@ describe('attemptResult', () => {
     request.dispose();
     noteAuthFailure(signal);
     expect(attemptResult(signal, false)).toBe('auth');
+  });
+
+  it('an abort after a send that noted no failing outcome is no attempt: a deadline or an abandon never spends budget', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const controller = new AbortController();
+    noteSendAttempt(controller.signal);
+    const request = boundedRequest(1000, { abortSignal: controller.signal });
+    request.noteAnswer(200, true, true);
+    request.dispose();
+    controller.abort();
+    expect(attemptResult(controller.signal, false)).toBe('not-attempt');
+    expect(attemptResult(controller.signal, true)).toBe('not-attempt');
+  });
+
+  it('a 403 and a JSON 404 under one signal are an auth answer: the permission denial outranks the counted failure', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    for (const order of [[403, 404], [404, 403]]) {
+      const signal = new AbortController().signal;
+      for (const status of order) {
+        const request = boundedRequest(1000, { abortSignal: signal });
+        request.noteAnswer(status, true, false);
+        request.dispose();
+      }
+      expect(attemptResult(signal, false)).toBe('auth');
+    }
   });
 });

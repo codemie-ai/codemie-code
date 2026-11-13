@@ -12,6 +12,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { logger } from '../../../../../../utils/logger.js';
 import { ConfigurationError } from '../../../../../../utils/errors.js';
 import type { PluginContext } from '../types.js';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { boundedRequest } from '../../../session/bounded-request.js';
 
 // --- Mock SessionSyncer so sync() is fully controlled (no network / fs) ---
 const { syncMock, SessionSyncerMock } = vi.hoisted(() => {
@@ -432,6 +436,99 @@ describe('SSOSessionSyncPlugin', () => {
       await interceptor.onProxyStop?.();
     });
 
+    it('hands each timer tick the stop-at-first-failure flag and its own abort signal', async () => {
+      vi.useFakeTimers();
+      const interceptor = await plugin.createInterceptor(buildContext());
+      await interceptor.onProxyStart?.();
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      expect(syncMock).toHaveBeenCalledWith('session-123', expect.objectContaining({
+        stopAtFirstFailure: true,
+        abortSignal: expect.any(AbortSignal)
+      }));
+
+      await interceptor.onProxyStop?.();
+    });
+
+    describe('a line the server refused for good during a timer run', () => {
+      let home: string;
+      let previousHome: string | undefined;
+      const livePath = (): string => join(home, 'sessions', 'session-123.json');
+      const liveRecord = (overrides: Record<string, unknown> = {}) => ({
+        sessionId: 'session-123', agentName: 'claude', provider: 'ai-run-sso', startTime: 1_790_000_000_000, endTime: 1_790_000_100_000,
+        workingDirectory: '/tmp/project', status: 'completed', activeDurationMs: 0, deliveryRealAttempts: 0,
+        correlation: { status: 'matched', agentSessionId: 'native-1', retryCount: 0 }, ...overrides
+      });
+
+      beforeEach(() => {
+        previousHome = process.env.CODEMIE_HOME;
+        home = mkdtempSync(join(tmpdir(), 'session-sync-plugin-'));
+        process.env.CODEMIE_HOME = home;
+        mkdirSync(join(home, 'sessions'), { recursive: true });
+        process.env.CODEMIE_SESSION_SYNC_INTERVAL = '15';
+      });
+
+      afterEach(() => {
+        if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+        else process.env.CODEMIE_HOME = previousHome;
+        rmSync(home, { recursive: true, force: true });
+      });
+
+      function syncAnswering(...statuses: number[]): void {
+        syncMock.mockImplementation(async (_id: string, ctx: { abortSignal: AbortSignal }) => {
+          for (const status of statuses) {
+            const request = boundedRequest(1000, { abortSignal: ctx.abortSignal });
+            request.noteAnswer(status, true, false);
+            request.dispose();
+          }
+          return { success: false, message: 'failed', processorResults: {}, failedProcessors: ['metrics-sync'] };
+        });
+      }
+
+      /** A timer tick on real timers (the stamp is real file I/O), settled once the sync and its stamp are done. */
+      async function tick(interceptor: { onProxyStart?: () => Promise<void>; onProxyStop?: () => Promise<void> }): Promise<void> {
+        await interceptor.onProxyStart?.();
+        await vi.waitFor(() => expect(syncMock).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // The timer is cleared and the tick in flight is let to finish, so nothing outlives the test
+        await interceptor.onProxyStop?.();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      it('stamps the drop on the live record without spending an attempt', async () => {
+        writeFileSync(livePath(), JSON.stringify(liveRecord({ deliveryRealAttempts: 2 })));
+        syncAnswering(400);
+        const interceptor = await plugin.createInterceptor(buildContext());
+
+        await tick(interceptor);
+
+        const saved = JSON.parse(readFileSync(livePath(), 'utf-8')) as Record<string, unknown>;
+        expect(saved).toMatchObject({ droppedReason: 'rejected by the server', droppedAt: expect.any(Number), deliveryRealAttempts: 2 });
+        expect(saved.deliveryFailingSince).toBeUndefined();
+      });
+
+      it('leaves an earlier drop stamp as it is', async () => {
+        writeFileSync(livePath(), JSON.stringify(liveRecord({ droppedAt: 1_790_000_050_000, droppedReason: 'retention expired' })));
+        syncAnswering(400);
+        const interceptor = await plugin.createInterceptor(buildContext());
+
+        await tick(interceptor);
+
+        expect(JSON.parse(readFileSync(livePath(), 'utf-8'))).toMatchObject({ droppedAt: 1_790_000_050_000, droppedReason: 'retention expired' });
+      });
+
+      it('stamps nothing for a failure that is not a rejection', async () => {
+        writeFileSync(livePath(), JSON.stringify(liveRecord()));
+        syncAnswering(503);
+        const interceptor = await plugin.createInterceptor(buildContext());
+
+        await tick(interceptor);
+
+        expect(JSON.parse(readFileSync(livePath(), 'utf-8')).droppedAt).toBeUndefined();
+      });
+    });
+
     it('respects a custom CODEMIE_SESSION_SYNC_INTERVAL', async () => {
       vi.useFakeTimers();
       process.env.CODEMIE_SESSION_SYNC_INTERVAL = '5000';
@@ -499,6 +596,19 @@ describe('SSOSessionSyncPlugin', () => {
       // Timer was cleared: further time advances produce no more syncs.
       await vi.advanceTimersByTimeAsync(5000);
       expect(syncMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('makes the final sync a full pass: only the timer stops at the first failure', async () => {
+      vi.useFakeTimers();
+      process.env.CODEMIE_SESSION_SYNC_INTERVAL = '1000';
+      const interceptor = await plugin.createInterceptor(buildContext());
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(1000);
+      await interceptor.onProxyStop?.();
+
+      const flags = syncMock.mock.calls.map(call => (call[1] as { stopAtFirstFailure?: boolean }).stopAtFirstFailure);
+      expect(flags).toEqual([true, false]);
     });
 
     it('performs a final sync even if the proxy was never started', async () => {

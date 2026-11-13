@@ -8,6 +8,7 @@ import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
 import { loadAnalyticsCookies } from './analytics-cookies.js';
 import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
+import { stampRejection } from '@/agents/core/session/delivery-budget.js';
 
 /** Saves the end metric's outcome on the latest copy of the record. */
 async function markEndMetric(
@@ -23,15 +24,10 @@ async function markEndMetric(
  * Marks an end metric the server refused for good (a JSON 400/422) as terminal: it is never re-sent, and the drop is
  * stamped (an earlier one stays) so the exit notice reports it even when the record leaves the queue in this delivery.
  */
-async function markEndMetricRejected(sessionStore: SessionStore, sessionId: string): Promise<void> {
+export async function markEndMetricRejected(sessionStore: SessionStore, sessionId: string): Promise<void> {
   const latest = await sessionStore.loadSession(sessionId);
   if (!latest) return;
-  await sessionStore.saveSession({
-    ...latest,
-    endMetricSkipped: 'rejected',
-    droppedAt: latest.droppedAt ?? Date.now(),
-    droppedReason: latest.droppedAt !== undefined ? latest.droppedReason : 'rejected by the server',
-  });
+  await sessionStore.saveSession(stampRejection({ ...latest, endMetricSkipped: 'rejected' }, Date.now()));
 }
 
 /**

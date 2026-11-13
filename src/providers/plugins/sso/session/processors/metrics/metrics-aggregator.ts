@@ -130,10 +130,12 @@ function buildSessionAttributes(
   { branch, fallbackModel }: { branch: string; fallbackModel?: string }
 ): ToolUsageAttributes {
   // The id the run's start metric was accepted under; else the agent session id from the
-  // correlation set during SessionStart, then the deltas', then the CodeMie session id
+  // correlation set during SessionStart, then the deltas', then the CodeMie session id (a `/clear` generation re-keyed to
+  // stay queued is still the session the user knows: its origin id, never the fresh one)
   const agentSessionId = session.startMetricSessionId
     || session.correlation?.agentSessionId
     || deltas[0]?.agentSessionId
+    || session.originSessionId
     || session.sessionId;
 
   // Tool tracking (internal — counts used for totals/tool_names only, not emitted as dict)

@@ -43,6 +43,8 @@ export async function deliverSessionRecord(
   const reports = !options.holdsReconcileLock && syncApplies(config);
   const attempt = reports ? attemptSignal(options) : undefined;
   const bounded = attempt ? { ...options, abortSignal: attempt.signal } : options;
+  let failed = false;
+  let failure: unknown;
   try {
     if (attempt) await beginAttempt(sessionId);
 
@@ -53,10 +55,15 @@ export async function deliverSessionRecord(
     // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
     //    abortable; unfinished work stays pending)
     await syncPendingDataToAPI(sessionId, agentSessionId, config, bounded);
+  } catch (error) {
+    // A local failure (a lock timeout, a file) reached no server: the attempt is still reported below, which gives it back
+    failed = true;
+    failure = error;
   } finally {
     attempt?.release();
   }
-  const reported = attempt ? await reportOutcome(sessionId, attemptResult(attempt.signal, false)) : undefined;
+  const reported = attempt ? await reportOutcome(sessionId, attemptResult(attempt.signal, failed)) : undefined;
+  if (failed) throw failure;
 
   // A hook process waits for the file locks no longer than the SessionEnd budget, never the 10 s per-lock wait
   const rename = async (id: string): Promise<boolean> => {
@@ -139,10 +146,10 @@ export async function deliverSession(sessionId: string, config: HookProcessingCo
   );
 }
 
-/** The agent's own session id of a record, else its CodeMie id. */
-export function nativeSessionId(record: { sessionId: string; correlation?: { agentSessionId?: string } }): string {
+/** The agent's own session id of a record, else its CodeMie id (the one a re-keyed `/clear` generation was known by, not its fresh one). */
+export function nativeSessionId(record: { sessionId: string; originSessionId?: string; correlation?: { agentSessionId?: string } }): string {
   const agentSessionId = record.correlation?.agentSessionId;
-  return agentSessionId && agentSessionId !== 'unknown' ? agentSessionId : record.sessionId;
+  return agentSessionId && agentSessionId !== 'unknown' ? agentSessionId : record.originSessionId ?? record.sessionId;
 }
 
 /**

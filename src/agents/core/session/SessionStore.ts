@@ -46,8 +46,8 @@ function earlier(a: number | undefined, b: number | undefined): number | undefin
 }
 
 /**
- * The saving copy wins, except delivery marks it lacks, attempt counters lower than the other copy's, and a later
- * failing-since clock; `droppedReason` travels with the `droppedAt` it pairs with.
+ * The saving copy wins, except delivery marks it lacks, attempt counters lower than the other copy's, and an earlier
+ * failing-since clock (unless the saving copy cleared it); `droppedReason` travels with the `droppedAt` it pairs with.
  */
 function mergeCompleted(saving: Session, other: Session): Session {
   return {
@@ -58,8 +58,12 @@ function mergeCompleted(saving: Session, other: Session): Session {
     legacyMetricsWithheld: saving.legacyMetricsWithheld ?? other.legacyMetricsWithheld,
     droppedAt: saving.droppedAt ?? other.droppedAt,
     droppedReason: saving.droppedAt !== undefined ? saving.droppedReason : other.droppedReason,
-    deliveryFailingSince: earlier(saving.deliveryFailingSince, other.deliveryFailingSince),
+    // `null` is an explicit clear (a successful attempt ended the failing streak): the other copy's older clock must not return
+    deliveryFailingSince: saving.deliveryFailingSince === null
+      ? undefined
+      : earlier(saving.deliveryFailingSince, other.deliveryFailingSince ?? undefined),
     deliveryRealAttempts: larger(saving.deliveryRealAttempts, other.deliveryRealAttempts),
+    deliveryAttemptedAt: larger(saving.deliveryAttemptedAt, other.deliveryAttemptedAt),
     deliveryAttempts: larger(saving.deliveryAttempts, other.deliveryAttempts),
     finalizeAttempts: larger(saving.finalizeAttempts, other.finalizeAttempts),
   };

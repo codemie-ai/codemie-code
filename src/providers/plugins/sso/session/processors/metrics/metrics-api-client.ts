@@ -31,7 +31,8 @@ import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../uti
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwIfStopped, type RequestGroup, type RequestOutcome } from '../../bounded-request.js';
+import { CodeMieError } from '../../../../../../utils/errors.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
@@ -43,6 +44,18 @@ interface MetricsRequestError extends Error {
   isAuthFailure?: boolean;
   /** What the request came to (see RequestOutcome); `rejected` makes the delta terminal */
   outcome?: RequestOutcome;
+}
+
+/** A metric whose retries all failed: the last try's `outcome` and the error it ended with, as its `cause`. */
+export class MetricsRetryExhaustedError extends CodeMieError {
+  readonly outcome: RequestOutcome | undefined;
+
+  constructor(retries: number, lastError: Error | undefined) {
+    super(`Failed after ${retries} retries: ${lastError?.message}`);
+    this.name = 'MetricsRetryExhaustedError';
+    this.cause = lastError;
+    this.outcome = (lastError as MetricsRequestError | undefined)?.outcome;
+  }
 }
 
 /**
@@ -74,6 +87,8 @@ class MetricsApiClient {
 
   async sendMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
     let lastError: Error | undefined;
+    // The tries of this metric are one logical request: only the last try's outcome counts for the caller's attempt
+    const group = newRequestGroup();
 
     for (let attempt = 0; attempt <= this.config.retryAttempts; attempt++) {
       try {
@@ -84,7 +99,7 @@ class MetricsApiClient {
         }
         throwIfStopped(this.bounds);
 
-        const response = await this.sendRequest(metric);
+        const response = await this.sendRequest(metric, group);
         // Server accepted our credentials — clear any stale invalid-auth marker
         await clearAnalyticsAuthStatus();
         return response;
@@ -121,13 +136,10 @@ class MetricsApiClient {
       }
     }
 
-    throw Object.assign(
-      new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError }),
-      { outcome: (lastError as MetricsRequestError | undefined)?.outcome }
-    );
+    throw new MetricsRetryExhaustedError(this.config.retryAttempts, lastError);
   }
 
-  private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
+  private async sendRequest(metric: SessionMetric, group: RequestGroup): Promise<MetricsSyncResponse> {
     const url = `${this.config.baseUrl}${CODEMIE_ENDPOINTS.METRICS}`;
     const body = JSON.stringify(metric);
 
@@ -185,7 +197,7 @@ class MetricsApiClient {
       headers['Cookie'] = this.config.cookies;
     }
 
-    const request = boundedRequest(this.config.timeout, this.bounds);
+    const request = boundedRequest(this.config.timeout, this.bounds, group);
     let answered = false;
 
     try {

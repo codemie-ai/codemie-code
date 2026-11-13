@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { appendFile, readFile, rename, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { logger } from '@/utils/logger.js';
+import { ReconcileLockHeldError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { getSessionConversationLockPath, getSessionMetricsLockPath, getSessionPath } from './session-config.js';
 import { acquireSessionFileLock, type LockBounds } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
@@ -165,6 +166,8 @@ async function requeueSetUnlocked(sessionId: string): Promise<string | undefined
   const to = sessionSetFiles(sessionsDir, newId);
   const { acquirePidLock } = await import('@/utils/pid-lock.js');
   const lock = await acquirePidLock(getCodemiePath('sessions', `${newId}.reconcile.lock`), { mode: 'try' });
+  // The id is fresh, so nobody should hold its lock; a lock that is not ours is no ground to move the set
+  if (!lock) throw new ReconcileLockHeldError(newId);
   const moved: Array<'metrics' | 'conversation'> = [];
   try {
     const tmp = `${to.json}.${process.pid}.tmp`;
@@ -178,6 +181,8 @@ async function requeueSetUnlocked(sessionId: string): Promise<string | undefined
         await rename(from[key], to[key]);
         moved.push(key);
       }
+      // Last, and inside the rollback: an old record that cannot be removed must not stay live beside the new one
+      await unlink(from.json);
     } catch (error) {
       for (const key of moved.reverse()) {
         await rename(to[key], from[key]).catch((undoError: unknown) => {
@@ -187,9 +192,8 @@ async function requeueSetUnlocked(sessionId: string): Promise<string | undefined
       await unlink(to.json).catch(() => undefined);
       throw error;
     }
-    await unlink(from.json);
   } finally {
-    await lock?.release();
+    await lock.release();
   }
   logger.info(`[hook] Kept the undelivered ${sessionId} set queued as ${newId}`);
   return newId;

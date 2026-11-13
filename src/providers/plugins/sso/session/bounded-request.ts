@@ -164,24 +164,48 @@ export function classifyError(_error: unknown, stopReason: SyncStopReason | unde
   return stopReason ? 'not-attempt' : 'outage';
 }
 
-/** Weakest first. */
-const OUTCOME_SEVERITY: readonly RequestOutcome[] = ['not-attempt', 'outage', 'auth', 'counted', 'rejected'];
-const outcomesBySignal = new WeakMap<AbortSignal, RequestOutcome>();
+/** Weakest first. `auth` outranks `counted`: an attempt that met a permission denial never spends the budget, whatever else it met. */
+const OUTCOME_SEVERITY: readonly RequestOutcome[] = ['not-attempt', 'outage', 'counted', 'auth', 'rejected'];
 
-function recordOutcome(signal: AbortSignal | undefined, outcome: RequestOutcome): void {
+/**
+ * One logical request: the tries of a client's retry loop. Only the last try's outcome stays noted under the caller's
+ * signal, so a try that failed and a retry that went through leave no outage behind.
+ */
+export type RequestGroup = object;
+
+/** A fresh group for one logical request (see {@link RequestGroup}). */
+export function newRequestGroup(): RequestGroup {
+  return {};
+}
+
+interface NotedOutcome {
+  outcome: RequestOutcome;
+  group?: RequestGroup;
+}
+
+const outcomesBySignal = new WeakMap<AbortSignal, NotedOutcome[]>();
+
+/** A new try of `group` replaces what the earlier tries of it noted. */
+function forgetGroup(signal: AbortSignal | undefined, group: RequestGroup | undefined): void {
+  const noted = signal && group ? outcomesBySignal.get(signal) : undefined;
+  if (signal && noted) outcomesBySignal.set(signal, noted.filter((entry) => entry.group !== group));
+}
+
+function recordOutcome(signal: AbortSignal | undefined, outcome: RequestOutcome, group?: RequestGroup): void {
   if (!signal || outcome === 'ok') return;
-  const previous = outcomesBySignal.get(signal);
-  if (!previous || OUTCOME_SEVERITY.indexOf(outcome) > OUTCOME_SEVERITY.indexOf(previous)) {
-    outcomesBySignal.set(signal, outcome);
-  }
+  outcomesBySignal.set(signal, [...(outcomesBySignal.get(signal) ?? []), { outcome, group }]);
 }
 
 /**
- * The worst outcome noted under `signal` (rejected > counted > auth > outage > not-attempt), or undefined when none was
+ * The worst outcome noted under `signal` (rejected > auth > counted > outage > not-attempt), or undefined when none was
  * (nothing sent, or only successes).
  */
 export function attemptOutcome(signal: AbortSignal): RequestOutcome | undefined {
-  return outcomesBySignal.get(signal);
+  let worst: RequestOutcome | undefined;
+  for (const { outcome } of outcomesBySignal.get(signal) ?? []) {
+    if (!worst || OUTCOME_SEVERITY.indexOf(outcome) > OUTCOME_SEVERITY.indexOf(worst)) worst = outcome;
+  }
+  return worst;
 }
 
 /**
@@ -238,8 +262,9 @@ export interface BoundedRequest {
 }
 
 /** The signal for one request: its own `timeoutMs`, capped by the remaining budget, plus the caller's abort. */
-export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRequest {
+export function boundedRequest(timeoutMs: number, bounds: SyncBounds, group?: RequestGroup): BoundedRequest {
   noteSendAttempt(bounds.abortSignal);
+  forgetGroup(bounds.abortSignal, group);
   const controller = new AbortController();
   const remaining = remainingMs(bounds);
   const cappedByDeadline = remaining < timeoutMs;
@@ -267,7 +292,7 @@ export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRe
       if (requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
       else noteServerReached(bounds.abortSignal);
       const outcome = classifyError(error, reason);
-      recordOutcome(bounds.abortSignal, outcome);
+      recordOutcome(bounds.abortSignal, outcome, group);
       return outcome;
     },
     noteAnswer: (status: number, bodyIsJson: boolean, success: boolean, body?: unknown): RequestOutcome => {
@@ -276,7 +301,7 @@ export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRe
         else noteServerReached(bounds.abortSignal);
       }
       const outcome = classifyAnswer(status, bodyIsJson, success, body);
-      recordOutcome(bounds.abortSignal, outcome);
+      recordOutcome(bounds.abortSignal, outcome, group);
       return outcome;
     },
   };
