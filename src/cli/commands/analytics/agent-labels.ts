@@ -25,6 +25,7 @@ const AGENT_LABELS: Record<string, string> = {
   'kimi-acp': 'Kimi Code ACP',
   openwiki: 'OpenWiki',
   'copilot-cli': 'GitHub Copilot CLI',
+  'copilot-desktop': 'GitHub Copilot Desktop',
   pi: 'Pi',
   omp: 'Oh My Pi',
 };

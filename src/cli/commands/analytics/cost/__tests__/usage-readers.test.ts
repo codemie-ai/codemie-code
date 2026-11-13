@@ -653,6 +653,13 @@ describe('gatherUsageDeduped — copilot-cli', () => {
     expect([...viaDedup.entries()]).toEqual([...viaReader.entries()]);
   });
 
+  it('prices copilot-desktop sessions exactly like copilot-cli', () => {
+    expect([...readUsageByModel('copilot-desktop', copilotParsed).entries()])
+      .toEqual([...readUsageByModel('copilot-cli', copilotParsed).entries()]);
+    expect([...gatherUsageDeduped('copilot-desktop', copilotParsed, new Set()).entries()])
+      .toEqual([...readUsageByModel('copilot-cli', copilotParsed).entries()]);
+  });
+
   it('is session-local — a shared seen set does not suppress a second session', () => {
     const seen = new Set<string>();
     const first = gatherUsageDeduped('copilot-cli', copilotParsed, seen);
