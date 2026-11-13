@@ -273,6 +273,106 @@ describe('handleRun resume ownership flow', () => {
       undefined,
     );
   });
+
+  describe('when the resolver maps the id to a native id', () => {
+    function createCli(resolveResumeOwnership: ReturnType<typeof vi.fn>, extra: Partial<AgentAdapter> = {}) {
+      const run = vi.fn().mockResolvedValue(undefined);
+      const cli = new AgentCLI(createAdapter({ resolveResumeOwnership, run, ...extra })) as unknown as {
+        handleRun: (args: string[], options: Record<string, unknown>) => Promise<void>;
+        promptExternalResume: (sessionId: string, fallbackResumeCommand?: string) => Promise<boolean>;
+      };
+      return { cli, run };
+    }
+
+    it('rewrites --resume and CODEMIE_RESUME_SESSION_ID to the native id', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(
+        vi.fn().mockResolvedValue({ supported: true, owned: true, nativeResumeId: 'native-1' }),
+      );
+
+      await cli.handleRun([], { resume: 'cm-1' });
+
+      expect(run).toHaveBeenCalledWith(
+        ['--resume', 'native-1'],
+        expect.objectContaining({ CODEMIE_RESUME_SESSION_ID: 'native-1' }),
+        undefined,
+      );
+    });
+
+    it('keeps the session owned: no prompt, no audit, no external-resume origin', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(
+        vi.fn().mockResolvedValue({ supported: true, owned: true, nativeResumeId: 'native-1' }),
+      );
+      const promptSpy = vi.spyOn(cli, 'promptExternalResume').mockResolvedValue(true);
+      const auditSpy = vi.spyOn(auditModule, 'appendAuditEvent').mockImplementation(() => {});
+
+      await cli.handleRun([], { resume: 'cm-1' });
+
+      expect(promptSpy).not.toHaveBeenCalled();
+      expect(auditSpy).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.not.objectContaining({ CODEMIE_SESSION_ORIGIN: 'external-resume' }),
+        undefined,
+      );
+    });
+
+    it('leaves --resume untouched when the resolver returns no native id', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(vi.fn().mockResolvedValue({ supported: true, owned: true }));
+
+      await cli.handleRun([], { resume: 'cm-2' });
+
+      expect(run).toHaveBeenCalledWith(
+        ['--resume', 'cm-2'],
+        expect.objectContaining({ CODEMIE_RESUME_SESSION_ID: 'cm-2' }),
+        undefined,
+      );
+    });
+
+    it('leaves --resume untouched when the native id equals the given id', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(
+        vi.fn().mockResolvedValue({ supported: true, owned: true, nativeResumeId: 'native-3' }),
+      );
+
+      await cli.handleRun([], { resume: 'native-3' });
+
+      expect(run).toHaveBeenCalledWith(['--resume', 'native-3'], expect.anything(), undefined);
+    });
+
+    it('strips control characters from the resolved native id', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(
+        vi.fn().mockResolvedValue({ supported: true, owned: true, nativeResumeId: 'native\u0007-4' }),
+      );
+
+      await cli.handleRun([], { resume: 'cm-4' });
+
+      expect(run).toHaveBeenCalledWith(
+        ['--resume', 'native-4'],
+        expect.objectContaining({ CODEMIE_RESUME_SESSION_ID: 'native-4' }),
+        undefined,
+      );
+    });
+
+    it('does not rewrite a native positional resume (extractNativeResumeId path)', async () => {
+      mockHandleRunDependencies();
+      const { cli, run } = createCli(
+        vi.fn().mockResolvedValue({ supported: true, owned: true, nativeResumeId: 'other-id' }),
+        { extractNativeResumeId: () => 'positional-5' },
+      );
+
+      await cli.handleRun(['resume', 'positional-5'], {});
+
+      expect(run).toHaveBeenCalledWith(
+        ['resume', 'positional-5'],
+        expect.objectContaining({ CODEMIE_RESUME_SESSION_ID: 'positional-5' }),
+        undefined,
+      );
+    });
+  });
 });
 
 describe('handleRun hands the launch\'s resume id to the plugin', () => {

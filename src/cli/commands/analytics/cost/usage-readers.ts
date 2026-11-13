@@ -890,6 +890,7 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
     case 'omp':
       return readPi(parsed);
     case 'copilot-cli':
+    case 'copilot-desktop':
       return readCopilotCli(parsed);
     default:
       if (isCodexFamilyAgent(agentName)) {
@@ -923,7 +924,7 @@ export function gatherUsageDeduped(
   if (a === 'kimi') {
     return readKimi(parsed);
   }
-  if (a === 'copilot-cli') {
+  if (a === 'copilot-cli' || a === 'copilot-desktop') {
     // Session-local, like gemini/kimi: Copilot never replays one API response into
     // another session file, so there is no cross-session key to dedup on.
     return readCopilotCli(parsed);
