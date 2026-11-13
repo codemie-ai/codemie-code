@@ -84,9 +84,9 @@ Confirm the installed Node.js version with `node --version` before proceeding. A
 
 For Windows and macOS, CodeMie ships two installer options:
 
-- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) and Windows (x64) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
+  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest) [![Download for Windows](install/assets/download-windows.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
 - **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
