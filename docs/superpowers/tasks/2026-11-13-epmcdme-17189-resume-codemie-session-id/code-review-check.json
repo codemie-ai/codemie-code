@@ -1,0 +1,140 @@
+{
+  "decision": "approve",
+  "rationale": "Targeted re-check of CR-001 and CR-002 against the fix-up diff since 6642ce23 (session-ownership.ts and its test; fix is in the working tree, uncommitted). Both findings are resolved with a failing-then-passing test each, 64/64 targeted tests, tsc and eslint clean. No new high-risk issue: the non-object guard only skips a file, the ranking is a pure comparison over a non-empty list, and exact generation matches still win. AC 8 stays partial as carried forward: the integration test exists but was not executed here (needs SSO/JWT and network). Deferred items from the final round (directory scan cost, pre-existing control-character pass-through) are unchanged.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "1. codemie-claude --resume <codemie-session-id> (from analytics / log list-sessions / log session) resumes with full CodeMie tracking",
+      "status": "pass",
+      "notes": "ClaudePlugin.resolveResumeOwnership uses resolveClaudeResumeSession; CodeMie id (record.sessionId or displayed file id) returns owned:true with nativeResumeId; AgentCLI rewrites options.resume; owned:true keeps origin from becoming external-resume. Real-binary path not executed."
+    },
+    {
+      "kind": "story-ac",
+      "item": "2. scanSessionsForClaudeId (or replacement) also checks record.sessionId in completed files, resolves CodeMie id to native id, passes native id to agent --resume",
+      "status": "pass",
+      "notes": "resolveClaudeResumeSession matches usable correlation.agentSessionId first, then record.sessionId or displayed id; AgentCLI sets options.resume = native id before collectPassThroughArgs. scanSessionsForClaudeId kept as a wrapper."
+    },
+    {
+      "kind": "story-ac",
+      "item": "3. Native id used for the agent's --resume call; CodeMie id only for analytics attribution",
+      "status": "pass",
+      "notes": "options.resume and providerEnv CODEMIE_RESUME_SESSION_ID both carry the native id; the resumed run gets a fresh CodeMie sessionId; CodeMie id appears only in auditData.codemieSessionId."
+    },
+    {
+      "kind": "story-ac",
+      "item": "4. Resume preserves session identity and analytics attribution without duplicating telemetry (EPMCDME-16537)",
+      "status": "pass",
+      "notes": "Session.resumeSessionId now holds the native id, the same value a native-id resume already produced, so the existing baseline/dedupe keyed on the native id is unchanged. No telemetry code touched."
+    },
+    {
+      "kind": "story-ac",
+      "item": "5. Interactive mode: a CodeMie id that resolves to a known session no longer shows the 'not created through CodeMie' warning",
+      "status": "pass",
+      "notes": "Resolved ids return owned:true so promptExternalResume is not called; test 'keeps the session owned' asserts no prompt, no audit, no external-resume origin."
+    },
+    {
+      "kind": "story-ac",
+      "item": "6. Non-interactive mode: a CodeMie id proceeds without blocking",
+      "status": "pass",
+      "notes": "The non-interactive block lives inside promptExternalResume, reached only when owned===false; a resolved CodeMie id never reaches it. No dedicated non-TTY test but the code path is identical."
+    },
+    {
+      "kind": "story-ac",
+      "item": "7a. Unit test: CodeMie ID resolves and succeeds",
+      "status": "pass",
+      "notes": "session-ownership.test.ts (completed, live, claude-acp, generation suffix, newest generation), claude.plugin.resume-ownership.test.ts, AgentCLI-resume.test.ts."
+    },
+    {
+      "kind": "story-ac",
+      "item": "7b. Unit test: native ID resolves and succeeds",
+      "status": "pass",
+      "notes": "'resolves a native id to itself' in the resolver and plugin tests; AgentCLI leaves --resume unchanged when native equals given id."
+    },
+    {
+      "kind": "story-ac",
+      "item": "7c. Unit test: unknown ID returns the correct not-found result",
+      "status": "pass",
+      "notes": "Per the documented assumption (no new hard error) tests assert owned:false with no nativeId, plus empty/missing dir, plus the plugin fallbackResumeCommand using the given id."
+    },
+    {
+      "kind": "story-ac",
+      "item": "8. Integration test: a session started via codemie-claude --task can be resumed by the CodeMie id shown in codemie log list-sessions",
+      "status": "partial",
+      "notes": "tests/integration/agent-resume-codemie-id.test.ts is added and its assertions look correct, but it needs real SSO/JWT, network and the claude binary and was not executed in this review; the end-to-end resume is unproven here. Run it once in an authenticated environment before merge."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: AgentCLI and core/types.ts stay agent-agnostic; new ResumeOwnershipResult field optional",
+      "status": "pass",
+      "notes": "nativeResumeId is optional; the AgentCLI addition uses this.adapter.name and no claude literals."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: a resolved CodeMie id returns owned:true",
+      "status": "pass",
+      "notes": "Any CodeMie match returns owned:true; AgentCLI test asserts CODEMIE_SESSION_ORIGIN external-resume is absent."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: resume ids are format-agnostic (only control characters stripped)",
+      "status": "pass",
+      "notes": "Resolved native id only gets .replace(/\\p{Cc}/gu, ''); covered by a test."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: resolvers must not throw",
+      "status": "partial",
+      "notes": "loadRecords wraps readdir/parse/read/stat, but a session file containing JSON null is pushed as a record and usableNativeId then throws TypeError outside the try/catch (see CR-001)."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: native id reaches both the agent --resume arg and CODEMIE_RESUME_SESSION_ID",
+      "status": "pass",
+      "notes": "Both are set together in AgentCLI and the test asserts both; the Codex-style positional path is deliberately not rewritten and has a test."
+    },
+    {
+      "kind": "spec",
+      "item": "Assumption: a record with no usable native id resolves owned with no nativeId, id passed through unchanged",
+      "status": "pass",
+      "notes": "usableNativeId rejects missing, 'unknown' and self-equal ids; it.each tests cover the three cases."
+    },
+    {
+      "kind": "spec",
+      "item": "Assumption: unknown id keeps the external-resume confirm/block flow; --task alone does not block; bare -r out of scope",
+      "status": "pass",
+      "notes": "The isExternal/promptExternalResume block and shouldBlockNonInteractiveResume are untouched; only options.resume is rewritten."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Commit 6642ce23 'fix(agents): resume a session by its CodeMie session id' uses an allowed type and scope and is under 100 chars. Note: it was committed with --no-verify at the user's explicit direction because the pre-commit hook cannot pass on this Windows machine (4 pre-existing environment-dependent test failures next to the changed files); CI will run the full gates."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Explicit return types on exports, interfaces for shapes, no any, .js import suffixes, logger.debug. eslint --max-warnings=0 and tsc --noEmit were clean on the changed files."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No secrets or credentials. Session ids come from the user's own ~/.codemie records; control characters are stripped from the rewritten id. fallbackResumeCommand is display-only."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "loadRecords now skips any parsed value that is null or not an object (debug log) before pushing it; tests cover a file containing null and files containing 42, a string and an array next to a valid record."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "New isBetterMatch ranks matches: exact displayed-id first, then a record with a usable native id, then newest mtime. Tests cover older generation with a native id beating a newer one without, two files sharing one displayed id (newest wins), and the exact <uuid>-<generation> match still winning."
+    }
+  ]
+}
