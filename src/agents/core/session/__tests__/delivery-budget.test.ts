@@ -168,6 +168,11 @@ describe('delivery budget', () => {
       expect(second.droppedReason).toBe('retry budget exhausted');
     });
 
+    it('notDroppedBefore is never a moment already past', async () => {
+      const { notDroppedBefore } = await import('../delivery-budget.js');
+      expect(notDroppedBefore(makeSession({ deliveryFailingSince: NOW - 48 * HOUR }), NOW)).toBe(NOW);
+    });
+
     it('notDroppedBefore is the clock plus the window, or now plus the window', async () => {
       const { notDroppedBefore } = await import('../delivery-budget.js');
       expect(notDroppedBefore(makeSession({ deliveryFailingSince: NOW - HOUR }), NOW)).toBe(NOW - HOUR + 24 * HOUR);

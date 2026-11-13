@@ -76,7 +76,7 @@ export const CONTINUE_SESSION_ENV_KEY = 'CODEMIE_CONTINUE_SESSION';
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'rejected';
 
 /** Why a record left the delivery queue with data unsent. */
-export type DropReason = 'rejected by the server' | 'retry budget exhausted' | 'retention expired';
+export type DropReason = 'rejected by the server' | 'retry budget exhausted' | 'retention expired' | 'local errors';
 
 /**
  * Conversations sync state (ConversationsProcessor)
@@ -209,8 +209,8 @@ export interface Session {
   startMetricDeferred?: string;
   /** Delivery attempts of a completed but undelivered record */
   deliveryAttempts?: number;
-  /** Finalization attempts of a stranded or legacy record */
-  finalizeAttempts?: number;
+  /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), in a row */
+  localFinalizeFailures?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;
   /** Why the record is dropped; set together with `droppedAt` */

@@ -122,8 +122,9 @@ function droppedLine(dropped: ExitDeliveryEntry[]): string {
     `${e.agent} ${e.sessionId.slice(0, 8)} (started ${formatDate(e.startTime)})${e.reason ? ` — ${e.reason}` : ''}` +
     (e.partial ? ', the rest is still queued' : ''));
   const more = ordered.length > MAX_NAMED_DROPS ? `; … and ${ordered.length - MAX_NAMED_DROPS} more` : '';
-  return `CodeMie: analytics of these sessions were dropped: ${named.join('; ')}${more}. ` +
-    'Check the connection to CodeMie with `codemie doctor`.';
+  const head = `CodeMie: analytics of these sessions were dropped: ${named.join('; ')}${more}.`;
+  // A local error is not a connection problem
+  return ordered.every((e) => e.reason === 'local errors') ? head : `${head} Check the connection to CodeMie with \`codemie doctor\`.`;
 }
 
 /** The notice lines for the entries; none when everything was delivered. */

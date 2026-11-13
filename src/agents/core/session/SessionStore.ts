@@ -65,7 +65,7 @@ function mergeCompleted(saving: Session, other: Session): Session {
     deliveryRealAttempts: larger(saving.deliveryRealAttempts, other.deliveryRealAttempts),
     deliveryAttemptedAt: larger(saving.deliveryAttemptedAt, other.deliveryAttemptedAt),
     deliveryAttempts: larger(saving.deliveryAttempts, other.deliveryAttempts),
-    finalizeAttempts: larger(saving.finalizeAttempts, other.finalizeAttempts),
+    localFinalizeFailures: larger(saving.localFinalizeFailures, other.localFinalizeFailures),
   };
 }
 

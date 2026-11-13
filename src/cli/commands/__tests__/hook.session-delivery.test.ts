@@ -1772,7 +1772,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(requests.length).toBeGreaterThan(endMetrics().length);
     const kept = readRecord(session.sessionId);
     expect(kept.status).toBe('completed');
-    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(kept.localFinalizeFailures).toBeUndefined();
     expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
   });
 
@@ -2010,7 +2010,7 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(requests.length).toBeGreaterThan(endMetrics().length);
     const kept = readRecord(session.sessionId);
     expect(kept.status).toBe('completed');
-    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(kept.localFinalizeFailures).toBeUndefined();
     expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
   });
 
@@ -3715,7 +3715,7 @@ describe('a plugin SessionEnd whose transcript pass throws', () => {
     for (let start = 1; start < LOCAL_FINALIZE_FAILURE_CAP; start++) {
       await reconcileOtherSessions({ env, ownSessionId: 'own' }).done;
       // A local failure: no request reached a server, so nothing is spent
-      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, finalizeAttempts: start });
+      expect(readRecord(id)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, localFinalizeFailures: start });
     }
     expect(requests).toEqual([]);
 

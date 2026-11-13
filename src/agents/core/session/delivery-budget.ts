@@ -73,7 +73,8 @@ export function budgetSpent(s: Session, lastOutcome: RequestOutcome, now: number
 export function notDroppedBefore(s: Session, now: number): number {
   const windowEnd = (s.deliveryFailingSince ?? now) + retryWindowMs();
   const at = s.endTime ?? s.startTime;
-  return at === undefined ? windowEnd : Math.min(windowEnd, at + evidenceRecordIdleDays() * DAY_MS);
+  // Never a moment already past: a record held back past its window by too few real attempts is not promised a date behind us
+  return Math.max(now, at === undefined ? windowEnd : Math.min(windowEnd, at + evidenceRecordIdleDays() * DAY_MS));
 }
 
 /**

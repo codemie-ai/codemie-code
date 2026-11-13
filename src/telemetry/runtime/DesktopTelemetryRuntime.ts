@@ -459,7 +459,8 @@ export class DesktopTelemetryRuntime {
     delete existing.endMetricSentAt;
     delete existing.endMetricSkipped;
     delete existing.deliveryAttempts;
-    delete existing.finalizeAttempts;
+    delete existing.localFinalizeFailures;
+    delete existing.deliveryAttemptedAt;
     delete existing.droppedAt;
     delete existing.droppedReason;
     delete existing.deliveryFailingSince;

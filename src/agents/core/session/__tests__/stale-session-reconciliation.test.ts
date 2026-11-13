@@ -756,7 +756,7 @@ describe('reconcileOtherSessions', () => {
 
     for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
-      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: i });
+      expect(load(stuck.sessionId)).toMatchObject({ status: 'active', localFinalizeFailures: i });
     }
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
@@ -764,7 +764,7 @@ describe('reconcileOtherSessions', () => {
     const closed = load(stuck.sessionId, 'completed_');
     expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted' });
     expect(closed.droppedAt).toBeTypeOf('number');
-    expect(closed.droppedReason).toBe('retry budget exhausted');
+    expect(closed.droppedReason).toBe('local errors');
   });
 
   it('an abort that cuts a failing finalize is no local failure: the cap does not count it', async () => {
@@ -781,7 +781,7 @@ describe('reconcileOtherSessions', () => {
     pass = reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook });
     await pass.done;
 
-    expect(load(stuck.sessionId).finalizeAttempts).toBeUndefined();
+    expect(load(stuck.sessionId).localFinalizeFailures).toBeUndefined();
   });
 
   it('closes locally a record whose finalize fails with a counted answer with its budget spent; the next pass reaches an older record', async () => {
@@ -1273,7 +1273,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     try {
       for (let i = 1; i < LOCAL_FINALIZE_FAILURE_CAP; i++) {
         sent.push(...await startPass(hook));
-        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, finalizeAttempts: i, correlation });
+        expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, localFinalizeFailures: i, correlation });
         expect(load(stuck.sessionId).deliveryFailingSince).toBeUndefined();
       }
       expect(hook.processEvent.mock.calls).toEqual([]);
@@ -1306,7 +1306,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
       expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
       const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
-      save({ ...stuck, finalizeAttempts: LOCAL_FINALIZE_FAILURE_CAP - 1 });
+      save({ ...stuck, localFinalizeFailures: LOCAL_FINALIZE_FAILURE_CAP - 1 });
       await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
     } finally {
       chmodSync(dir, 0o755);
@@ -1343,7 +1343,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(load(stuck.sessionId)).toMatchObject({ status: 'active', deliveryRealAttempts: 0, correlation: named });
 
     const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
-    save({ ...stuck, finalizeAttempts: LOCAL_FINALIZE_FAILURE_CAP - 1 });
+    save({ ...stuck, localFinalizeFailures: LOCAL_FINALIZE_FAILURE_CAP - 1 });
     await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
 
     expect(hook.processEvent.mock.calls).toEqual([]);
@@ -1818,7 +1818,7 @@ describe('EPMCDME-17068 the start pass reports outcomes to the delivery budget',
     const transcript = join(home, 'transcript.jsonl');
     writeFileSync(transcript, '{}\n');
     const capped = record({ status: 'completed', endTime: Date.now() - HOUR, deliveryAttempts: 3, startTime: Date.now() - HOUR });
-    const stranded = record({ finalizeAttempts: 3, startTime: Date.now() - 2 * HOUR, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } });
+    const stranded = record({ localFinalizeFailures: 3, startTime: Date.now() - 2 * HOUR, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'n', agentSessionFile: transcript } });
     save(capped);
     save(stranded);
     const hook = pipeline();

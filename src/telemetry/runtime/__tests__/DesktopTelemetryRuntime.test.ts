@@ -1188,7 +1188,7 @@ describe('DesktopTelemetryRuntime', () => {
       const { startTime } = readRecord(sessionId)!;
       // The CLI or an earlier attempt left counters; the resumed stretch starts clean
       const completedPath = join(sessionsDir(), `completed_${sessionId}.json`);
-      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, finalizeAttempts: 2, droppedAt: T0, droppedReason: 'retry budget exhausted', deliveryFailingSince: T0 - HOUR_MS, deliveryRealAttempts: 2 }));
+      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, localFinalizeFailures: 2, droppedAt: T0, droppedReason: 'retry budget exhausted', deliveryFailingSince: T0 - HOUR_MS, deliveryRealAttempts: 2, deliveryAttemptedAt: T0 }));
       writeFileSync(join(sessionsDir(), `completed_${sessionId}_metrics.jsonl`), '');
 
       const daemon = await startDaemon(createAdapter());
@@ -1198,7 +1198,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
       const reopened = readRecord(sessionId)!;
       expect(reopened).toMatchObject({ status: 'active', ownerPid: process.pid, ownerStartedAt: processStartedAt(), startTime });
-      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'finalizeAttempts', 'droppedAt', 'droppedReason', 'deliveryFailingSince', 'deliveryRealAttempts', 'endTime', 'reason']) {
+      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'localFinalizeFailures', 'droppedAt', 'droppedReason', 'deliveryFailingSince', 'deliveryRealAttempts', 'deliveryAttemptedAt', 'endTime', 'reason']) {
         expect(reopened).not.toHaveProperty(field);
       }
 

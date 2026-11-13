@@ -363,7 +363,7 @@ async function markTranscriptUnsent(sessionId: string, reason: DropReason): Prom
   logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent (${reason}); marked dropped`);
 }
 
-/** Local failures of its own (a file, a transcript) in a row after which a record is closed locally, never marked dropped. */
+/** Local failures of its own (a file, a transcript) in a row after which a record is closed locally and, when it was to deliver, reported dropped ('local errors'). */
 export const LOCAL_FINALIZE_FAILURE_CAP = 5;
 
 /** Counts one more local finalize failure on the live record; true once the cap is reached. A failed save counts as not reached. */
@@ -371,9 +371,9 @@ async function localFinalizeFailuresSpent(sessionId: string): Promise<boolean> {
   try {
     const live = await readLiveRecord(sessionId);
     if (!live) return false;
-    const finalizeAttempts = (live.finalizeAttempts ?? 0) + 1;
-    await new SessionStore().saveSession({ ...live, finalizeAttempts });
-    return finalizeAttempts >= LOCAL_FINALIZE_FAILURE_CAP;
+    const localFinalizeFailures = (live.localFinalizeFailures ?? 0) + 1;
+    await new SessionStore().saveSession({ ...live, localFinalizeFailures });
+    return localFinalizeFailures >= LOCAL_FINALIZE_FAILURE_CAP;
   } catch (error) {
     logger.warn(`[reconcile] ${sessionId}: cannot count its local finalize failure: ${error instanceof Error ? error.message : String(error)}`);
     return false;
@@ -384,7 +384,7 @@ async function localFinalizeFailuresSpent(sessionId: string): Promise<boolean> {
  * The synthetic end of a stranded / legacy record, delivered when `deliver`. `flushSpent` is why the record may leave the
  * queue before this attempt sends anything (the evidence retention ended): the end then goes without the flush. True
  * when the finalize failed and the record was closed locally instead: with its budget spent by this attempt's own
- * counted failure, or after {@link LOCAL_FINALIZE_FAILURE_CAP} local failures in a row (never marked dropped).
+ * counted failure, or after {@link LOCAL_FINALIZE_FAILURE_CAP} local failures in a row (reported dropped as 'local errors' when it was to deliver).
  */
 async function finalizeRecord(
   record: Session,
@@ -416,7 +416,7 @@ async function finalizeRecord(
 /**
  * A finalize that failed: closed locally, nothing sent, when this attempt's own counted failure spent the budget (the
  * evidence retention spends it at any outcome) or after {@link LOCAL_FINALIZE_FAILURE_CAP} failures of its own in a row
- * (marked dropped when it was to deliver); any other failure is rethrown and leaves the record for a later start.
+ * (marked dropped as 'local errors' when it was to deliver); any other failure is rethrown and leaves the record for a later start.
  */
 async function closeAfterFinalizeFailure(
   record: Session,
@@ -437,8 +437,8 @@ async function closeAfterFinalizeFailure(
   }
   // A failure of its own (no request noted, no abort) that repeats must not hold one of the pass's slots until the retention ends
   if (attemptOutcome(signal) === undefined && !signal.aborted && (await localFinalizeFailuresSpent(id))) {
-    // Closed with data it never sent: reported as dropped, not lost silently
-    await closeExhaustedLocally(id, error, options, deliver ? 'retry budget exhausted' : undefined);
+    // Closed with data it never sent: reported as dropped (its own reason; no request spent a budget), not lost silently
+    await closeExhaustedLocally(id, error, options, deliver ? 'local errors' : undefined);
     return;
   }
   throw error;
