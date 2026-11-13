@@ -4,6 +4,8 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
+import { homedir } from 'os';
+import { join } from 'path';
 import { KimiSessionAdapter } from './kimi.session.js';
 import { KimiExtensionInstaller } from './kimi.extension-installer.js';
 import { KimiHookTransformer } from './kimi.hook-transformer.js';
@@ -192,8 +194,11 @@ export class KimiPlugin extends BaseAgentAdapter {
         {
           timeout: 300000,
           verifyCommand: this.metadata.cliCommand || undefined,
+          versionEnvVar: 'KIMI_VERSION',
           verifyPath:
-            process.platform === 'win32' ? undefined : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
+            process.platform === 'win32'
+              ? join(homedir(), '.kimi-code', 'bin', 'kimi.exe')
+              : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
         },
       );
 

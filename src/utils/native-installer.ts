@@ -3,6 +3,8 @@
  * Used for Claude Code native installation management
  */
 
+import path from 'path';
+import { rm } from 'fs/promises';
 import { exec } from './processes.js';
 import { AgentInstallationError } from './errors.js';
 import { logger } from './logger.js';
@@ -15,7 +17,7 @@ import { ensureCommandInPath } from './windows-path.js';
  */
 export interface PlatformInstallerUrls {
 	macOS: string; // Shell script URL
-	windows: string; // PowerShell script URL
+	windows: string; // Batch (.cmd) or PowerShell (.ps1) script URL
 	linux: string; // Shell script URL
 }
 
@@ -28,6 +30,7 @@ export interface NativeInstallOptions {
 	verifyCommand?: string; // Command to verify installation (e.g., 'claude')
 	verifyPath?: string; // Full path to verify (e.g., '~/.local/bin/claude') - used instead of PATH-based verification
 	installFlags?: string[]; // Additional flags to pass to installer (e.g., ['--force'])
+	versionEnvVar?: string; // Env var used to pass a pinned version to a PowerShell installer (e.g., 'KIMI_VERSION')
 }
 
 /**
@@ -66,7 +69,7 @@ function detectPlatform(): 'macOS' | 'windows' | 'linux' {
  * @param installFlags - Additional flags to pass to installer (e.g., ['--force'])
  * @returns Command string to execute
  */
-function buildInstallerCommand(
+export function buildInstallerCommand(
 	agentName: string,
 	installerUrls: PlatformInstallerUrls,
 	version: string | undefined,
@@ -113,7 +116,7 @@ function buildInstallerCommand(
 
 	// Build platform-specific command
 	if (platform === 'windows') {
-		// Windows CMD command (simpler and more universal than PowerShell)
+		// Windows batch command (.cmd installers; .ps1 installers use buildPowerShellInstallerArgs)
 		// Download install.cmd, execute with args, then delete
 		const versionArg = version ? ` ${version}` : '';
 		const flagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
@@ -128,6 +131,56 @@ function buildInstallerCommand(
 			return `curl -fsSL ${url} | bash${argsArg}`;
 		}
 	}
+
+/**
+ * Whether a Windows installer URL points at a PowerShell script (.ps1)
+ */
+export function isPowerShellInstallerUrl(url: string): boolean {
+	try {
+		return new URL(url).pathname.toLowerCase().endsWith('.ps1');
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Build powershell.exe arguments that download and run a .ps1 installer in memory.
+ * Emits [codemie-step:download] / [codemie-step:run] markers so failures can be attributed.
+ */
+export function buildPowerShellInstallerArgs(url: string): string[] {
+	if (!url.startsWith('https://')) {
+		throw new AgentInstallationError('installer', `Installer URL must use HTTPS: ${url}`);
+	}
+	if (url.includes("'")) {
+		throw new AgentInstallationError('installer', 'Installer URL must not contain single quotes');
+	}
+	const script = [
+		"$ErrorActionPreference='Stop'",
+		`try { $s = irm '${url}' } catch { Write-Output "[codemie-step:download] $_"; exit 1 }`,
+		'try { iex $s } catch { Write-Output "[codemie-step:run] $_"; exit 1 }',
+		'exit 0',
+	].join('; ');
+	return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script];
+}
+
+/**
+ * Build a step-aware error message for a failed Windows PowerShell installer run
+ */
+export function describeWindowsPowerShellFailure(output: string, code: number | null | undefined, url: string): string {
+	const step = output.match(/\[codemie-step:(download|run)\]/)?.[1];
+	if (step === 'download') {
+		return `Failed to download the Kimi installer from ${url} (check network/proxy/TLS access to code.kimi.com)`;
+	}
+	if (step === 'run') {
+		return (
+			'Kimi installer script failed while running. kimi.exe may already be copied to ' +
+			'%USERPROFILE%\\.kimi-code\\bin, a kimi.exe.bak backup may exist, and the user PATH may have been modified. ' +
+			'To remove, delete that folder and its PATH entry, or restore the .bak. ' +
+			`Output: ${sanitizeValue(output.trim())}`
+		);
+	}
+	return `Installer exited with code ${code}. Output: ${sanitizeValue(output.trim())}`;
+}
 
 /**
  * Verify installation by running the verify command
@@ -254,6 +307,91 @@ function detectHtmlErrorMessage(output: string): string {
 	return 'Installer URL returned an HTML page instead of an installation script. The service may be temporarily unavailable or not accessible from your location. Visit https://claude.ai for more information.';
 }
 
+type ExecResult = Awaited<ReturnType<typeof exec>>;
+
+/**
+ * Run a Windows .ps1 installer through PowerShell (download + run, no cmd/shell piping)
+ */
+async function runPowerShellInstaller(
+	agentName: string,
+	url: string,
+	version: string | undefined,
+	timeout: number,
+	env: Record<string, string> | undefined,
+	versionEnvVar: string | undefined
+): Promise<ExecResult> {
+	if (!url.startsWith('https://')) {
+		throw new AgentInstallationError(agentName, `Installer URL must use HTTPS: ${url}`);
+	}
+	const isPinnedVersion = !!version && !['latest', 'stable'].includes(version.toLowerCase());
+	if (isPinnedVersion && !isValidSemanticVersion(version)) {
+		throw new AgentInstallationError(
+			agentName,
+			`Invalid version format: "${version}". Expected semantic version (e.g., "2.0.30"), "latest", or "stable".`
+		);
+	}
+	const psEnv: Record<string, string> = { ...(process.env as Record<string, string>), ...env };
+	if (versionEnvVar && isPinnedVersion) {
+		psEnv[versionEnvVar] = version;
+	}
+	logger.debug('Executing PowerShell installer', {
+		agentName,
+		executable: 'powershell',
+		steps: ['download', 'run'],
+	});
+	return exec('powershell', buildPowerShellInstallerArgs(url), { timeout, env: psEnv, shell: false });
+}
+
+/**
+ * Run the platform's shell installer command (curl | bash, or install.cmd on Windows)
+ */
+async function runShellInstaller(
+	agentName: string,
+	installerUrls: PlatformInstallerUrls,
+	version: string | undefined,
+	platform: 'macOS' | 'windows' | 'linux',
+	timeout: number,
+	env: Record<string, string> | undefined,
+	installFlags: string[] | undefined
+): Promise<ExecResult> {
+	const command = buildInstallerCommand(agentName, installerUrls, version, platform, installFlags);
+
+	logger.debug('Executing installer command', {
+		agentName,
+		platform,
+		// Don't log full command (may contain sensitive URLs)
+	});
+
+	try {
+		let result = await exec(command, [], {
+			timeout,
+			env,
+			shell: true, // Required for piped commands (curl | bash)
+		});
+
+		// Windows-specific: auto-fix PowerShell execution policy and retry once
+		if (result.code !== 0 && platform === 'windows') {
+			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
+			if (isExecutionPolicyError(combinedOutput)) {
+				logger.info('PowerShell execution policy is blocking installation. Attempting auto-fix...');
+				const fixed = await fixWindowsExecutionPolicy();
+				if (fixed) {
+					logger.info('Execution policy updated. Retrying installation...');
+					result = await exec(command, [], { timeout, env, shell: true });
+				} else {
+					logger.warn('Could not update execution policy automatically. Manual fix required.');
+				}
+			}
+		}
+		return result;
+	} finally {
+		// The command string's trailing `del` is skipped when an earlier step fails
+		if (platform === 'windows') {
+			await rm(path.join(process.cwd(), 'install.cmd'), { force: true }).catch(() => undefined);
+		}
+	}
+}
+
 /**
  * Install agent using native platform installer
  * Detects platform and executes appropriate installation script
@@ -289,40 +427,24 @@ export async function installNativeAgent(
 	});
 
 	try {
-		// Build installer command
-		const command = buildInstallerCommand(agentName, installerUrls, version, platform, options?.installFlags);
-
-		logger.debug('Executing installer command', {
-			agentName,
-			platform,
-			// Don't log full command (may contain sensitive URLs)
-		});
-
-		// Execute installer
-		let result = await exec(command, [], {
-			timeout,
-			env,
-			shell: true, // Required for piped commands (curl | bash)
-		});
-
-		// Windows-specific: auto-fix PowerShell execution policy and retry once
-		if (result.code !== 0 && platform === 'windows') {
-			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
-			if (isExecutionPolicyError(combinedOutput)) {
-				logger.info('PowerShell execution policy is blocking installation. Attempting auto-fix...');
-				const fixed = await fixWindowsExecutionPolicy();
-				if (fixed) {
-					logger.info('Execution policy updated. Retrying installation...');
-					result = await exec(command, [], { timeout, env, shell: true });
-				} else {
-					logger.warn('Could not update execution policy automatically. Manual fix required.');
-				}
-			}
-		}
+		const windowsUrl = installerUrls.windows;
+		const usePowerShell = platform === 'windows' && isPowerShellInstallerUrl(windowsUrl);
+		const result = usePowerShell
+			? await runPowerShellInstaller(agentName, windowsUrl, version, timeout, env, options?.versionEnvVar)
+			: await runShellInstaller(agentName, installerUrls, version, platform, timeout, env, options?.installFlags);
 
 		// Check if installation succeeded
 		if (result.code !== 0) {
 			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
+
+			if (usePowerShell) {
+				throw new AgentInstallationError(
+					agentName,
+					isExecutionPolicyError(combinedOutput)
+						? 'PowerShell execution policy is blocking the installer. Run this in PowerShell and retry: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser'
+						: describeWindowsPowerShellFailure(combinedOutput, result.code, windowsUrl)
+				);
+			}
 
 			// Detect HTML response instead of installer script
 			// This happens when the service returns an error page (e.g., region block)
