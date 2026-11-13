@@ -4,10 +4,6 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
-### Fixed
-
-- `codemie install opencode` and `codemie install opencode-acp` install OpenCode v2; existing v1 users are given migration instructions
-
 ## [0.16.8] - 2026-11-12
 
 ### Added
