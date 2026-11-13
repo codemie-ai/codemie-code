@@ -202,7 +202,7 @@ and routing coverage runs as part of `npm test`.
 | Model does not appear | VS Code has not reloaded the configuration | Reload VS Code and open Chat: Manage Language Models |
 | Missing or invalid API key | The secret reference does not resolve | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` again |
 | HTTP 401 from localhost | The stored local key is missing or stale | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` |
-| HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`, stop, and restart the proxy |
+| HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`. When the login is gone the proxy keeps its port, answers 401 ("CodeMie SSO session expired") and opens a browser sign-in for a request that carries the local key; it resumes by itself after a successful login |
 | Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect vscode` |
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |

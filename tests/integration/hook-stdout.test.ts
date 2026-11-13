@@ -322,10 +322,14 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       expect(fileLog(home)).not.toContain('[daemon-manager] Spawning daemon');
     });
 
-    /** The daemon the hook started holds its port: it answers /health and a 401 that names the login command. */
+    /**
+     * The daemon the hook started holds its port: it answers /health, rejects a request without the gateway key,
+     * and gives one with the key a 401 that names the login command. The keyed request goes to an analytics path,
+     * which never starts a browser sign-in (any other path would).
+     */
     async function expectPortHeldAwaitingLogin(home: string): Promise<void> {
       const state = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as {
-        port: number; pid: number; health: string;
+        port: number; pid: number; health: string; gatewayKey: string;
       };
       expect(state.health).toBe('unhealthy');
       const health = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(5000) });
@@ -336,8 +340,19 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
         pid: state.pid,
         analytics: { credentials: 'stale' },
       });
-      const response = await fetch(`http://127.0.0.1:${state.port}/v1/messages`, {
+      const keyless = await fetch(`http://127.0.0.1:${state.port}/v1/messages`, {
         method: 'POST',
+        body: '{}',
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(keyless.status).toBe(401);
+      expect(await keyless.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: 'Invalid API key' },
+      });
+      const response = await fetch(`http://127.0.0.1:${state.port}/v1/analytics/hooks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${state.gatewayKey}` },
         body: '{}',
         signal: AbortSignal.timeout(5000),
       });
