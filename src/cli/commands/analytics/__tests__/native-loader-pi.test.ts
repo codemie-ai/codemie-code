@@ -12,6 +12,14 @@ import { synthesizeRawSession, synthesizePiRawSession, loadNativeSessions, type 
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionDescriptor } from '../../../../agents/core/session/discovery-types.js';
 import { PI_FORKED_CONTINUATION, PI_SUBAGENT_RUN } from '../../../../agents/plugins/pi/pi.session.js';
+import { PiSessionAdapter } from '../../../../agents/plugins/pi/pi.session.js';
+import { PiPluginMetadata } from '../../../../agents/plugins/pi/pi.plugin.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { enrichCosts } from '../cost/cost-enricher.js';
+import { AnalyticsAggregator } from '../aggregator.js';
+import { buildPayload } from '../report/payload-builder.js';
 
 const descriptor: SessionDescriptor = {
   sessionId: '019fdb4a-c16f-70fa-bb4b-07bd16c46cc1',
@@ -51,6 +59,56 @@ const conversation = piParsed([
   userEntry('u2', '2026-08-07T08:20:00.000Z', 'now ship it'),
   assistantEntry('a3', '2026-08-07T08:20:10.000Z', 'claude-opus-4-6'),
 ]);
+
+describe('R67 Pi disk parser to analytics and cost projection', () => {
+  it('loads a v3 transcript and prices two models, cached tokens and repeated entries exactly once', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-native-pipeline-'));
+    try {
+      const filePath = join(directory, 'session.jsonl');
+      const a1 = assistantEntry('a1', '2026-08-07T08:15:45.000Z', 'claude-haiku-4-5', {
+        content: [{ type: 'toolCall', id: 'c1', name: 'read', arguments: { path: '/repo/a.ts' } }],
+        usage: { input: 1000, output: 200, cacheRead: 300, cacheWrite: 400, totalTokens: 1900 },
+      });
+      const entries = [
+        entry('session', 'pi-fixture', '2026-08-07T08:15:37.327Z', { version: 3, cwd: '/repo' }),
+        userEntry('u1', '2026-08-07T08:15:40.000Z', 'read the file'), a1, a1,
+        entry('message', 't1', '2026-08-07T08:15:50.000Z', {
+          message: { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [], isError: false,
+            timestamp: Date.parse('2026-08-07T08:15:50.000Z') },
+        }),
+        userEntry('u2', '2026-08-07T08:16:00.000Z', 'review it'),
+        assistantEntry('a2', '2026-08-07T08:16:10.000Z', 'claude-sonnet-4-5', {
+          usage: { input: 2000, output: 100, cacheRead: 500, cacheWrite: 200, totalTokens: 2800 },
+        }),
+      ];
+      writeFileSync(filePath, entries.map((line) => JSON.stringify(line)).join('\n') + '\n');
+      const adapter = new PiSessionAdapter(PiPluginMetadata);
+      const parsed = await adapter.parseSessionFile(filePath, 'pi-fixture');
+      expect(parsed.messages).toHaveLength(7);
+      expect(parsed.metadata.projectPath).toBe('/repo');
+      const raw = synthesizePiRawSession('pi', { ...descriptor, sessionId: 'pi-fixture', filePath }, parsed);
+      const { index, summary } = await enrichCosts([raw], {
+        resolveAgentName: () => 'pi',
+        loadAgentSessionFile: async (session) => session.agentSessionFile ?? null,
+        parseNative: async (_agent, file, id) => adapter.parseSessionFile(file, id),
+      });
+      const cost = index.get('pi-fixture');
+      expect(cost?.tokens).toEqual({ input: 3000, output: 300, cacheRead: 800, cacheCreation: 600, cacheCreation1h: 0, total: 4700 });
+      // Haiku: .001+.001+.00003+.0005; Sonnet: .006+.0015+.00015+.00075.
+      expect(cost?.costUSD).toBeCloseTo(0.01093, 10);
+      expect(cost?.perModel.map((model) => model.model).sort()).toEqual(['claude-haiku-4-5', 'claude-sonnet-4-5']);
+      const root = AnalyticsAggregator.aggregate([raw]);
+      expect(root.totalTurns).toBe(2);
+      expect(root.totalSessions).toBe(1);
+      const report = buildPayload(root, index, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-08-07T09:00:00Z' });
+      expect(report.sessions[0]).toMatchObject({ turns: 2, costUSD: cost?.costUSD, project: '/repo', branch: 'Unknown' });
+      expect(report.meta.totals.totalCostUSD).toBeCloseTo(0.01093, 10);
+      expect(report.sessions[0].tokens.total).toBe(4700);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('synthesizePiRawSession', () => {
   it('maps a Pi v3 transcript into RawSessionData', () => {

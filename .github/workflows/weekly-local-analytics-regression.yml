@@ -1,0 +1,44 @@
+name: Local Analytics Regression
+
+on:
+  pull_request:
+    paths:
+      - 'src/cli/commands/analytics/**'
+      - 'src/agents/plugins/**'
+      - 'src/providers/plugins/sso/session/processors/metrics/**'
+      - 'src/utils/*pricing*'
+      - 'src/utils/price*'
+      - 'tests/integration/*analytics*'
+      - 'scripts/run-weekly-local-analytics-regression.mjs'
+      - 'package*.json'
+      - '.github/workflows/weekly-local-analytics-regression.yml'
+  schedule:
+    - cron: '15 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Verify browser prerequisite
+        run: google-chrome --version
+      - run: npm run build
+      - run: npm run test:analytics:weekly
+      - name: Preserve immutable run evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: analytics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/analytics-weekly/
+          if-no-files-found: error
+          retention-days: 90
