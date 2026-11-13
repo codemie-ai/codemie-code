@@ -18,6 +18,16 @@ interface WithExtensionInstaller {
 export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
   '*': {
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
+      // Heal stale CodeMie paths in Claude Code's shared OTLP hooks on every launch (EPMCDME-17164).
+      // Lazy import avoids a provider-to-connector cycle and startup cost; never blocks launch.
+      try {
+        const { healClaudeSettingsHooks } = await import('@/cli/commands/proxy/connectors/claude-code-otlp.js');
+        await healClaudeSettingsHooks();
+      } catch (error) {
+        const { logger } = await import('@/utils/logger.js');
+        logger.debug(`OTLP hook heal skipped: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
       const agentName = config.agent;
       if (!agentName) return env;
 

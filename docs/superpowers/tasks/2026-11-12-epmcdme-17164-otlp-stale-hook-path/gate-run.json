@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17164",
+  "head": "476bd1feaaf42687567a9dd21682cbf4db6a2926",
+  "runner": "npm",
+  "started_at": "2026-11-12T14:47:03.180Z",
+  "completed_at": "2026-11-12T14:47:03.180Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9911,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 71216,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 25589,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 39988,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 354760,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "11 failed/6 files (launch-identity, stale-session-reconciliation symlink EPERM, hook.session-delivery timing, generators symlink EPERM, config-per-profile-identity, system-proxy-dispatcher); likely Windows/env"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 353458,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "7 failed tests/8 files (cli-commands/*, hook-stdout, skills-integration)"
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4019,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 6101,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\"; nothing scanned. Stage changes or rely on CI."
+    }
+  ],
+  "failures": {
+    "unit": "    3143|     expect(elapsedMs).toBeLessThan(2 * SECOND);\n       |                       ^\n    3144|     expect(readRecord(session.sessionId).startMetricSessionId).toBeUnd…\n    3145|     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(l…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯\n\n FAIL  |unit| src/agents/core/session/__tests__/stale-session-reconciliation.test.ts > nextRecordStart > bounds a opencode record by the later one in the same directory reached through a symlink\nError: EPERM: operation not permitted, symlink 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-reconcile-GvOUJH\\repo' -> 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-reconcile-GvOUJH\\repo-link'\n ❯ src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1605:5\n    1603|     mkdirSync(repo);\n    1604|     mkdirSync(other);\n    1605|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1606|     const earlier = record({ agentName, startTime: t0, ownerPid: proce…\n    1607|     save(earlier);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯\n\n FAIL  |unit| src/agents/core/session/__tests__/stale-session-reconciliation.test.ts > nextRecordStart > bounds a codemie-code record by the later one in the same directory reached through a symlink\nError: EPERM: operation not permitted, symlink 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-reconcile-HhOCxG\\repo' -> 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-reconcile-HhOCxG\\repo-link'\n ❯ src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1605:5\n    1603|     mkdirSync(repo);\n    1604|     mkdirSync(other);\n    1605|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1606|     const earlier = record({ agentName, startTime: t0, ownerPid: proce…\n    1607|     save(earlier);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯\n\n FAIL  |unit| src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts > resolveJobCommand > resolves a symlinked entry to its realpath and builds argv the startup gate recognizes\nError: EPERM: operation not permitted, symlink 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-job-cmd-I1FiQ3\\codemie.js' -> 'C:\\Users\\RATIGI~1\\AppData\\Local\\Temp\\codemie-job-cmd-I1FiQ3\\codemie-shim'\n ❯ src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts:125:5\n    123|     const link = join(dir, 'codemie-shim');\n    124|     await writeFile(target, '');\n    125|     await symlink(target, link);\n       |     ^\n    126|     process.argv[1] = link;\n    127|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯\n\n\n Test Files  6 failed | 568 passed (574)\n      Tests  11 failed | 10180 passed | 34 skipped (10225)\n   Start at  18:34:29\n   Duration  349.02s (transform 132.82s, setup 0ms, import 507.55s, tests 1208.61s, environment 172ms)\n\n",
+    "integration": "\n- Expected\n+ Received\n\n- 0\n+ 1\n\n ❯ tests/integration/cli-commands/self-update.test.ts:51:7\n     49|       result.status,\n     50|       `self-update --check failed\\nstdout: ${result.stdout}\\nstderr: $…\n     51|     ).toBe(0);\n       |       ^\n     52|\n     53|     // Command must produce one of the two expected messages.\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > blocks every subcommand on unauthenticated invocation (spec §7)\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:129:3\n    127|   });\n    128|\n    129|   it('blocks every subcommand on unauthenticated invocation (spec §7)'…\n       |   ^\n    130|     // Point credentials lookup at a brand-new URL never logged in to …\n    131|     // fallback global credentials in the user's keychain will not mat…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯\n\n\n Test Files  8 failed | 38 passed | 1 skipped (47)\n      Tests  7 failed | 328 passed | 22 skipped (357)\n   Start at  18:40:25\n   Duration  347.14s (transform 56.17s, setup 0ms, import 95.91s, tests 1505.07s, environment 18ms)\n\n"
+  }
+}

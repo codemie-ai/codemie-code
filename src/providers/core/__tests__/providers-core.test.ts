@@ -38,6 +38,11 @@ vi.mock('@/utils/logger.js', () => ({
   logger: loggerMock
 }));
 
+const healMock = vi.hoisted(() => vi.fn());
+vi.mock('@/cli/commands/proxy/connectors/claude-code-otlp.js', () => ({
+  healClaudeSettingsHooks: healMock
+}));
+
 // ---------------------------------------------------------------------------
 // BaseHealthCheck
 // ---------------------------------------------------------------------------
@@ -357,6 +362,24 @@ describe('defaultAgentHooks', () => {
 
     expect(result.CODEMIE_GEMINI_EXTENSION_DIR).toBeUndefined();
     expect(loggerMock.warn).toHaveBeenCalled();
+  });
+
+  it('beforeRun heals stale OTLP hook paths once, even without an agent', async () => {
+    healMock.mockReset().mockResolvedValue(false);
+    await wildcard.beforeRun!({} as NodeJS.ProcessEnv, runConfig(undefined));
+    expect(healMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('beforeRun still installs the extension when the heal rejects', async () => {
+    healMock.mockReset().mockRejectedValue(new Error('disk gone'));
+    const install = vi.fn(async () => ({ success: true, targetPath: '/tmp/ext-dir' }));
+    getAgentMock.mockReturnValue({ getExtensionInstaller: () => ({ install }) });
+
+    const result = await wildcard.beforeRun!({} as NodeJS.ProcessEnv, runConfig('claude'));
+
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(result.CODEMIE_CLAUDE_EXTENSION_DIR).toBe('/tmp/ext-dir');
+    expect(loggerMock.debug).toHaveBeenCalled();
   });
 
   it('beforeRun logs an error and continues when install throws', async () => {
