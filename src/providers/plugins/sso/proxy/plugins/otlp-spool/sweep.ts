@@ -1,5 +1,6 @@
 import { unlink } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
+import { sweepRecords } from '@/agents/core/evidence/record-store.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   SPOOL_STREAMS,
@@ -8,6 +9,7 @@ import {
   streamFile,
 } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
+import { repairDestinationIntent } from './destination-intent.js';
 import { createStatus, readStatus } from './session-status.js';
 import { isSessionDrained, lastActivityMs, readSpoolState } from './spool-state.js';
 import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js';
@@ -30,18 +32,46 @@ import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js'
  * than the abandonment timeout may have its spool removed. That is safe — the
  * next producer write recreates the status and spool files from scratch.
  */
-export async function sweepSpool(): Promise<void> {
+/** Sessions with undelivered spool bytes: their evidence records must never be evicted. */
+export async function pendingSpoolSessionIds(): Promise<Set<string>> {
+  const pending = new Set<string>();
   for (const sessionId of await listSessionIds()) {
     try {
+      const status = (await readStatus(sessionId)) ?? createStatus();
+      // An owed destination marker pins the record too: the marker is written for it later
+      if (status.destinationIntent || !isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
+    } catch {
+      pending.add(sessionId); // unknown state: protect
+    }
+  }
+  return pending;
+}
+
+export async function sweepSpool(): Promise<void> {
+  const pending = new Set<string>();
+  for (const sessionId of await listSessionIds()) {
+    try {
+      const status = (await readStatus(sessionId)) ?? createStatus();
+      // An owed destination marker pins the record too: the marker is written for it later
+      if (status.destinationIntent || !isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
       await sweepSession(sessionId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.debug('[otlp-sweep] per-session error', ...sanitizeLogArgs({ sessionId, err: msg }));
     }
   }
+  // Evidence records have their own retention (90 d idle / file cap); records of sessions with
+  // undelivered spool are never evicted. reserve:1 keeps room for the next new session.
+  try {
+    await sweepRecords({ pendingKeys: new Set(), pendingSessionIds: pending, reserve: 1 });
+  } catch (err) {
+    logger.debug('[otlp-sweep] record sweep error', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));
+  }
 }
 
 async function sweepSession(sessionId: string): Promise<void> {
+  // An owed destination marker keeps the status (the gate reads the intent meanwhile) until its write succeeds
+  if (await repairDestinationIntent(sessionId)) return;
   // Cheap unlocked pre-scan to keep the sweep off the hot path...
   if (!(await isDeletable(sessionId))) return;
 
@@ -54,12 +84,15 @@ async function sweepSession(sessionId: string): Promise<void> {
 
 async function isDeletable(sessionId: string): Promise<boolean> {
   const status = (await readStatus(sessionId)) ?? createStatus();
+  if (status.destinationIntent) return false;
   const spool = await readSpoolState(sessionId, status);
 
   if (!isSessionDrained(spool)) return false;
 
   const activityMs = await lastActivityMs(spool);
-  if (activityMs === null) return false; // nothing on disk to clean up
+  // Nothing on disk to clean up, except a status that only records a stamp loss: aged out like an abandoned session.
+  const lossAt = Math.max(status.lastLoss?.at ?? 0, status.stampLoss?.at ?? 0);
+  if (activityMs === null) return lossAt > 0 ? Date.now() - lossAt >= abandonedSessionGraceMs() : false;
 
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;

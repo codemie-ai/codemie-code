@@ -1,16 +1,200 @@
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
+import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { isStopped, writeNotice } from '@/agents/core/evidence/stop-marker.js';
+import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
+import { holdsCheckpoint, owedStop, tryStop } from './stop-intent.js';
+import { advertisesContract } from './policy-cache.js';
 import { withSessionLock } from './session-lock.js';
-import { readStatus, writeStatus } from './session-status.js';
-import { OTEL_STREAMS } from './spool-paths.js';
-import { hasPendingData, readSpoolState } from './spool-state.js';
-import { applyProjectPolicyLocked } from './spool-io.js';
+import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
+import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
+import { hasPendingData, hooksGroupPresent, readSpoolState, type SpoolState } from './spool-state.js';
+import {
+  applyProjectPolicyLocked,
+  clearHold,
+  forwarderIdentity,
+  pendingHooksMarkedLocked,
+  recordLossLocked,
+} from './spool-io.js';
+import { expireCarriedAgeLocked } from './delivery-state.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 import { areCredentialsStale } from './auth-state.js';
+import {
+  applyProjectDecision,
+  decideProject,
+  evaluateSessionEvidence,
+  holdOrLose,
+  type SessionEvidenceDecision,
+} from './session-project.js';
+import type { PolicyState } from './policy-cache.js';
+import { readVerdictState } from './verdict-store.js';
+import { heldRetentionMs } from './spool-config.js';
+import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
+import { classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
+import type { ClassResult } from '@/agents/core/evidence/classify.js';
+import { publicationMode } from './publication-mode.js';
 
 const currentlyForwarding = new Set<string>();
+
+type TickEvidenceDecision = SessionEvidenceDecision | { action: 'suppress' };
+
+async function stickyPersonalOf(key: string): Promise<boolean> {
+  const v = await readVerdictState(key);
+  return v.state === 'unreadable' || (v.state === 'ok' && v.verdict.class === 'personal');
+}
+
+/**
+ * Policy/capability for the forwarder's namespace, refreshed (bounded by the cache's backoff) before
+ * the session lock is taken, so a slow backend never blocks spool appends. `undefined` = no identity.
+ */
+async function tickPolicyState(
+  credentials: SSOCredentials | JWTCredentials,
+  endpoint: AnalyticsEndpoint,
+  reprobe: boolean,
+  sessionId: string
+): Promise<PolicyState | undefined> {
+  const id = endpoint.identity;
+  if (!id) return undefined;
+  const ns = { ...id, ...(endpoint.profile ? { profile: endpoint.profile } : {}) };
+  // Only a new-contract session needs the backend to advertise the contract (bounded refresh when it does not).
+  const found = await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId));
+  const needContract = (found?.kind === 'existing' || found?.kind === 'created') && found.record.funding_route !== undefined;
+  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe, needContract);
+}
+
+/**
+ * Gather the provenance inputs (marker, record at the forwarder's own key, capability, sticky
+ * verdict, epoch), decide with `evaluateSessionEvidence`, classify an evidence send (consumer seam,
+ * sticky verdict) and apply it to `status`: a hold keeps its first-hold time, a loss drops the
+ * backlog with its named reason, a send clears the session hold and records the mode (an evidence
+ * record also binds its project); `suppress` changes nothing. Caller holds the lock; writes the
+ * status only when it changed.
+ */
+async function applySessionEvidenceLocked(
+  sessionId: string,
+  status: SessionStatus,
+  spool: SpoolState,
+  credentials: SSOCredentials | JWTCredentials,
+  policy: PolicyState | undefined,
+  now: number = Date.now()
+): Promise<{ decision: TickEvidenceDecision; result?: ClassResult }> {
+  const before = JSON.stringify(status);
+  await expireCarriedAgeLocked(sessionId, status, now); // handed-over bytes expire on their original clock, held or not
+  if (!status.evidenceMarked && (await pendingHooksMarkedLocked(sessionId, status))) {
+    status.evidenceMarked = true;
+  }
+
+  const id = forwarderIdentity(credentials);
+  const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
+  const heldSince = status.holds?.session?.since;
+  const found = key ? await readRecord(key) : undefined;
+  // A recorded session without a frozen generation cannot prove privacy continuity: suspended whatever the wire protocol.
+  const unproven = (found?.kind === 'existing' || found?.kind === 'created') && !hasScopeEvidence(found.record);
+  if (key && unproven) await tryStop(key, 'scope_unproven', sessionId); // the marker carries the one-shot notice; unproven stays stopped if this fails
+  // A stop whose marker is still unwritten (status.stopIntent) is retried here and keeps the session stopped meanwhile.
+  const owed = key ? owedStop(key, status) : undefined; // an intent, or a previous process's unresolved send checkpoint
+  if (key && owed && (await tryStop(key, owed, sessionId))) {
+    delete status.stopIntent;
+    if (!holdsCheckpoint(key)) delete status.sendCheckpoint; // a previous process's checkpoint is resolved by the marker
+  }
+  let decision: TickEvidenceDecision = evaluateSessionEvidence({
+    hasHooks: hooksGroupPresent(spool),
+    marked: status.evidenceMarked === true,
+    record: found,
+    capability: policy?.capability ?? 'unknown',
+    stopped: unproven || (key ? (await isStopped(key)) || owed !== undefined : false),
+    contractAdvertised: policy ? advertisesContract(policy) : false,
+    // An unreadable verdict may hide a sticky Personal: treated as Personal (fail closed, never legacy).
+    stickyPersonal: key ? await stickyPersonalOf(key) : false,
+    preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
+    heldSince,
+    now,
+    retentionMs: heldRetentionMs(),
+  });
+
+  let result: ClassResult | undefined;
+  if (decision.action === 'send_evidence' && key) {
+    const cls = await classifySession(key, decision.record, policy ?? { policy: null, capability: 'unknown' });
+    if (cls.action === 'suppress') {
+      if (JSON.stringify(status) !== before) await writeStatus(sessionId, status); // e.g. a carried range that just expired
+      return { decision: cls };
+    }
+    if (cls.action === 'hold') decision = holdOrLose(cls.reason, heldSince, now, heldRetentionMs());
+    else if (decision.record.funding_route !== undefined &&
+      !(await publicationMode(key, decision.record, policy ?? { policy: null, capability: 'unknown', usable: false, refreshDue: true }, cls.result))) {
+      decision = holdOrLose('publication_contract_unavailable', heldSince, now, heldRetentionMs());
+    } else result = cls.result;
+  }
+
+  if (decision.action === 'hold') {
+    const since = status.holds?.session?.since ?? now;
+    if (status.holds?.session?.reason !== decision.reason) {
+      logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
+      // First hold on an unadvertised contract: the user is told once (marker notice; the hold itself may recover).
+      if (decision.reason === 'publication_contract_unavailable' && !heldSince && key) {
+        // Authoritative only when the backend was actually consulted: absent or unknown capability is transient (still held, still bounded).
+        const authoritative = !!policy && policy.capability !== 'unknown';
+        await writeNotice(key, authoritative ? 'hold_contract_unavailable' : 'hold_state_unknown', sessionId).catch(() => undefined);
+        logger.warn(authoritative
+          ? '[otlp-tick] analytics publication held: the backend does not advertise the publication contract'
+          : '[otlp-tick] analytics publication held: the backend capability could not be confirmed');
+      }
+    }
+    status.holds = { ...status.holds, session: { reason: decision.reason, since } };
+  } else if (decision.action === 'lose' && decision.reason === 'publication_contract_unavailable' && key &&
+    !(await tryStop(key, 'hold_expired', sessionId))) {
+    // The required stop is not recorded: the hold stays and the backlog is kept (nothing sends); the next tick retries.
+    decision = { action: 'hold', reason: decision.reason };
+    status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
+  } else {
+    clearHold(status, 'session');
+    if (decision.action === 'lose') {
+      await recordLossLocked(sessionId, status, decision.reason, undefined, now);
+    } else {
+      status.sendMode = decision.action === 'send_evidence' ? 'evidence' : 'legacy';
+      if (decision.action === 'send_evidence' && decision.record.project) {
+        applyProjectDecision(status, decideProject([decision.record.project], status));
+      }
+    }
+  }
+
+  if (JSON.stringify(status) !== before) {
+    await writeStatus(sessionId, status);
+  }
+  return { decision, result };
+}
+
+/**
+ * The daemon's analytics URL does not match the credentials' identity: nothing is sent or fetched, but the
+ * session is held under a named reason (and lost, recorded, only past the retention bound) instead of
+ * silently stalling. Sessions with nothing pending are left untouched.
+ */
+async function holdEndpointMismatch(sessionId: string, now: number = Date.now()): Promise<void> {
+  await withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return;
+    const before = JSON.stringify(status);
+    await expireCarriedAgeLocked(sessionId, status, now);
+    if (!hasPendingData(await readSpoolState(sessionId, status))) {
+      if (JSON.stringify(status) !== before) await writeStatus(sessionId, status);
+      return;
+    }
+    const heldSince = status.holds?.session?.since;
+    const decision = holdOrLose('analytics_endpoint_mismatch', heldSince, now, heldRetentionMs());
+    if (decision.action === 'lose') {
+      clearHold(status, 'session');
+      await recordLossLocked(sessionId, status, decision.reason, undefined, now);
+    } else {
+      if (status.holds?.session?.reason !== decision.reason) {
+        logger.warn('[otlp-tick] analytics endpoint does not match the credential identity; session held', ...sanitizeLogArgs({ sessionId }));
+      }
+      status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
+    }
+    if (JSON.stringify(status) !== before) await writeStatus(sessionId, status);
+  });
+}
 
 /**
  * Process one tick for a single session: evaluate the completeness gate and,
@@ -27,6 +211,13 @@ export async function processSessionTick(
 ): Promise<void> {
   let shouldForward = false;
   let hooksOnly = false;
+  let classification: ClassResult | undefined;
+  // Re-decided every tick: the policy is refreshed (when due) before the classification below.
+  // One analytics endpoint per tick, validated against the credential identity before any network call.
+  const endpoint = areCredentialsStale() ? undefined : await resolveAnalyticsEndpoint(credentials);
+  if (endpoint === null) return holdEndpointMismatch(sessionId);
+  const reprobe = (await readStatus(sessionId))?.holds?.session?.reason === 'organization_encoding_unsupported';
+  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe, sessionId) : undefined;
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -34,10 +225,22 @@ export async function processSessionTick(
       return;
     }
     if (areCredentialsStale()) {
+      // Nothing is sent while the login is stale, but a handed-over range still expires on its original clock.
+      if (await expireCarriedAgeLocked(sessionId, status)) await writeStatus(sessionId, status);
       return;
     }
 
     const spool = await readSpoolState(sessionId, status);
+
+    // Provenance first (spec item 7): a hold or a recorded loss is applied before any send, and the
+    // session hold it persists also gates the snapshots and `isSendAllowed`.
+    let evidenceSend = false;
+    if (hasPendingData(spool)) {
+      const { decision, result } = await applySessionEvidenceLocked(sessionId, status, spool, credentials, policyState);
+      if (decision.action === 'hold' || decision.action === 'lose' || decision.action === 'suppress') return;
+      evidenceSend = decision.action === 'send_evidence';
+      classification = result;
+    }
 
     // Project policy, before the completeness gate and the same one the snapshots apply: a
     // conflicted or unbound session sends nothing, so a hooks-only session that would never reach
@@ -50,11 +253,17 @@ export async function processSessionTick(
       hooksOnly = true;
       return;
     }
-    if (policy.state !== 'bound' && policy.state !== 'undecided') {
+    // Sendable: bound, undecided (completeness gate decides) or an evidence session without a project (AC8).
+    if (policy.state !== 'undecided' && policy.hooks.kind !== 'send') {
       return;
     }
 
-    const decision = gateDecision(spool, status);
+    let decision = gateDecision(spool, status);
+    // A valid evidence record proves the project is tracked (the hook stamps only tracked projects),
+    // which is what the OTEL-only invariant guards: such a session no longer waits to be skipped.
+    if (evidenceSend && !hooksGroupPresent(spool) && decision !== 'noop') {
+      decision = 'send';
+    }
     const pending = hasPendingData(spool);
 
     logger.debug(
@@ -79,7 +288,7 @@ export async function processSessionTick(
       // Accepted trade-off: a tracked session whose first hook arrives after the
       // wait limit loses the OTEL bytes received before that.
       if (pending) {
-        for (const stream of OTEL_STREAMS) {
+        for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
           status.cursors[stream] = Math.max(status.cursors[stream], spool.streams[stream].size);
         }
         await writeStatus(sessionId, status);
@@ -95,7 +304,8 @@ export async function processSessionTick(
   currentlyForwarding.add(sessionId);
 
   try {
-    await forwardSession(sessionId, hooksOnly, credentials);
+    if (classification) await forwardSession(sessionId, hooksOnly, credentials, classification, endpoint);
+    else await forwardSession(sessionId, hooksOnly, credentials, undefined, endpoint);
   } finally {
     currentlyForwarding.delete(sessionId);
   }

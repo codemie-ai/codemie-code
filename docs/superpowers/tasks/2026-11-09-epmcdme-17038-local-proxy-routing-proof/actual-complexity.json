@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 7 files changed (217 insertions, 3 deletions), which maps to L in the actual-mode file band (7-10). 4 of the 7 are test files (classify, funding-route, routing, claude-evidence-inputs); production code is routing.ts, claude-code-otlp.plugin.ts and the new event-fields/local-proxy.ts." },
+    { "dimension": "component_scope", "reason": "3 components across 2 layers: the evidence routing module (new LocalProxy contract, localProxyCandidate gate, native-daemon branch in routedViaCodemie), the claude-code-otlp adapter (gates and resolves the daemon at hook time), and a new resolveLocalProxy helper that reuses the existing daemon-manager readState/isDaemonAlive." },
+    { "dimension": "technical_risk", "reason": "Closely follows the existing managed-proxy proof branch (loopback endpoint plus upstream matched to the profile base URL). New elements are loopback host normalization, daemon liveness lookup and fail-closed handling at hook time. The edge cases are covered by the existing parameterized evidence test suites, so no security or test-template bump was applied." },
+    { "dimension": "calibration", "reason": "Nearest project example l/profile-provider-decoupling (23, L) is much larger: 14 files, a data migration and 4 layers. This change has no migration, no dependencies and a single subsystem, which fits the low M band. Total 15 sits at the 14/15 boundary. Technical Risk is M and existing patterns cover most of the work, so the borderline rule suggests leaning lower (S), but the dimension sum is kept at 15 as computed." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

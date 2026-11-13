@@ -15,8 +15,9 @@
  * assertions pin the CURRENT contract.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,6 +25,7 @@ import { join } from 'node:path';
 
 import { MetricsSender } from '../metrics-api-client.js';
 import type { SessionMetric } from '../metrics-types.js';
+import { SyncStoppedError } from '../../../../../../../agents/core/session/BaseProcessor.js';
 import { logger } from '../../../../../../../utils/logger.js';
 
 interface CapturedRequest {
@@ -63,6 +65,8 @@ class MockServer {
   }
 
   async stop(): Promise<void> {
+    // A delayed responder may still hold a socket the client already aborted.
+    this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 }
@@ -172,6 +176,39 @@ describe('MetricsSender upload contract', () => {
     expect(h).toHaveProperty('x-codemie-branch');
   });
 
+  it('percent-encodes non-Latin-1 repository, omits a non-Latin-1 project header', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({
+      baseUrl: server.baseUrl,
+      cookies: 'session=abc',
+      version: '9.9.9',
+      clientType: 'codemie-claude',
+    });
+    const session = { ...makeSession(home), repository: 'clients/репо-тест', project: 'проект' };
+    await sender.sendSessionStart(session, home, { status: 'started' });
+
+    const h = server.last.headers;
+    expect(h['x-codemie-repository']).toBe('clients/' + encodeURIComponent('репо-тест'));
+    expect(h['x-codemie-project']).toBeUndefined();
+  });
+
+  it('sends a personal project header unchanged', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({
+      baseUrl: server.baseUrl,
+      cookies: 'session=abc',
+      version: '9.9.9',
+      clientType: 'codemie-claude',
+    });
+    await sender.sendSessionStart({ ...makeSession(home), project: 'a@b.com' }, home, { status: 'started' });
+
+    expect(server.last.headers['x-codemie-project']).toBe('a@b.com');
+  });
+
   it('uses the user-id header (localhost dev) when apiKey is set and omits the Cookie header', async () => {
     server = new MockServer();
     await server.start(jsonOk);
@@ -203,6 +240,37 @@ describe('MetricsSender upload contract', () => {
     expect(server.captured).toHaveLength(2);
   }, 15000);
 
+  describe('session end branch', () => {
+    // A git hook exports GIT_DIR and friends, which would point git at the outer repository.
+    beforeEach(() => {
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith('GIT_')) vi.stubEnv(key, undefined);
+      }
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const sentBranch = async (gitBranch?: string): Promise<unknown> => {
+      execFileSync('git', ['init', '--initial-branch=detected-branch'], { cwd: home });
+      server = new MockServer();
+      await server.start(jsonOk);
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
+      await sender.sendSessionEnd({ ...makeSession(home), gitBranch }, home, { status: 'completed' }, 4321);
+      return JSON.parse(server.last.body).attributes.branch;
+    };
+
+    it('sends the branch of the record, not the one checked out at send time', async () => {
+      expect(await sentBranch('record-branch')).toBe('record-branch');
+      expect(server!.last.headers['x-codemie-branch']).toBe('record-branch');
+    });
+
+    it('sends the detected branch when the record has none', async () => {
+      expect(await sentBranch()).toBe('detected-branch');
+    });
+  });
+
   it('classifies a 401 as an auth failure: throws and writes the analytics-auth-status marker', async () => {
     server = new MockServer();
     await server.start((_req, res) => {
@@ -213,6 +281,7 @@ describe('MetricsSender upload contract', () => {
     const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'expired=1', retryAttempts: 0 });
 
     await expect(sender.sendSessionStart(makeSession(home), home, { status: 'started' })).rejects.toThrow(/401/);
+    expect(server.captured).toHaveLength(1);
 
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8')) as {
@@ -236,6 +305,7 @@ describe('MetricsSender upload contract', () => {
     const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'expired=1', retryAttempts: 0 });
 
     await expect(sender.sendSessionStart(makeSession(home), home, { status: 'started' })).rejects.toThrow(/non-JSON/);
+    expect(server.captured).toHaveLength(1);
 
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8')) as { status: string };
@@ -309,5 +379,86 @@ describe('MetricsSender upload contract', () => {
     const payload = JSON.parse(server.last.body) as SessionMetric;
     expect(payload.name).toBe('codemie_cli_tool_usage_total');
     expect((payload.attributes as { tool_names: string[] }).tool_names).toEqual(['Read', 'Edit']);
+  });
+
+  describe('retries and caller bounds', () => {
+    const unavailable: Responder = (_req, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ message: 'unavailable' }));
+    };
+    const usageMetric: SessionMetric = {
+      name: MetricsSender.METRIC_TOOL_USAGE_TOTAL,
+      attributes: {
+        agent: 'claude',
+        agent_version: '1.0.0',
+        codemie_client: 'codemie-cli',
+        repository: 'owner/repo',
+        session_id: 'sess-123',
+        branch: 'main',
+        count: 1,
+      },
+    } as SessionMetric;
+
+    it('retryAttempts: 0 sends exactly one request on a 503', async () => {
+      server = new MockServer();
+      await server.start(unavailable);
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      expect((error as Error).message).toMatch(/Failed after 0 retries/);
+      expect((error as Error).cause).toMatchObject({ statusCode: 503 });
+      expect(server.captured).toHaveLength(1);
+    });
+
+    it('retryAttempts: 1 sends two requests on a 503 (one retry)', async () => {
+      server = new MockServer();
+      await server.start(unavailable);
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 1 });
+
+      await expect(sender.sendSessionMetric(usageMetric)).rejects.toThrow(/Failed after 1 retries/);
+      expect(server.captured).toHaveLength(2);
+    }, 15000);
+
+    it('aborts a request still in flight at the deadline and starts no second attempt', async () => {
+      server = new MockServer();
+      // The server answers only after 3 s.
+      await server.start((req, res, index) => {
+        setTimeout(() => jsonOk(req, res, index), 3_000);
+      });
+
+      const started = Date.now();
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', deadlineMs: started + 1_000 });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      const elapsed = Date.now() - started;
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('deadline');
+      expect(elapsed).toBeGreaterThanOrEqual(900);
+      expect(elapsed).toBeLessThan(2_500);
+      expect(server.captured).toHaveLength(1);
+    }, 10000);
+
+    it('wakes from the backoff sleep at once when the caller aborts', async () => {
+      server = new MockServer();
+      const controller = new AbortController();
+      await server.start((req, res, index) => {
+        unavailable(req, res, index);
+        // Time-based on purpose: 200 ms after the 503 the client sits in its 1 s backoff.
+        res.on('finish', () => setTimeout(() => controller.abort(), 200));
+      });
+
+      const started = Date.now();
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', abortSignal: controller.signal });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('aborted');
+      expect(Date.now() - started).toBeLessThan(900);
+      expect(server.captured).toHaveLength(1);
+    });
   });
 });

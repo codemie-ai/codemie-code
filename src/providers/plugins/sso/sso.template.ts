@@ -31,6 +31,8 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   supportsStreaming: true,
   customProperties: {
     requiresIntegration: true,
+    // Each global profile owns a CodeMie project (EPMCDME-15411)
+    carriesCodeMieProject: true,
     sessionDuration: 86400000 // 24 hours
   },
 

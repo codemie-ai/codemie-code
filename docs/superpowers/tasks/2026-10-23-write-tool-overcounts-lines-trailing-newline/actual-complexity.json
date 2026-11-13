@@ -1,0 +1,81 @@
+{
+  "task": "Fix Write-tool line-count overcounting on trailing newlines by lifting the private countContentLines logic into a shared Utils helper and reusing it in the Claude plugin and the OTLP plugin, plus a secondary empty-content linesAdded fix found in code review.",
+  "generated": "2026-10-24T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "Utils file-operations helper, Claude plugin file-operation extractor (claude-file-operation.ts), claude-code-otlp transcript session-signals.ts",
+      "layers": "Service (shared Utils helper), Agent-Tool (Claude plugin), Agent-Tool (OTLP plugin)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Secondary empty-content linesAdded bug (stayed undefined instead of 0) was not in the original ticket description and was only identified during code review (CR-001/CR-002), requiring a small follow-up fix beyond the initial scope"
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "countContentLines is now a single shared helper consumed by two independent agent plugins (Claude live/session-replay path and the claude-code-otlp transcript signals path); a regression here silently skews line-count metrics across both plugins rather than one",
+      "mitigation": "Logic was centralized in src/utils/file-operations.ts behind a pure, well-named function with direct unit tests (file-operations.test.ts, claude-file-operation.test.ts); no behavior change to unrelated extractFormat/detectLanguage helpers; low-risk, easily reversible metrics-only change"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 5,
+      "modified_file_list": [
+        "src/agents/plugins/claude-code-otlp/transcript/session-signals.ts",
+        "src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts",
+        "src/agents/plugins/claude/session/claude-file-operation.ts",
+        "src/utils/__tests__/file-operations.test.ts",
+        "src/utils/file-operations.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/agents/plugins/claude-code-otlp/transcript",
+        "src/agents/plugins/claude/session",
+        "src/agents/plugins/claude/session/__tests__",
+        "src/utils",
+        "src/utils/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["Service", "Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 5,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches a shared Utils helper plus two independent Agent-Tool consumers (the Claude plugin's claude-file-operation.ts and the claude-code-otlp plugin's session-signals.ts) that both needed their line-counting call sites updated to delegate to the new countContentLines helper — the 'touches core shared utilities' pattern bumps this from a base M (single-helper, 2-layer coordination) to L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "countContentLines became the single source of truth for line counts consumed by two separate agent plugins; a regression would silently skew metrics in both places at once, though the change itself is additive/well-tested and trivially reversible."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "5 files modified (3 source, 2 test), 0 new files, spanning the Utils layer and two distinct agent-plugin directories (claude session and claude-code-otlp transcript) — just above the S band's single-directory ceiling, landing in M."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utilities (src/utils/file-operations.ts) consumed by two independent agent-plugin call sites."
+  ],
+  "split_recommendation": null
+}

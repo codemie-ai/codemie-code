@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "generated": "2026-11-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 37,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Production changes span several subsystems: the SSO sign-in gate (sso.auth-gate.ts) and detached login lock (sso.detached-login.ts); the SSO proxy plugins (sso-auth, sso-session-expiry, sso.session-sync, credential-refresh); the session cookie-auth module with its superseded-credentials check; the metrics sync client, processor and types; the hook CLI command (hook.ts); the shared BaseProcessor classes; the codex, opencode and pi incremental-sync processors; and DesktopTelemetryRuntime. cookie-auth and the superseded-credentials check are shared by several sync paths."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for the new behaviour: a last-sign-in stamp carried across lock takeovers and scoped per URL, a TTL-cached superseded-credentials check shared through a WeakMap, and replay of superseded requests with fresh cookies. The code is concurrency-sensitive (a lock file shared across processes, atomic lock rewrites, orphaned tmp-file sweeping, in-flight de-duplication) and touches authentication and credential handling (cookies, auth-status marker, sign-in triggering). The tests cover many edge and race cases, with new dedicated lock, marker and superseded test files. Bumped from L to XL for the auth and concurrency red flags. A wrong decision either opens a second browser sign-in or suppresses a genuine re-auth prompt."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "37 files changed (18 production, 19 test) across more than 10 directories under src/providers, src/agents, src/cli, src/telemetry and tests/integration. Diffstat is +3412/-236 (about 1,000 production lines). Count alone puts this at XXL, although most of the volume is tests."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Service layer (auth gate, credential refresh, metrics sync processors); API/CLI layer (hook command, proxy plugins); Infrastructure (cross-process lock file, auth-status marker, detached browser process spawning); External (CodeMie platform metrics endpoint and SSO login). The cross-process lock file and credential-store reads are persistence-adjacent but there is no schema change or migration, so this stays at L rather than XL."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L to XL: affects authentication and credential handling (SSO cookies, auth-status marker, sign-in gating) and involves cross-process lock concurrency.",
+    "Technical Risk: the closest pattern is the existing detached-login lock and auth-status marker, which did not cover the superseded-credentials and per-URL sign-in stamp cases. Enumerated edge and race cases in the tests add to the risk.",
+    "Component Scope held at XL: touches shared utilities (cookie-auth, the BaseProcessor classes) used by several agent sync paths."
+  ],
+  "split_recommendation": null
+}

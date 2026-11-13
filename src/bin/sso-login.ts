@@ -6,7 +6,7 @@
  */
 import { parseArgs } from 'node:util';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
-import { releaseLoginLockOnSuccess } from '@/providers/plugins/sso/sso.detached-login.js';
+import { releaseLoginLockOnFailure, releaseLoginLockOnSuccess } from '@/providers/plugins/sso/sso.detached-login.js';
 import { logger } from '@/utils/logger.js';
 
 const LOGIN_TIMEOUT_MS = 120_000;
@@ -27,6 +27,7 @@ async function main(): Promise<number> {
 
   if (!result.success) {
     logger.error(`[sso-login] Sign-in failed: ${result.error ?? 'unknown error'}`);
+    await releaseLoginLockOnFailure(result.error ?? 'unknown error');
   }
 
   return result.success ? 0 : 1;

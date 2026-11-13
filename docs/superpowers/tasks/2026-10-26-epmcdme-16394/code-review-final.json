@@ -1,0 +1,32 @@
+{
+  "decision": "approve",
+  "rationale": "All four lenses ran, but the expected standards audit produced no output (standards_path null with standards_expected true), so commit-format, code-quality and security are unverified and confidence is low. Reachability checks against the real code dismissed about 17 candidates as handled by design, spec-mandated or below the floor; 0 deferred. The unused inferAllowlistScope export, flagged by three lenses, is non-blocking dead code; the brief is at code-review-brief.local.md.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "1. connect --claude-code-otlp without --scope behaves as --scope user (Global prompt, empty allowlist on accept)", "status": "pass", "notes": "default scope user; orchestrator and connector tests cover it" },
+    { "kind": "story-ac", "item": "2. --scope project is explicit opt-in: Project prompt, adds current project, keeps other projects", "status": "pass", "notes": "addProjectPath on existing valid list; connector test preserves prior projects" },
+    { "kind": "story-ac", "item": "3. Prompt before proxy start and settings write; Confirm first/default, Enter accepts", "status": "pass", "notes": "confirmClaudeCodeOtlp runs before deriveDaemonIdentity/spawn and the writer" },
+    { "kind": "story-ac", "item": "4. Decline and Ctrl+C do not start proxy, change settings.json, or touch allowlist and running daemon", "status": "pass", "notes": "decline-only run returns before daemon logic; tests assert no spawn/stop/write" },
+    { "kind": "story-ac", "item": "5. --silent skips prompt: Global without --scope, adds current project with --scope project", "status": "pass", "notes": "silent returns true after the invalid-allowlist guard; two orchestrator tests" },
+    { "kind": "story-ac", "item": "6. Non-interactive terminal without --silent exits with error, no proxy start or settings update", "status": "pass", "notes": "ConfigurationError thrown before SSO and daemon; tested for both scopes" },
+    { "kind": "story-ac", "item": "7. Scope derived from Claude allowlist; no new persisted config field", "status": "pass", "notes": "no config schema change; inferAllowlistScope helper exists but is unused in production" },
+    { "kind": "story-ac", "item": "8. Docs describe Global default; regression tests cover default scope, confirmation, decline, cancel, silent, non-interactive error", "status": "pass", "notes": "COMMANDS.md and README.md updated; tests across five files" },
+    { "kind": "story-ac", "item": "9. Prompt starts with Using profile and CodeMie URL only when configured", "status": "pass", "notes": "otlpDisplay resolved once via resolveProfileCodeMieUrl" },
+    { "kind": "story-ac", "item": "10. Prompt has no Already enabled / About to add wording and does not list enabled projects", "status": "pass", "notes": "negative assertions in analytics-confirmation.test" },
+    { "kind": "story-ac", "item": "11. Exact Global and Project messages, parallel wording, path unwrapped, identical across allowlist states", "status": "pass", "notes": "GLOBAL_MESSAGE/PROJECT_MESSAGE match spec; only invalid-allowlist note varies" },
+    { "kind": "story-ac", "item": "12. Confirm/Decline is an inquirer list prompt, screen not cleared, no custom raw-mode handling", "status": "pass", "notes": "inquirer list prompt; no clear or raw-mode code" },
+    { "kind": "story-ac", "item": "13. Post-start output limited to success line, Analytics Configuration table and yellow restart line", "status": "pass", "notes": "runClaudeCodeOtlp prints only those three; Copilot runners unchanged" },
+    { "kind": "story-ac", "item": "14. Using profile appears exactly once", "status": "pass", "notes": "pre-prompt line gated by confirmationWillBeShown" },
+    { "kind": "spec", "item": "Invalid-allowlist guard (stop unless --force) still runs before the prompt on every path", "status": "pass", "notes": "guard precedes the silent short-circuit in confirmClaudeCodeOtlp" },
+    { "kind": "spec", "item": "Silent flag is new on proxy connect only; no second non-interactive detector", "status": "pass", "notes": "--silent only on connect; only isNonInteractiveEnvironment used" },
+    { "kind": "spec", "item": "Non-goals respected: no disconnect change, no Copilot output change, no config persistence", "status": "pass", "notes": "none of these touched in the diff" },
+    { "kind": "spec", "item": "Documentation covers Global default, scope selection, confirmation, decline/cancel, --silent, non-interactive error", "status": "pass", "notes": "docs/COMMANDS.md and README.md updated" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit did not run (standards_path null while expected); unverified." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit did not run (standards_path null while expected); unverified." },
+    { "kind": "security", "status": "na", "notes": "Standards audit did not run (standards_path null while expected); unverified." }
+  ],
+  "findings": []
+}

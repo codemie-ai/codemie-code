@@ -1,15 +1,23 @@
 import type { AgentConfig, AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { flagValue } from '../../core/flag-transform.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { SessionStartEvent } from '../../../cli/commands/hook.js';
 import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
+import { getCopilotHome, getCopilotSessionStateRoot } from './copilot-cli.paths.js';
+import { join, resolve } from 'node:path';
+import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
+import { assertSessionStateListable, recordNoTranscript, recordTranscriptCorrelation, transcriptExists } from '../../core/session/no-transcript-correlation.js';
+import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
+import { isNativeIdSegment } from './copilot-cli.transcript-lookup.js';
 import {
   assertExplicitCopilotModelAllowed,
   resolveCopilotModel,
@@ -29,6 +37,70 @@ const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 
+// Flags that make Copilot pick (or resume) a session itself; CodeMie must not add --session-id.
+const COPILOT_SESSION_SELECTION_FLAGS = ['--session-id', '--resume', '-r', '--continue', '--connect'];
+const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
+
+/**
+ * The id a run goes under: the native session a launch resumes by its full UUID (`--resume`, `-r`,
+ * `--session-id`), lower-cased as copilot names its `session-state/<id>/` directory, so the whole run
+ * continues that session; else the CodeMie id.
+ *
+ * A `--continue`, an id prefix or a session name keeps its metrics under the CodeMie id (the start
+ * metric goes out before the transcript is known); its conversation goes under the native session
+ * once the transcript is located.
+ */
+function runSessionIdOf(sessionId: string, env: NodeJS.ProcessEnv): string {
+  const resumed = env[RESUME_SESSION_ENV_KEY];
+  return resumed && FULL_SESSION_UUID.test(resumed) ? resumed.toLowerCase() : sessionId;
+}
+
+/**
+ * The run's native transcript: a pinned or resumed run's own session exactly (none when it is missing);
+ * a session the wrapper could not name (`--continue`, an id prefix, a name) by the run window.
+ * With no native transcript the run goes under the CodeMie id, the one its stored correlation names.
+ * A stored id that cannot name a session directory is no native id: the record is rewritten to the CodeMie id,
+ * since a SessionEnd under that id would read the id left on the record as another generation.
+ * Throws when the lookup could not conclude.
+ */
+async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: string; native?: string }> {
+  const { SessionStore } = await import('../../core/session/SessionStore.js');
+  const store = new SessionStore();
+  const record = await store.loadSession(sessionId);
+  const storedId = record?.correlation?.agentSessionId;
+  if (record && storedId && !isNativeIdSegment(storedId)) {
+    record.correlation = { ...record.correlation, agentSessionId: sessionId };
+    await store.saveSession(record);
+  }
+  const runSessionId = isNativeIdSegment(storedId) ? storedId : sessionId;
+  const pinned = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId;
+  if (pinned || runSessionId !== sessionId || !record) {
+    if (record) assertSessionStateListable(record);
+    const eventsFile = join(getCopilotSessionStateRoot(record?.agentHome), runSessionId, 'events.jsonl');
+    return transcriptExists(eventsFile) ? { runSessionId, native: eventsFile } : { runSessionId: sessionId };
+  }
+  const [native] = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).locateTranscript(record);
+  return { runSessionId, native };
+}
+
+/**
+ * Stores the run's exit reason on its still active record before anything can stop the close: a thrown lookup or
+ * read, or a session file lock timeout, which throws nothing and leaves the record active. The synthetic end that
+ * closes such a record later ends with it; a SessionEnd that closes the record writes the same reason itself. Nothing
+ * else reads it on an active record. A failure here is only logged: the SessionEnd goes on as it would without it.
+ */
+async function keepExitReason(sessionId: string, reason: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../core/session/SessionStore.js');
+    const store = new SessionStore();
+    const record = await store.loadSession(sessionId);
+    if (record?.status === 'active') await store.saveSession({ ...record, reason });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`[copilot-cli] Could not keep the exit reason of session ${sessionId}: ${message}`);
+  }
+}
+
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
   return {
     agentName: env.CODEMIE_AGENT || COPILOT_CLI_AGENT_NAME,
@@ -43,6 +115,8 @@ function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: COPILOT_CLI_CLIENT_TYPE,
+    rethrowFlushFailure: true,
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -155,17 +229,16 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
       try {
         const { processEvent } = await import('../../../cli/commands/hook.js');
-        await processEvent(
-          {
-            hook_event_name: 'SessionStart',
-            session_id: sessionId,
-            transcript_path: '',
-            permission_mode: 'default',
-            cwd: process.cwd(),
-            source: 'startup',
-          },
-          buildCopilotHookConfig(env, sessionId)
-        );
+        const start: SessionStartEvent = {
+          hook_event_name: 'SessionStart',
+          session_id: runSessionIdOf(sessionId, env),
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          source: 'startup',
+          agent_home: resolve(process.cwd(), getCopilotHome(env)),
+        };
+        await processEvent(start, buildCopilotHookConfig(env, sessionId));
         logger.info(`[copilot-cli] SessionStart hook completed for session ${sessionId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -223,6 +296,20 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         enriched.push('--model', process.env.CODEMIE_MODEL);
       }
 
+      // Pin the native Copilot session UUID to the CodeMie session ID so the native
+      // transcript is known exactly instead of being guessed afterwards. Never override a
+      // session the user selected (resume/continue/connect/explicit id).
+      const selectsSession = enriched.some((arg) =>
+        COPILOT_SESSION_SELECTION_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))
+      );
+      const codemieSessionId = process.env.CODEMIE_SESSION_ID;
+      if (codemieSessionId && !selectsSession) {
+        enriched.push('--session-id', codemieSessionId);
+        process.env[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
+      } else {
+        delete process.env[PINNED_NATIVE_SESSION_ENV];
+      }
+
       return enriched;
     },
     async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
@@ -232,26 +319,31 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         return;
       }
 
+      const reason = exitCode === 0 ? 'exit' : `exit(${exitCode})`;
       try {
-        const adapter = new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
-        const sessions = await adapter.discoverSessions({
-          maxAgeDays: 1,
-          limit: 1,
-          cwd: process.cwd(),
-        });
+        await keepExitReason(sessionId, reason);
 
-        const transcriptPath = sessions[0]?.filePath ?? '';
-        const agentSessionId = sessions[0]?.sessionId ?? sessionId;
+        // Native Copilot session events live under COPILOT_HOME, which may be a custom path.
+        if (env.COPILOT_HOME) process.env.COPILOT_HOME = env.COPILOT_HOME;
+
+        const { runSessionId, native } = await locateRunTranscript(sessionId);
+        // Must land before SessionEnd renames the record to completed_{id}.json.
+        if (native) {
+          await recordTranscriptCorrelation(sessionId, native);
+        } else {
+          logger.warn('[copilot-cli] No native Copilot transcript for this run; not correlated');
+          await recordNoTranscript(sessionId);
+        }
 
         const { processEvent } = await import('../../../cli/commands/hook.js');
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
-            session_id: agentSessionId,
-            transcript_path: transcriptPath,
+            session_id: runSessionId,
+            transcript_path: native ?? '',
             permission_mode: 'default',
             cwd: process.cwd(),
-            reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+            reason,
           },
           buildCopilotHookConfig(env, sessionId)
         );
@@ -276,6 +368,11 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
       this.sessionAdapter = new CopilotCliSessionAdapter(this.metadata);
     }
     return this.sessionAdapter;
+  }
+
+  /** The session the launch names in copilot's own forms: `-r <id>`, `--session-id <id>` / `--session-id=<id>`. */
+  extractNativeResumeId(args: string[]): string | undefined {
+    return flagValue(args, ['-r', '--session-id']);
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {

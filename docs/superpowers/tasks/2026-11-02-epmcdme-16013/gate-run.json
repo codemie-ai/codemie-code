@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16013",
+  "head": "15fca22c12bc079d8a530cb794c7a156b9eec0d2",
+  "runner": "npm",
+  "started_at": "2026-11-02T10:29:48Z",
+  "completed_at": "2026-11-02T10:35:33Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license", "source": "guide", "status": "PASS", "duration_ms": 7147, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 37944, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 15709, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 36561, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 129984, "command": "npx vitest run --project unit", "exit_code": 0, "notes": "393 files, 6401 passed, 2 skipped; CODEMIE_* env vars stripped"},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 67542, "command": "npx vitest run --project cli", "exit_code": 0, "notes": "37 files passed, 1 skipped; 283 tests passed, 10 skipped; CODEMIE_* env vars stripped"},
+    {"id": "commitlint", "source": "guide", "status": "PASS", "duration_ms": 3645, "command": "npm run commitlint:last", "exit_code": 0, "notes": "found 0 problems, 0 warnings"},
+    {"id": "secrets", "source": "hook", "status": "SKIPPED", "duration_ms": 4620, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Self-skip: 'No staged changes to scan'. Changes are already committed, so nothing was scanned. CI secrets-detection (reusable workflow) will scan for real; to run locally, stage the changes or run gitleaks directly on the commit range with Docker available."},
+    {"id": "lint-staged", "source": "hook", "status": "N/A", "command": "npx lint-staged", "notes": "pre-commit hook; no staged changes (work already committed). Equivalent lint and typecheck gates ran in full."},
+    {"id": "ci-secrets-detection", "source": "ci", "status": "N/A", "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml@main", "notes": "Remote reusable workflow; cannot be run locally."},
+    {"id": "ui", "source": "guide", "status": "N/A", "notes": "Diff does not touch UI globs."}
+  ],
+  "failures": {}
+}

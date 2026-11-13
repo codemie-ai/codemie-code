@@ -9,9 +9,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, rmSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import { dirname } from 'path';
 import { OpenCodeMetricsProcessor, countDiffLines } from '../opencode.metrics-processor.js';
-import { getSessionMetricsPath } from '../../../../../core/session/session-config.js';
+import { getSessionMetricsPath, getSessionPath } from '../../../../../core/session/session-config.js';
 import type { ParsedSession } from '../../../../../core/session/BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../../../core/session/BaseProcessor.js';
 import type { MetricDelta } from '../../../../../core/metrics/types.js';
@@ -84,10 +85,14 @@ function fileOps(deltas: MetricDelta[]): NonNullable<MetricDelta['fileOperations
 
 beforeEach(() => {
   sessionId = `test-oc-metrics-${Math.random().toString(36).slice(2)}`;
+  // The live record the metrics writer needs: its start time and its existence
+  mkdirSync(dirname(getSessionPath(sessionId)), { recursive: true });
+  writeFileSync(getSessionPath(sessionId), JSON.stringify({ sessionId, startTime: 0 }));
 });
 
 afterEach(() => {
   rmSync(getSessionMetricsPath(sessionId), { force: true });
+  rmSync(getSessionPath(sessionId), { force: true });
 });
 
 describe('countDiffLines', () => {

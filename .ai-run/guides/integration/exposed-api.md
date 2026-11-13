@@ -77,10 +77,10 @@ Plugin-extensible HTTP proxy that streams requests to an upstream API and runs p
 | `provider?` | `string` | e.g. `'ai-run-sso'` |
 | `sessionId?` | `string` | For traceability |
 
-**Request processing order**: build context → `onRequest` hooks → forward to upstream → `onResponseHeaders` hooks → stream chunks (`onResponseChunk`) → `onResponseComplete` hooks.
+**Request processing order**: build context → `onRequest` hooks → forward to upstream → `onResponseHeaders` hooks → stream chunks (`onResponseChunk`) → `onResponseStreamEnd` hooks (the bytes an interceptor still holds) → `onResponseComplete` hooks.
 
 **Plugin lifecycle hooks**:
-`onProxyStart` → `onRequest` → `onResponseHeaders` → `onResponseChunk` → `onResponseComplete` → `onProxyStop` / `onError`
+`onProxyStart` → `onRequest` → `onResponseHeaders` → `onResponseChunk` → `onResponseStreamEnd` → `onResponseComplete` → `onProxyStop` / `onError`
 
 | DO | DON'T |
 |----|-------|
@@ -113,7 +113,7 @@ interface ProxyPlugin {
 ```
 (`src/providers/plugins/sso/proxy/plugins/registry.ts:14`)
 
-**`ProxyInterceptor` hooks** (all optional): `onProxyStart`, `onRequest`, `onResponseHeaders`, `onResponseChunk`, `onResponseComplete`, `onProxyStop`, `onError`.
+**`ProxyInterceptor` hooks** (all optional): `onProxyStart`, `onRequest`, `onResponseHeaders`, `onResponseChunk` (may return `null` to hold a chunk back), `onResponseStreamEnd` (returns the bytes still held when the upstream stream ends), `onResponseComplete`, `onProxyStop`, `onError`.
 
 **`PluginContext` fields**: `config: ProxyConfig`, `logger`, `credentials?: SSOCredentials`, `profileConfig?`.
 
@@ -135,11 +135,11 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 | Event | Steps |
 |-------|-------|
 | `SessionStart` | Create session record → send start metrics → init activity tracking |
-| `SessionEnd` | Accumulate activity → transform messages → sync to API → send end metrics → rename files with `completed_` prefix |
+| `SessionEnd` | Under `{id}.reconcile.lock` (a hook process tries once and skips when held): accumulate activity → final flush of the transcript → mark `completed` (with `endTimeFromActivity`: end = last recorded activity, active time capped at it) → in a `codemie hook` process with reason `prompt_input_exit` / `logout`, a send path and a live wrapper (`CODEMIE_WRAPPER_PID`, pid check only) stop here: the wrapper's exit step sends the end metric, syncs and renames → otherwise send end metrics once (`endMetricSentAt` / `endMetricSkipped`) → sync to API → rename files with `completed_` prefix only when delivered (else `{id}.json` stays queued) |
 | `Stop` / `SubagentStop` | Accumulate duration → incremental sync |
 | `UserPromptSubmit` | Start activity tracking |
 
-**`BaseHookEvent` required fields**: `session_id`, `transcript_path`, `permission_mode`, `hook_event_name`. Optional per-event: `cwd`, `source` (SessionStart), `reason` (SessionEnd), `agent_id` / `agent_transcript_path` / `stop_hook_active` (SubagentStop).
+**`BaseHookEvent` required fields**: `session_id`, `transcript_path`, `permission_mode`, `hook_event_name`. Optional per-event: `cwd`, `source` (SessionStart), `reason`, `endTimeFromActivity`, `endTime` (SessionEnd), `agent_id` / `agent_transcript_path` / `stop_hook_active` (SubagentStop).
 
 **Behavior difference**:
 
@@ -170,7 +170,7 @@ Unified config loader with a fixed priority chain. Supports legacy single-provid
 **Config formats** (`src/utils/config.ts:29`):
 
 Legacy (v1): flat `{ provider, apiKey, model, baseUrl, ... }`.  
-Multi-provider (v2): `{ version: 2, activeProfile: string, profiles: Record<string, CodeMieConfigOptions>, analytics? }`.
+Multi-provider (v2): `{ version: 2, activeProfile: string, profiles: Record<string, CodeMieConfigOptions> }`.
 
 **Profile isolation**: when an explicit profile name is passed via CLI, env vars for `baseUrl`/`apiKey`/`model`/`provider` are filtered out to prevent contamination.
 
@@ -179,6 +179,24 @@ Multi-provider (v2): `{ version: 2, activeProfile: string, profiles: Record<stri
 | Use `loadAndValidate()` when required fields must exist | Use `load()` when validation is needed |
 | Use `ConfigLoader` for all config access | Read config files directly |
 | Use profile names for multi-provider config | Hardcode provider configuration |
+
+---
+
+## CLI entry: unattended scheduled runs
+
+`bin/codemie.js`, the CLI entry script, detects one invocation shape and skips its normal
+interactive startup for it: `<node> <realpath of bin/codemie.js> analytics sync run
+--scheduled`, the command the `codemie analytics sync install` OS job (launchd/systemd
+user timer/Task Scheduler) always runs. Detection (`isScheduledSyncRun`,
+`src/utils/scheduled-run.ts:20`) is a pure `argv` check: the contiguous tokens `analytics`,
+`sync`, `run`, with `--scheduled` anywhere after `run`.
+
+When detected, `bin/codemie.js` runs pending migrations with `silent: true`, and skips the
+CLI update check/prompt and the once-per-upgrade "what's new" notice — the job has no
+terminal and no user to notify. A manual `codemie analytics sync run` (no `--scheduled`)
+keeps today's normal interactive startup. See
+[ANALYTICS-REPORT.md](../../../docs/ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync)
+for the full `sync` command surface.
 
 ---
 

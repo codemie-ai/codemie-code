@@ -3,6 +3,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader } from '../../utils/config.js';
+import type { CodeMieConfigOptions, ProviderProfile } from '../../env/types.js';
 import { logger } from '../../utils/logger.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import {
@@ -16,6 +17,17 @@ import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
+
+/**
+ * Global profile record for a setup result. A subscription profile whose owner
+ * declined CodeMie analytics in this run (no CodeMie URL or project) is stored off
+ * CodeMie (`codeMieProject: null`), so it never falls back to the shared project.
+ */
+export function globalProfileFromSetup(providerName: string, config: Partial<CodeMieConfigOptions>): ProviderProfile {
+  const declinedCodeMie = ProviderRegistry.getProvider(providerName)?.customProperties?.canStayOffCodeMie === true
+    && !config.codeMieUrl && !config.codeMieProject;
+  return declinedCodeMie ? { ...(config as ProviderProfile), codeMieProject: null } : (config as ProviderProfile);
+}
 
 export function createSetupCommand(): Command {
   const command = new Command('setup');
@@ -341,8 +353,10 @@ async function handlePluginSetup(
           }
         }
       } else {
-        // Save to global ~/.codemie/ directory
-        await ConfigLoader.saveProfile(finalProfileName!, config as any);
+        // Save to global ~/.codemie/ directory. A subscription profile whose owner
+        // declined CodeMie analytics in this run is stored off CodeMie (`null`), so it
+        // never falls back to the shared project of another profile (EPMCDME-15411).
+        await ConfigLoader.saveProfile(finalProfileName!, globalProfileFromSetup(providerName, config));
         saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to global config`));
 
         // Switch to new profile if needed (for global configs)

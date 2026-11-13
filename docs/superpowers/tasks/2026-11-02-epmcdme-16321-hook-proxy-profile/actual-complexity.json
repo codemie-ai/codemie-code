@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-11-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Five proxy command modules changed together (daemon-manager record read/write/seed, connect-orchestrator ensureOtlpProxy cold start and SSO pre-check, launch-daemon, restart, proxy index), all inside one CLI subsystem with no new abstraction layer." },
+    { "dimension": "technical_risk", "reason": "New persisted proxy-connection.json with atomic tmp+rename writes, tolerant parsing, and a hook cold-start path that must never write to stdout or exit. Race handling between hook cold start and restart, plus daemon lifecycle and port rebinding, has no exact precedent. No secrets are stored in the record. Edge cases are covered by the added unit and integration tests." },
+    { "dimension": "file_change_estimate", "reason": "12 files changed per diffstat (XL band 11-15), all modified, none new. Only 5 are production source; 5 are tests and 2 are docs. +1388/-111 lines." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

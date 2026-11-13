@@ -1,0 +1,23 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 resolved: the guard now trims before checking (`if (!config.baseUrl?.trim()) return;`), so a whitespace-only baseUrl is correctly treated as unconfigured. A new test case covers it and passes. Narrow blind+edge-case confirmation pass on the fix-up diff alone found no new high-risk issue.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "Missing or empty baseUrl is detected before daemon startup", "status": "pass", "notes": "connect-orchestrator.ts: guard placed before daemonConfig/ensureDaemon"},
+    {"kind": "story-ac", "item": "No daemon process is spawned", "status": "pass", "notes": "Early return occurs before ensureDaemon()/spawnDaemon(); asserted by new tests"},
+    {"kind": "story-ac", "item": "No daemon state file is created", "status": "pass", "notes": "readState() is read-only; no write occurs before the early return on the missing-baseUrl path"},
+    {"kind": "story-ac", "item": "Hook returns code 0", "status": "pass", "notes": "ensureOtlpProxy resolves without throwing; verified via resolves.toBeUndefined() in new tests"},
+    {"kind": "story-ac", "item": "No user-facing startup failure is produced", "status": "pass", "notes": "Guard only returns; no console.error/throw/ConfigurationError introduced"},
+    {"kind": "story-ac", "item": "A profile with a valid baseUrl continues to cold-start normally", "status": "pass", "notes": "Truthy, non-whitespace baseUrl falls through unchanged; covered by the 'still cold-starts normally' test"},
+    {"kind": "spec", "item": "Fix must not touch/build on/be committed with pre-existing TEMP LOCAL-DEV OVERRIDE scratch edits", "status": "pass", "notes": "Both commits (guard + trim fix-up) stage only the baseUrl-guard hunks via git add -p; scratch overrides remain uncommitted and untouched in the working tree"}
+  ],
+  "standards_review": [
+    {"guide": ".ai-run/guides/standards/git-workflow.md", "check": "Conventional Commits format", "status": "pass", "notes": "Commit subject 'fix(proxy): treat a whitespace-only baseUrl as unconfigured' matches <type>(<scope>): <subject>"},
+    {"guide": ".ai-run/guides/development/security-patterns.md", "check": "security checklist", "status": "na", "notes": "Guide not present in repo; no concrete security issue identified"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "Guard now trims before the falsy check; whitespace-only baseUrl correctly treated as unconfigured, confirmed by new test and the fix-up confirmation pass"}
+  ]
+}

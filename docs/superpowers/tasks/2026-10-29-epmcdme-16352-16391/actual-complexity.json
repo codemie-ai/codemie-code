@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Fork-skill detection, orchestrator, parse-state, subagent-usage deferral, plugin and claude-named-invocations touched within the claude-code-otlp transcript pipeline." },
+    { "dimension": "technical_risk", "reason": "Heuristic marker-less fork recognition with pending/deferral state and many edge cases (unidentified/completed Agent calls, concurrent agents); no exact precedent. Estimated from the file list and commit history, not a diff read." },
+    { "dimension": "file_change_estimate", "reason": "11 files changed (1029 insertions), about half of them tests and docs, concentrated in one plugin directory." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

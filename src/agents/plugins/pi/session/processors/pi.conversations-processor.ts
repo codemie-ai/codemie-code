@@ -19,7 +19,9 @@
  * in the file forever; only the active branch is uploaded.
  */
 
-import { appendFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
+
 import { dirname } from 'path';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
@@ -27,7 +29,7 @@ import type { ConversationPayloadRecord } from '@/providers/plugins/sso/session/
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import { CODEMIE_ASSISTANT_ID } from '@/providers/plugins/sso/session/processors/conversations/constants.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 import { logger } from '@/utils/logger.js';
 import {
   extractPiToolCalls,
@@ -124,7 +126,7 @@ export class PiConversationsProcessor implements SessionProcessor {
     return session.messages.length > 0;
   }
 
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       const metadata = session.metadata as { agentSessionId?: string; createdAt?: string } | undefined;
 
@@ -165,7 +167,10 @@ export class PiConversationsProcessor implements SessionProcessor {
       }
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+      const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(
+        conversationsPath,
+        `[${PI_CONVERSATIONS_PROCESSOR_NAME}]`
+      );
       const syncedSourceIndex = await this.resolveSyncedSourceIndex(
         session.sessionId,
         conversationId,
@@ -184,6 +189,8 @@ export class PiConversationsProcessor implements SessionProcessor {
         syncedSourceIndex,
         conversationId,
         conversationsPath,
+        sessionId: session.sessionId,
+        context,
         queuedSentinels,
         llmModel,
       });
@@ -274,6 +281,8 @@ export class PiConversationsProcessor implements SessionProcessor {
     syncedSourceIndex: number;
     conversationId: string;
     conversationsPath: string;
+    sessionId: string;
+    context: ProcessingContext;
     queuedSentinels: Set<string>;
     llmModel?: string;
   }): Promise<{
@@ -284,7 +293,7 @@ export class PiConversationsProcessor implements SessionProcessor {
     lastSentinel?: string;
     lastHistoryIndex?: number;
   }> {
-    const { events, conversationId, conversationsPath, queuedSentinels, llmModel } = options;
+    const { events, conversationId, conversationsPath, sessionId, context, queuedSentinels, llmModel } = options;
     let cursorSourceIndex = options.syncedSourceIndex;
 
     let payloads = 0;
@@ -352,7 +361,11 @@ export class PiConversationsProcessor implements SessionProcessor {
           status: CONVERSATION_SYNC_STATUS.PENDING,
         };
 
-        await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n', 'utf-8');
+        const appended = await appendSessionFile('conversation', sessionId, JSON.stringify(payloadRecord) + '\n', context);
+        if (!appended) {
+          logger.warn(`[pi-conversations] Turn ${sentinel} write dropped, will retry on the next pass`);
+          break;
+        }
         queuedSentinels.add(sentinel);
 
         payloads += 1;

@@ -1,0 +1,322 @@
+{
+  "decision": "approve",
+  "rationale": "All 9 blocking findings are resolved: CR-005, CR-006 and CR-007 by source and tests read at HEAD 9fa3f17b, the other six by recorded decisions with rationale. Confidence is medium because those decisions leave work open: the security sign-off for CR-001 is still a pre-merge step, and CR-002 and CR-004 keep behavior the EPMCDME-16545 criteria still mark partial without amending them. The npm run ci record names reviewed_head 522954bb rather than HEAD, so it was not used as proof and this round ran no commands.",
+  "confidence": "medium",
+  "risk_flags": [
+    "security",
+    "breaking-change"
+  ],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16542: a Desktop session finalized by inactivity has endTime equal to its last activity timestamp",
+      "status": "pass",
+      "notes": "finalizeInactive passes tracked activity; finalizeLocked uses desktopEndTime"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16542: unit test covers inactivity finalization timing",
+      "status": "pass",
+      "notes": "test asserts endTime, duration and end-metric end_time"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16545: an undelivered end metric is persisted and re-delivered when connectivity returns",
+      "status": "pass",
+      "notes": "saved completed before send; the 10-minute uncounted pass re-delivers"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16545: a failed end-metric delivery is retried after connectivity is restored, including after a daemon restart",
+      "status": "partial",
+      "notes": "at deliveryAttempts 3 the next start renames the record unsent without trying; see CR-002"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16545: the end metric is delivered exactly once",
+      "status": "partial",
+      "notes": "a process cut between the server's 200 and the save re-sends it; see CR-004"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16248: a session that switched folder is priced from its transcript in codemie analytics",
+      "status": "pass",
+      "notes": "retrackSession updates agentSessionFile; recordTranscriptPath falls back to the checkpoint path"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16248: a session that switched folder is attributed to the folder where the work happened",
+      "status": "pass",
+      "notes": "retrackSession re-detects attribution; relies on Desktop rewriting originCwd, reported as checked live"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: inactivity, daemon stop, start-up scan and legacy close end a record at its last activity, else last discovery, else start",
+      "status": "pass",
+      "notes": "all four paths use desktopEndTime"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: end metric carries the end time and the duration from the start, or from the resumed stretch start",
+      "status": "pass",
+      "notes": "sendSessionEndMetric passes endTime and endTime minus stretch start"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a CLI start that finds a dead daemon's record closes it at that same last activity",
+      "status": "pass",
+      "notes": "closeWithoutAttempt uses desktopEndTime"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a record is saved completed with its attempt counted before any send; a failed send is logged and the record stays {id}.json",
+      "status": "pass",
+      "notes": "deliverLocked saves attempts + 1 first and catches sync and metric failures"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: undelivered owned records are delivered on every daemon start (counted, at most 3) and every 10 minutes (not counted)",
+      "status": "pass",
+      "notes": "reconcileRecords(true) from start, reconcileRecords(false) from startRedeliveryIfDue"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: end metric sent once via endMetricSentAt; files renamed completed_* only when sent or skipped and nothing is pending",
+      "status": "pass",
+      "notes": "guard in sendSessionEndMetric; renameToCompleted gates on isDeliveryDone"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the 10-minute pass runs outside the poll so polling continues during a long outage",
+      "status": "pass",
+      "notes": "startRedeliveryIfDue does not await the pass and starts no second one"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a counted attempt needs stored SSO cookies and auth not marked invalid; otherwise saved, flushed locally, nothing sent",
+      "status": "pass",
+      "notes": "canDeliver gate precedes the counter and the cap"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a send answered with rejected credentials gives its attempt back and marks the auth invalid",
+      "status": "pass",
+      "notes": "settleAttempt restores the counter; canDeliver reads the mark"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: an active record whose owner daemon is gone is finalized desktop-daemon-restart at its last activity and delivered",
+      "status": "pass",
+      "notes": "classifyRecord returns restart; reconcileRecord calls finalizeLocked"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a record a CLI start closed as desktop-daemon-gone is flushed once per delivery and delivered",
+      "status": "pass",
+      "notes": "flush keyed on the reason in reconcileRecord"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: ownerless records are never re-delivered; one idle past 72 h is closed locally as interrupted, nothing sent",
+      "status": "pass",
+      "notes": "completed branch requires ownerPid; legacy branch uses LEGACY_IDLE_MS"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a record stores codemieUrl; a daemon of another host never delivers it",
+      "status": "pass",
+      "notes": "isForeignRecord used in classifyRecord, indexSessions and retrackUnderLock"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the index is built before the start-up pass; if it fails at start, the first poll builds it after the pass",
+      "status": "pass",
+      "notes": "start() order and poll's await of startupPass"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: new activity reopens the same record: completed_* restored to one live set, end state cleared, running daemon becomes owner",
+      "status": "pass",
+      "notes": "reopenCompleted and restoreCompletedFiles, .json moved last"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a completed_* metrics or conversation file beside a live record is merged in front of live lines; a record file is left",
+      "status": "pass",
+      "notes": "completed-files.ts merge branch and the .json continue"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the reopened stretch's end metric reports that stretch alone; an unsent earlier stretch is kept in the next end metric",
+      "status": "pass",
+      "notes": "stretchStartTime set only when endMetricLeft; startTime untouched"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a reopen and a delivery never interleave; a lock held past budget raises ReconcileLockHeldError, retried at next poll",
+      "status": "pass",
+      "notes": "both paths take reconcileLockPath"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: an ownerless completed record reopens into a new stretch and is stamped with this daemon's host",
+      "status": "pass",
+      "notes": "endMetricLeft true without an owner; codemieUrl ??= credentialsUrl"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a tracked session whose transcript path or folder changed takes the new attribution; sync index and fingerprint kept",
+      "status": "pass",
+      "notes": "retrackSession; setRuntimeCheckpoint spreads the existing checkpoint"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: analytics loader and cost enricher use the last seen transcript; native loader treats both paths as CodeMie's own",
+      "status": "pass",
+      "notes": "recordTranscriptPath; recordTranscriptPaths; the runtime no longer writes differing paths, see CR-008"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: after a switch the end metric and later deltas carry the new attribution; proxied model request headers unchanged",
+      "status": "pass",
+      "notes": "sendSessionEnd uses the new values; header injection is not in the diff"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the attribution change requires security-review sign-off before merge",
+      "status": "partial",
+      "notes": "nothing in the diff or the spec evidences the sign-off; see CR-001"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: state startedAt is the daemon process start",
+      "status": "pass",
+      "notes": "proxy-daemon.ts writes daemonStartedAt()"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a daemon counts as running when kill(pid, 0) succeeds and real start is no later than recorded start + 60 s",
+      "status": "pass",
+      "notes": "isDaemonPidAlive, isDaemonAlive, one-sided comparison in isOwnerAlive"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a live pid failing the start check still counts if the shallow /health reports that port and pid",
+      "status": "pass",
+      "notes": "answersOnOwnPort; pid added in sso.proxy.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: stop wait loops check the pid only",
+      "status": "pass",
+      "notes": "stopDaemon loops use isDaemonPidAlive"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the daemon writes its state before the Desktop runtime starts",
+      "status": "pass",
+      "notes": "telemetryRuntime.start() runs after persistState"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: daemon and CLI write the state through a temp file named after their own pid",
+      "status": "pass",
+      "notes": "persistState and writeState"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: one failing session no longer stops start(), a poll, the inactivity pass or stop(); a failed start metric is logged",
+      "status": "pass",
+      "notes": "per-session try/catch in each loop"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a reopen whose lock wait fails holds the discovery window back so the next poll re-reads it",
+      "status": "pass",
+      "notes": "reopenLockFailed keeps lastPollAt; side effect in CR-006"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the Desktop runtime is split into DesktopSessionMetrics, DesktopSessionDelivery, completed-files.ts and desktop-session.ts",
+      "status": "pass",
+      "notes": "all four files added"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: docs updated: ARCHITECTURE-PROXY.md and ANALYTICS-REPORT.md",
+      "status": "pass",
+      "notes": "both updated in the diff"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: npm run ci is green (license, lint, build, unit, cli)",
+      "status": "pending-stage-7",
+      "notes": "PR reports green; execution evidence belongs to Stage 7"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "3 non-merge subjects match type(scope): subject, imperative, under 100 chars; merge subjects exempt by commitlint; subject only adjudicated; issue reference in body met only by 88e003f6"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Met: return types, .js imports, typed errors, no console.log. Unmet: kebab-case file naming (2 new files), under-500-line limit (5 files past or further past it), JSDoc on 5 new declarations"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "Met: no header/JWT change, no hardcoded secrets, logs sanitized, cookies never logged. Unmet: state file with gatewayKey has no 0o600 mode; record transcript paths not validated; /health adds pid"
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: the sign-off stays a reviewer step on the PR. The sign-off itself is not evidenced and remains open before merge."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: the 3-attempt cap stands. The finding asked to amend the ticket criterion if so; no amendment is recorded."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: both file names stay, matching their parent module."
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: at-least-once stands. The finding asked to amend the criterion if so; no amendment is recorded."
+    },
+    {
+      "id": "CR-005",
+      "status": "resolved",
+      "notes": "DesktopTelemetryRuntime.test.ts:877 touches with no transcript write, stops, then asserts desktop-daemon-stop and the in-memory end time on the record and the END metric."
+    },
+    {
+      "id": "CR-006",
+      "status": "resolved",
+      "notes": "retrackSession returns 'idle' through hasActivityAfter before reopening (DesktopTelemetryRuntime.ts:404); pollSession leaves it untracked; test at line 1919 covers it."
+    },
+    {
+      "id": "CR-007",
+      "status": "resolved",
+      "notes": "DesktopTelemetryRuntime.test.ts:534-536 asserts the owner on the first save and on disk after the first poll of a new chat."
+    },
+    {
+      "id": "CR-008",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: a live capture shows Desktop moves the transcript, so no old file remains. native-loader.ts:84 docstring matches it."
+    },
+    {
+      "id": "CR-009",
+      "status": "resolved",
+      "notes": "Decision recorded with rationale: any discovered working directory change is a switch; no capture shows the metadata tiers differing."
+    }
+  ]
+}

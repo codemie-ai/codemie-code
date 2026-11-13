@@ -120,3 +120,37 @@ function transformSingleFlag(mapping: FlagMapping, value: string): string[] {
       return [value];
   }
 }
+
+/**
+ * The value of the first of `flags` in `args` before a bare `--`, as `<flag> <value>` or
+ * `<flag>=<value>`; undefined when absent or followed by another flag.
+ */
+export function flagValue(allArgs: string[], flags: string[]): string | undefined {
+  const args = argsBeforeSeparator(allArgs);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (flags.includes(arg)) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith('-')) return next;
+      continue;
+    }
+    const flag = flags.find((name) => arg.startsWith(`${name}=`));
+    if (flag) return arg.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+/**
+ * Whether one of the boolean `flags` is set among `args` before a bare `--` (as `<flag>` or
+ * `<flag>=true`; `<flag>=false` is not); everything after it is the prompt or other positional
+ * text, never a flag.
+ */
+export function hasFlagBeforeSeparator(args: string[], flags: string[]): boolean {
+  return argsBeforeSeparator(args).some((arg) => flags.some((flag) => arg === flag || arg === `${flag}=true`));
+}
+
+/** The arguments before a bare `--`: everything after it is positional text, never a flag. */
+function argsBeforeSeparator(args: string[]): string[] {
+  const end = args.indexOf('--');
+  return end === -1 ? args : args.slice(0, end);
+}

@@ -24,7 +24,6 @@
 - multi-provider ai
 
 ## Technical Keywords
-- langgraph agent
 - langchain cli
 - openai cli tool
 - claude anthropic cli
@@ -143,7 +142,6 @@
 - autonomous coding
 - agentic workflow
 - multi agent system
-- langgraph applications
 - langchain ecosystem
 - conversational coding
 - context aware ai

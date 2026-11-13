@@ -43,6 +43,7 @@ vi.mock('../../../utils/logger.js', () => ({
 vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+  wrapperOwnerFromEnv: vi.fn(() => ({})),
 }));
 
 // Mock processEvent from hook.js
@@ -80,12 +81,12 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
 }));
 
 // Mock OpenCodeSessionAdapter
-const { mockDiscoverSessions } = vi.hoisted(() => ({
-  mockDiscoverSessions: vi.fn(),
+const { mockLocateSessionTranscript } = vi.hoisted(() => ({
+  mockLocateSessionTranscript: vi.fn(),
 }));
 vi.mock('../opencode/opencode.session.js', () => ({
   OpenCodeSessionAdapter: vi.fn(function () {
-    return { discoverSessions: mockDiscoverSessions };
+    return { locateSessionTranscript: mockLocateSessionTranscript };
   }),
 }));
 
@@ -136,7 +137,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDiscoverSessions.mockResolvedValue([]);
+    mockLocateSessionTranscript.mockResolvedValue(undefined);
     mockProcessEvent.mockResolvedValue(undefined);
   });
 
@@ -252,6 +253,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
       await onSessionEnd(0, env);
 
+      expect(mockProcessEvent).toHaveBeenCalled();
       expect(mockCleanupReasoningSanitizer).toHaveBeenCalled();
     });
 

@@ -14,38 +14,9 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
+import { extractMessageText, type GeminiContent } from '../utils/message-text.js';
 import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
-
-/**
- * Strip <session_context>...</session_context> blocks and trim the result.
- */
-function filterSessionContext(text: string): string | null {
-  const cleaned = text.replace(/<session_context>[\s\S]*?<\/session_context>/gi, '').trim();
-  return cleaned || null;
-}
-
-/**
- * Extract user prompt text from varied content formats.
- */
-function extractPromptText(content: unknown): string | null {
-  if (typeof content === 'string') {
-    return filterSessionContext(content);
-  }
-  if (Array.isArray(content)) {
-    const textParts = content
-      .map((part) => {
-        if (part && typeof part === 'object' && typeof part.text === 'string') {
-          return part.text;
-        }
-        return '';
-      })
-      .filter(Boolean);
-    if (textParts.length > 0) {
-      return filterSessionContext(textParts.join('\n'));
-    }
-  }
-  return null;
-}
 
 /**
  * Gemini message structure (from gemini.session-adapter.ts)
@@ -54,7 +25,7 @@ interface GeminiMessage {
   id: string;
   timestamp: string;
   type: 'user' | 'gemini';
-  content: string;
+  content: GeminiContent;
   toolCalls?: Array<{
     id: string;
     name: string;
@@ -100,12 +71,12 @@ export class GeminiMetricsProcessor implements SessionProcessor {
    */
   private async processMessages(
     session: ParsedSession,
-    _context: ProcessingContext
+    context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
-      const deltas = this.transformMessagesToDeltas(session, _context);
+      const deltas = this.transformMessagesToDeltas(session, context);
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -115,16 +86,18 @@ export class GeminiMetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
       }
 
-      logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+      logger.info(`[${this.name}] Generated ${deltas.length} deltas, wrote ${appended.written}`);
 
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: deltas.length }
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
+        metadata: { recordsProcessed: appended.written, deltasWritten: appended.written }
       };
 
     } catch (error) {
@@ -153,7 +126,7 @@ export class GeminiMetricsProcessor implements SessionProcessor {
     for (const msg of messages) {
       // Track user prompts
       if (msg.type === 'user') {
-        lastUserPrompt = extractPromptText(msg.content);
+        lastUserPrompt = extractMessageText(msg.content);
         continue; // User messages don't generate deltas
       }
 

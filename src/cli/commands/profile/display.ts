@@ -5,7 +5,7 @@
  */
 
 import chalk from 'chalk';
-import type { CodeMieConfigOptions } from '../../../env/types.js';
+import type { ProviderProfile } from '../../../env/types.js';
 import type { AuthStatus } from '../../../providers/core/types.js';
 import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
 
@@ -15,8 +15,18 @@ import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profil
 export interface ProfileInfo {
   name: string;
   active: boolean;
-  profile: CodeMieConfigOptions;
+  profile: ProviderProfile;
   source?: 'local' | 'global';
+}
+
+/**
+ * Resolved CodeMie identity of a profile for display: URL and the project text
+ * with its binding state (see describeProjectBinding()). `project` undefined
+ * means no Project line (providers without a CodeMie project).
+ */
+export interface ProfileIdentityDisplay {
+  codeMieUrl?: string;
+  project?: string;
 }
 
 
@@ -30,14 +40,15 @@ export class ProfileDisplay {
    * @param info - Profile information
    * @returns Formatted string
    */
-  static format(info: ProfileInfo, workspaceCodeMieUrl?: string): string {
+  static format(info: ProfileInfo, identity: ProfileIdentityDisplay = {}): string {
     const { name, active, profile, source } = info;
 
     const baseInfo = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
+      codeMieUrl: identity.codeMieUrl,
+      project: identity.project,
       isActive: active
     });
 
@@ -56,11 +67,13 @@ export class ProfileDisplay {
    * Display list of profiles
    *
    * @param profiles - Array of profile information
-   * @param workspaceCodeMieUrls - Workspace codeMieUrl for local and for global profiles
+   * @param identities - Resolved identity per profile name: each profile resolves
+   *   its own URL and project, since two global profiles can target different
+   *   CodeMie environments and projects
    */
   static formatList(
     profiles: ProfileInfo[],
-    workspaceCodeMieUrls: { local?: string; global?: string } = {}
+    identities: Map<string, ProfileIdentityDisplay> = new Map()
   ): void {
     if (profiles.length === 0) {
       console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
@@ -70,10 +83,7 @@ export class ProfileDisplay {
     console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
     profiles.forEach((profile, index) => {
-      const workspaceCodeMieUrl = profile.source === 'local'
-        ? workspaceCodeMieUrls.local
-        : workspaceCodeMieUrls.global;
-      const formatted = this.format(profile, workspaceCodeMieUrl);
+      const formatted = this.format(profile, identities.get(profile.name));
       console.log(formatted);
 
       // Add separator between profiles except for the last one
@@ -100,7 +110,7 @@ export class ProfileDisplay {
    * @param info - Profile information
    * @param authStatus - Authentication status (optional)
    */
-  static formatStatus(info: ProfileInfo, authStatus?: AuthStatus, workspaceCodeMieUrl?: string): void {
+  static formatStatus(info: ProfileInfo, authStatus?: AuthStatus, identity: ProfileIdentityDisplay = {}): void {
     console.log(chalk.bold.cyan('\n📋 Profile Status:\n'));
 
     const { name, active, profile } = info;
@@ -118,7 +128,8 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
+      codeMieUrl: identity.codeMieUrl,
+      project: identity.project,
       authStatus: authStatusDisplay,
       isActive: active
     });

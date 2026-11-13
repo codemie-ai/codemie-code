@@ -2,11 +2,23 @@ import {
   getAnalyticsPlatformSource,
   getPlatformUrl,
   getStoredAnalyticsCredentials,
+  type PlatformUrlSource,
 } from '@/providers/core/codemie-auth-helpers.js';
-import { getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { startDetachedSsoLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
+import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
+import {
+  describeLogin,
+  getLastSignInAt,
+  SSO_LOGIN_WAIT_MS,
+  startDetachedSsoLogin,
+  waitForDetachedSsoLogin,
+  type DetachedLoginOutcome,
+  type LoginWaitResult,
+} from '@/providers/plugins/sso/sso.detached-login.js';
 import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
+
+/** Shortest wait worth holding a prompt for; below it the gate blocks with re-send guidance at once. */
+export const MIN_LOGIN_WAIT_MS = 30_000;
 
 export interface AuthGateInput {
   provider?: string;
@@ -22,7 +34,7 @@ export interface AuthGateInput {
 
 export type AuthGateResult =
   | { ok: true }
-  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined };
+  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined; waitResult?: LoginWaitResult };
 
 /**
  * The analytics-auth-status marker is a single global file, written by multiple profiles'
@@ -36,18 +48,72 @@ export type AuthGateResult =
  * of baseUrl/syncApiUrl/loginUrl. No candidate resolved at all (e.g. no SSO configured) ⇒ treat
  * the marker as still applicable rather than silently ignore a real problem.
  */
-function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrls: Array<string | undefined>): boolean {
+export function markerAppliesToProfile(
+  marker: AnalyticsAuthStatus,
+  candidateUrls: Array<string | undefined>,
+  requireUrlMatch = false
+): boolean {
   if (!marker.baseUrl) {
     // Old/malformed marker with no key of its own — treat as matching rather than silently
     // ignore a real problem it might still be reporting.
-    return true;
+    return !requireUrlMatch;
   }
   const known = candidateUrls.filter((u): u is string => Boolean(u));
   if (known.length === 0) {
-    return true;
+    return !requireUrlMatch;
   }
   const normalizedMarkerUrl = normalizeUrlForKey(marker.baseUrl);
   return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
+}
+
+export function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): boolean {
+  return signedInAt !== null && Number.isFinite(marker.detectedAt) && marker.detectedAt < signedInAt;
+}
+
+/**
+ * Read-only view of the marker for status commands: it must match the profile's URLs and must not
+ * predate the latest sign-in for `source`. Unlike the gate it never clears an outdated marker, and it
+ * is stricter: a marker with no URL, or a profile with no known URL, is not attributed to this profile,
+ * so another profile's failure is never reported as this one's.
+ */
+export async function applicableAuthMarker(
+  source: PlatformUrlSource,
+  candidateUrls: Array<string | undefined>
+): Promise<AnalyticsAuthStatus | null> {
+  const marker = await getAnalyticsAuthStatus();
+  if (!marker || !markerAppliesToProfile(marker, candidateUrls, true)) {
+    return null;
+  }
+  return isOlderThan(marker, await getLastSignInAt(source)) ? null : marker;
+}
+
+/**
+ * A marker detected before the latest completed sign-in describes credentials that sign-in has
+ * since replaced, so it is cleared instead of blocking the prompt and opening another browser.
+ * The sign-in time is read first and the marker is re-read after it, with nothing awaited between
+ * that re-read and the clear; the clear is also tied to the re-read marker's detection time, so a
+ * marker written in between (a genuine rejection after the sign-in) is kept and never deleted
+ * unexamined. Returns the marker that still applies, or null when none does.
+ */
+async function dropMarkerOlderThanSignIn(
+  marker: AnalyticsAuthStatus,
+  source: PlatformUrlSource,
+  candidateUrls: Array<string | undefined>
+): Promise<AnalyticsAuthStatus | null> {
+  const signedInAt = await getLastSignInAt(source);
+  if (!isOlderThan(marker, signedInAt)) {
+    return marker;
+  }
+  const current = await getAnalyticsAuthStatus();
+  if (!current || !markerAppliesToProfile(current, candidateUrls)) {
+    return null;
+  }
+  if (!isOlderThan(current, signedInAt)) {
+    return current;
+  }
+  await clearAnalyticsAuthStatus({ ifDetectedAt: current.detectedAt });
+  logger.debug('[sso-auth-gate] Cleared an auth-status marker older than the last sign-in');
+  return null;
 }
 
 /**
@@ -90,9 +156,11 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     }
 
     const rawAuthStatus = await getAnalyticsAuthStatus();
-    const authStatus = rawAuthStatus && markerAppliesToProfile(rawAuthStatus, [input.baseUrl, input.syncApiUrl, loginUrl])
-      ? rawAuthStatus
-      : null;
+    const candidateUrls = [input.baseUrl, input.syncApiUrl, loginUrl];
+    let authStatus = rawAuthStatus && markerAppliesToProfile(rawAuthStatus, candidateUrls) ? rawAuthStatus : null;
+    if (authStatus && hasValidAuth && !input.apiKey) {
+      authStatus = await dropMarkerOlderThanSignIn(authStatus, source, candidateUrls);
+    }
 
     if (hasValidAuth && !authStatus) {
       return { ok: true };
@@ -104,6 +172,10 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
 
     if (!input.apiKey && loginUrl) {
       loginOutcome = await startDetachedSsoLogin(loginUrl);
+    } else if (input.provider === 'ai-run-sso' || !input.apiKey) {
+      // SSO credential problem with no sign-in started (no login URL, or SSO provider with a key):
+      // 'failed' makes describeLogin point at `codemie profile login`, not the API-key text.
+      loginOutcome = 'failed';
     }
 
     return { ok: false, reason, loginOutcome };
@@ -111,4 +183,30 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     logger.debug('[sso-auth-gate] Auth gate check failed:', error);
     return { ok: false, reason: 'CodeMie SSO auth gate check failed unexpectedly', loginOutcome };
   }
+}
+
+/**
+ * Like ensureCodeMieSsoAuth, but when the gate started (or found) a browser sign-in, waits for it
+ * and re-checks once, so a hook that can hold the prompt lets it through without a resubmit.
+ * Never waits for other failures (api key, cooldown, failed start, unexpected gate error).
+ */
+export async function ensureCodeMieSsoAuthOrWait(
+  input: AuthGateInput,
+  opts: { waitMs?: number; onWaitStart?: (message: string) => void } = {}
+): Promise<AuthGateResult> {
+  const first = await ensureCodeMieSsoAuth(input);
+  const waitMs = opts.waitMs ?? SSO_LOGIN_WAIT_MS;
+  // Too short a wait rarely outlasts a sign-in, so keep the manual re-send text instead of promising auto-continue.
+  if (first.ok || waitMs < MIN_LOGIN_WAIT_MS || (first.loginOutcome !== 'started' && first.loginOutcome !== 'in-progress')) {
+    return first;
+  }
+
+  opts.onWaitStart?.(describeLogin(first.loginOutcome, { resume: 'auto' }));
+  const waitResult = await waitForDetachedSsoLogin({ timeoutMs: waitMs });
+  if (waitResult.status !== 'succeeded') {
+    return { ...first, waitResult };
+  }
+  // The lock may have been released by another profile's login, so success still needs a re-check.
+  const recheck = await ensureCodeMieSsoAuth(input);
+  return recheck.ok ? recheck : { ...recheck, waitResult };
 }

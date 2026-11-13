@@ -26,6 +26,8 @@ import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
+import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
+import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -66,6 +68,51 @@ const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
  * conservative values, and either variable set explicitly in the environment still wins everywhere.
  */
 const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
+
+/**
+ * Providers whose gateway cannot carry auto mode's server-side classifier review: the
+ * `safeguards` request field and the `safeguard_results` response field.
+ *
+ * `ai-run-sso` goes through the CodeMie backend to LiteLLM's unified `/v1/messages`, which drops
+ * `safeguards` before v1.99.3 and, on any version, never returns `safeguard_results` from
+ * `bedrock_converse` deployments. Claude Code then falls back to its own (billed) classifier
+ * requests and shows an "isn't eligible" notice that blocks the first checked action until the
+ * user answers it.
+ *
+ * Every other provider is left alone: direct connections (anthropic-subscription, bedrock)
+ * support server review, and a user-run `litellm` gateway may be a version that passes the
+ * contract through. Remove a provider from this set once its gateway does.
+ * https://code.claude.com/docs/en/auto-mode-classifier-billing
+ */
+const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
+
+/**
+ * Upper bound on the pre-spawn OTLP endpoint refresh (EPMCDME-16647 QA fix): ensureOtlpProxy can
+ * run SSO credential checks and a daemon health check/spawn with no timeout of its own, and
+ * `beforeRun` runs synchronously before Claude Code's process starts. A slow check must degrade
+ * to relying on the existing SessionStart hook-time rewrite rather than stall every launch.
+ *
+ * Must cover a cold respawn — the exact scenario this fix targets. daemon-manager.ts's
+ * `spawnDaemon` (DAEMON_READY_TIMEOUT_MS there) polls for readiness for up to 5s; this adds
+ * ~2s of overhead for the SSO credential check and health check that run around it. Kept as
+ * a literal rather than importing that constant: this module is pulled in by a wide and
+ * growing set of unrelated unit tests (via claude-code-otlp's event-field builders) that mock
+ * daemon-manager.js wholesale, and a cross-module import here breaks every one of them whenever
+ * daemon-manager.ts gains a new export. Bump this if DAEMON_READY_TIMEOUT_MS changes.
+ */
+const PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS = 7000;
+
+/**
+ * Races `promise` against `timeoutMs`; rejects with `message` on expiry so the caller's own
+ * catch block treats a timeout the same as any other non-blocking failure.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Claude Code installer URLs
@@ -220,7 +267,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
-    async beforeRun(env) {
+    // `this: BaseAgentAdapter` explicit: the pre-spawn OTLP refresh below reads
+    // this.metadata.name, and hook.call(context, ...) in lifecycle-helpers.ts binds
+    // `this` to the launching adapter instance (claude or claude-acp).
+    async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
       // Whether this provider's gateway is known to carry the tool-search payload — see
       // TOOL_SEARCH_VERIFIED_PROVIDERS. CODEMIE_PROVIDER is populated before this hook runs.
       const toolSearchVerified = TOOL_SEARCH_VERIFIED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '');
@@ -236,6 +286,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // https://code.claude.com/docs/en/llm-gateway-protocol
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
         env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = toolSearchVerified ? '0' : '1';
+      }
+
+      // Don't ask the server for auto mode classifier review where the gateway can't carry it
+      // (see AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS). Classifier requests stay client-side and
+      // billed as before, but the "isn't eligible" notice no longer interrupts the session.
+      // Set to '1' in the environment to opt back in.
+      if (
+        !env.CLAUDE_CODE_AUTO_MODE_SERVER &&
+        AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '')
+      ) {
+        env.CLAUDE_CODE_AUTO_MODE_SERVER = '0';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
@@ -543,6 +604,39 @@ export const ClaudePluginMetadata: AgentMetadata = {
             logger.warn(
               `[Claude] ${label} tier not provisioned — subagents dispatched with model: "${name}" will fall back to ${subagentFallback} rather than the requested ${label} model. Provision CODEMIE_${name.toUpperCase()}_MODEL or omit the \`model\` parameter to silence this warning.`
             );
+          }
+        }
+      }
+
+      // Pre-spawn OTLP endpoint refresh (EPMCDME-16647 QA fix): rewrite
+      // ~/.claude/settings.json's endpoint before Claude Code's own process
+      // reads it, not only during the SessionStart hook that runs after.
+      // Gated on claude-code-otlp already being connected so an unconnected
+      // launch never starts the proxy daemon as a side effect. Mirrors
+      // OtlpAgentAdapter.ts's own non-blocking contract: a failure here must
+      // never fail the launch. this.metadata.name (not the OTLP adapter's own
+      // 'claude-code-otlp' name) is the real launching client — 'claude' or
+      // 'claude-acp' — so the daemon/connection record attributes correctly.
+      // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
+      // checks have no timeout of their own and must not stall this synchronous path.
+      if (await isClaudeCodeOtlpConnected()) {
+        const timeoutMessage = `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`;
+        try {
+          await withTimeout(
+            ensureOtlpProxy(this.metadata.name),
+            PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS,
+            timeoutMessage
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const logArgs = sanitizeLogArgs({ error: message });
+          if (message === timeoutMessage) {
+            // Visible on a normal terminal run (logger.warn is log-file-only and would
+            // fail silently here): Claude Code is about to launch with a possibly stale
+            // endpoint until the next SessionStart hook corrects it.
+            logger.notice('[claude] pre-spawn OTLP endpoint refresh timed out (non-blocking)', ...logArgs);
+          } else {
+            logger.warn('[claude] pre-spawn OTLP endpoint refresh failed (non-blocking)', ...logArgs);
           }
         }
       }

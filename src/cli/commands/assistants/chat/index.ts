@@ -15,7 +15,7 @@ import { StorageScope } from '@/env/types.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 import { AuthMethod, ProviderName } from '@/providers/core/types.js';
-import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
+import type { CodemieAssistant, CodeMieConfigOptions } from '@/env/types.js';
 import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { appendConversationTurn } from './historyPersister.js';
@@ -198,7 +198,7 @@ async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise
 async function interactiveChat(
   client: CodeMieClient,
   assistant: CodemieAssistant,
-  config: ProviderProfile,
+  config: CodeMieConfigOptions,
   conversationId?: string,
   loadHistory: boolean = true,
   detectedFiles: DetectedFile[] = [],
@@ -276,7 +276,7 @@ async function sendSingleMessage(
   assistant: CodemieAssistant,
   message: string,
   options: SingleMessageOptions,
-  config: ProviderProfile,
+  config: CodeMieConfigOptions,
   conversationId?: string,
   loadHistory: boolean = true,
   detectedFiles: DetectedFile[] = [],
@@ -415,7 +415,7 @@ async function sendMessageWithHistory(
 /**
  * Handle chat errors with proper context
  */
-async function handleChatError(error: unknown, config: ProviderProfile): Promise<void> {
+async function handleChatError(error: unknown, config: CodeMieConfigOptions): Promise<void> {
   const context = createErrorContext(error);
   logger.error('Assistant chat API call failed', context);
 

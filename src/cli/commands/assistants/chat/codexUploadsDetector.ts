@@ -103,7 +103,14 @@ async function findMatchingRollout(cwdReal: string, nowMs: number): Promise<stri
   allCandidates.sort((a, b) => b.mtime - a.mtime);
 
   for (const { filePath } of allCandidates) {
-    const records = await readJSONLTolerant<CodexRolloutRecord>(filePath, LOG_PREFIX);
+    let records: CodexRolloutRecord[];
+    try {
+      records = await readJSONLTolerant<CodexRolloutRecord>(filePath, LOG_PREFIX);
+    } catch (error) {
+      // One unreadable rollout (EACCES, EMFILE under load) must not hide an older one that matches
+      logger.debug(`${LOG_PREFIX} Skipping unreadable rollout`, { filePath, error });
+      continue;
+    }
     const metaRecord = records.find((r) => r.type === 'session_meta');
     if (!metaRecord) continue;
 

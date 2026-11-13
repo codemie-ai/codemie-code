@@ -1,0 +1,88 @@
+diff --git a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+index f506c860..6cd6cb27 100644
+--- a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++++ b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ import {
+   daemonMatchesRequest,
+   deriveDaemonIdentity,
++  ensureOtlpProxy,
+   type ConnectTargets,
+   type RequestedDaemonConfig,
+ } from '../connect-orchestrator.js';
+@@ -26,6 +27,10 @@ vi.mock('../daemon-manager.js', () => ({
+   spawnDaemon: vi.fn(),
+   stopDaemon: vi.fn(),
+ }));
++vi.mock('@/utils/processes.js', () => ({
++  isProcessAlive: vi.fn().mockReturnValue(false),
++  spawnDetached: vi.fn(),
++}));
+ vi.mock('../health-check.js', () => ({
+   checkProxyHealth: vi.fn(),
+ }));
+@@ -489,6 +494,46 @@ describe('deriveDaemonIdentity — codex-desktop', () => {
+   });
+ });
+ 
++describe('ensureOtlpProxy', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is undefined', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: undefined });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is an empty string', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: '' });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('still cold-starts normally when baseUrl is present', async () => {
++    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
++    vi.mocked(spawnDaemon).mockResolvedValue(
++      daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
++    );
++    await setupHappyMocks();
++
++    await ensureOtlpProxy('claude-code-otlp');
++
++    expect(spawnDaemon).toHaveBeenCalledTimes(1);
++  });
++});
++
+ describe('runCodexDesktop', () => {
+   // resetModules BEFORE each case: connect-orchestrator.js is cached by earlier
+   // describes, and vi.doMock only affects modules imported after the registry is
+diff --git a/src/cli/commands/proxy/connect-orchestrator.ts b/src/cli/commands/proxy/connect-orchestrator.ts
+index a961bf2b..3c710b85 100644
+--- a/src/cli/commands/proxy/connect-orchestrator.ts
++++ b/src/cli/commands/proxy/connect-orchestrator.ts
+@@ -408,6 +408,13 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
+     activeProfileName ? { name: activeProfileName } : undefined
+   );
+ 
++  // Hook invocations run as a background side effect on every tracked project;
++  // an unconfigured baseUrl must skip cold start silently (not throw, unlike
++  // connectTargets' interactive ConfigurationError) so it never fails the hook.
++  if (!config.baseUrl) {
++    return;
++  }
++
+   const daemonConfig = {
+     clientType: agentName,
+     port: DEFAULT_DAEMON_PORT,

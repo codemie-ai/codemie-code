@@ -266,5 +266,10 @@ describe('transparent VS Code proxy integration', () => {
     const response = await fetch(`${startedProxy.url}/health`);
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'ok',
+      port: Number(new URL(startedProxy.url).port),
+      pid: process.pid,
+    });
   });
 });

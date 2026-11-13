@@ -9,8 +9,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
-import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
+import { INTERNAL_PARSED_FAMILY, recordTranscriptPath, type RawSessionData } from '../data-loader.js';
+import type { ParsedSession, RunBounds, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
@@ -33,18 +33,32 @@ import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
 import { enrichSkillDispatchCost } from './dispatch-allocation.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { nextRecordStarts } from '@/agents/core/session/next-record-start.js';
+import type { Session } from '@/agents/core/session/types.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent, sessionAdapterKey } from './pi-agent.js';
+import { allocatePiUsage, isPiLayoutRunId } from './pi-dispatch-allocation.js';
+import { PI_SUBAGENT_RUN } from '@/agents/plugins/pi/pi.session.js';
+import { extractPiToolCalls, isPiAssistantMessage, isPiMessageEntry, type PiEntry } from '@/agents/plugins/pi/pi.types.js';
 import { isLocalModel } from './local-models.js';
+import { copilotRunWindows, isCopilotRun, parseCopilotRun } from './copilot-runs.js';
 import { logger } from '@/utils/logger.js';
 
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
   /** Native agent log path for a session, or null if not resolvable. */
   loadAgentSessionFile(raw: RawSessionData): Promise<string | null>;
-  parseNative(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
+  /** `run`: the session's own slice of a native log it shares with the runs that resumed it. */
+  parseNative(agentName: string, filePath: string, sessionId: string, run?: RunBounds): Promise<ParsedSession | null>;
+  /**
+   * The start of the next CodeMie record on disk over the same native session of each id, whether or
+   * not the report loaded it; absent — a run with no loaded sibling keeps no upper bound.
+   */
+  nextRecordStarts?(sessionIds: string[]): Promise<Map<string, number | undefined>>;
 }
 
 /**
@@ -59,7 +73,7 @@ function resolveSessionAdapter(agentName: string): SessionAdapter | null {
   if (isCodexFamilyAgent(agentName)) {
     return AgentRegistry.getAgent('codex')?.getSessionAdapter?.() ?? null;
   }
-  const fromRegistry = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+  const fromRegistry = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
   if (fromRegistry) {
     return fromRegistry;
   }
@@ -76,32 +90,38 @@ export const realDeps: EnricherDeps = {
     if (raw.agentSessionFile) {
       return raw.agentSessionFile;
     }
-    try {
-      const metaPath = getCodemiePath('sessions', `${raw.sessionId}.json`);
-      const meta = JSON.parse(await readFile(metaPath, 'utf-8')) as {
-        correlation?: { agentSessionFile?: string };
-      };
-      return meta.correlation?.agentSessionFile ?? null;
-    } catch {
-      return null;
+    // A live record, else its completed one (a `/clear` generation `<uuid>-<gen>` is only ever completed)
+    for (const name of [`${raw.sessionId}.json`, `completed_${raw.sessionId}.json`]) {
+      try {
+        const meta = JSON.parse(await readFile(getCodemiePath('sessions', name), 'utf-8')) as Parameters<typeof recordTranscriptPath>[0];
+        return recordTranscriptPath(meta) ?? null;
+      } catch {
+        // not under this name
+      }
     }
+    return null;
   },
-  async parseNative(agentName, filePath, sessionId) {
+  async parseNative(agentName, filePath, sessionId, run) {
     const adapter = resolveSessionAdapter(agentName);
     if (!adapter) {
       return null;
     }
     try {
-      return await adapter.parseSessionFile(filePath, sessionId);
+      return await adapter.parseSessionFile(filePath, sessionId, undefined, run);
     } catch (e) {
       logger.debug(`[cost] native parse failed for ${sessionId}:`, e);
       return null;
     }
   },
+  async nextRecordStarts(sessionIds) {
+    const store = new SessionStore();
+    const records = await Promise.all(sessionIds.map((id) => store.loadSession(id)));
+    return nextRecordStarts(records.filter((record): record is Session => !!record));
+  },
 };
 
 /** Parsed native log for one session, plus ordering/attribution metadata. */
-interface ParsedEntry {
+export interface ParsedEntry {
   sessionId: string;
   agentName: string;
   hadLog: boolean;
@@ -109,6 +129,8 @@ interface ParsedEntry {
   filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
+  /** Why the session's log was not parsed, when that is known. */
+  unavailableReason?: string;
   /** Provider the session was launched with (start event), used to recognise free local models. */
   provider?: string;
   capturedAt?: number;
@@ -203,7 +225,7 @@ function maxOwnRecordTs(agentName: string, parsed: ParsedSession, upperBoundExcl
     records = extractClaudeUsageRecords(parsed);
   } else if (isCodexFamilyAgent(a)) {
     records = extractCodexUsageRecords(parsed);
-  } else if (a === 'pi') {
+  } else if (isPiFamilyAgent(a)) {
     records = extractPiUsageRecords(parsed);
   } else {
     return undefined;
@@ -252,14 +274,14 @@ function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefin
   return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
 }
 
-/** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
+/** Phase 1: resolve + parse a session's native log (a copilot run's waits for its window). Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
   const capture = raw[INTERNAL_PARSED_FAMILY];
   const parsed = capture?.parsed
-    ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
+    ?? (filePath && !isCopilotRun(agentName) ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
     sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
@@ -480,24 +502,47 @@ function enrichDispatchCosts(
   agentName: string,
   sessionRecords: UsageRecord[]
 ): void {
-  const byToolUseId = new Map<string, { messages: unknown[] }>();
+  // Pi links a dispatch to its child transcript by agent id (runs only); the rest by tool-use id.
+  const pi = isPiFamilyAgent(agentName);
+  const byKey = new Map<string, { messages: unknown[] }>();
+  // Plain-Pi runs carry no task id; paired with untasked agent dispatches in order below.
+  const piLayoutRuns: Array<{ messages: unknown[] }> = [];
   for (const sub of parsed.subagents ?? []) {
-    if (sub.toolUseId && Array.isArray(sub.messages)) {
-      byToolUseId.set(sub.toolUseId, sub);
+    if (!Array.isArray(sub.messages)) continue;
+    if (!pi) {
+      if (sub.toolUseId) byKey.set(sub.toolUseId, sub);
+      continue;
     }
+    if (sub.agentType !== PI_SUBAGENT_RUN || !sub.agentId) continue;
+    if (isPiLayoutRunId(sub.agentId)) {
+      piLayoutRuns.push(sub);
+      continue;
+    }
+    // omp: a nested child `A/A.B` folds into the top-level dispatch `A` that spawned it.
+    const top = sub.agentId.split('/')[0];
+    const merged = byKey.get(top);
+    byKey.set(top, { messages: merged ? [...merged.messages, ...sub.messages] : sub.messages });
   }
+  const untasked = pi ? dispatches.filter((d) => d.kind === 'agent' && !d._taskId) : [];
+  // ponytail: order pairing only when counts match 1:1; needs a dispatch→run id to do better.
+  const pairPiRuns = untasked.length > 0 && untasked.length === piLayoutRuns.length;
 
   for (const dispatch of dispatches) {
     if (dispatch.kind === 'skill') {
       enrichSkillDispatchCost(dispatch, sessionRecords);
       continue;
     }
-    if (dispatch.kind !== 'agent' || !dispatch._toolUseId) continue;
-    const sub = byToolUseId.get(dispatch._toolUseId);
+    if (dispatch.kind !== 'agent') continue;
+    const key = pi ? dispatch._taskId : dispatch._toolUseId;
+    const sub = key
+      ? byKey.get(key)
+      : pairPiRuns
+        ? piLayoutRuns[untasked.indexOf(dispatch)]
+        : undefined;
     if (!sub) continue;
 
     const subSeen = new Set<string>();
-    const usageAgent = isCodexFamilyAgent(agentName) ? 'codex' : 'claude';
+    const usageAgent = isCodexFamilyAgent(agentName) ? 'codex' : pi ? 'pi' : 'claude';
     const records = gatherDedupedUsageRecords(
       usageAgent,
       { sessionId: '', agentName: usageAgent, metadata: {}, messages: sub.messages } as unknown as ParsedSession,
@@ -525,6 +570,13 @@ function enrichDispatchCosts(
         if (raw.type === 'response_item' && raw.payload?.type === 'function_call' && raw.payload.name) {
           const name = raw.payload.name.toLowerCase();
           toolCounts[name] = (toolCounts[name] || 0) + 1;
+        }
+      }
+    } else if (isPiFamilyAgent(agentKey)) {
+      for (const entry of sub.messages as PiEntry[]) {
+        if (!isPiMessageEntry(entry) || !isPiAssistantMessage(entry.message)) continue;
+        for (const call of extractPiToolCalls(entry.message)) {
+          toolCounts[call.name] = (toolCounts[call.name] || 0) + 1;
         }
       }
     } else {
@@ -561,6 +613,8 @@ export async function enrichCosts(
   const sharedFileGroups = groupSharedFileSiblings(ordered);
   const reportedObservedEnd = computeReportedObservedEnd(sharedFileGroups);
   const nextSiblingStart = computeNextSiblingStart(sharedFileGroups);
+  const copilot = await copilotRunWindows(ordered, nextSiblingStart, deps);
+  await mapWithConcurrency(copilot.runs, 16, (entry) => parseCopilotRun(entry, copilot.bounds, deps));
   const dedupWindowEnd = computeDedupWindowEnd(sharedFileGroups);
   // CR-002: a Claude SDK modelUsage rollup is a whole-file aggregate, not a per-session one —
   // trusting it for a session sharing its native log file would let every sharing session
@@ -688,6 +742,7 @@ export async function enrichCosts(
           cost.dispatchesComplete = complete;
         } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
+          if (isPiFamilyAgent(entry.agentName)) allocatePiUsage(dispatches, entry.parsed, records, cost);
         }
         if (dispatches.length) {
           // Strip internal _toolUseId before storing in the public cost index
@@ -696,6 +751,8 @@ export async function enrichCosts(
       } catch (e) {
         logger.debug(`[cost] dispatch extraction failed for ${entry.sessionId}:`, e);
       }
+    } else if (entry.unavailableReason) {
+      cost.usageUnavailableReason = entry.unavailableReason;
     }
     index.set(cost.sessionId, cost);
     u.forEach((m) => unpriced.add(m));

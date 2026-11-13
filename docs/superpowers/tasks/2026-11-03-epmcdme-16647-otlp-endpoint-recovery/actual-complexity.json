@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "generated": "2026-11-04T00:00:00Z",
+  "corrected": "2026-11-04: file-status counts and test-file wording fixed against `git diff --name-status 12f45115..b895ef4b`; scoring unchanged",
+  "baseline": "12f451151716cebaa8f10f4aa077dbea814f39dd",
+  "assessed_head": "b895ef4b6678aa4fe047da8fd5872fc38c3859e3",
+  "assessed_head_after_subject_normalization": "140aec9eb27b4e4ce6990f5de203f9f5d2c63920 (same tree b86eb8962af6c58c842544409a225ae315fdf37f; only commit subjects differ)",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "changed_files": { "total": 11, "production": 7, "test": 4, "added": 3, "modified": 8, "added_test": 1, "modified_test": 3 },
+  "insertions": 521,
+  "deletions": 29,
+  "production_lines": { "insertions": 298, "deletions": 23 },
+  "test_lines": { "insertions": 223, "deletions": 6 },
+  "source_read_by_assessor": "Line-by-line: awaiting-login-listener.ts and the three exports of claude-code-otlp-endpoint.ts. The remaining files were scored from the supplied file list and diffstat, not read by the assessor.",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the proxy daemon entry (src/bin/proxy-daemon.ts), a new awaiting-login placeholder listener, connect-orchestrator, watcher, proxy index (status) and the Claude Code OTLP connector plus an extracted claude-code-otlp-endpoint.ts helper module: about 6 components within the proxy CLI/daemon subsystem." },
+    { "dimension": "technical_risk", "reason": "awaiting-login-listener.ts (lines 29-60) implements port reclaim with EADDRINUSE retry (5 x 200ms) for a pinned port and lines 62-75 serve an Anthropic-shaped 401 (authentication_error) with /health 200 while SSO credentials are missing; daemon lifecycle, port-pinning and auth-failure behaviour have no exact precedent, and the endpoint-refresh helpers (claude-code-otlp-endpoint.ts: readConfiguredOtlpPort, checkClaudeCodeOtlpEndpoint, refreshClaudeCodeOtlpEndpoint) rewrite client config, so wrongly rewriting a user's own endpoint is a risk. The AC enumerates error and variant cases; the 4 test files (1 added, 3 modified) cover them." },
+    { "dimension": "file_change_estimate", "reason": "11 files changed (7 production, 4 test), 521 insertions and 29 deletions. 3 files are added (awaiting-login-listener.ts, claude-code-otlp-endpoint.ts, __tests__/awaiting-login-listener.test.ts) and 8 are modified, all under src/bin and src/cli/commands/proxy. The count maps to XL, but it is localized to one subsystem and about 43% of the added lines are tests." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: security-adjacent 401 and auth-state handling plus daemon port-pinning, with no exact precedent"
+  ],
+  "split_recommendation": null
+}

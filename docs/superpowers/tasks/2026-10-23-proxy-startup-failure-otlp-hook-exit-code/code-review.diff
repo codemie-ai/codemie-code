@@ -1,0 +1,85 @@
+diff --git a/src/agents/core/OtlpAgentAdapter.ts b/src/agents/core/OtlpAgentAdapter.ts
+index 4b82edfb..31d04bda 100644
+--- a/src/agents/core/OtlpAgentAdapter.ts
++++ b/src/agents/core/OtlpAgentAdapter.ts
+@@ -100,7 +100,12 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
+       return;
+     }
+ 
+-    await ensureOtlpProxy(this.name);
++    try {
++      await ensureOtlpProxy(this.name);
++    } catch (error) {
++      const message = error instanceof Error ? error.message : String(error);
++      logger.error(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
++    }
+ 
+     const decision = await this.evaluate(hookInput);
+     if (decision.decision === 'block') {
+diff --git a/src/agents/core/__tests__/OtlpAgentAdapter.test.ts b/src/agents/core/__tests__/OtlpAgentAdapter.test.ts
+index 847aea6a..452a34ac 100644
+--- a/src/agents/core/__tests__/OtlpAgentAdapter.test.ts
++++ b/src/agents/core/__tests__/OtlpAgentAdapter.test.ts
+@@ -141,6 +141,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
+     expect(ensureOtlpProxy.mock.invocationCallOrder[0]).toBeLessThan(forwardToSpool.mock.invocationCallOrder[0]);
+   });
+ 
++  it('swallows an ensureOtlpProxy failure, logs it, and still forwards the event', async () => {
++    ensureOtlpProxy.mockRejectedValueOnce(new Error('Daemon failed to start within 5 seconds'));
++    await expect(run()).resolves.toBeUndefined();
++    expect(forwardToSpool).toHaveBeenCalledTimes(1);
++    expect(ensureOtlpProxy.mock.invocationCallOrder[0]).toBeLessThan(forwardToSpool.mock.invocationCallOrder[0]);
++  });
++
+   it('prints the decision and forwards nothing on the block path', async () => {
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+     await run({ block: true });
+diff --git a/src/cli/commands/__tests__/hook.analytics-wiring.test.ts b/src/cli/commands/__tests__/hook.analytics-wiring.test.ts
+index d1e10f8f..e8259d47 100644
+--- a/src/cli/commands/__tests__/hook.analytics-wiring.test.ts
++++ b/src/cli/commands/__tests__/hook.analytics-wiring.test.ts
+@@ -12,6 +12,30 @@ import { createHookCommand } from '../hook.js';
+ import { ensureOtlpProxy } from '../proxy/connect-orchestrator.js';
+ import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
+ import { AgentRegistry } from '../../../agents/registry.js';
++import { OtlpAgentAdapter } from '@/agents/core/OtlpAgentAdapter.js';
++import type { ForwardDecision, OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
++
++class TrackedNoopAdapter extends OtlpAgentAdapter<{ cwd: string }> {
++  readonly name = 'fake-tracked';
++  protected parseHookInput(raw: string) {
++    return JSON.parse(raw) as { cwd: string };
++  }
++  protected extractHookContext(input: { cwd: string }): OtlpHookContext {
++    return { cwd: input.cwd };
++  }
++  protected async isTracked(): Promise<boolean> {
++    return true;
++  }
++  protected async evaluate(): Promise<ForwardDecision> {
++    return { decision: 'forward', payload: [] };
++  }
++  protected async resolveAgentFields(): Promise<Record<string, unknown>> {
++    return {};
++  }
++  protected resolveEventType(): string {
++    return 'fake.event';
++  }
++}
+ 
+ describe('hook command analytics wiring', () => {
+   const originalStdin = Object.getOwnPropertyDescriptor(process, 'stdin');
+@@ -43,4 +67,13 @@ describe('hook command analytics wiring', () => {
+     expect(deps).toEqual({ ensureOtlpProxy, forwardOtlpEventsToSpool });
+     expect((deps as { ensureOtlpProxy: unknown }).ensureOtlpProxy).toBe(ensureOtlpProxy);
+   });
++
++  it('keeps process.exitCode at 0 when ensureOtlpProxy rejects (daemon start failure)', async () => {
++    vi.mocked(ensureOtlpProxy).mockRejectedValueOnce(new Error('Daemon failed to start within 5 seconds'));
++    vi.spyOn(AgentRegistry, 'getAnalyticsAgent').mockReturnValue(new TrackedNoopAdapter());
++
++    await createHookCommand().parseAsync(['--agent', 'claude-code-otlp'], { from: 'user' });
++
++    expect(process.exitCode).toBe(0);
++  });
+ });

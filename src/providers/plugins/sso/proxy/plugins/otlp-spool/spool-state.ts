@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 import {
   OTEL_STREAMS,
+  OTEL_JSON_STREAMS,
   SPOOL_STREAMS,
   statusFile,
   streamFile,
@@ -69,7 +70,7 @@ export function hooksGroupPresent(spool: SpoolState): boolean {
 }
 
 export function otelGroupPresent(spool: SpoolState): boolean {
-  return OTEL_STREAMS.some((stream) => hasData(spool.streams[stream]));
+  return [...OTEL_STREAMS, ...OTEL_JSON_STREAMS].some((stream) => hasData(spool.streams[stream]));
 }
 
 export function hasPendingData(spool: SpoolState): boolean {

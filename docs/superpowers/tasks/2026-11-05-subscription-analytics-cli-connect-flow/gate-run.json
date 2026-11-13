@@ -1,0 +1,11 @@
+{"schema":1,"branch":"EPMCDME-16849_cli-connect-flow","head":"60252f5561f7dab48cccbe0bf1021d5d1b7742ef","runner":"npm","started_at":"2026-11-05T11:20:00Z","completed_at":"2026-11-05T11:25:00Z","status":"BLOCKED","drift_detected":false,
+"gates":[
+{"id":"license","source":"guide","status":"PASS","command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"FAIL","command":"npx vitest run --project unit <4 changed-path dirs>","exit_code":1,"notes":"Scoped per controller. 3 failed/2519 passed. codex-desktop 'returns null when no candidate path exists' fails, unbaselined (not run on 916710fb). transitions 'disabled hook writes no session state' and connect-wiring 'unified connect maps target flags' hit 30s timeouts under load; both files passed 29/29 on isolated rerun (exit 0). Logs: evidence/qa/unit.log, unit-rerun.log"},
+{"id":"secrets","source":"hook","status":"SKIPPED","command":"npm run validate:secrets","exit_code":0,"notes":"Output 'No staged changes to scan' - scanned nothing; CI runs it unconditionally. Needs staged changes + Docker locally."},
+{"id":"integration","source":"guide","status":"N/A","command":"npx vitest run --project cli","notes":"Out of controller scope; tests/e2e not rerun."},
+{"id":"commitlint","source":"guide","status":"N/A","command":"npm run commitlint:last","notes":"Not requested."}],
+"failures":{"unit":"codex-desktop.test.ts findCodexDesktopApp 'returns null when no candidate path exists' failed (unbaselined); two 30s-timeout failures passed on isolated rerun. See evidence/qa/unit.log"}}

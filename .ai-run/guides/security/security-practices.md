@@ -43,6 +43,8 @@ Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plug
 | `X-CodeMie-Integration` | Integration/tenant identity |
 | `X-CodeMie-Repository` / `X-CodeMie-Branch` / `X-CodeMie-Project` | Repository/branch/project attribution |
 
+Exception: on `/v1/metrics` the plugin does not inject `X-CodeMie-Client`, `X-CodeMie-Repository`, `X-CodeMie-Branch` or `X-CodeMie-Project`. `MetricsApiClient` sets them, the client from its sender's client type, the other three from the metric's attributes.
+
 Also in scope even though they are body fields, not headers: the Responses API `user` field, JWT `sub` / `email` overrides, and any other identifier the server treats as authoritative for attribution.
 
 ### Rules for changes that touch any of the above
@@ -102,6 +104,20 @@ await store.deleteSSOCredentials(url);
 | Hardcode `const key = 'sk-ant-abc123'` | `const key = process.env.ANTHROPIC_API_KEY` |
 
 Reference: `src/utils/security.ts:200` — `CredentialStore`
+
+**Exception — analytics sync webhook.** `codemie analytics sync install` stores the webhook
+URL in `~/.codemie/analytics-sync.json` (mode `0o600`), not `CredentialStore`: the daily
+unattended job must read it without an OS keychain/credential prompt. The signed `sig=`
+query parameter is still secret — every printed or logged string that may contain the URL
+goes through `redactSecrets()` (`src/cli/commands/analytics/sync/redact.ts`) first, and
+`status`/the install summary show only the webhook's host.
+
+The same exception covers `codemie analytics sync bootstrap`'s lead state,
+`~/.codemie/analytics-sync-bootstrap.json` (mode `0o600`, written via `writePrivateJson()` in
+`src/cli/commands/analytics/sync/private-file.ts`). It holds the full webhook URL, including
+`sig=`, because the guided wizard saves after every step so an interrupted or repeated run can
+resume and reprint the install command. The same rules apply: `--webhook` mode never reads or
+writes it, and the wizard shows the saved webhook only as its host.
 
 ---
 

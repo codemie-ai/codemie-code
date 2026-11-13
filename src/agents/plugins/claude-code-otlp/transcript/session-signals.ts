@@ -1,5 +1,8 @@
+import { countContentLines } from '@/utils/file-operations.js';
+
 /**
- * Transcript signals for `agent.session.summary`.
+ * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
+ * `agent.session.compact.done`.
  *
  * Pure functions over already-parsed main-transcript lines: edit-diff line counts, user turns,
  * compaction boundaries, client versions and the session title. No I/O — the orchestrator reads
@@ -66,13 +69,6 @@ function countPatchLines(patch: unknown[]): { added: number; removed: number } {
   return { added, removed };
 }
 
-/** Lines in a file body; a trailing newline does not start another line. */
-function countContentLines(content: string): number {
-  if (content.length === 0) return 0;
-  const lines = content.split('\n').length;
-  return content.endsWith('\n') ? lines - 1 : lines;
-}
-
 /**
  * Sum the diff stats of every tool result that reports one.
  *
@@ -95,12 +91,14 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
 
     let added: number | null = null;
     let removed = 0;
-    if (Array.isArray(structuredPatch)) {
+    // A create without a non-empty patch is counted by its content; any non-empty patch wins.
+    const hasPatch = Array.isArray(structuredPatch) && structuredPatch.length > 0;
+    if (type === 'create' && !hasPatch) {
+      if (typeof content === 'string') added = countContentLines(content);
+    } else if (Array.isArray(structuredPatch)) {
       const counts = countPatchLines(structuredPatch);
       added = counts.added;
       removed = counts.removed;
-    } else if (type === 'create' && typeof content === 'string') {
-      added = countContentLines(content);
     }
     if (added === null) continue;
 
@@ -111,24 +109,69 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
   return { linesAdded, linesRemoved };
 }
 
+/** Starts of the user lines Claude Code writes itself (an interrupt, a local or shell command's input or output). */
+const SELF_WRITTEN_PREFIXES = [
+  '[Request interrupted by user',
+  '<local-command-stdout>',
+  '<local-command-stderr>',
+  '<local-command-caveat>',
+  '<bash-stdout>',
+  '<bash-stderr>',
+  '<bash-input>',
+];
+
+/** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
+const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
+
+function startsWithAny(text: string, prefixes: readonly string[]): boolean {
+  const start = text.trimStart();
+  return prefixes.some((prefix) => start.startsWith(prefix));
+}
+
+/** The text of a user line: its string content, else its `text` blocks joined in order by a newline. */
+export function userLineText(line: SignalLine): string {
+  const content = line.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block): block is { type: 'text'; text: string } => {
+      const { type, text } = (block ?? {}) as { type?: unknown; text?: unknown };
+      return type === 'text' && typeof text === 'string';
+    })
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/** Whether a user line's text is one Claude Code writes itself, not one the user submitted. */
+export function isSelfWrittenUserText(text: string): boolean {
+  return startsWithAny(text, SELF_WRITTEN_PREFIXES);
+}
+
+/**
+ * Whether `parsed` is a genuine new user turn: a user line that is not meta, sidechain or a
+ * compaction summary and holds text (a plain string or a `text` block), not only `tool_result` blocks.
+ */
+export function isGenuineUserTurn(parsed: SignalLine): boolean {
+  if (parsed.type !== 'user' || parsed.isMeta || parsed.isSidechain || parsed.isCompactSummary) {
+    return false;
+  }
+  const content = parsed.message?.content;
+  if (typeof content === 'string') return true;
+  return Array.isArray(content) && content.some((block) => (block as { type?: unknown } | null)?.type === 'text');
+}
+
 /**
  * Count real user prompts: user lines with text (a plain string or a `text` block) that are not
- * meta, sidechain or compaction-summary lines. Lines holding only `tool_result` blocks are not
- * prompts.
+ * meta, sidechain or compaction-summary lines, and whose text is neither one Claude Code writes
+ * itself nor an auto prompt. Lines holding only `tool_result` blocks are not prompts.
  */
 export function countTurns(lines: readonly SignalLine[]): number {
   let turns = 0;
   for (const line of lines) {
-    if (line.type !== 'user' || line.isMeta || line.isSidechain || line.isCompactSummary) continue;
-    const content = line.message?.content;
-    if (typeof content === 'string') {
-      turns += 1;
-    } else if (
-      Array.isArray(content) &&
-      content.some((block) => (block as { type?: unknown } | null)?.type === 'text')
-    ) {
-      turns += 1;
-    }
+    if (!isGenuineUserTurn(line)) continue;
+    const text = userLineText(line);
+    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    turns += 1;
   }
   return turns;
 }
@@ -163,6 +206,19 @@ export function collectCompactions(lines: readonly SignalLine[]): Compaction[] {
     });
   }
   return compactions;
+}
+
+/** Builds the `agent.session.compact.done` record from a `Compaction` found by `openPostCompactPass`. */
+export function buildCompactionDoneEvent(sessionId: string, compaction: Compaction): Record<string, unknown> {
+  return {
+    type: 'agent.session.compact.done',
+    session_id: sessionId,
+    pre_tokens: compaction.pre_tokens,
+    post_tokens: compaction.post_tokens,
+    dropped_tokens: compaction.dropped_tokens,
+    duration_ms: compaction.duration_ms,
+    timestamp: compaction.end,
+  };
 }
 
 /** Distinct client versions, in order of first appearance. */

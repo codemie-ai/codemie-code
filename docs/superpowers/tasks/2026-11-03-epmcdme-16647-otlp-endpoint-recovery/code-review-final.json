@@ -1,0 +1,53 @@
+{
+  "decision": "request-changes",
+  "rationale": "Behavior ACs (a)-(d) trace clean in source; two documented-standard violations block (file size, ticket key in commit subjects). 6 lens candidates dismissed (host cast unreachable, Claude-only refresh is owned-keys-only, busy-port covered, untested rethrow branch is correct in source, extra-header overwrite matches connect's existing ownership, stale-health on rejected credentials is outside ACs); no deferred; fix pack written.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "spec", "item": "Respawn port = CodeMie-owned OTEL endpoint port, else dead state.port, else 4001", "status": "pass", "notes": "ensureOtlpProxy; orchestrator tests cover all three" },
+    { "kind": "spec", "item": "Busy port falls back and settings are re-pointed", "status": "pass", "notes": "refresh after ensureDaemon" },
+    { "kind": "spec", "item": "Refresh after (re)start and on every hook when daemon alive", "status": "pass", "notes": "both branches call refresh" },
+    { "kind": "spec", "item": "Refresh rewrites only endpoint + header keys in user-level settings", "status": "pass", "notes": "verified in source" },
+    { "kind": "spec", "item": "Ownership limited to local 127.0.0.1 endpoint + Bearer header; never throws; no-op when equal", "status": "pass", "notes": "LOCAL_DAEMON_ENDPOINT + isCodemieOwnedEnvValue" },
+    { "kind": "spec", "item": "proxy status reports mismatch without repairing; advice names connect then new session", "status": "pass", "notes": "index wiring probe-verified only" },
+    { "kind": "spec", "item": "AuthenticationError from proxy.start() keeps pinned port with placeholder listener", "status": "pass", "notes": "bringUp" },
+    { "kind": "spec", "item": "Placeholder: /health 200, others Anthropic-shaped 401", "status": "pass", "notes": "listener test asserts shape" },
+    { "kind": "spec", "item": "State health unhealthy + reason while awaiting login", "status": "pass", "notes": "healthPatch" },
+    { "kind": "spec", "item": "Watcher records unauthorized once, keeps watching", "status": "pass", "notes": "watcher tests" },
+    { "kind": "spec", "item": "Daemon restarts real proxy on pinned port once credentials exist", "status": "pass", "notes": "daemon glue verified by probe, not unit test" },
+    { "kind": "spec", "item": "Occupied port while restoring: pinned bind retries then rejects", "status": "pass", "notes": "listener test" },
+    { "kind": "spec", "item": "Non-auth / non-SSO startup failures still rethrow", "status": "pass", "notes": "source rethrows (proxy-daemon.ts bringUp); no test, tests only on request" },
+    { "kind": "spec", "item": "Running Claude session keeps old endpoint; next session uses new (documented)", "status": "pass", "notes": "documented limit" },
+    { "kind": "spec", "item": "Lint/typecheck/full-suite/build results at head", "status": "pending-stage-7", "notes": "Stage 7 owns execution evidence" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "partial", "notes": "3 subjects append ticket key (EPMCDME-16647); git-workflow.md puts it in body footer" },
+    { "kind": "code-quality", "status": "partial", "notes": "claude-code-otlp.ts 806->898 lines (guide <500); connect-orchestrator.ts 953 lines (+5)" },
+    { "kind": "security", "status": "pass", "notes": "sanitizeLogArgs used; gateway key not logged" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/claude-code-otlp.ts",
+      "title": "Oversized connector file grew further",
+      "problem": "code-quality.md limits files to 500 lines; this file went from 806 to 898 lines with the endpoint-refresh helpers (readOwnedOtlpEnv, readConfiguredOtlpPort, checkClaudeCodeOtlpEndpoint, refreshClaudeCodeOtlpEndpoint). PROVEN (line count and guide). Disposition: fix before merge.",
+      "impact": "Documented structure limit exceeded and worsened by this change; blocks workflow per standards review.",
+      "recommendation": "Move the new refresh/check helpers into a separate small module (e.g. alongside claude-code-otlp-flow.ts) and update imports in connect-orchestrator.ts and proxy index."
+    },
+    {
+      "id": "CR-002",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Ticket key in commit subjects",
+      "problem": "Commits c7471810, 38d1f33c, b6e8d550 end subjects with '(EPMCDME-16647)'; git-workflow.md Anti-Patterns says the key belongs in the body footer. PROVEN. Disposition: fix before MR, only on explicit user request for history rewrite (squash-and-merge title may also resolve it).",
+      "impact": "Documented commit-format convention broken in every commit of the range.",
+      "recommendation": "Reword subjects without the ticket key and add the key in the commit body footer."
+    }
+  ],
+  "deferred": []
+}

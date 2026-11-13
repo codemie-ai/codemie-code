@@ -14,16 +14,29 @@
  *             transcript can recover it. Those counts come from the run ledger, which the
  *             CodeMie extension records from inside Pi at input time.
  *
+ * oh-my-pi (`omp`) writes the same transcript format but records these differently:
+ *
+ * - `/skill:<name>` becomes a `custom_message` entry with `customType: 'skill-prompt'` and the
+ *   name in `details.name`, rather than a wrapper inside the user message.
+ * - A skill the model loads itself is a `read` of `skill://<name>`; its `toolResult` names the
+ *   resolved `SKILL.md`. Reads of a skill's other files (`references/…`, `scripts/…`) are not
+ *   invocations and do not count.
+ * - A delegated agent is a `task` tool call; each entry of `arguments.tasks` names its agent,
+ *   and an entry without one runs the default `task` agent.
+ *
  * @see ../pi.extension.ts — PiRunLedger.commandInvocations
  */
 
 import { logger } from '@/utils/logger.js';
+import { normalizePathSeparators } from '@/utils/paths.js';
 import type { NamedInvocationCounts } from '../../claude/session/claude-named-invocations.js';
 import {
   extractPiToolCalls,
   isPiAssistantMessage,
   isPiMessageEntry,
+  isPiToolResultMessage,
   isPiUserMessage,
+  piEntryTimestamp,
   type PiEntry,
   type PiUserMessage,
 } from '../pi.types.js';
@@ -32,6 +45,44 @@ export type { NamedInvocationCounts };
 
 /** Name of the tool `pi-subagents` registers for delegating to a child agent. */
 const SUBAGENT_TOOL = 'subagent';
+
+/** oh-my-pi's delegation tool, and the agent an entry of its `tasks` runs when it names none. */
+const OMP_TASK_TOOL = 'task';
+const OMP_DEFAULT_TASK_AGENT = 'task';
+
+/** oh-my-pi's `customType` for the entry a user `/skill:<name>` command expands into. */
+const OMP_SKILL_PROMPT = 'skill-prompt';
+
+/** `skill://<name>[/SKILL.md]` — oh-my-pi stores the URL with any `:selector` already peeled. */
+const OMP_SKILL_URL = /^skill:\/\/(.+?)(?:\/SKILL\.md)?$/;
+
+/**
+ * The plugin a resolved `SKILL.md` belongs to, read from its install path. oh-my-pi records a
+ * plugin skill by its bare name (`mr-creator`), so the path is the only place the bundle
+ * (`sdlc-factory`) survives:
+ * - oh-my-pi's own cache: `…/plugins/cache/plugins/<marketplace>___<plugin>___<version>/skills/<name>/SKILL.md`
+ * - Claude Code's cache, which oh-my-pi also loads: `…/plugins/cache/<marketplace>/<plugin>/<version>/skills/<name>/SKILL.md`
+ */
+const PLUGIN_SKILL_PATHS = [
+  /\/plugins\/cache\/plugins\/[^/]+?___([^/]+?)___[^/]+\/skills\/[^/]+\/SKILL\.md$/,
+  /\/plugins\/cache\/[^/]+\/([^/]+)\/[^/]+\/skills\/[^/]+\/SKILL\.md$/,
+];
+
+/**
+ * `<plugin>/<name>` when `path` is a plugin's `SKILL.md`, else `name` unchanged — the same
+ * slash namespace oh-my-pi writes when the user names the plugin, so both spellings of one
+ * skill count together and the session-source detector sees the bundle.
+ */
+function qualifySkillName(name: string, path: unknown): string {
+  if (name.includes('/') || typeof path !== 'string') return name;
+  // oh-my-pi builds install paths with `path.join`, so they carry `\` on Windows.
+  const posixPath = normalizePathSeparators(path);
+  for (const pattern of PLUGIN_SKILL_PATHS) {
+    const plugin = pattern.exec(posixPath)?.[1];
+    if (plugin) return `${plugin}/${name}`;
+  }
+  return name;
+}
 
 /**
  * The opening of Pi's skill wrapper, which only Pi itself writes (`_expandSkillCommand` in
@@ -189,39 +240,151 @@ function subagentNames(args: Record<string, unknown> | undefined): string[] {
 }
 
 /**
- * Extract skill and agent name counts from Pi session entries.
+ * Agent names launched by one oh-my-pi `task` call: one per `tasks[]` entry. omp also accepts
+ * `tasks` as a JSON-encoded string, and a flat `{agent, task}` call when batching is disabled.
+ */
+function ompTaskAgents(args: Record<string, unknown> | undefined): string[] {
+  let tasks: unknown = args?.tasks;
+  if (typeof tasks === 'string') {
+    try {
+      tasks = JSON.parse(tasks);
+    } catch {
+      return [];
+    }
+  }
+  if (tasks === undefined && typeof args?.task === 'string') {
+    tasks = [args];
+  }
+  if (!Array.isArray(tasks)) {
+    return [];
+  }
+  return tasks
+    .filter((task): task is Record<string, unknown> => !!task && typeof task === 'object')
+    .map((task) => (typeof task.agent === 'string' && task.agent.trim() ? task.agent.trim() : OMP_DEFAULT_TASK_AGENT));
+}
+
+/** The `details` object an oh-my-pi entry or tool result carries, if any. */
+function detailsOf(value: object): object | undefined {
+  return 'details' in value && value.details && typeof value.details === 'object' ? value.details : undefined;
+}
+
+/** The skill name an oh-my-pi `skill-prompt` entry carries, if `raw` is one. */
+function ompSkillPromptName(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  if (!('type' in raw) || raw.type !== 'custom_message') return undefined;
+  if (!('customType' in raw) || raw.customType !== OMP_SKILL_PROMPT) return undefined;
+  const details = detailsOf(raw);
+  if (!details || !('name' in details) || typeof details.name !== 'string' || !details.name.trim()) return undefined;
+  return qualifySkillName(details.name.trim(), 'path' in details ? details.path : undefined);
+}
+
+/** The skill a successful oh-my-pi `read` loaded, when it resolved to that skill's `SKILL.md`. */
+function ompSkillReadName(result: object): string | undefined {
+  const details = detailsOf(result);
+  if (!details || !('resolvedPath' in details) || typeof details.resolvedPath !== 'string') return undefined;
+  const resolvedPath = normalizePathSeparators(details.resolvedPath);
+  if (!resolvedPath.endsWith('/SKILL.md')) return undefined;
+  const meta = 'meta' in details ? details.meta : undefined;
+  const source = meta && typeof meta === 'object' && 'source' in meta ? meta.source : undefined;
+  const url = source && typeof source === 'object' && 'value' in source ? source.value : undefined;
+  const name = typeof url === 'string' ? OMP_SKILL_URL.exec(url)?.[1] : undefined;
+  return name ? qualifySkillName(name, resolvedPath) : undefined;
+}
+
+/** One detected skill or agent invocation, in transcript order. */
+export interface PiInvocation {
+  kind: 'skill' | 'agent';
+  name: string;
+  /** Epoch ms of the entry that carried the detection, when it has one. */
+  timestamp: number | null;
+  /** Id of the `subagent` / `task` tool call that spawned the agent (agent items only). */
+  toolCallId?: string;
+}
+
+/**
+ * Every skill and agent invocation in Pi session entries, in order, with the timestamp of the
+ * entry that evidences it.
  *
  * Safe against missing or malformed fields — anything that is not a recognized shape is
- * skipped. `commandInvocations` is always empty; see the module comment.
+ * skipped.
  */
-export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInvocationCounts {
-  const skillInvocations: Record<string, number> = {};
-  const agentInvocations: Record<string, number> = {};
+export function listPiInvocations(entries: readonly unknown[]): PiInvocation[] {
+  const invocations: PiInvocation[] = [];
+  // A `/skill:x` prompt already injected the skill, so the model re-reading `skill://x` before
+  // the next user message is the same invocation, not a second one.
+  let promptedThisTurn: string | undefined;
 
   for (const raw of entries) {
+    const promptedSkill = ompSkillPromptName(raw);
+    if (promptedSkill) {
+      invocations.push({ kind: 'skill', name: promptedSkill, timestamp: piEntryTimestamp(raw) });
+      promptedThisTurn = promptedSkill;
+      continue;
+    }
+
     const entry = raw as PiEntry;
     if (!isPiMessageEntry(entry)) {
       continue;
     }
     const message = entry.message;
+    const timestamp = piEntryTimestamp(raw);
 
     if (isPiUserMessage(message)) {
+      promptedThisTurn = undefined;
       for (const text of userTextBlocks(message)) {
         const { name } = parseSkillWrapper(text);
-        if (name) bump(skillInvocations, name);
+        if (name) invocations.push({ kind: 'skill', name, timestamp });
       }
       continue;
     }
 
     if (isPiAssistantMessage(message)) {
       for (const toolCall of extractPiToolCalls(message)) {
-        if (toolCall.name !== SUBAGENT_TOOL) continue;
-        for (const agent of subagentNames(toolCall.arguments)) {
-          bump(agentInvocations, agent);
+        let agents: string[] = [];
+        if (toolCall.name === SUBAGENT_TOOL) {
+          agents = subagentNames(toolCall.arguments);
+        } else if (toolCall.name === OMP_TASK_TOOL) {
+          agents = ompTaskAgents(toolCall.arguments);
+        }
+        for (const name of agents) {
+          invocations.push({ kind: 'agent', name, timestamp, toolCallId: toolCall.id });
         }
       }
+      continue;
+    }
+
+    if (isPiToolResultMessage(message) && message.toolName === 'read' && message.isError !== true) {
+      const loaded = ompSkillReadName(message);
+      if (loaded && loaded !== promptedThisTurn) invocations.push({ kind: 'skill', name: loaded, timestamp });
     }
   }
 
+  return invocations;
+}
+
+/**
+ * Extract skill and agent name counts from Pi session entries.
+ *
+ * `commandInvocations` is always empty; see the module comment.
+ */
+export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInvocationCounts {
+  const skillInvocations: Record<string, number> = {};
+  const agentInvocations: Record<string, number> = {};
+  for (const invocation of listPiInvocations(entries)) {
+    bump(invocation.kind === 'skill' ? skillInvocations : agentInvocations, invocation.name);
+  }
   return { skillInvocations, agentInvocations, commandInvocations: {} };
+}
+
+/** Key-wise sum of several {@link NamedInvocationCounts}. */
+export function sumPiNamedInvocations(counts: readonly NamedInvocationCounts[]): NamedInvocationCounts {
+  const total: NamedInvocationCounts = { skillInvocations: {}, agentInvocations: {}, commandInvocations: {} };
+  for (const part of counts) {
+    for (const key of ['skillInvocations', 'agentInvocations', 'commandInvocations'] as const) {
+      for (const [name, count] of Object.entries(part[key])) {
+        total[key][name] = (total[key][name] ?? 0) + count;
+      }
+    }
+  }
+  return total;
 }

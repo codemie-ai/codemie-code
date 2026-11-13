@@ -12,10 +12,12 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
+import { resolveCodemieBinary, rewriteHooksCommandTree } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
+  type AllowlistScope,
   CODEMIE_ANALYTICS_PROJECT_FILTER_ENV,
   addProjectPath,
   canonicalizePath,
@@ -26,7 +28,7 @@ import {
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -40,7 +42,7 @@ interface WriteClaudeCodeOtlpResult {
 }
 
 interface RemoveClaudeCodeOtlpOptions {
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface RemoveClaudeCodeOtlpResult {
@@ -68,7 +70,7 @@ interface HookGroup {
   [key: string]: unknown;
 }
 
-interface ClaudeSettings {
+export interface ClaudeSettings {
   // Parsed from user-edited JSON, so an event's value is not guaranteed to be an array.
   hooks?: Record<string, unknown>;
   env?: Record<string, string>;
@@ -103,12 +105,28 @@ type FixedCodemieEnvKey = Exclude<
 const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
   CLAUDE_CODE_ENABLE_TELEMETRY: '1',
   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
-  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
   OTEL_LOGS_EXPORTER: 'otlp',
   OTEL_METRICS_EXPORTER: 'otlp',
   OTEL_TRACES_EXPORTER: 'otlp',
   OTEL_LOG_TOOL_DETAILS: '1',
 };
+
+/**
+ * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
+ * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
+ * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
+ * to today's default with no `--force`, and a disconnect still clean it up.
+ */
+const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
+  OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
+};
+
+function isHistoricalCodemieValue(key: string, value: string): boolean {
+  return (
+    (CODEMIE_ENV_HISTORICAL_VALUES as Partial<Record<string, readonly string[]>>)[key]?.includes(value) ?? false
+  );
+}
 
 /**
  * True if `value` is (still) codemie's own value for `key`, without a live
@@ -120,7 +138,7 @@ const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
  * own (via `env`) — neither half alone is distinctive enough. `env` must
  * be a pre-mutation snapshot or the pairing check breaks mid-pass.
  */
-function isCodemieOwnedEnvValue(
+export function isCodemieOwnedEnvValue(
   key: (typeof CODEMIE_ENV_KEYS)[number],
   value: unknown,
   env: Record<string, unknown>
@@ -142,7 +160,7 @@ function isCodemieOwnedEnvValue(
     const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
     return typeof endpoint === 'string' && endpoint.endsWith('/v1/analytics/otlp');
   }
-  return CODEMIE_ENV_FIXED_VALUES[key] === value;
+  return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
 /**
@@ -210,20 +228,49 @@ export const HOOK_EVENTS = [
   'StopFailure',
   'SessionEnd',
   'UserPromptSubmit',
+  'UserPromptExpansion',
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
   'SubagentStart',
   'SubagentStop',
   'PreCompact',
+  'PostCompact',
   'Notification',
+  'PostModelSwitch',
+  'ConfigChange',
 ] as const satisfies readonly HookEvent[];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
 
-async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
+/**
+ * `PostCompact` alone gets `async: true` plus a longer `timeout`: `openPostCompactPass`
+ * (`transcript/orchestrator.ts`) waits up to a minute, lock-free, for a still-landing
+ * `compact_boundary` line (`POST_COMPACT_WAIT_BUDGET_MS`). `async` keeps Claude Code — and the
+ * user's own turn — from ever waiting on that; the larger `timeout` here is what keeps Claude
+ * Code itself from killing the subprocess before that wait, plus the lock-held merge/send/commit
+ * afterward, can finish. Every other event is synchronous and keeps the default
+ * `CODEMIE_HOOK_TIMEOUT_SECONDS`, except `UserPromptSubmit` (see below).
+ */
+export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
+
+/**
+ * `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for its decision, so it is
+ * never async, and it may hold the prompt for up to `SSO_LOGIN_WAIT_MS` (150s) while a browser
+ * sign-in completes. This timeout must stay above that wait: the hook must never reach it.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
+
+/**
+ * Claude Code shows exit-0 hook stderr only in verbose mode, so the "continue automatically" notice
+ * goes in the spinner text it displays while the hook runs.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
+  'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
+
+export async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
     return {};
   }
@@ -273,6 +320,20 @@ function isHookGroup(group: unknown): group is HookGroup {
 
 function isCodemieCommand(h: unknown): boolean {
   return isHookEntry(h) && h.command.includes(CODEMIE_COMMAND_MARKER);
+}
+
+/**
+ * Pin codemie's own hook commands to an absolute, shell-safe `codemie` path. A bare `codemie` fails
+ * under Git Bash when only `codemie.cmd` exists (Connect installs). User hooks are left untouched.
+ * Returns true if anything changed. EPMCDME-15907.
+ */
+export async function localizeCodemieHookCommands(hooksBlock: Record<string, unknown>): Promise<boolean> {
+  const binary = await resolveCodemieBinary();
+  const entries = Object.values(hooksBlock)
+    .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+    .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
+    .filter(isCodemieCommand);
+  return rewriteHooksCommandTree(entries, binary, process.platform === 'win32');
 }
 
 /**
@@ -445,9 +506,15 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    if (currentVal !== undefined && currentVal !== desiredVal) {
-      envConflicts.push(key);
+    if (currentVal === undefined || currentVal === desiredVal) {
+      continue;
     }
+    // A prior CodeMie version's own value for this key — migrated to today's default by
+    // this same write below, not a conflict requiring --force.
+    if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    envConflicts.push(key);
   }
 
   // A non-array value under ANY existing hooks event key (not just the ones we
@@ -483,8 +550,9 @@ export async function writeClaudeCodeOtlpConfig(
     );
   }
 
+  const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (opts.scope === 'project') {
+  if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
@@ -559,11 +627,19 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  const buildCodemieEntry = (): HookGroup => {
+  // `PostCompact` alone is async with a longer timeout; `UserPromptSubmit` gets the SSO-wait timeout.
+  const buildCodemieEntry = (eventName: string): HookGroup => {
+    const isPostCompact = eventName === 'PostCompact';
     const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-      timeout: CODEMIE_HOOK_TIMEOUT_SECONDS,
+      timeout: isPostCompact
+        ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+        : eventName === 'UserPromptSubmit'
+          ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+          : CODEMIE_HOOK_TIMEOUT_SECONDS,
+      ...(isPostCompact ? { async: true } : {}),
+      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };
@@ -590,8 +666,10 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry()];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
+
+  await localizeCodemieHookCommands(hooks);
 
   // --- Merge env block ---
   const mergedEnv: Record<string, string> = {
@@ -647,7 +725,7 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries)';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
       }
       return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
@@ -729,4 +807,17 @@ export async function removeClaudeCodeOtlpConfig(
     ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
   );
   return { removed: true, path: settingsPath, mode: 'full' };
+}
+
+/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return false;
+  }
+  return Object.values(existing.hooks ?? {}).some(
+    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+  );
 }

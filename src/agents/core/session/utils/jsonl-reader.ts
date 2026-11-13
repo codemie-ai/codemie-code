@@ -15,6 +15,7 @@ import { logger } from '../../../../utils/logger.js';
  * @param filePath - Absolute path to JSONL file
  * @param logPrefix - Log prefix for warnings (e.g. '[codex-storage]')
  * @returns Array of parsed records (empty if file doesn't exist; corrupted lines skipped)
+ * @throws The read error for any failure other than a missing file (EACCES, EMFILE, EISDIR, …)
  */
 export async function readJSONLTolerant<T>(filePath: string, logPrefix = '[jsonl-reader]'): Promise<T[]> {
   try {
@@ -38,12 +39,10 @@ export async function readJSONLTolerant<T>(filePath: string, logPrefix = '[jsonl
 
     return results;
   } catch (error: unknown) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return [];
     }
-    logger.debug(`${logPrefix} Failed to read JSONL ${filePath}: ${err.message}`);
-    return [];
+    throw error;
   }
 }
 

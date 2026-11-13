@@ -4,17 +4,200 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.8] - 2026-11-12
+
+### Added
+
+- `codemie analytics sync` delivers each developer's priced analytics report once a day to a Power Automate webhook, a git repository, or both; a team lead connects the team with `codemie analytics sync bootstrap` and each developer registers the daily job with the command it prints
+- Claude Desktop Cowork sessions now appear on the CLI Analytics tab (turns, tools, subagents, tokens, cost) once Claude Desktop is connected with `codemie proxy connect --claude-desktop`; sessions that ran while the proxy was stopped are sent when it runs again, up to 7 days back. `codemie proxy analytics disable` and `exclude` apply to them
+- `codemie proxy status` shows whether Claude Desktop sessions are being collected (`Desktop: collecting` / `NOT collecting` with the command that fixes it) and the latest analytics data that was not stored (`Last dropped: <reason>`); `codemie proxy analytics status` shows the latter too
+
+### Changed
+
+- `codemie-opencode` and `codemie-opencode-acp` now target OpenCode v2; OpenCode v1 is no longer supported (the built-in `codemie-code` agent is unaffected)
+- OpenCode lists Responses API models under the provider `codemie-openai` instead of `openai`. Anything that names `openai/<model>` — a resumed session, a script, an agent config, a favourite or a saved variant — must be pointed at `codemie-openai/<exact deployment id>` (for example `codemie-openai/gpt-6.1-terra-2026-10-26`). A resumed session reports the old model as unavailable until you pick the model again; its conversation is kept
+- `codemie-opencode --reasoning-effort` selects an OpenCode model variant and is clamped to the levels the model offers: `minimal`–`xhigh` for Responses API models, `low`–`high` for the others
+- `codemie-pi` uses Pi's built-in MCP support and no longer installs `pi-mcp-adapter`. Installs that still have the adapter keep built-in MCP disabled until it is removed (`pi remove npm:pi-mcp-adapter`)
+- `codemie-pi` takes a model's context window from the CodeMie model catalog when the catalog gives one
+- HTML pages from the Claude plugin's `codemie-html-report` skill (0.4.0) look like the CodeMie app in light and dark: Geist Mono for the interface and Geist for text, the app's cards, stat tiles and tables, and its violet corner light behind the page. Decks are unchanged
+
+### Fixed
+
+- Cookie-only SSO credentials are no longer expired locally
+- `codemie self-update` warns when the shell still resolves an older `codemie` install
+- Any Pi 1.x release is accepted, and `codemie install pi` installs the latest Pi release
+- Managed and native sessions select the CodeMie project the same way
+- The claude-code-otlp endpoint is refreshed before Claude Code starts
+- Agent tool results in Claude Code sessions carry the forked agent's id in analytics
+- With Claude Desktop connected, connecting another client, `codemie proxy start`, `codemie proxy restart` or a Claude Code hook no longer restarts the proxy outside Desktop mode, which silently stopped the collection of Claude Desktop sessions
+- The route of a model request (`x-litellm-model-name`) is no longer lost from a streamed answer whose first event is split across network chunks, or from a compressed non-streaming answer, so the cost of such a request is priced by its route
+- An analytics session discarded for having no CodeMie project is now logged and shown by `codemie proxy status`
+- The turn count in a Claude Code session summary no longer includes the lines Claude Code writes itself (an interrupted request, the output of a local or `!` command, the `!` command itself) or automatic prompts (a finished background task, an agent's message), so `Turns` on the CLI Analytics tab is no longer raised by them. Sessions already sent are not recounted
+- An undelivered session no longer loses its end metric to an outage that answers with errors: a delivery attempt answered 5xx, 429 or a gateway's error page is given back, so Claude Desktop and CLI sessions are delivered once the server recovers
+- OpenCode v2: choosing a model from the "CodeMie SSO (Responses API)" list no longer fails with `Invalid model name`; the list now holds only the models CodeMie serves, and `--model` starts on the requested model
+- OpenCode v2: sessions sync their metrics and conversations again, hooks (prompt, tool, stop) run, `--reasoning-effort` no longer aborts `--task` runs, and each `codemie-opencode` session runs its own OpenCode server instead of attaching to a background service that held another session's settings
+- OpenCode v2: session titles are generated with the profile's haiku-tier model when it is in the catalog
+
+## [0.16.7] - 2026-11-10
+
+### Added
+
+- `codemie analytics` now includes oh-my-pi sub-agent spend and auxiliary model usage in omp token and cost totals, reports omp file changes, net lines and languages, shows omp skill/agent dispatches on the Timeline with per-agent cost and a root/unlinked allocation, recognizes more framework bundles (SecOps, Matt Pocock Skills, Caveman, Ponytail, CodeMie Skills, Herdr and the full CodeMie AI Factory set), and shows omp Commands as "not recorded"
+- `codemie proxy connect --omp` gives oh-my-pi the active profile's live model catalog (cost, context window, output cap, image input) via an auto-loaded extension; `codemie proxy disconnect --omp` removes it; it cannot be combined with `--vscode`
+- `codemie proxy disconnect` now also works for `--claude-desktop` and `--vscode-claude-code`
+- Explicit work consent for subscription sessions: sessions without consent stay out of legacy metrics
+- The MS Graph skill can create email drafts with attachments and browse and download from any SharePoint document library
+- `codemie` ships a Windows diagnostics script for installation issues
+
+### Fixed
+
+- `codemie analytics --include-external` now finds oh-my-pi sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record, and reports them as their own `omp` agent ("Oh My Pi") instead of folding them into Pi; filter with `--agent omp`. Plugin skills are named after their plugin (`sdlc-factory/mr-creator`), so the Frameworks view attributes those sessions to CodeMie AI Factory or Superpowers instead of "Pure chat"
+- The analytics report and terminal output label every agent by its product name (Claude Code, CodeMie Code, CodeMie Codex, …) instead of mixing raw keys such as `claude` with names such as "GitHub Copilot CLI"; chart legends use the same labels
+- Native (untracked) Pi and oh-my-pi sessions now report tool calls, skills and sub-agents; oh-my-pi `/skill:` prompts, `skill://` loads and `task` dispatches are recognized, and `sdlc-factory/…`, `sdlc-standard`, `sdlc-doctor` and `sdlc-status` mark a session as CodeMie AI Factory
+- Encrypted reasoning-content recovery now also covers `codemie proxy start` and `codemie proxy connect --omp` daemons
+- Legacy metrics are published only after the backend accepts the destination, and subscription sessions without consent are kept out of them
+- Local-proxy Claude sessions are classified as CodeMie-routed
+- Windows transcript paths are matched case-insensitively in analytics
+- A delivered session keeps its attribution on metrics
+- `codemie proxy status` reports analytics delivery health
+- Claude Desktop offers router models, and an invalid MCP source key is dropped
+- MCP OAuth login runs in a reliable sequence, with optional login persistence
+- Provider-prefixed models resolve in Codex Desktop
+- Pi works with the SSO provider and installs the supported version
+- Plain-string Gemini conversation messages are synced and empty user turns are skipped
+- `claude-code-otlp` hooks are written with an absolute `codemie` path
+- The MS Graph Teams `--teams-list` fallback follows `nextLink` pages
+
+## [0.16.6] - 2026-11-05
+
+### Added
+
+- The Claude plugin ships codemie-html-report 0.3 and codemie-humanizer 2.0
+
+### Fixed
+
+- Date-only `--from` / `--to` analytics filters use UTC day bounds
+- `--json` invocations keep start-up output off stdout
+- A run's analytics metrics and conversation are scoped to its own sessions and run window
+- Hooks restart the proxy daemon on the recorded profile
+- SSO re-authentication no longer opens the browser twice
+- The OTLP endpoint stays valid across proxy daemon respawns, and the pinned port is held while SSO credentials are missing
+
+## [0.16.5] - 2026-11-04
+
+### Added
+
+- Claude subscription type is classified, and CLI analytics are routed by evidence
+
+### Fixed
+
+- Each global profile now keeps its own CodeMie project, URL and integration
+- Managed and native sessions select the same CodeMie project
+- Claude analytics work again for oauth2-proxy SSO logins
+- Claude Desktop sessions survive proxy daemon restarts and failed deliveries
+- Metric deltas are deduplicated within a shared run window, and the sync rewrite is merged instead of overwritten
+- Hook SSO auth checks use the session's profile
+- Forked skills and slash commands are recognised in analytics
+- Stranded sessions are finalized and undelivered ones are delivered
+
+## [0.16.4] - 2026-11-02
+
+### Added
+
+- Claude Code analytics can be disabled globally or per project
+
+### Fixed
+
+- Git branch is now detected in repositories that have no commits yet
+- UUID fragments and model tokens are no longer mistaken for story mentions in analytics
+- Claude runs are baselined per record, and Codex calls are counted once their output appears
+- Native `-s` flags are preserved for Codex and Gemini
+- On shutdown only the agent is signalled, so its SessionEnd hook is no longer killed
+
+## [0.16.3] - 2026-10-30
+
+### Added
+
+- `codemie proxy restart` command, and update notes that match the installed version
+- Prompts are resumed automatically after SSO re-authentication
+
+### Fixed
+
+- Codemie hooks run under PowerShell on Windows, and stale hook paths are healed automatically
+- Secrets are masked in forwarded OTLP hook events
+- Secrets are masked in forwarded native Claude Code telemetry (logs, metrics, traces), including secret-named attributes and JSON-encoded tool parameters
+- Hook output is no longer swallowed, so the agent receives the answer from `codemie hook`
+- Signals sent to the wrapper are forwarded to the agent before the proxy is stopped
+- `pasted_content` tags are stripped from Claude hook prompts in analytics
+
+### Changed
+
+- Claude Code analytics now sends native telemetry as OTLP/JSON so it can be masked. Existing users: run `codemie proxy connect --claude-code-otlp` and restart Claude Code; until then telemetry still goes out as unmasked protobuf
+
+## [0.16.2] - 2026-10-28
+
+### Added
+
+- Claude 5.5 models in the Claude Desktop and VS Code proxy connectors
+- `codemie proxy connect` confirms Claude Code analytics before connecting
+- Copilot Chat and native Copilot CLI analytics via OTLP hook ingestion
+
+## [0.16.1] - 2026-10-27
+
+### Added
+
+- GitHub Copilot CLI local session analytics
+- `--redact` analytics export option that omits prompts and absolute paths
+- Richer hook events and new synthetic analytics events
+
+### Fixed
+
+- claude-haiku-5-5 and gemini-4-argon are priced from the gateway catalog
+- X-CodeMie attribution headers are percent-encoded for non-Latin paths
+- API-error placeholders are excluded from usage analytics
+- Session reports no longer run out of memory during native session discovery
+- Proxy cold start is skipped silently when no base URL is configured
+- Write line counts are no longer inflated by a trailing newline, and new-file writes are counted
+- OTLP hook path tolerates proxy start failures
+- Forked skills keep their name on SubagentStart/SubagentStop events
+- Partial output token counts are flagged in analytics
+
+### Changed
+
+- Removed unused dependencies (@langchain/langgraph, express, cors, minimatch, @clack)
+
+## [0.16.0] - 2026-10-22
+
 ### Added
 
 - Feature tips: short "did you know" hints shown at session start and end, with no-repeat rotation and a `CODEMIE_TIPS` off switch
+- Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
 - `codemie tips` command to browse the full tip catalog, grouped by category
 - `codemie whatsnew` command showing release notes from this changelog
 - Once-per-upgrade "What's new" notice on CLI start after an update
-- Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
+- Claude Code OTLP analytics integration, with a per-project allowlist
+- codex-acp, gemini-acp and opencode-acp ACP adapters
+- GPT-6 family model support
+- Session project is sent as X-CodeMie-Project on analytics requests
+- VS Code models use tenant catalog token limits
+- Headless registration for assistants and skills
+- `codemie mcp remove` and `codemie mcp list` subcommands
+- Live Ollama model search with recommendations
 
 ### Fixed
 
 - CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
+- SSO session expiry handling and zero-cost analytics misattribution
+- Analytics delivery resumes after SSO re-authentication, and prompts are blocked immediately when the SSO session is invalid
+- Windows system proxy and PAC settings are honored
+- Windows Codex desktop MSIX installations are detected
+- Multi-segment and dotted git remote repository names resolve correctly
+- Conversation sync no longer re-sends in a loop
+
+### Changed
+
+- Analytics export is always costed and uses strict model pricing
+- Server-side auto mode review is disabled for the ai-run-sso provider
 
 ## [0.15.1] - 2026-09-08
 

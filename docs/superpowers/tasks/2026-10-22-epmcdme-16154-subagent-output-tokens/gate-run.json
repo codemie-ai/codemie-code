@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "branch": "feat/EPMCDME-16154",
+  "head": "355d747415d189861f5d494eecf955d899bd18ab",
+  "runner": "npm",
+  "started_at": "2026-10-22T12:49:31.330Z",
+  "completed_at": "2026-10-22T12:50:39.230Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1843,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2191,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2307,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6868,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 46094,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "Failures only in src/utils/__tests__/system-proxy-dispatcher.test.ts (3 tests, connect timeouts to 127.0.0.2; sandbox/network-related, unrelated to changed files)"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8031,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 565,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\"; stage changes (git add) to scan locally; CI Gitleaks runs unconditionally"
+    }
+  ],
+  "failures": {
+    "unit": "     × routes global fetch directly when NO_PROXY matches 10006ms\n     × routes the Node HTTP client through proxy and bypass paths per request 5024ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch through the explicit proxy\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:53171, timeout: 10000ms)\n ❯ onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n ❯ Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n ❯ src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar…\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n ❯ ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯\n\n\n Test Files  1 failed | 361 passed (362)\n      Tests  3 failed | 5505 passed (5508)\n   Start at  14:49:44\n   Duration  45.53s (transform 10.83s, setup 0ms, import 78.04s, tests 85.38s, environment 17ms)\n\n"
+  }
+}

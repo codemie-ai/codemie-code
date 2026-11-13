@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "source": ".ai-run/guides/quality-gates.md",
+  "gates": [
+    {"id": "license", "command": "npm run license-check", "available": true},
+    {"id": "lint", "command": "npm run lint", "available": true},
+    {"id": "typecheck", "command": "npm run typecheck", "available": true},
+    {"id": "build", "command": "npm run build", "available": true},
+    {"id": "unit", "command": "npx vitest run --project unit", "available": true},
+    {"id": "integration", "command": "npx vitest run --project cli", "available": true},
+    {"id": "commitlint", "command": "npm run commitlint:last; npx commitlint --from <merge_base> --to HEAD", "available": true},
+    {"id": "secrets", "command": "npm run validate:secrets", "available": true},
+    {"id": "affected", "command": "", "available": false},
+    {"id": "ui", "command": "", "available": false}
+  ],
+  "env": "all CODEMIE_* variables unset (the session runs under a codemie launcher; ambient vars break AgentCLI-model-source.test.ts)",
+  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
+  "detected_at": "2026-11-02T10:42:00Z"
+}

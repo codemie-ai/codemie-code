@@ -8,7 +8,7 @@ import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
 import { AuthMethod } from '@/providers/core/types.js';
-import type { ProviderProfile } from '@/env/types.js';
+import type { CodeMieConfigOptions } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
 import { applySystemProxyEnvironment } from '@/utils/system-proxy.js';
@@ -33,7 +33,7 @@ export interface AuthenticationOptions {
  *         or immediately when `nonInteractive` is set
  */
 export async function getAuthenticatedClient(
-  config: ProviderProfile,
+  config: CodeMieConfigOptions,
   options: AuthenticationOptions = {}
 ): Promise<CodeMieClient> {
   if (config.authMethod === AuthMethod.JWT) {
@@ -83,7 +83,7 @@ export async function getAuthenticatedClient(
  * @returns True if re-authentication succeeded, false otherwise
  * @throws ConfigurationError if re-authentication is not available
  */
-export async function promptReauthentication(config: ProviderProfile): Promise<boolean> {
+export async function promptReauthentication(config: CodeMieConfigOptions): Promise<boolean> {
   const setupSteps = ProviderRegistry.getSetupSteps(config.provider || '');
 
   if (setupSteps?.validateAuth) {

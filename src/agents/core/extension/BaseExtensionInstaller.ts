@@ -519,6 +519,9 @@ export abstract class BaseExtensionInstaller {
 
   // Rewrite installed hooks.json commands to an absolute codemie path. Non-fatal:
   // failures log and leave the copied file as-is so install never breaks. EPMCDME-14035.
+  // Hook runner differs per host; only Claude hooks are pinned to PowerShell on Windows.
+  protected readonly hookHost: 'claude' | 'other' = 'other';
+
   protected async localizeInstalledHooks(targetPath: string): Promise<void> {
     try {
       const { resolveCodemieBinary, rewriteHooksCommandTree } = await import('../../../utils/hook-command.js');
@@ -526,7 +529,8 @@ export abstract class BaseExtensionInstaller {
       const raw = await readFile(hooksFile, 'utf-8');
       const parsed = JSON.parse(raw) as { hooks?: unknown };
       const binary = await resolveCodemieBinary();
-      if (rewriteHooksCommandTree(parsed.hooks, binary)) {
+      const powershell = this.hookHost === 'claude' && process.platform === 'win32';
+      if (rewriteHooksCommandTree(parsed.hooks, binary, powershell)) {
         await writeFile(hooksFile, JSON.stringify(parsed, null, 2), 'utf-8');
         logger.info(`[${this.agentName}] Localized hook commands to ${binary}`);
       }
@@ -697,6 +701,8 @@ export abstract class BaseExtensionInstaller {
         await this.localizeInstalledHooks(targetPath);
       } else {
         logger.info(`[${this.agentName}] Skipping copy - extension already up-to-date`);
+        // Idempotent: re-heals stale paths and the PowerShell pinning.
+        await this.localizeInstalledHooks(targetPath);
       }
 
       // Build result

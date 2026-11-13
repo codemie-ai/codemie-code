@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
   appendAuditEvent,
-  appendTranscriptMarker,
+  writeOwnershipMarker,
   isExternalOrigin,
 } from '../session/session-origin-audit.js';
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '../session/types.js';
@@ -48,27 +48,86 @@ describe('appendAuditEvent', () => {
   });
 });
 
-describe('appendTranscriptMarker', () => {
-  it('appends a codemie_session_start line to the transcript', () => {
-    appendTranscriptMarker(transcriptFile, 'codemie-id-1', 'claude');
-    const lines = readFileSync(transcriptFile, 'utf-8').trim().split('\n');
-    expect(lines).toHaveLength(2);
-    const marker = JSON.parse(lines[1]);
-    expect(marker.type).toBe('codemie_session_start');
-    expect(marker.codemie_session_id).toBe('codemie-id-1');
-    expect(marker.codemie_agent).toBe('claude');
-    expect(typeof marker.uuid).toBe('string');
+describe('writeOwnershipMarker', () => {
+  const codemieHome = join(TMP, 'home');
+  const sessionsDir = join(codemieHome, 'sessions');
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = codemieHome;
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = previousHome;
+  });
+
+  function sidecars(): Record<string, unknown>[] {
+    return readdirSync(sessionsDir)
+      .filter((file) => file.endsWith('-codemie-marker.json'))
+      .map((file) => JSON.parse(readFileSync(join(sessionsDir, file), 'utf-8')));
+  }
+
+  it('leaves a claude transcript byte-for-byte unchanged and records ownership in one sidecar', () => {
+    const before = readFileSync(transcriptFile);
+    writeOwnershipMarker(transcriptFile, 'codemie-id-1', 'claude');
+    expect(readFileSync(transcriptFile).equals(before)).toBe(true);
+    const [marker, ...rest] = sidecars();
+    expect(rest).toEqual([]);
+    expect(marker).toMatchObject({ transcriptPath: transcriptFile, codemieSessionId: 'codemie-id-1', codemieAgent: 'claude' });
     expect(typeof marker.timestamp).toBe('string');
+
+    writeOwnershipMarker(transcriptFile, 'codemie-id-1', 'claude');
+    expect(sidecars()).toEqual([marker]);
+    expect(readFileSync(transcriptFile).equals(before)).toBe(true);
+  });
+
+  it('names the sidecar by the first 8 hex of the transcript path hash, then the CodeMie session', () => {
+    writeOwnershipMarker('/work/claude/t1.jsonl', 'codemie-id-1', 'claude');
+    expect(readdirSync(sessionsDir)).toEqual(['e5b77992-codemie-id-1-codemie-marker.json']);
+  });
+
+  it('leaves a sidecar already on disk for the same pair byte-identical', () => {
+    mkdirSync(sessionsDir, { recursive: true });
+    const sidecar = join(sessionsDir, 'e5b77992-codemie-id-1-codemie-marker.json');
+    writeFileSync(sidecar, '{"earlier":"writer"}');
+    writeOwnershipMarker('/work/claude/t1.jsonl', 'codemie-id-1', 'claude');
+    expect(readFileSync(sidecar, 'utf-8')).toBe('{"earlier":"writer"}');
+  });
+
+  it('gives each transcript of a pi run its own sidecar, even when their basenames match, and touches neither', () => {
+    const first = join(TMP, 'a', 'run.jsonl');
+    const second = join(TMP, 'b', 'run.jsonl');
+    for (const file of [first, second]) {
+      mkdirSync(join(file, '..'), { recursive: true });
+      writeFileSync(file, '{"type":"session","id":"s1"}\n');
+    }
+    writeOwnershipMarker(first, 'codemie-pi-1', 'pi');
+    writeOwnershipMarker(second, 'codemie-pi-1', 'pi');
+    for (const file of [first, second]) {
+      expect(readFileSync(file, 'utf-8')).toBe('{"type":"session","id":"s1"}\n');
+    }
+    expect(sidecars().map((marker) => marker.transcriptPath).sort()).toEqual([first, second]);
+  });
+
+  it('writes no ownership marker for a shared sqlite store: the file unchanged, no sidecar', () => {
+    const dbFile = join(TMP, 'opencode.db');
+    writeFileSync(dbFile, 'SQLite format 3\0');
+    writeOwnershipMarker(dbFile, 'codemie-id-1', 'opencode');
+    expect(readFileSync(dbFile, 'utf-8')).toBe('SQLite format 3\0');
+    const markers = existsSync(sessionsDir) ? readdirSync(sessionsDir).filter((file) => file.endsWith('-codemie-marker.json')) : [];
+    expect(markers).toEqual([]);
   });
 
   it('is non-fatal when the transcript file does not exist', () => {
     expect(() =>
-      appendTranscriptMarker('/does/not/exist/session.jsonl', 'id', 'claude')
+      writeOwnershipMarker('/does/not/exist/session.jsonl', 'id', 'claude')
     ).not.toThrow();
   });
 
   it('is non-fatal when transcript path is empty string', () => {
-    expect(() => appendTranscriptMarker('', 'id', 'claude')).not.toThrow();
+    expect(() => writeOwnershipMarker('', 'id', 'claude')).not.toThrow();
   });
 });
 

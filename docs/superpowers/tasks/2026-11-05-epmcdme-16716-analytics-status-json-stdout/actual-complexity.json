@@ -1,0 +1,70 @@
+{
+  "task": "Keep start-up output (migration banner, update check, what's-new notice) off stdout for --json invocations via a new isMachineOutputInvocation(argv) helper wired into bin/codemie.js, with a stderr warning when a start-up migration fails (EPMCDME-16716).",
+  "generated": "2026-11-05T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "CLI wrapper (bin/codemie.js start-up sequence), machine-output utility (src/utils/machine-output.ts), COMMANDS.md docs",
+      "layers": "API (CLI entry), Service (utility)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Minor: `--json <path>` (SDK commands take a file as input) cannot be told apart from the output switch before commander parses argv; accepted as a documented trade-off (silent start-up only moves details to the log file)"
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "argv-based heuristic runs on every CLI start-up; false positives only suppress start-up chatter and update prompts; silent migration failure had to be surfaced via stderr",
+      "mitigation": "Reuses the existing isHookProcess silent-migration pattern in the wrapper; unit tests for the helper plus spawned-CLI integration tests covering stdout purity, skipped update check and the stderr warning; trivially reversible"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 3,
+      "modified_file_list": [
+        "bin/codemie.js",
+        "docs/COMMANDS.md",
+        "tests/integration/hook-stdout.test.ts"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        "src/utils/machine-output.ts",
+        "src/utils/__tests__/machine-output.test.ts"
+      ],
+      "affected_dirs": ["bin", "docs", "src", "tests"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["API", "Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Highest-scoring dimension: diffstat reports 5 files (3 modified, 2 new) across bin, docs, src and tests, mapping to M; about 100 insertions and 6 deletions, mostly tests."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "One small pure helper and one start-up wrapper edit; no cross-cutting restructuring. Wrapper runs on every invocation but the change is gated to --json argv only."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

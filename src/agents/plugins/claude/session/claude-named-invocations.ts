@@ -35,10 +35,31 @@ interface RawBlock {
 }
 
 interface RawMessage {
+  promptId?: unknown;
+  isMeta?: unknown;
   message?: { role?: string; content?: unknown };
 }
 
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
+const SLASH_LINE = /^\/([A-Za-z0-9][\w:.-]*)(?:\s[\s\S]*)?$/;
+
+/**
+ * The name in a typed `/name [args]` user prompt (a lone string or text block), or `''`. A wrapper
+ * line (`<command-message>`) is not plain, and neither is prose that merely contains a slash.
+ * Alone this proves nothing about the name; callers must have independent evidence it started a run.
+ */
+export function plainSlashCommandName(content: unknown): string {
+  let text = '';
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    const blocks = content as RawBlock[];
+    if (blocks.length !== 1 || blocks[0]?.type !== 'text' || typeof blocks[0].text !== 'string') return '';
+    text = blocks[0].text;
+  }
+  if (!text || text.includes('<command-message>')) return '';
+  return SLASH_LINE.exec(text.trim())?.[1] ?? '';
+}
 
 function bump(map: Record<string, number>, key: string): void {
   map[key] = (map[key] || 0) + 1;
@@ -58,7 +79,10 @@ export function extractNamedInvocations(messages: readonly unknown[]): NamedInvo
  * Same extraction as {@link extractNamedInvocations}, additionally keeping the slash commands in
  * the order they were invoked (repeats kept, no leading slash).
  */
-export function extractOrderedNamedInvocations(messages: readonly unknown[]): OrderedNamedInvocations {
+export function extractOrderedNamedInvocations(
+  messages: readonly unknown[],
+  forkedSlashPromptIds?: ReadonlySet<string>
+): OrderedNamedInvocations {
   const skillInvocations: Record<string, number> = {};
   const agentInvocations: Record<string, number> = {};
   const commandInvocations: Record<string, number> = {};
@@ -86,6 +110,16 @@ export function extractOrderedNamedInvocations(messages: readonly unknown[]): Or
     const msg = raw as RawMessage;
     const content = msg?.message?.content;
     const isUser = msg?.message?.role === 'user';
+
+    // A forked skill run as `/name` is a plain user line with no wrapper. The caller vouches for
+    // the prompts that started a fork; the line is the command, counted once, in order.
+    if (isUser && !msg.isMeta && typeof msg.promptId === 'string' && forkedSlashPromptIds?.has(msg.promptId)) {
+      const cmd = plainSlashCommandName(content);
+      if (cmd) {
+        bump(commandInvocations, cmd);
+        commandsInOrder.push(cmd);
+      }
+    }
 
     // Real slash commands arrive as plain string content (the CLI shape).
     if (typeof content === 'string') {

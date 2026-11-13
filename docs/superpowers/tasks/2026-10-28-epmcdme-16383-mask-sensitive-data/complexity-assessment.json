@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "task": "Mask secrets and cap/drop unbounded free-text fields in claude-code-otlp hook event payloads before spooling/forwarding to CodeMie analytics, skip tool_response for sensitive-file Reads, and add per-field unit tests.",
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "OtlpAgentAdapter.limitPayload/buildEvent (shared base class also used by copilot-chat-otlp and copilot-cli-otlp), a new shared text-masking util in src/utils, and the claude-code-otlp plugin onPostToolUse/onPreToolUse handlers for sensitive-file Reads. Spool and forwarder stay untouched (byte-for-byte contract). Touching a shared base class and a shared util gives L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest existing pattern is utils/security.ts (sanitizeLogArgs/sanitizeValue), but its value patterns are whole-string anchored and cannot mask secrets embedded in prose, .env dumps or command output, and maskString leaks 8 chars. The security-sensitive aspect is therefore not covered, which is a divergence and bumps risk. No runtime embedded-secret scanner exists, so a new regex pattern set is needed. Risks: mask-before-truncate ordering; prompt_body computed separately from the unmasked original; raw duplicates the whole event; masker must not corrupt the agentId in tool_response that the backend uses for fork attribution; masking structured tool_input before stringify; already-spooled events stay unmasked. ACs enumerate many secret variants (API key, token, password, private key, connection string) and there is no existing parameterized-pattern test template for forwarded fields, which is a second bump."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to XL: security requirement (secret masking), and the nearest existing pattern (security.ts) does not cover embedded-secret detection in free text",
+    "Technical Risk bumped: AC enumerates specific secret/variant cases and no existing test template covers a defensive pattern table for forwarded fields",
+    "Component Scope kept at L: touches a shared base class (OtlpAgentAdapter) that also serves two Copilot adapters, plus a new shared util"
+  ],
+  "split_recommendation": null
+}

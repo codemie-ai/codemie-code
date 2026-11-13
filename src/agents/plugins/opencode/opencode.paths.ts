@@ -5,6 +5,47 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { logger } from '../../../utils/logger.js';
+import { getCodemieHome } from '../../../utils/paths.js';
+
+/**
+ * The user's own XDG_DATA_HOME, read at load: a codemie-code launch later points this
+ * process's XDG_DATA_HOME at its private storage.
+ */
+const USER_XDG_DATA_HOME = process.env.XDG_DATA_HOME;
+
+/** The data home codemie-code's OpenCode runs use (their XDG_DATA_HOME). */
+export function getOpenCodeStorageBase(): string {
+  return join(getCodemieHome(), 'opencode-storage');
+}
+
+/**
+ * The OpenCode storage dir (`…/opencode/storage`) an agent's runs write: codemie-code's private
+ * data home, or — for opencode / opencode-acp — the user's XDG_DATA_HOME, else the platform default.
+ */
+export function getAgentOpenCodeStoragePath(agentName: string): string {
+  if (agentName === 'codemie-code') {
+    return join(getOpenCodeStorageBase(), 'opencode', 'storage');
+  }
+  return USER_XDG_DATA_HOME
+    ? join(USER_XDG_DATA_HOME, 'opencode', 'storage')
+    : join(platformOpenCodeDataDir(), 'storage');
+}
+
+function platformOpenCodeDataDir(): string {
+  const home = homedir();
+  switch (process.platform) {
+    case 'darwin':
+      return join(home, 'Library', 'Application Support', 'opencode');
+    case 'win32': {
+      const appData = process.env.LOCALAPPDATA;
+      return appData
+        ? join(appData, 'opencode')
+        : join(home, '.local', 'share', 'opencode');
+    }
+    default:
+      return join(home, '.local', 'share', 'opencode');
+  }
+}
 
 /**
  * Storage layout detection result
@@ -86,19 +127,19 @@ export async function detectStorageLayout(storagePath: string): Promise<StorageL
  * - Windows: %LOCALAPPDATA%/opencode/storage/
  *
  * Priority order:
- * 1. OPENCODE_STORAGE_PATH (explicit override)
+ * 1. `storagePathOverride`, else OPENCODE_STORAGE_PATH (explicit override)
  * 2. XDG_DATA_HOME (standard XDG convention)
  * 3. Platform-specific defaults
  *
  * @returns Path to storage root directory or null if not found
  */
-export function getOpenCodeStoragePath(): string | null {
+export function getOpenCodeStoragePath(storagePathOverride?: string): string | null {
   const home = homedir();
   let storagePath: string;
 
   // Priority 0: Custom storage path override (most explicit)
-  if (process.env.OPENCODE_STORAGE_PATH) {
-    const customPath = process.env.OPENCODE_STORAGE_PATH;
+  const customPath = storagePathOverride ?? process.env.OPENCODE_STORAGE_PATH;
+  if (customPath) {
     logger.debug(`[opencode-paths] Using OPENCODE_STORAGE_PATH: ${customPath}`);
     return existsSync(customPath) ? customPath : null;
   }
@@ -139,33 +180,21 @@ export function getOpenCodeStoragePath(): string | null {
  * database undiscoverable.
  *
  * Priority mirrors getOpenCodeStoragePath():
- * 1. dirname(OPENCODE_STORAGE_PATH)
+ * 1. dirname(`storagePathOverride`, else OPENCODE_STORAGE_PATH)
  * 2. XDG_DATA_HOME/opencode
  * 3. Platform-specific defaults
  */
-export function getOpenCodeDataDir(): string {
-  const home = homedir();
-
-  if (process.env.OPENCODE_STORAGE_PATH) {
-    return dirname(process.env.OPENCODE_STORAGE_PATH);
+export function getOpenCodeDataDir(storagePathOverride?: string): string {
+  const customPath = storagePathOverride ?? process.env.OPENCODE_STORAGE_PATH;
+  if (customPath) {
+    return dirname(customPath);
   }
 
   if (process.env.XDG_DATA_HOME) {
     return join(process.env.XDG_DATA_HOME, 'opencode');
   }
 
-  switch (process.platform) {
-    case 'darwin':
-      return join(home, 'Library', 'Application Support', 'opencode');
-    case 'win32': {
-      const appData = process.env.LOCALAPPDATA;
-      return appData
-        ? join(appData, 'opencode')
-        : join(home, '.local', 'share', 'opencode');
-    }
-    default:
-      return join(home, '.local', 'share', 'opencode');
-  }
+  return platformOpenCodeDataDir();
 }
 
 /**
@@ -174,8 +203,8 @@ export function getOpenCodeDataDir(): string {
  *
  * @returns Path to sessions directory or null if storage not found
  */
-export function getOpenCodeSessionsPath(): string | null {
-  const storagePath = getOpenCodeStoragePath();
+export function getOpenCodeSessionsPath(storagePathOverride?: string): string | null {
+  const storagePath = getOpenCodeStoragePath(storagePathOverride);
   if (!storagePath) return null;
   const sessionsPath = join(storagePath, 'session');
   return existsSync(sessionsPath) ? sessionsPath : null;
@@ -235,8 +264,8 @@ export function getOpenCodeConfigDir(): string {
  *
  * @returns Path to opencode.db or null if not found
  */
-export function getOpenCodeDbPath(): string | null {
-  const dbPath = join(getOpenCodeDataDir(), 'opencode.db');
+export function getOpenCodeDbPath(storagePathOverride?: string): string | null {
+  const dbPath = join(getOpenCodeDataDir(storagePathOverride), 'opencode.db');
   if (existsSync(dbPath)) {
     logger.debug(`[opencode-paths] Found SQLite DB: ${dbPath}`);
     return dbPath;

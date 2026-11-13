@@ -23,10 +23,10 @@ import {
   checkStatus,
   type DaemonState,
 } from '../daemon-manager.js';
-import { isProcessAlive } from '../../../../utils/processes.js';
+import { isProcessAlive, processStartedAt } from '../../../../utils/processes.js';
+import { getEffectiveClientType } from '../client-type.js';
 import {
   daemonMatchesRequest,
-  getEffectiveClientType,
   type RequestedDaemonConfig,
 } from '../connect-orchestrator.js';
 import { createProxyCommand } from '../index.js';
@@ -47,7 +47,7 @@ function makeFullState(overrides: Partial<DaemonState> = {}): DaemonState {
     clientType: 'vscode-byok',
     syncApiUrl: 'https://api.example.com',
     syncCodeMieUrl: 'https://codemie.example.com',
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(processStartedAt()).toISOString(),
     health: 'ok',
     healthReason: undefined,
     recoveryAttempts: 0,
@@ -258,5 +258,13 @@ describe('proxy status --json: stopped shape (no live daemon)', () => {
     expect(parsed).not.toHaveProperty('url');
     expect(parsed).not.toHaveProperty('port');
     expect(parsed).not.toHaveProperty('level');
+    expect(parsed).not.toHaveProperty('analytics');
+  });
+
+  it('prints only "Status: stopped" in text mode, with no Analytics line', async () => {
+    const proxy = createProxyCommand();
+    await proxy.parseAsync(['status'], { from: 'user' });
+
+    expect(logSpy).toEqual(['Status: stopped']);
   });
 });

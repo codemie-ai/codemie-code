@@ -1,0 +1,101 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran; every acceptance row passes, but 5 blocking findings remain: an unreadable session record (loadSession returns null) skips the baseline and re-sends pre-start records (reachability unconfirmed, capped major), three code-quality.md violations in claude.metrics-processor.ts, and an untested baseline group/untimestamped-line rule. 3 deferred to code-review-deferred.local.md (subagent Task prompt counted as user prompt; finalPass only on SessionEnd; in-REPL /resume re-entry gets no baseline); 16 candidates dismissed as handled, spec-authorized or unreachable.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-16537: after --resume/--continue synced deltas contain no recordId already synced for the same Claude session", "status": "pass", "notes": "SessionStart marker + applyClaudeBaseline seeding; claude-run-baseline.test.ts resumed record emits only its own delta" },
+    { "kind": "story-ac", "item": "EPMCDME-16537: a one-prompt resumed run reports 1 turn", "status": "pass", "notes": "resumed run emits one delta with only the new prompt; cutoff filter in collectRunPromptsAndInvocations" },
+    { "kind": "story-ac", "item": "EPMCDME-16537: automated test covers resume of a previously synced Claude transcript", "status": "pass", "notes": "claude-run-baseline.test.ts; hook-routing-contract.test.ts asserts marker at SessionStart" },
+    { "kind": "story-ac", "item": "EPMCDME-16543: a function_call whose output arrives after a pass is recorded once, as success", "status": "pass", "notes": "codex.metrics-processor.ts skips calls without output; fixed success status" },
+    { "kind": "story-ac", "item": "EPMCDME-16543: unit test covers a pending call completed between two passes", "status": "pass", "notes": "codex.metrics-processor.test.ts 'emits a pending call once its output appears'" },
+    { "kind": "spec", "item": "SessionStart of a new claude/claude-acp record stores a baseline marker (start time, transcript path, session id)", "status": "pass", "notes": "hook.ts createSessionRecord runtimeCheckpoint; non-Claude agent test asserts no marker" },
+    { "kind": "spec", "item": "Start time taken at record creation, after git detection", "status": "pass", "notes": "hook.ts startTime = Date.now() at record construction" },
+    { "kind": "spec", "item": "First pass applies the marker: pre-start lines marked processed and not sent, then marker cleared", "status": "pass", "notes": "claude-baseline.ts computes ids/pointer, clears marker, single save" },
+    { "kind": "spec", "item": "A line counts as before the start by its own timestamp (synthetic 'No response requested.' reply)", "status": "pass", "notes": "messages-before.ts per-line timestamp; synthetic reply test" },
+    { "kind": "spec", "item": "If the baseline step fails, the run sends nothing and the marker stays for retry", "status": "pass", "notes": "claude.session.ts catch returns failed 'baseline' when cutoff known; see CR-001 for the null-load path" },
+    { "kind": "spec", "item": "Baseline glue moved into shared claude-baseline.ts; Desktop adapter delegates to it", "status": "pass", "notes": "ClaudeDesktopTelemetryAdapter.applyBaseline calls applyClaudeBaseline" },
+    { "kind": "spec", "item": "Record start time kept in metrics sync state; filters pre-start prompts/invocations every pass", "status": "pass", "notes": "MetricsSyncState.baselineCutoffMs; isStampedBefore filter" },
+    { "kind": "spec", "item": "Conversation pointer only moves forward (uuid and index together)", "status": "pass", "notes": "claude-baseline.ts updates only when stored index undefined or below pointer" },
+    { "kind": "spec", "item": "Desktop: in-flight turn straddling daemon start keeps tokens, loses its prompt; tests cover start time and pointer", "status": "pass", "notes": "adapter-baseline.test.ts cutoff and pointer tests" },
+    { "kind": "spec", "item": "Per-run prompts and invocations from lines after last processed message up to last emitted group", "status": "pass", "notes": "collectRunPromptsAndInvocations slice runStart..lastEmittedIndex+1" },
+    { "kind": "spec", "item": "A Task/Skill call pending at a sync is counted once, by the run that emits it", "status": "pass", "notes": "trailing lines excluded on non-final pass; pending invocation tests" },
+    { "kind": "spec", "item": "A run never takes a prompt or invocation from a line stamped before its record's start", "status": "pass", "notes": "ownLine filter on run and trailing lines" },
+    { "kind": "spec", "item": "At SessionEnd, prompts after the last answered turn counted as one prompts-only delta when no turn emits", "status": "pass", "notes": "handleSessionEnd finalPass; <uuid>:prompts delta; repeated final-pass test" },
+    { "kind": "spec", "item": "Interrupt marker, meta line, local command output, slash-command line not counted at SessionEnd", "status": "pass", "notes": "isTypedPromptText + isMeta filter; '/exit alone' test" },
+    { "kind": "spec", "item": "Pending Skill/Task group at SessionEnd not emitted; invocation counted only when the pass emits another group", "status": "pass", "notes": "subagent namedOnly trailing handling; pending Skill tests" },
+    { "kind": "spec", "item": "Codex: function_call without output gives no delta, nothing written; next pass counts it once output appears", "status": "pass", "notes": "continue on missing output; JSONL absent after first pass" },
+    { "kind": "spec", "item": "Codex delta time is the call's own rollout line timestamp, else session start", "status": "pass", "notes": "record.timestamp with baseTimestamp fallback; tests for both" },
+    { "kind": "spec", "item": "Docs: external-integrations.md describes the Claude CLI baseline and the Codex call rule", "status": "pass", "notes": "external-integrations.md updated" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "5 subjects in range all use type fix with allowed scope analytics, imperative mood, lengths 77-93 chars within the 100-char subject-max-length in git-workflow.md" },
+    { "kind": "code-quality", "status": "partial", "notes": "claude-baseline.ts conforms; claude.metrics-processor.ts grows to 525 lines (>500), collectRunPromptsAndInvocations ~65 lines (>50), messages: any[] undocumented" },
+    { "kind": "security", "status": "pass", "notes": "no hardcoded secrets or console.log; new logs carry only ids/caller/cutoff/counts/error; runtimeCheckpoint follows existing createSessionRecord pattern" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.session.ts",
+      "line": 626,
+      "title": "Unreadable session skips baseline and re-sends history",
+      "problem": "processSession step 1b reads baselineCutoffMs from sessionStore.loadSession(sessionId). loadSession swallows read/parse errors and returns null (SessionStore.ts:65-75), and saveSession writes non-atomically, so a concurrent write can yield a transient null. baselineCutoffMs then stays undefined, the baseline is skipped without error, and the metrics/conversations processors reload the (now readable) session and process the whole transcript on a record that still carries the marker.",
+      "impact": "On a resumed Claude transcript the run re-sends every metric record, prompt, invocation and conversation entry an earlier session already synced, violating EPMCDME-16537's 'no failure path re-sends them'. Reachability unconfirmed: requires a transient unreadable session file between step 1b and the processors' own load.",
+      "recommendation": "In processSession step 1b, when loadSession returns null, return the same failed 'baseline' result (success:false, failedProcessors ['baseline'], totalRecords 0) instead of falling through to the processors; only proceed without a baseline when the session loaded and carries no baselineCutoffMs."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts",
+      "line": 396,
+      "title": "collectRunPromptsAndInvocations exceeds 50-line limit",
+      "problem": "code-quality.md sets functions under 50 lines; the newly added collectRunPromptsAndInvocations is ~65 lines and mixes prompt extraction with final-pass record marking.",
+      "impact": "Documented code-quality standard is broken by a newly added function; standards audit marks code-quality partial.",
+      "recommendation": "Split the finalPass record-marking block (the `if (finalPass && !namedOnly)` section) into its own private helper returning promptsDelta."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts",
+      "line": 397,
+      "title": "Undocumented any[] parameter on new method",
+      "problem": "code-quality.md Type Annotations allow any only with a documented reason; the new parameter `messages: any[]` has no justifying comment while the method otherwise uses ClaudeMessage.",
+      "impact": "Documented type-annotation rule is unmet on newly added code; weakens type safety of the per-run prompt path.",
+      "recommendation": "Type the `messages` parameter as `ClaudeMessage[]`, or add a one-line comment explaining why `any[]` is required."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts",
+      "title": "Metrics processor file exceeds 500 lines",
+      "problem": "code-quality.md Code Structure Guidelines set files under 500 lines; this change grows claude.metrics-processor.ts from 412 to 525 lines.",
+      "impact": "Documented code-quality standard is broken by lines this change introduced.",
+      "recommendation": "Move the new per-run prompt/invocation helpers (collectRunPromptsAndInvocations, isStampedBefore, isTypedPromptText) into a co-located module such as session/processors/run-prompts.ts."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/session/processors/messages-before.ts",
+      "title": "Baseline group and untimestamped-line rules untested",
+      "problem": "regression-gap: takeMessagesBefore's new rules (every line of one message.id group follows the group's first line; a line without a timestamp follows the previous stamped line) have no test. Every claude-run-baseline and adapter-baseline fixture gives each assistant line its own message.id and every line a timestamp; only the out-of-order synthetic reply is exercised.",
+      "impact": "Consumers ConversationsProcessor.computeBaselinePointer and MetricsProcessor.computeBaselineRecordIds (via applyClaudeBaseline from the CLI and Desktop adapters): dropping the group map or defaulting untimestamped lines to after-cutoff would place the baseline pointer mid-turn and re-send or skip part of a turn on resume, with no failing test.",
+      "recommendation": "Add a baseline test where one assistant message.id has chunks stamped on both sides of the cutoff, plus a line with no timestamp after a pre-cutoff line; assert computeBaselinePointer's lastSyncedHistoryIndex/lastSyncedMessageUuid, the seeded processedRecordIds, and that the run neither duplicates nor drops that group."
+    }
+  ],
+  "deferred": [
+    { "id": "DF-001", "severity": "major", "file": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts", "line": 422, "title": "Subagent Task prompt counted as user prompt", "problem": "When the main transcript attached no prompt this run, a subagent's runLines go through extractUserPrompts and its Task prompt is counted as a typed prompt.", "preexisting": "main already attached subagent userPromptsMap when attachedUserPrompts was empty; namedOnly only narrows trailing lines" },
+    { "id": "DF-002", "severity": "major", "file": "src/cli/commands/hook.ts", "line": 250, "title": "Final pass runs only on SessionEnd", "problem": "Sessions ending by reaping, SIGTERM/abort or Desktop teardown never get finalPass, so trailing unanswered prompts and pending invocations are dropped.", "preexisting": "trailing prompts were never counted before this change; the task scopes the new rule to SessionEnd" },
+    { "id": "DF-003", "severity": "major", "file": "src/cli/commands/hook.ts", "line": 869, "title": "In-REPL /resume re-entry gets no baseline", "problem": "A live record re-entered by SessionStart(source=resume) with a new transcript_path sets no baselineCutoffMs, so that transcript's history can be sent again.", "preexisting": "re-entry path is unchanged; the task covers --resume/--continue CLI runs that create a fresh record" }
+  ]
+}

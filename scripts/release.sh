@@ -132,10 +132,11 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     fi
 fi
 
-# Remind about release notes in CHANGELOG.md (non-blocking; `codemie whatsnew`
-# and the once-per-upgrade notice read them)
+# Require release notes in CHANGELOG.md (blocking; `codemie whatsnew` and the
+# once-per-upgrade notice show only the installed version's section)
 if [[ ! -f CHANGELOG.md ]] || ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-    printf "\033[33m⚠️  CHANGELOG.md has no '## [%s]' section — add release notes before publishing.\033[0m\n" "$VERSION"
+    printf "\033[31m❌ CHANGELOG.md has no '## [%s]' section — add release notes before publishing.\033[0m\n" "$VERSION"
+    exit 1
 fi
 
 # Show what will be done

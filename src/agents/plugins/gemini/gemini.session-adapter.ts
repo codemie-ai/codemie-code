@@ -14,7 +14,7 @@
 import { readFile, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
@@ -23,6 +23,7 @@ import { ConfigurationError } from '../../../utils/errors.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from './session/processors/gemini.conversations-processor.js';
 import { getGeminiTmpRoot } from './gemini.paths.js';
+import type { GeminiContent } from './session/utils/message-text.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -45,7 +46,7 @@ interface GeminiMessage {
   id: string;
   timestamp: string;
   type: 'user' | 'gemini' | 'assistant';
-  content: string;
+  content: GeminiContent;
   toolCalls?: GeminiToolCall[];
   thoughts?: string[];
   model?: string;
@@ -389,6 +390,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
         agentSessionId: sessionData.sessionId,  // Store agent-specific session ID
         metadata,
         messages: sessionData.messages,  // Preserve raw messages for conversations processor
+        recordTimes: sessionData.messages.map((message) => message.timestamp),
         metrics    // Extracted metrics for metrics processor
       } as ParsedSession;
 
@@ -603,7 +605,8 @@ export class GeminiSessionAdapter implements SessionAdapter {
         success: failedProcessors.length === 0,
         processors: processorResults,
         totalRecords,
-        failedProcessors
+        failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs)
       };
 
       logger.debug(

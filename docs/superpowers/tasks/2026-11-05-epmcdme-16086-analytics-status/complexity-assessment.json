@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Add a tool-agnostic one-line Analytics health field (text + --json) to `codemie proxy status`, backed by spool/auth-marker reads and an additive stale-credentials field on the daemon `/health` reply, and restyle `codemie proxy analytics status` (all connectors) to the proxy-status style with a shared Delivery section.",
+  "generated": "2026-11-05T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the proxy status command, both analytics status collect/format renderers (Claude and Copilot) plus hints, a new shared spool delivery-health collector over otlp-spool session-status/spool-state, the analytics auth marker reader, and the SSO proxy /health handler with the daemon auth-state flag — 4+ components across CLI, proxy plugin and daemon." },
+    { "dimension": "technical_risk", "reason": "No precedent for a CLI command reading the OTLP spool; the closest patterns (collect/format split, never-throwing health result, markerAppliesToProfile) cover rendering and auth-marker reads but not the cross-process /health contract change (consumed by daemon-manager identity check) or spool-scan cost against the 1.5s shallow status budget. Auth-blocked backlog leaves no on-disk record, so the unhealthy rules depend on the in-memory flag being surfaced correctly. Exact-string tests on both outputs will break on restyle." },
+    { "dimension": "file_change_estimate", "reason": "About 8-10 source/test files modified (proxy index, analytics-status, analytics-command, analytics-hints, sso.proxy /health, auth-state, possibly health-check/daemon-manager, plus index/analytics-status/analytics-advice/analytics-command/daemon-status-contract tests) and 1-2 new modules (shared delivery-health collector + test), across src/cli/commands/proxy, src/providers/plugins/sso/proxy and docs (README, COMMANDS.md, tips.json)." },
+    { "dimension": "requirements_clarity", "reason": "Requirements are explicit: visibility rule, four unhealthy conditions with reasons and tips, JSON shape addition, Delivery section contents and explicit exclusions (no new disk files, no session-sync, no trend). Only minor details (exact labels for hold reasons, wording) remain. Calibration: bundled M example epmcdme-10203 (total 15) has a less clear spec but lower risk/file count; this task sits above it in the M band, consistent with 18." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

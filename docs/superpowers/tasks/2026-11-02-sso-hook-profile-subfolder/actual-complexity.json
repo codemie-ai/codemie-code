@@ -1,0 +1,81 @@
+{
+  "task": "Fix EPMCDME-16308: hook SSO auth gate now resolves the session launch profile (CODEMIE_PROFILE_CONFIG, else nearest ancestor .codemie config) via a new shared resolveHookAuthProfile() helper wired into the claude-code, copilot-chat and copilot-cli OTLP plugins.",
+  "generated": "2026-11-02T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "hook-auth-profile (new shared core helper), identity-fields (findNearestConfigDir export), claude-code-otlp plugin, copilot-chat-otlp plugin, copilot-cli-otlp plugin",
+      "layers": "Service (core hook helper), Agent-Tool (OTLP agent plugins)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "SSO auth gate (authentication path) shared by three plugins, fail-closed semantics on config load errors, launch config JSON may carry credentials (log leakage), precedence between launch profile and local .codemie lookup",
+      "mitigation": "Single shared helper with explicit precedence, fixed non-leaking log message for malformed CODEMIE_PROFILE_CONFIG (added in review fix-up), unit tests for the helper and for each plugin's gate wiring"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/agents/core/event-fields/identity-fields.ts",
+        "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts",
+        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts",
+        "src/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.plugin.ts",
+        "src/agents/plugins/copilot-chat-otlp/__tests__/copilot-chat-otlp.plugin.test.ts",
+        "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.ts",
+        "src/agents/plugins/copilot-cli-otlp/__tests__/copilot-cli-otlp.plugin.test.ts"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        "src/agents/core/hook-auth-profile.ts",
+        "src/agents/core/__tests__/hook-auth-profile.test.ts"
+      ],
+      "affected_dirs": ["src/agents/core", "src/agents/plugins"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["Service", "Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 9,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "A new shared core helper (hook-auth-profile) plus an exported lookup in identity-fields, consumed by three separate OTLP agent plugins. Red flags applied: touches shared core utility and affects multiple agents, bumping from M to L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Touches the SSO authentication gate that blocks prompts and opens logins. Wrong profile resolution means blocking users or checking the wrong environment. Security-adjacent: the launch config can carry credentials, and a review fix-up was needed to stop malformed-config parse errors from being logged. Auth red flag bumped M to L."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "9 files per diffstat (7 modified, 2 new including the helper's test) across src/agents/core and three plugin directories, with about 307 insertions, a majority of them tests."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches a shared core utility and affects multiple agents (claude-code-otlp, copilot-chat-otlp, copilot-cli-otlp)",
+    "Technical Risk bumped from M to L: affects authentication (SSO hook auth gate), with credential-bearing launch config handled in the new helper"
+  ],
+  "split_recommendation": null
+}

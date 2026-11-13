@@ -50,7 +50,8 @@ export default {
     if (testFiles.size === 0) return [eslint];
 
     const tests = [...testFiles].join(' ');
-    return [eslint, `npx vitest run --passWithNoTests ${tests}`];
+    // Avoid npx.cmd's 8 KiB command-line limit on Windows; Node accepts the same test list directly.
+    return [eslint, `node ./node_modules/vitest/vitest.mjs run --passWithNoTests ${tests}`];
   },
 
   'package.json': ['npm run license-check'],

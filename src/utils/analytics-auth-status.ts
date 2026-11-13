@@ -10,10 +10,11 @@
  * silently disappear from analytics.
  *
  * Writers:
- * - MetricsApiClient marks the status invalid when the server rejects the
- *   provided credentials (401/403 or an HTML login page response).
- * - MetricsApiClient and the SSO login flow clear the marker when auth is
- *   known to work again.
+ * - MetricsApiClient and the conversations API client mark the status invalid
+ *   when the server rejects the provided credentials (401 or an HTML login
+ *   page response).
+ * - MetricsApiClient, the conversations API client and the SSO login flow
+ *   clear the marker when auth is known to work again.
  *
  * Readers:
  * - The unified `codemie hook` UserPromptSubmit gate blocks the prompt when
@@ -65,12 +66,21 @@ export async function markAnalyticsAuthInvalid(reason: string, baseUrl: string):
 
 /**
  * Clear the invalid-auth marker (after successful login or successful send).
+ * With `ifDetectedAt` the marker is removed only while it still carries that detection time, so a
+ * caller that judged one marker cannot delete a newer one written since. The marker is re-read
+ * immediately before the unlink.
  */
-export async function clearAnalyticsAuthStatus(): Promise<void> {
+export async function clearAnalyticsAuthStatus(opts: { ifDetectedAt?: number } = {}): Promise<void> {
   try {
     const statusPath = getStatusPath();
     if (!existsSync(statusPath)) {
       return;
+    }
+    if (opts.ifDetectedAt !== undefined) {
+      const current = await getAnalyticsAuthStatus();
+      if (!current || current.detectedAt !== opts.ifDetectedAt) {
+        return;
+      }
     }
     await unlink(statusPath);
     logger.debug('[analytics-auth] Cleared analytics auth status marker');

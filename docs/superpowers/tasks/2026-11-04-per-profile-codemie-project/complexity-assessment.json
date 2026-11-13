@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Give each global CodeMie CLI profile its own CodeMie identity (codeMieUrl/codeMieProject/codeMieIntegration) with a safe upgrade path that never clones the leftover shared project into every profile, a visible warning/prompt for profiles without a project, and the project shown in the launch banner and `codemie profile` output (EPMCDME-16519 / EPMCDME-15411).",
+  "generated": "2026-11-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 25,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Spans 4+ subsystems: ProviderProfile type, core ConfigLoader (load, resolveProfileWorkspaceWithOrigin, saveProfile, loadWithSources, resolveIdentitySource), a new migration (id >= 010), CLI profile list/status display and setup save path, the agent launch banner (renderProfileInfo/BaseAgentAdapter), evidence project_source (stamp.ts), and the standalone Claude statusline mirror. Downstream template/plugin/proxy readers are consumers only. Base L, bumped to XL by the core-shared-utility red flag (ConfigLoader)." },
+    { "dimension": "requirements_clarity", "reason": "Problem and root cause are confirmed, but the direction is explicitly 'to be confirmed in spec': the upgrade policy (active profile only vs. provable cases vs. none), the warning vs. one-time prompt behaviour, read-time fallback to workspace.codeMieProject, and an optional launcher --project override are all open design decisions with rework risk." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is reverted PR #701 (71093df1): atomic identity trio, saveProfile carry-forward, per-profile list display, statusline mirror. It does not cover the new upgrade/fallback policy (its canUseSharedIdentity guard passed same-URL profiles, reproducing the bug) and changes the derivation source of X-CodeMie-Project/-Integration, which the security guide marks CRITICAL. Budget misattribution is silent and costly; shortcut launchers and statusline skip migrations; open PRs #753/#667/#575 overlap config.ts. Base M (pattern exists), +1 security/attribution red flag, +1 data-migration red flag." },
+    { "dimension": "file_change_estimate", "reason": "Roughly 8-12 source files (config.ts, types.ts, migrations/index.ts, setup.ts, profile/index.ts, display.ts, utils/profile.ts, BaseAgentAdapter.ts, stamp.ts, statusline.ts, possibly AgentCLI.ts and a guide) plus modified tests (config-project-override, profile index, statusline, seam/routing-contract) and new migration + migration test across 6+ directories: base XL, bumped to XXL by the data-migration red flag. Matches the project calibration example profile-provider-decoupling (XXL file change)." },
+    { "dimension": "affected_layers", "reason": "UI (CLI banner, profile list/status, setup prompt), Service (ConfigLoader resolution), DB-Persistence (config file schema change on ProviderProfile + migration), with the External attribution header as a downstream consumer: 3-4 layers including a persistence schema change, i.e. L. Not bumped further: adding three fields to ProviderProfile is not a significant schema overhaul." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared utility ConfigLoader (src/utils/config.ts) consumed by every launcher, plugin, hook and proxy path",
+    "Technical Risk bumped from M to L: security-sensitive change to the derivation source of X-CodeMie-Project/-Integration attribution headers (security guide CRITICAL checklist); closest pattern #701 does not cover the safe-upgrade aspect",
+    "Technical Risk bumped from L to XL: requires a data migration of existing users' global config (new migration >= 010) where the input holds only one shared project",
+    "File Change Estimate bumped from XL to XXL: same data-migration red flag (new migration + test + registry)"
+  ],
+  "split_recommendation": null
+}

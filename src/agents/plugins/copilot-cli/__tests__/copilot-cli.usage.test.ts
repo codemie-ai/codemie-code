@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractCopilotUsage } from '../copilot-cli.usage.js';
+import { extractCopilotRunUsage, extractCopilotUsage, inRun, runShutdownShare } from '../copilot-cli.usage.js';
 import type { CopilotEvent } from '../copilot-cli-event-types.js';
 
 /** A representative mixed-model session (gpt-5.2 + claude-sonnet-4.5). */
@@ -208,5 +208,259 @@ describe('extractCopilotUsage — tier 3 (no usage data)', () => {
     const result = extractCopilotUsage([]);
     expect(result.messages).toEqual([]);
     expect(result.unavailableReason).toBeTruthy();
+  });
+});
+
+describe('inRun', () => {
+  it('puts an event with no timestamp in no bounded run window, only in the whole session', () => {
+    const untimed: CopilotEvent = { type: 'user.message', data: { text: 'p' } };
+
+    expect(inRun(untimed, { startTime: 0, upperBound: Date.parse('2030-01-01T00:00:00.000Z') })).toBe(false);
+    expect(inRun(untimed, { startTime: 0 })).toBe(false);
+    expect(inRun(untimed, { startTime: -Infinity })).toBe(true);
+  });
+});
+
+describe('an untimed event in a bounded run window', () => {
+  const at = (minute: number) => `2026-01-01T00:${String(minute).padStart(2, '0')}:00.000Z`;
+  const run = { startTime: Date.parse(at(10)), upperBound: Date.parse(at(30)) };
+  const shutdown = (premium: number, minute?: number): CopilotEvent => ({
+    type: 'session.shutdown',
+    ...(minute === undefined ? {} : { timestamp: at(minute) }),
+    data: { totalPremiumRequests: premium },
+  });
+
+  it('an untimed session.shutdown is not the run\'s last shutdown', () => {
+    const events: CopilotEvent[] = [{ type: 'session.start', timestamp: at(11) }, shutdown(2, 20), shutdown(9)];
+
+    expect(runShutdownShare(events, run)?.premiumRequests).toBe(2);
+  });
+
+  it('an in-run shutdown below the base counts 0, never a negative share', () => {
+    expect(runShutdownShare([shutdown(5, 5), shutdown(3, 20)], run)?.premiumRequests).toBe(0);
+  });
+
+  it('a run with no session.start is not fresh, so a shutdown with no base carries nothing', () => {
+    expect(runShutdownShare([shutdown(4, 20)], run)).toBeUndefined();
+  });
+
+  it('a resume after the base with no shutdown of its own (a killed run) leaves this run\'s share unknown', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(5) },
+      { type: 'session.resume', timestamp: at(11) }, shutdown(9, 20),
+    ];
+
+    expect(runShutdownShare(events, run)).toBeUndefined();
+  });
+
+  it('a base shutdown, then this run and its shutdown, gives the difference', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(11) }, shutdown(9, 20),
+    ];
+
+    expect(runShutdownShare(events, run)?.premiumRequests).toBe(7);
+  });
+
+  it('usage records with no model and no model in effect fall through to the fallbacks, never an empty result without a reason', () => {
+    const modelless: CopilotEvent = { type: 'session.usage_record', timestamp: at(13), data: { usage: { inputTokens: 100, outputTokens: 10 } } };
+    const fresh: CopilotEvent[] = [{ type: 'session.start', timestamp: at(11) }, modelless, { ...turn('gpt-5.2', 10), timestamp: at(14) }];
+    const resumed: CopilotEvent[] = [{ type: 'session.resume', timestamp: at(11) }, modelless];
+
+    expect(extractCopilotRunUsage(fresh, run).messages).toEqual([
+      { model: 'gpt-5.2', usage: { outputTokens: 10 }, requests: 1, partial: true },
+    ]);
+    expect(extractCopilotRunUsage(resumed, run).unavailableReason).toBeTruthy();
+  });
+
+  it('a base shutdown, then this run\'s start and no shutdown of its own (a kill), leaves the share unknown', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(1) }, shutdown(2, 3),
+      { type: 'session.resume', timestamp: at(11) },
+    ];
+
+    expect(runShutdownShare(events, run)).toBeUndefined();
+  });
+
+  it('a usage record with no model goes under the model in effect, the latest model event of either kind; with none in effect it is dropped and the result partial', () => {
+    const modelled: CopilotEvent = { type: 'session.usage_record', timestamp: at(12), data: { usage: { model: 'gpt-5.2', inputTokens: 100, outputTokens: 10 } } };
+    const modelless: CopilotEvent = { type: 'session.usage_record', timestamp: at(13), data: { usage: { inputTokens: 40, outputTokens: 4 } } };
+    const change: CopilotEvent = { type: 'session.model_change', timestamp: at(11), data: { newModel: 'claude-sonnet-4.5' } };
+    const zero = { cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+
+    expect(extractCopilotRunUsage([change, modelled, modelless], run)).toMatchObject({
+      messages: [
+        { model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, ...zero }, requests: 1 },
+        { model: 'claude-sonnet-4.5', usage: { inputTokens: 40, outputTokens: 4, ...zero }, requests: 1 },
+      ],
+      partial: false,
+    });
+    expect(extractCopilotRunUsage([modelled, modelless], run)).toMatchObject({
+      messages: [{ model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, ...zero }, requests: 1 }],
+      partial: true,
+    });
+    const answered: CopilotEvent = { type: 'assistant.message', timestamp: at(12), data: { model: 'gpt-5.2' } };
+    expect(extractCopilotRunUsage([change, answered, modelless], run)).toMatchObject({
+      messages: [{ model: 'gpt-5.2', usage: { inputTokens: 40, outputTokens: 4, ...zero }, requests: 1 }],
+      partial: false,
+    });
+  });
+
+  it('the fresh branch drops an untimed event under a bounded window', () => {
+    const events: CopilotEvent[] = [
+      { type: 'session.start', timestamp: at(11) },
+      { ...turn('gpt-5.2', 10), timestamp: at(12) },
+      turn('gpt-5.2', 20),
+    ];
+
+    expect(extractCopilotRunUsage(events, run).messages).toEqual([
+      { model: 'gpt-5.2', usage: { outputTokens: 10 }, requests: 1, partial: true },
+    ]);
+  });
+});
+
+describe('extractCopilotRunUsage — a resumed run with no usage records', () => {
+  const at = (minute: number) => `2026-01-01T00:${String(minute).padStart(2, '0')}:00.000Z`;
+  const run = { startTime: Date.parse(at(10)), upperBound: Date.parse(at(30)) };
+  const metrics = (count: number, inputTokens: number, outputTokens: number, cacheReadTokens = 0) => ({
+    requests: { count },
+    usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens: 0, reasoningTokens: 0 },
+  });
+  const shutdown = (minute: number, modelMetrics?: Record<string, unknown>): CopilotEvent => ({
+    type: 'session.shutdown',
+    timestamp: at(minute),
+    data: { totalPremiumRequests: 1, ...(modelMetrics && { modelMetrics }) },
+  });
+  const earlierRun: CopilotEvent[] = [
+    { type: 'session.start', timestamp: at(1) },
+    shutdown(3, { 'gpt-5.2': metrics(2, 100, 10, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) }),
+  ];
+  const resume = (minute: number): CopilotEvent => ({ type: 'session.resume', timestamp: at(minute) });
+
+  it('takes only the used model, the exact delta of its counters over the run\'s shutdowns', () => {
+    const events = [...earlierRun, resume(11), shutdown(20, { 'gpt-5.2': metrics(5, 350, 40, 100), 'claude-sonnet-4.5': metrics(1, 50, 5) })];
+
+    expect(extractCopilotRunUsage(events, run)).toEqual({
+      messages: [{
+        model: 'gpt-5.2',
+        usage: { inputTokens: 250, outputTokens: 30, cacheReadTokens: 60, cacheWriteTokens: 0, reasoningTokens: 0 },
+        requests: 3,
+      }],
+      premiumRequests: 0,
+      partial: false,
+    });
+  });
+
+  it('a model first used in this run counts whole; a known share with every delta zero carries no tokens and its own reason', () => {
+    const newModel = [...earlierRun, resume(11), shutdown(20, { 'gpt-5.2': metrics(2, 100, 10, 40), 'claude-sonnet-4.5': metrics(1, 50, 5), 'gpt-5.5': metrics(1, 7, 3) })];
+    const idle = [...earlierRun, resume(11), shutdown(20, { 'gpt-5.2': metrics(2, 100, 10, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) })];
+
+    expect(extractCopilotRunUsage(newModel, run).messages).toEqual([
+      { model: 'gpt-5.5', usage: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, requests: 1 },
+    ]);
+    const measured = extractCopilotRunUsage(idle, run);
+    expect(measured).toEqual({
+      messages: [],
+      premiumRequests: 0,
+      partial: false,
+      unavailableReason: 'No tokens in this run of a resumed Copilot session',
+    });
+  });
+
+  it.each([
+    ['a bucket of last below the base', { 'gpt-5.2': metrics(3, 99, 20, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) }],
+    ['a request count of last below the base', { 'gpt-5.2': metrics(1, 200, 20, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) }],
+    ['a base model absent from last', { 'gpt-5.2': metrics(3, 200, 20, 40) }],
+    ['an empty modelMetrics over a non-empty base', {}],
+  ])('%s: the rollup is not comparable, the reason, no tokens', (_case, modelMetrics) => {
+    const usage = extractCopilotRunUsage([...earlierRun, resume(11), shutdown(20, modelMetrics)], run);
+
+    expect(usage.messages).toEqual([]);
+    expect(usage.unavailableReason).toMatch(/share of the session rollup is unknown/);
+  });
+
+  it.each([
+    [
+      'a base entry with no usage under a last entry with usage',
+      { 'gpt-5.2': { requests: { count: 2 } } },
+      { 'gpt-5.2': metrics(5, 350, 40, 100) },
+    ],
+    [
+      'a last entry with no usage',
+      { 'gpt-5.2': metrics(2, 100, 10, 40) },
+      { 'gpt-5.2': metrics(5, 350, 40, 100), 'gpt-5.5': { requests: { count: 1 } } },
+    ],
+  ])('%s: the share is unknown, the reason, no tokens', (_case, baseMetrics, lastMetrics) => {
+    const events = [shutdown(3, baseMetrics), resume(11), shutdown(20, lastMetrics)];
+    const usage = extractCopilotRunUsage(events, run);
+
+    expect(usage.messages).toEqual([]);
+    expect(usage.unavailableReason).toMatch(/share of the session rollup is unknown/);
+  });
+
+  it('usage records that are all model-less, with a known share, take the delta', () => {
+    const modelless: CopilotEvent = { type: 'session.usage_record', timestamp: at(12), data: { usage: { inputTokens: 11, outputTokens: 1 } } };
+    const events = [...earlierRun, resume(11), modelless, shutdown(20, { 'gpt-5.2': metrics(5, 350, 40, 100), 'claude-sonnet-4.5': metrics(1, 50, 5) })];
+
+    expect(extractCopilotRunUsage(events, run)).toEqual({
+      messages: [{
+        model: 'gpt-5.2',
+        usage: { inputTokens: 250, outputTokens: 30, cacheReadTokens: 60, cacheWriteTokens: 0, reasoningTokens: 0 },
+        requests: 3,
+      }],
+      premiumRequests: 0,
+      partial: false,
+    });
+  });
+
+  it('a killed earlier run leaves the share unknown: the reason, no tokens', () => {
+    const events = [...earlierRun, resume(5), resume(11), shutdown(20, { 'gpt-5.2': metrics(9, 900, 90) })];
+
+    const usage = extractCopilotRunUsage(events, run);
+
+    expect(usage.messages).toEqual([]);
+    expect(usage.unavailableReason).toMatch(/share of the session rollup is unknown/);
+  });
+
+  it('a last shutdown with no modelMetrics: the reason, no tokens', () => {
+    const usage = extractCopilotRunUsage([...earlierRun, resume(11), shutdown(20)], run);
+
+    expect(usage.messages).toEqual([]);
+    expect(usage.unavailableReason).toMatch(/share of the session rollup is unknown/);
+  });
+
+  it('a base shutdown with no modelMetrics: the reason, never the earlier runs\' tokens', () => {
+    const events = [{ type: 'session.start', timestamp: at(1) }, shutdown(3), resume(11), shutdown(20, { 'gpt-5.2': metrics(9, 900, 90) })] as CopilotEvent[];
+
+    const usage = extractCopilotRunUsage(events, run);
+
+    expect(usage.messages).toEqual([]);
+    expect(usage.unavailableReason).toMatch(/share of the session rollup is unknown/);
+  });
+
+  it('two consecutive resumed runs each get their own delta', () => {
+    const events = [
+      ...earlierRun,
+      resume(11), shutdown(20, { 'gpt-5.2': metrics(3, 200, 20, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) }),
+      resume(31), shutdown(40, { 'gpt-5.2': metrics(7, 600, 70, 40), 'claude-sonnet-4.5': metrics(1, 50, 5) }),
+    ];
+    const zero = { cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+
+    expect(extractCopilotRunUsage(events, run).messages).toEqual([
+      { model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, ...zero }, requests: 1 },
+    ]);
+    expect(extractCopilotRunUsage(events, { startTime: Date.parse(at(30)) }).messages).toEqual([
+      { model: 'gpt-5.2', usage: { inputTokens: 400, outputTokens: 50, ...zero }, requests: 4 },
+    ]);
+  });
+
+  it('a resumed run with usage records still counts the records, not the delta', () => {
+    const record: CopilotEvent = { type: 'session.usage_record', timestamp: at(12), data: { usage: { model: 'gpt-5.2', inputTokens: 11, outputTokens: 1 } } };
+    const events = [...earlierRun, resume(11), record, shutdown(20, { 'gpt-5.2': metrics(5, 350, 40, 100) })];
+
+    expect(extractCopilotRunUsage(events, run).messages).toEqual([
+      { model: 'gpt-5.2', usage: { inputTokens: 11, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, requests: 1 },
+    ]);
   });
 });

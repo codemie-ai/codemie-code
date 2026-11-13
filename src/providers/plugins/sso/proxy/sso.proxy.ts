@@ -240,13 +240,11 @@ export class CodeMieProxy {
     });
   }
 
-  /**
-   * Stop the proxy server
-   */
-  async stop(): Promise<void> {
+  /** Stop the proxy; the plugins' final work (e.g. the session sync) stops at `bounds.deadlineMs` when given. */
+  async stop(bounds?: { deadlineMs?: number }): Promise<void> {
     // 1. Call onProxyStop lifecycle hooks (before stopping server)
     await this.runHook('onProxyStop', interceptor =>
-      interceptor.onProxyStop?.()
+      interceptor.onProxyStop?.(bounds)
     );
 
     // 2. Stop server
@@ -293,10 +291,13 @@ export class CodeMieProxy {
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
+      const analytics = this.interceptors.find((i) => i.healthStatus)?.healthStatus?.();
       res.end(JSON.stringify({
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
+        pid: process.pid,
+        ...(analytics ? { analytics } : {}),
       }));
       return;
     }
@@ -485,7 +486,8 @@ export class CodeMieProxy {
   }
 
   /**
-   * Stream response with optional chunk transformation
+   * Stream response with optional chunk transformation; once the upstream ends or fails, the bytes
+   * interceptors still hold are written before the downstream ends or the error propagates.
    */
   private async streamResponse(
     context: ProxyContext,
@@ -534,35 +536,53 @@ export class CodeMieProxy {
       logger.debug(`[proxy-stream] Downstream error for ${context.requestId}:`, error);
     });
 
-    for await (const chunk of upstream) {
-      chunkCount++;
-      let processedChunk: Buffer | null = Buffer.from(chunk);
+    try {
+      for await (const chunk of upstream) {
+        chunkCount++;
+        let processedChunk: Buffer | null = Buffer.from(chunk);
 
-      // Run onResponseChunk hooks (optional transform)
-      for (const interceptor of this.interceptors) {
-        if (interceptor.onResponseChunk && processedChunk) {
+        // Run onResponseChunk hooks (optional transform)
+        for (const interceptor of this.interceptors) {
+          if (interceptor.onResponseChunk && processedChunk) {
+            try {
+              processedChunk = await interceptor.onResponseChunk(context, processedChunk);
+            } catch (error) {
+              logger.error(`[CodeMieProxy] Chunk hook error:`, error);
+              // Continue streaming even if hook fails
+            }
+          }
+        }
+
+        // Write to client (if not filtered out)
+        if (processedChunk) {
+          downstream.write(processedChunk);
+          bytesSent += processedChunk.length;
+        }
+
+        // Check if downstream disconnected
+        if (downstreamClosed) {
+          logger.debug(`[proxy-stream] Downstream closed, stopping chunk iteration for ${context.requestId}`);
+          break;
+        }
+      }
+      logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
+    } finally {
+      // Runs on an upstream failure too, so the bytes interceptors hold reach the client before the error propagates.
+      if (!downstreamClosed) {
+        for (const interceptor of this.interceptors) {
+          if (!interceptor.onResponseStreamEnd) continue;
           try {
-            processedChunk = await interceptor.onResponseChunk(context, processedChunk);
+            const held = await interceptor.onResponseStreamEnd(context);
+            if (held && held.length > 0) {
+              downstream.write(held);
+              bytesSent += held.length;
+            }
           } catch (error) {
-            logger.error(`[CodeMieProxy] Chunk hook error:`, error);
-            // Continue streaming even if hook fails
+            logger.error(`[CodeMieProxy] Stream end hook error:`, error);
           }
         }
       }
-
-      // Write to client (if not filtered out)
-      if (processedChunk) {
-        downstream.write(processedChunk);
-        bytesSent += processedChunk.length;
-      }
-
-      // Check if downstream disconnected
-      if (downstreamClosed) {
-        logger.debug(`[proxy-stream] Downstream closed, stopping chunk iteration for ${context.requestId}`);
-        break;
-      }
     }
-    logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
 
     // Explicitly destroy upstream to ensure connection closes
     if (!upstream.destroyed) {
@@ -623,7 +643,7 @@ export class CodeMieProxy {
       retry: (requestBody) => this.httpClient.forward(targetUrl, {
         method,
         headers: context.headers,
-        body: requestBody,
+        body: requestBody || undefined,
       }),
       fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
     };

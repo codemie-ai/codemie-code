@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { getSessionMetricsPath, getSessionPath } from '../../../core/session/session-config.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
@@ -437,11 +439,19 @@ describe('CopilotCliSessionAdapter — model attribution fallbacks', () => {
 
 describe('CopilotCliSessionAdapter.processSession', () => {
   it('runs registered processors and aggregates their results', async () => {
-    const adapter = newAdapter();
-    const result = await adapter.processSession(file, 'sess-1', {} as never);
+    // The metrics processor needs the run's live record: its start time and its existence
+    mkdirSync(dirname(getSessionPath('sess-1')), { recursive: true });
+    writeFileSync(getSessionPath('sess-1'), JSON.stringify({ sessionId: 'sess-1', startTime: 0 }));
+    try {
+      const adapter = newAdapter();
+      const result = await adapter.processSession(file, 'sess-1', {} as never);
 
-    expect(result.success).toBe(true);
-    expect(result.failedProcessors).toEqual([]);
-    expect(Object.keys(result.processors).length).toBeGreaterThan(0);
+      expect(result.success).toBe(true);
+      expect(result.failedProcessors).toEqual([]);
+      expect(Object.keys(result.processors).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(getSessionPath('sess-1'), { force: true });
+      rmSync(getSessionMetricsPath('sess-1'), { force: true });
+    }
   });
 });

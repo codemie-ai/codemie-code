@@ -23,15 +23,17 @@
 import { readdir, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
-import type {
-  SessionAdapter,
-  ParsedSession,
-  AggregatedResult,
-  SessionDiscoveryOptions,
-  SessionDescriptor,
+import {
+  latestRecordTime,
+  type SessionAdapter,
+  type ParsedSession,
+  type AggregatedResult,
+  type SessionDiscoveryOptions,
+  type SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
+import type { Session } from '../../core/session/types.js';
 import type {
   CodexRolloutRecord,
   CodexSessionMeta,
@@ -313,6 +315,7 @@ export class CodexSessionAdapter implements SessionAdapter {
         agentVersion: sessionMeta.cli_version,
         metadata,
         messages: records, // Preserved in full for processors
+        recordTimes: records.map((record) => record.timestamp),
         ...(subagents.length > 0 && { subagents }),
         metrics,
       };
@@ -365,6 +368,24 @@ export class CodexSessionAdapter implements SessionAdapter {
       }
     }
     return out;
+  }
+
+  /**
+   * The rollout of a record that names none, searched inside the record's window (its start →
+   * the start of the next codex record in the same directory).
+   *
+   * ponytail: two codex runs in one directory are indistinguishable
+   */
+  async locateTranscript(record: Session): Promise<string[]> {
+    const { findRolloutForRun } = await import('./codex.correlation.js');
+    const { nextRecordStartInDirectory } = await import('../../core/session/next-record-start.js');
+    const rollout = await findRolloutForRun(this, {
+      sessionId: record.sessionId,
+      startedAt: record.startTime,
+      cwd: record.workingDirectory,
+      window: { until: await nextRecordStartInDirectory(record) },
+    });
+    return rollout ? [rollout.filePath] : [];
   }
 
   /**
@@ -432,6 +453,7 @@ export class CodexSessionAdapter implements SessionAdapter {
         processors: processorResults,
         totalRecords,
         failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs),
       };
 
     } catch (error) {

@@ -1,0 +1,481 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved for local completion against HEAD 4c783b4d plus the frozen independent delta evidence/cli-independent-approved.local.diff (sha256 4cd8a8e876f30af97a563e425d9cba2d8caa2df2eee4796f7c8480700b0b3220) and publication-review.test.ts (sha256 d04db7a485cf1d7784a1436e1d4d36f1b2920aba3487b803f1eead4e5f09ca7c); IR-001/IR-002 closed by independent final-delta verification; CR-008 and CR-016 accepted locally (security sign-off still required before merge; subject cleanup at squash). No push/MR/merge."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Controller triage: fix CR-001/002/003/004/011/013/006/009 + bounded checks for 005/012/007/014/015; CR-010 rejected as blanket rule; CR-016 recorded for squash. See review-fix-triage.local.md"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved for local completion against HEAD 4c783b4d plus the frozen independent delta evidence/cli-independent-approved.local.diff (sha256 4cd8a8e876f30af97a563e425d9cba2d8caa2df2eee4796f7c8480700b0b3220) and publication-review.test.ts (sha256 d04db7a485cf1d7784a1436e1d4d36f1b2920aba3487b803f1eead4e5f09ca7c); IR-001/IR-002 closed by independent final-delta verification; CR-008 and CR-016 accepted locally (security sign-off still required before merge; subject cleanup at squash). No push/MR/merge."
+    }
+  ],
+  "reviewed_head": "60252f5561f7dab48cccbe0bf1021d5d1b7742ef",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "14 of 16 prior blocking findings are resolved against current source/evidence (controller rejections CR-005/007/010/012 hold up in code and tests). CR-008 stays unresolved: tests are not the recorded security sign-off (controller also lists it outstanding). CR-016 stays unresolved: it is an evidence finding with only a deferral decision mapped, and the commit subjects still carry the ticket key.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "security",
+    "auth",
+    "data-contract",
+    "public-api",
+    "breaking-change"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 14,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 2
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/evidence/consent-store.ts",
+      "line": 422,
+      "title": "Consent store load-modify-save without lock",
+      "problem": "connect-folder and disconnect-folder load, modify and save the store with no lock; concurrent runs overwrite each other.",
+      "impact": "A concurrent connect can overwrite a disconnect, leaving revoked consent in place (admin-visible uploads). Reachability unconfirmed beyond the lens report.",
+      "recommendation": "Serialize load-modify-save with a lock file or atomic compare-and-replace.",
+      "status": "resolved",
+      "check_notes": "withStoreLock (pid lock, wait 10s) wraps connect and disconnect; concurrency test added.",
+      "fix": {
+        "change": "confirmed defect: connectFolder/disconnectFolder load-modify-save now run under a pid-lock (consent-store.ts withStoreLock)",
+        "test": "consent-store.test.ts concurrent connects + disconnect"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/evidence/consent-store.ts",
+      "line": 476,
+      "title": "Subfolder disconnect is a no-op under parent consent",
+      "problem": "disconnectFolder removes only entries equal to the given folder; disconnecting a subfolder of a connected parent reports 'Nothing to change' while the parent consent still covers it.",
+      "impact": "User believes consent is revoked while the subfolder keeps publishing to work scope. Reachability unconfirmed.",
+      "recommendation": "Refuse with an explicit message naming the covering parent entry, or record an exclusion for the subfolder.",
+      "status": "resolved",
+      "check_notes": "coveringEntries + disconnect command names covering parent and exact command; tests added.",
+      "fix": {
+        "change": "confirmed defect: disconnect-folder prints the effective covering parent connection and the exact disconnect command (coveringEntries), also after its own entry was removed",
+        "test": "analytics-consent-command.test.ts subfolder disconnect; consent-store.test.ts coveringEntries"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/evidence/stop-marker.ts",
+      "line": 72,
+      "title": "takeNotice can overwrite a concurrent stop",
+      "problem": "takeNotice reads a notice-only marker and atomicReplaces {...m, noticed:true} with no lock; if the daemon upgrades the marker to stop:true in between, the stale stop:false copy is written back.",
+      "impact": "A persisted publication stop is silently downgraded and the session publishes again (fail-open, privacy boundary).",
+      "recommendation": "Re-read and compare under the same lock before replacing, or hold noticed in a separate sidecar file.",
+      "status": "resolved",
+      "check_notes": "takeNotice and upgradeToStop serialized on a marker lock; monotonic tests added.",
+      "fix": {
+        "change": "confirmed defect: takeNotice and the notice->stop upgrade serialize on a per-marker lock so a stop is never downgraded",
+        "test": "stop-marker.test.ts monotonic + lock-wait tests"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts",
+      "line": 224,
+      "title": "folder_changed compare ignores project source and case",
+      "problem": "transitionGate compares resolveProjectAtCwd(cwd) !== record.project, case-sensitive and with env then config order only, ignoring record.project_source (env pin, linked folder); consent compare is case-insensitive. connectWorkFolder also resolves via loadHookConfig which prefers CLAUDE_PROJECT_DIR.",
+      "impact": "Healthy pinned/linked-folder sessions can be permanently stopped as folder_changed, or the user is asked to confirm a wrong project. Reachability unconfirmed.",
+      "recommendation": "Compare with the same source order as resolveSessionProject, skip when project_source differs, normalize trim and case.",
+      "status": "resolved",
+      "check_notes": "trim/lowercase comparison in transitionGate; test added.",
+      "fix": {
+        "change": "confirmed for case/trim only: transitionGate compares project trimmed and case-insensitively; source order left unchanged (check never skipped; no source mismatch reproduced)",
+        "test": "claude-code-otlp.transitions.test.ts canonical compare"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts",
+      "title": "transitionGate continues when identity unavailable",
+      "problem": "transitionGate returns 'continue' when currentEvidenceIdentity() is null before checking the stop marker or the resume rule; non-existing/created record kinds return bare 'stop' with no marker or notice.",
+      "impact": "A stopped or unrecorded resumed session keeps spooling while credentials are unreadable; capacity stops are silent. Reachability unconfirmed.",
+      "recommendation": "Fail closed when identity is null for a new-contract session and write a marker/notice for the bare-stop paths.",
+      "status": "resolved",
+      "check_notes": "Rejection plausible: daemon tick keys on endpoint identity and sends nothing without it; no code change.",
+      "fix": {
+        "change": "rejected/limitation: no identity => no stop-marker key, nothing is sent (forwarder evidenceContext returns null without identity, events park in pending-owner); bare stop for unavailable/capacity records retries on the next hook; unchanged",
+        "test": "n/a"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/analytics-command.ts",
+      "title": "connect-folder/disconnect-folder actions untested",
+      "problem": "Only subcommand registration is asserted; no test invokes the actions (confirmation gate, --yes/non-TTY, Copilot guard, identity requirement, store mutation).",
+      "impact": "A regression skipping confirmation authorizes admin-visible conversation content with no failing test.",
+      "recommendation": "Add command-level tests: --yes connects, non-TTY without --yes exits 1 with no entry, Copilot refusal, disconnect removes.",
+      "status": "resolved",
+      "check_notes": "analytics-consent-command.test.ts exists, mapped vitest exit 0.",
+      "fix": {
+        "change": "evidence gap closed: command-level tests for connect/disconnect actions",
+        "test": "analytics-consent-command.test.ts"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "src/cli/commands/proxy/__tests__/analytics-consent-command.test.ts"
+          }
+        ],
+        "commands": [
+          {
+            "command": "npx vitest run src/cli/commands/proxy/__tests__/analytics-consent-command.test.ts",
+            "exit_code": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 107,
+      "title": "Consent header dropped for non-Latin1 project",
+      "problem": "rawProjectHeader returns nothing for non-Latin1 project names, so the project header is omitted while ctx.consent is true.",
+      "impact": "Echo check fails and the session is stopped as response_unverified for a legitimate project. Reachability unconfirmed.",
+      "recommendation": "Encode the project per the wire contract or refuse to send and report consent_without_project locally.",
+      "status": "resolved",
+      "check_notes": "buildAttributionHeaders omits consent with project; test asserts; echo check then fails closed.",
+      "fix": {
+        "change": "rejected/limitation: non-Latin1 projects are an existing shared wire limit; confirmed fail-closed (no project and no consent header, echo mismatch stops the session); no new encoding",
+        "test": "attribution-headers.test.ts non-Latin1 consent"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 112,
+      "title": "No security-review sign-off for attribution headers",
+      "problem": "security-practices.md marks adding X-CodeMie-* attribution headers (contract, funding route, consent) as CRITICAL needing recorded sign-off; none is recorded.",
+      "impact": "Documented workflow gate unmet; PR would merge a CRITICAL change without required review.",
+      "recommendation": "Call the change out as CRITICAL in the PR description and record security-review sign-off.",
+      "status": "wont-fix",
+      "check_notes": "Mapped tests are not a recorded security sign-off; controller itself lists sign-off outstanding.",
+      "fix": {
+        "change": "evidence gap: trust-boundary tests added (model strip, OTLP ingress, forged header ignored); formal security-review sign-off for CRITICAL X-CodeMie-* headers remains outstanding before merge",
+        "test": "attribution-headers.test.ts, otlp.plugin.hooks.test.ts"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "src/providers/plugins/sso/proxy/plugins/__tests__/attribution-headers.test.ts"
+          },
+          {
+            "path": "src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.hooks.test.ts"
+          }
+        ],
+        "commands": [
+          {
+            "command": "npx vitest run src/providers/plugins/sso/proxy/plugins/__tests__/attribution-headers.test.ts src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.hooks.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder-contract.test.ts",
+            "exit_code": 0
+          }
+        ]
+      },
+      "disposition": {
+        "rationale": "Accepted locally by the user: formal security sign-off for the X-CodeMie-* headers is handled by the responsible reviewer through the eventual MR review; header attribution is flagged CRITICAL in the future MR description and the sign-off remains a requirement before merge. Not a blocker for local completion.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 116,
+      "title": "Header strip and OTLP ingress tests missing",
+      "problem": "Spec 11a/11b require tests that stripAnalyticsOnlyHeaders runs in HeaderInjectionInterceptor.onRequest and that injected headers via the cloned-settings OTLP ingress (otlp.plugin handleRequest) never reach the backend; only the pure helper and a mocked forwarder are tested.",
+      "impact": "Removing or misplacing the strip call ships client-supplied consent/funding headers on model traffic with no failing test; security boundary against forged consent.",
+      "recommendation": "Add an onRequest interceptor test with mixed-case consent/funding/contract headers and an ingress test through otlp.plugin handleRequest asserting analytics request headers come only from the frozen record.",
+      "status": "resolved",
+      "check_notes": "Mixed-case strip test on interceptor onRequest and ingress spool test added.",
+      "fix": {
+        "change": "evidence gap closed: onRequest mixed-case strip test and OTLP ingress (handleRequest) test",
+        "test": "attribution-headers.test.ts; otlp.plugin.hooks.test.ts"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts",
+      "line": 106,
+      "title": "Unconsented request accepted with project destination",
+      "problem": "echoVerified returns true when !ctx.consent after accepting dest 'project' or 'personal'; a request sent without consent that the backend routes to project is acknowledged as success.",
+      "impact": "Privacy mismatch (work-visible storage without consent) is not detected and the session keeps publishing.",
+      "recommendation": "if (!ctx.consent) return dest === 'personal'; add an N0 + project-destination test.",
+      "status": "resolved",
+      "check_notes": "Rejection upheld: echoVerified keeps N0 routing as approved; N0+project test and derived corporate e2e pass.",
+      "fix": {
+        "change": "rejected: blanket !consent -> personal-only conflicts with approved N0 derived corporate/codemie routing; both routing cases now pinned",
+        "test": "forwarder-contract.test.ts N0 project destination acknowledged; N0 personal acknowledged (existing)"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts",
+      "line": 186,
+      "title": "422 contract_unsupported stops without refresh",
+      "problem": "A 422 publication_contract_unsupported is an immediate final stop; spec item 2 / AC9 require one bounded capability refresh before hold/suspend. The 422 decoder also ignores the body disposition field.",
+      "impact": "A stale policy racing a backend change permanently stops a healthy session; required behavior not implemented.",
+      "recommendation": "On first contract_unsupported, refresh capability once and hold; stop only if still unsupported after refresh; consider honoring disposition.",
+      "status": "resolved",
+      "check_notes": "One bounded refresh in send(); resend, hold and final cases tested.",
+      "fix": {
+        "change": "confirmed defect: 422 publication_contract_unsupported refreshes capability once; still advertised => one resend (second refusal final+stop); no longer advertised => hold with notice, no stop, no ack",
+        "test": "forwarder-contract.test.ts 422 refresh cases"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts",
+      "title": "sendGuard skipped for non-evidence streams",
+      "problem": "sendGuard is evaluated only when req.evidence is set; non-evidence streams of the same stopped session skip the stop and generation checks despite the comment claiming all paths check isStopped.",
+      "impact": "Stopped sessions may still upload OTEL streams. Reachability unconfirmed.",
+      "recommendation": "Apply isStopped/generation check to every stream of a new-contract session, or document and test why non-evidence streams are exempt.",
+      "status": "resolved",
+      "check_notes": "Evidence context is built once per forwardSession and passed to all streams; stopped-session test covers hooks, OTLP and JSON.",
+      "fix": {
+        "change": "rejected for evidence sessions: forwardSession builds one EvidenceContext and passes it to hooks, OTLP and JSON streams; stop/generation guard applies to all; legacy (non-evidence) sessions intentionally unchanged; consumer test added",
+        "test": "forwarder-contract.test.ts stopped session sends on no stream"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/tick-processor.ts",
+      "line": 104,
+      "title": "Missing policy read as contract not advertised",
+      "problem": "contractAdvertised is `policy ? advertisesContract(policy) : false`; with stale credentials or no endpoint identity the backend was never consulted yet a hold notice is written and past retention a permanent hold_expired stop. Tick wiring (stopped, contractAdvertised, hold_expired, needContract) has no tick-processor test.",
+      "impact": "False 'backend not ready' notice and permanent stop of a healthy session; dropped inputs would go unnoticed.",
+      "recommendation": "Pass undefined (unknown) when policy is absent and skip hold/notice; add tick-processor tests for stop marker, unadvertised policy and lose-past-retention.",
+      "status": "resolved",
+      "check_notes": "Unknown capability stays held with distinct hold_state_unknown notice; tick-processor tests added.",
+      "fix": {
+        "change": "confirmed in part: unknown/absent capability stays held and bounded, but the notice is distinct (hold_state_unknown) from an authoritative not-advertised hold; tick wiring tests added",
+        "test": "tick-processor.test.ts new-contract wiring"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "tests/e2e/subscription-analytics/drive.mjs",
+      "title": "AC2/AC3/AC9 cases not covered against real backend",
+      "problem": "No e2e for a profile-sourced project without entry, a global profile in an unrelated folder, or derived corporate N0 route; 200 final discards and 503 holds are unit-only with mocked transports.",
+      "impact": "Acceptance criteria that require real-backend verification are unproven.",
+      "recommendation": "Add the missing drive.mjs scenarios or record Stage 7 evidence covering them.",
+      "status": "resolved",
+      "check_notes": "drive.mjs scenarios added; results.json present and all new checks ok.",
+      "fix": {
+        "change": "evidence gap closed: PG17 harness extended (profile-sourced no-consent private, derived corporate N0 project routing, real-backend 503 hold then delivery, SYNTHETIC 200 discard); 45/45 assertions, drive exit 0",
+        "test": "bash tests/e2e/subscription-analytics/run-e2e.sh (evidence/e2e/)"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "C:/codemie-dev/_local/epmcdme-16849/evidence/e2e/results.json"
+          },
+          {
+            "path": "tests/e2e/subscription-analytics/drive.mjs"
+          }
+        ],
+        "commands": [
+          {
+            "command": "NODE_ENV=test bash tests/e2e/subscription-analytics/run-e2e.sh",
+            "exit_code": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "No duplicate-consumption guard across /clear and resume",
+      "problem": "Spec item 9 / AC8 require no duplicate consumption across a /clear pair plus resume; no change or test shows it, and the e2e step only replays the same session id.",
+      "impact": "Required behavior unproven; usage entries may be uploaded twice.",
+      "recommendation": "Implement or demonstrate the guard and add a test covering a /clear pair plus resume in the same scope.",
+      "status": "resolved",
+      "check_notes": "Demonstrated by clear+repeated-resume e2e (REPLAY hooks), no duplicated usage rows; no new mechanism.",
+      "fix": {
+        "change": "evidence gap closed, no defect reproduced: /clear pair + 3x repeated resume/Stop of the known sessions add no usage rows and no stop; no dedup mechanism added (REPLAY hook sequence, not live TUI)",
+        "test": "run-e2e.sh '/clear + repeated resume' assertions"
+      }
+    },
+    {
+      "id": "CR-016",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects carry ticket key",
+      "problem": "All commits in the range (592f75ca, 161f75fc, 8cebda96, acd26a50, 4c783b4d and T1/T2) put EPMCDME-16849 in the subject, which git-workflow.md anti-patterns forbid.",
+      "impact": "Documented commit-format convention broken; squash title would inherit it.",
+      "recommendation": "Reword to <type>(analytics): <subject> and move the ticket key to the body footer.",
+      "status": "wont-fix",
+      "check_notes": "Evidence finding mapped only to a deferral decision; commit subjects unchanged.",
+      "fix": {
+        "change": "recorded: no history rewrite; fix subjects at publication/squash",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "No history rewrite; subject-format cleanup (type(scope): subject, ticket key moved to body footer) deferred to eventual publication/squash",
+        "rationale": "Controller triage: no runtime defect; avoid a seven-commit rewrite now and correct the squash/publication metadata before delivery."
+      },
+      "disposition": {
+        "rationale": "Accepted locally by the user: commit subjects carrying the ticket key are cleaned up at eventual publication/squash; no history rewrite now.",
+        "source": "hitl"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "2. Capability not advertised: one bounded refresh then hold, notice, expire",
+      "status": "partial",
+      "notes": "422 publication_contract_unsupported stops immediately; no refresh-then-final step."
+    },
+    {
+      "kind": "spec",
+      "item": "9. Transitions: /clear, resume/fork, folder change, generation, no duplicate consumption",
+      "status": "partial",
+      "notes": "No implementation or test for duplicate consumption across /clear pair plus resume."
+    },
+    {
+      "kind": "spec",
+      "item": "10. Notification once via hook output channel",
+      "status": "pending-stage-7",
+      "notes": "Live Claude display and model-context exclusion need runtime evidence."
+    },
+    {
+      "kind": "spec",
+      "item": "11a. Strip analytics-only headers on proxy model onRequest path",
+      "status": "partial",
+      "notes": "Only the helper is unit-tested; onRequest wiring untested."
+    },
+    {
+      "kind": "spec",
+      "item": "11b. Injected headers via cloned-settings OTLP ingress never reach backend (test)",
+      "status": "partial",
+      "notes": "Test does not exercise otlp.plugin handleRequest."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2/AC3: no connection / profile project without entry",
+      "status": "partial",
+      "notes": "Profile-sourced project and derived corporate routes not covered by e2e."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: transitions without duplicate consumption",
+      "status": "partial",
+      "notes": "Duplicate consumption across /clear + resume uncovered; TUI gap documented."
+    },
+    {
+      "kind": "spec",
+      "item": "AC9/AC11: old backend, 422 handling, discards, echo mismatch",
+      "status": "partial",
+      "notes": "200 discards and 503 holds unit-only; unsupported-after-refresh missing."
+    },
+    {
+      "kind": "spec",
+      "item": "AC-hdr: injected headers never alter analytics request",
+      "status": "partial",
+      "notes": "Model-path strip and real OTLP ingress not tested."
+    },
+    {
+      "kind": "spec",
+      "item": "AC-notify: first-hold/suspension notice observed functionally",
+      "status": "pending-stage-7",
+      "notes": "Live display and model-context exclusion remain runtime evidence."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "7 subjects use allowed types and scope, but all put the ticket key EPMCDME-16849 in the subject, which git-workflow.md lists as to-avoid."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "No any, require(), generic throw new Error; console.log is hook/CLI protocol output. Size limits not measured."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "Adding X-CodeMie-* attribution headers is CRITICAL per guide and needs security-review sign-off; none recorded. No concrete credential or injection defect seen."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Spec items 2, 9, 11a/11b are partial (422 contract_unsupported stops without the required refresh, no /clear+resume duplicate-consumption proof, header-strip/OTLP-ingress tests missing) and several fail-open/privacy defects were confirmed in forwarder, stop-marker and tick-processor; standards flag ticket keys in commit subjects and no security sign-off. Reachability was confirmed only for the forwarder, stop-marker, tick and transitionGate items (others kept as lens-reported, uncertain); acceptance is partial; 8 candidates dismissed as noise; pending-stage-7 notification visibility remains; 0 deferred.",
+    "confidence": "low",
+    "risk_flags": [
+      "security",
+      "auth",
+      "data-contract",
+      "public-api",
+      "breaking-change"
+    ]
+  }
+}

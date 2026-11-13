@@ -1,7 +1,6 @@
 import { mkdir, writeFile } from 'fs/promises';
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import { logger } from '../../../utils/logger.js';
 import type { ModelPrice } from '../../../utils/pricing.js';
 import { lookupPrice } from '../../../utils/pricing.js';
@@ -80,6 +79,17 @@ function detectLimits(id: string): { contextWindow: number; maxTokens: number } 
   }
   if (id.startsWith('deepseek')) return { contextWindow: 65536, maxTokens: 65536 };
   return { contextWindow: 128000, maxTokens: 4096 };
+}
+
+/**
+ * The catalog's own window (LiteLLM `max_input_tokens`) wins over the `detectLimits` guess, which
+ * stays the fallback for models the catalog does not size. Screened because it arrives from
+ * `JSON.parse`: Pi rejects a non-positive window, and one bad value voids the whole `models.json`.
+ */
+function catalogContextWindow(maxInputTokens: unknown, fallback: number): number {
+  return typeof maxInputTokens === 'number' && Number.isSafeInteger(maxInputTokens) && maxInputTokens > 0
+    ? maxInputTokens
+    : fallback;
 }
 
 function defaultThinkingLevelMap(): Record<string, string | null> {
@@ -209,7 +219,7 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id,
     name: model.label || id,
     input: model.multimodal ? ['text', 'image'] : ['text'],
-    contextWindow: limits.contextWindow,
+    contextWindow: catalogContextWindow(model.max_input_tokens, limits.contextWindow),
     maxTokens: limits.maxTokens,
   };
 
@@ -227,7 +237,8 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id.startsWith('claude-sonnet-4-6') ||
     id.startsWith('claude-sonnet-5') ||
     /^claude-opus-4-[6-8]/.test(id) ||
-    id.startsWith('claude-opus-5')
+    id.startsWith('claude-opus-5') ||
+    id.startsWith('claude-haiku-5')
   ) {
     entry.compat = { forceAdaptiveThinking: true };
   }
@@ -240,6 +251,7 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
   return entry;
 }
 
+// Pi validates provider `compat` against a strict schema; an unknown `thinkingFormat` literal makes Pi drop the whole file.
 interface PiModelsConfig {
   providers: Record<string, {
     baseUrl: string;
@@ -252,25 +264,11 @@ interface PiModelsConfig {
 }
 
 async function fetchCodeMieModels(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
-  const jwtToken = env.CODEMIE_JWT_TOKEN;
-  const baseUrl = env.CODEMIE_BASE_URL;
-
-  if (jwtToken && baseUrl) {
-    logger.debug('[pi-models] Fetching CodeMie model list via JWT auth');
-    return fetchCodeMieLlmModels(baseUrl, jwtToken);
+  const models = await fetchCodeMieCatalogForEnv(env, { logPrefix: '[pi-models]' });
+  if (!models) {
+    throw new Error('No CodeMie authentication available. Run codemie setup or set CODEMIE_JWT_TOKEN.');
   }
-
-  const platformUrl = getPlatformUrlFromEnv(env);
-  if (platformUrl) {
-    const found = await getStoredPlatformCredentialsFromEnv(env);
-    if (!found) {
-      throw new Error(`SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`);
-    }
-    logger.debug('[pi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
-  }
-
-  throw new Error('No CodeMie authentication available. Run codemie setup or set CODEMIE_JWT_TOKEN.');
+  return models;
 }
 
 function buildModelsConfig(
@@ -299,7 +297,6 @@ function buildModelsConfig(
       apiKey,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
       },
       models: proxyModels,
     };
@@ -313,7 +310,6 @@ function buildModelsConfig(
       authHeader: true,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
       },
       models: anthropicModels,
     };
@@ -387,7 +383,6 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
         apiKey,
         compat: {
           supportsReasoningEffort: true,
-          thinkingFormat: 'reasoning_effort',
         },
         models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
       },

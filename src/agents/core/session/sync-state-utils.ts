@@ -1,5 +1,21 @@
 import type { ProcessingResult } from './BaseProcessor.js';
-import type { Session } from './types.js';
+import type { ConversationsSyncState, Session } from './types.js';
+
+/**
+ * Seeds the per-conversation map with a record's legacy single checkpoint (`conversationId` +
+ * `lastSyncedHistoryIndex`), so a record written before the map keeps its first conversation's
+ * protection once another conversation writes the map.
+ *
+ * @returns true when the seed changed the map.
+ */
+function seedLegacyCheckpoint(conversations: ConversationsSyncState): boolean {
+  const { conversationId, lastSyncedHistoryIndex } = conversations;
+  if (conversationId === undefined || lastSyncedHistoryIndex === undefined || lastSyncedHistoryIndex < 0) return false;
+  const byConversation = (conversations.historyIndexByConversation ??= {});
+  if (conversationId in byConversation) return false;
+  byConversation[conversationId] = lastSyncedHistoryIndex;
+  return true;
+}
 
 /**
  * Merge processor sync updates into a session.
@@ -71,6 +87,9 @@ export function applyProcessingSyncUpdates(
         totalSyncAttempts: 0,
       };
 
+      if (syncUpdates.conversations.historyIndexByConversation && seedLegacyCheckpoint(session.sync.conversations)) {
+        hasChanges = true;
+      }
       if (
         syncUpdates.conversations.lastSyncedMessageUuid !== undefined &&
         session.sync.conversations.lastSyncedMessageUuid !== syncUpdates.conversations.lastSyncedMessageUuid
@@ -86,6 +105,13 @@ export function applyProcessingSyncUpdates(
         );
         if (session.sync.conversations.lastSyncedHistoryIndex !== nextHistoryIndex) {
           session.sync.conversations.lastSyncedHistoryIndex = nextHistoryIndex;
+          hasChanges = true;
+        }
+      }
+      for (const [id, index] of Object.entries(syncUpdates.conversations.historyIndexByConversation ?? {})) {
+        const byConversation = (session.sync.conversations.historyIndexByConversation ??= {});
+        if ((byConversation[id] ?? -1) < index) {
+          byConversation[id] = index;
           hasChanges = true;
         }
       }

@@ -1,0 +1,93 @@
+{
+  "task": "Add a per-connector copilot-analytics.json preferences store and analytics gate, wire it into the copilot-cli-otlp and copilot-chat-otlp plugins, and expose --copilot-cli-otlp/--copilot-chat-otlp flags on `codemie proxy analytics` (EPMCDME-16396 Copilot analytics parity).",
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "Copilot analytics preferences store (new), Copilot analytics gate (new), copilot-cli-otlp plugin, copilot-chat-otlp plugin, proxy analytics command (connector selection and store abstraction), analytics-status collector/formatter",
+      "layers": "Service (core agents), Agent-Tool (OTLP plugins), API (CLI command), DB-Persistence (JSON preferences file)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "privacy opt-out must fail closed on corrupt preferences, hook behavior must never block Copilot Chat when analytics is opted out (fixed in a review follow-up), reader/writer file-shape validation had to be unified (review follow-up), atomic temp-file write with merge preserving sibling connector records, precedence ordering across preferences and connector scope",
+      "mitigation": "mirrors the existing claude-code-otlp gate and preferences precedence shape, separate file so connect cannot wipe exclusions, shared validator for read and update, extensive unit tests plus a real-filesystem disable matrix test"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/agents/plugins/copilot-chat-otlp/__tests__/copilot-chat-otlp.plugin.test.ts",
+        "src/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.plugin.ts",
+        "src/agents/plugins/copilot-cli-otlp/__tests__/copilot-cli-otlp.plugin.test.ts",
+        "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.ts",
+        "src/cli/commands/proxy/__tests__/analytics-command.test.ts",
+        "src/cli/commands/proxy/analytics-command.ts",
+        "src/cli/commands/proxy/analytics-status.ts"
+      ],
+      "new_files": 5,
+      "new_file_list": [
+        "src/agents/core/__tests__/copilot-analytics-gate.matrix.test.ts",
+        "src/agents/core/__tests__/copilot-analytics-gate.test.ts",
+        "src/agents/core/__tests__/copilot-analytics-preferences.test.ts",
+        "src/agents/core/copilot-analytics-gate.ts",
+        "src/agents/core/copilot-analytics-preferences.ts"
+      ],
+      "affected_dirs": [
+        "src/agents/core",
+        "src/agents/plugins/copilot-chat-otlp",
+        "src/agents/plugins/copilot-cli-otlp",
+        "src/cli/commands/proxy"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["API", "Service", "Agent-Tool", "DB-Persistence"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Six components: new preferences store, new gate composing it with CopilotConnectorScope, two OTLP plugins wired to the gate, the proxy analytics command refactored around a per-connector store abstraction, and the status collector/formatter. Base L, bumped to XL because the change affects multiple agent plugins."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "A privacy opt-out must fail closed on corrupt preferences yet never block Copilot Chat sessions, prompts or tools. The diff includes two review follow-ups (unified file-shape validator, no-block on opt-out), showing subtle behavior. A direct precedent exists in the Claude gate and preferences, which keeps this at L rather than XL. Base M, bumped for the privacy/compliance red flag."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "12 files (7 modified, 5 new) across 4 directories, of which 6 are tests. Diffstat shows 1369 insertions and 69 deletions. Maps to XL by file count."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "CLI (API), Service (gate and preferences logic in core), Agent-Tool (two OTLP plugins) and a new JSON persistence file. No schema migration or cross-system calls."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: affects multiple agents (copilot-cli-otlp and copilot-chat-otlp plugins plus the shared analytics command).",
+    "Technical Risk bumped from M to L: privacy opt-out / compliance-style requirement with fail-closed semantics."
+  ],
+  "split_recommendation": null
+}

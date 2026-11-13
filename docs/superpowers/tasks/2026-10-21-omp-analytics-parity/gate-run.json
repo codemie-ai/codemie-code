@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "branch": "fix/omp-analytics-discovery",
+  "head": "5093707d8f3616a39f8a481a41cbef52be219c45",
+  "runner": "custom",
+  "started_at": "2026-10-21T16:20:23Z",
+  "completed_at": "2026-10-21T16:21:31Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1819,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3604,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3489,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6495,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 31866,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 18604,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 653,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan'. Script only scans staged changes; CI-equivalent full gitleaks scan still owed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 575,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Covers HEAD~1..HEAD only; earlier branch commits not checked by this command."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run check:pre-commit",
+      "notes": "Composite of typecheck+lint, both run individually and passed."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run ci",
+      "notes": "Composite of license-check, lint, build, unit, cli; each run individually and passed (matches .github/workflows/ci.yml)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged",
+      "notes": "No staged files; lint gate covers {src,tests} fully."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && --project cli (windows-latest)",
+      "notes": "Requires Windows runner; only CI can settle."
+    }
+  ],
+  "failures": {}
+}

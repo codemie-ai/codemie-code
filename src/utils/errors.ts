@@ -47,6 +47,95 @@ export class AnalyticsSourceError extends CodeMieError {
   }
 }
 
+export class SyncConfigError extends ConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SyncConfigError';
+  }
+}
+
+export class SyncTargetMissingError extends CodeMieError {
+  constructor() {
+    super(
+      'No sync target configured. Run: codemie analytics sync install --webhook <url> or --git-repo <url>'
+    );
+    this.name = 'SyncTargetMissingError';
+  }
+}
+
+export class SyncIdentityMissingError extends CodeMieError {
+  constructor() {
+    super(
+      'No sync identity configured. Run: codemie analytics sync install, or set git config --global user.email'
+    );
+    this.name = 'SyncIdentityMissingError';
+  }
+}
+
+export class SyncSchedulerUnsupportedError extends CodeMieError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SyncSchedulerUnsupportedError';
+  }
+}
+
+/** An OS scheduler command (`launchctl bootstrap`, `systemctl --user ...`, `schtasks /Create`)
+ * failed while registering the analytics sync job; `output` is the command's stderr/stdout. */
+export class SyncSchedulerRegisterError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly output?: string
+  ) {
+    super(message);
+    this.name = 'SyncSchedulerRegisterError';
+  }
+}
+
+export class SyncDeliveryError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly status?: number
+  ) {
+    super(message);
+    this.name = 'SyncDeliveryError';
+  }
+}
+
+/** Why a `git` subprocess invoked by `codemie analytics sync`'s git-repo target failed,
+ * classified from its stderr (see `classifyGitError` in `targets/git-client.ts`). */
+export type GitFailureCause =
+  | 'auth'
+  | 'host-key'
+  | 'unreachable'
+  | 'rejected'
+  | 'protected'
+  | 'branch-not-found'
+  | 'timeout'
+  | 'other';
+
+/** A `git` subprocess run by the sync git-repo target failed or timed out. `message` is
+ * already redacted (no token/signature). The field is named `gitCause`, not `cause`, to
+ * avoid colliding with `Error.cause`. */
+export class SyncGitError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly gitCause: GitFailureCause
+  ) {
+    super(message);
+    this.name = 'SyncGitError';
+  }
+}
+
+export class ExportTooLargeError extends CodeMieError {
+  constructor(
+    public readonly bytes: number,
+    public readonly limit: number
+  ) {
+    super(`Export size ${bytes} bytes exceeds limit of ${limit} bytes`);
+    this.name = 'ExportTooLargeError';
+  }
+}
+
 export class RegistrationItemNotFoundError extends CodeMieError {
   constructor(kind: 'assistant' | 'skill', identifier: string) {
     super(`No ${kind} found matching "${identifier}"`);
@@ -62,6 +151,28 @@ export class AmbiguousIdentifierError extends CodeMieError {
   }
 }
 
+export class SessionRecordNotFoundError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Session record not found: ${sessionId}`);
+    this.name = 'SessionRecordNotFoundError';
+  }
+}
+
+const SESSION_FILE_LOCK_TIMEOUT = 'Timed out waiting for lock';
+
+export class SessionFileLockTimeoutError extends CodeMieError {
+  constructor(lockPath: string) {
+    super(`${SESSION_FILE_LOCK_TIMEOUT} ${lockPath}`);
+    this.name = 'SessionFileLockTimeoutError';
+  }
+}
+
+/** Whether an error, or a processor's failure message carrying its text, is a session file lock timeout. */
+export function isSessionFileLockTimeout(reason: unknown): boolean {
+  return reason instanceof SessionFileLockTimeoutError ||
+    (typeof reason === 'string' && reason.includes(SESSION_FILE_LOCK_TIMEOUT));
+}
+
 export class PartialRegistrationError extends CodeMieError {
   constructor(
     public readonly written: string[],
@@ -71,6 +182,13 @@ export class PartialRegistrationError extends CodeMieError {
     const writtenSummary = written.length > 0 ? written.join(', ') : 'none';
     super(`Registration stopped after a failure. Already registered: ${writtenSummary}. Cause: ${causeMessage}`);
     this.name = 'PartialRegistrationError';
+  }
+}
+
+export class ReconcileLockHeldError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Reconcile lock of ${sessionId} is held by another process`);
+    this.name = 'ReconcileLockHeldError';
   }
 }
 

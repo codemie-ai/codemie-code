@@ -37,9 +37,10 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 // Mock installGlobal / uninstallGlobal
-vi.mock('../../../utils/processes.js', () => ({
+vi.mock('../../../utils/processes.js', async (importOriginal) => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+  wrapperOwnerFromEnv: (await importOriginal<typeof import('../../../utils/processes.js')>()).wrapperOwnerFromEnv,
 }));
 
 // Mock processEvent from hook.js
@@ -69,8 +70,8 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
 }));
 
 // Use vi.hoisted for mock functions referenced in vi.mock factories
-const { mockDiscoverSessionsCC, mockProcessSessionCC } = vi.hoisted(() => ({
-  mockDiscoverSessionsCC: vi.fn(),
+const { mockLocateSessionTranscriptCC, mockProcessSessionCC } = vi.hoisted(() => ({
+  mockLocateSessionTranscriptCC: vi.fn(),
   mockProcessSessionCC: vi.fn(),
 }));
 
@@ -78,7 +79,7 @@ const { mockDiscoverSessionsCC, mockProcessSessionCC } = vi.hoisted(() => ({
 vi.mock('../opencode/opencode.session.js', () => ({
   OpenCodeSessionAdapter: vi.fn(function () {
     return {
-      discoverSessions: mockDiscoverSessionsCC,
+      locateSessionTranscript: mockLocateSessionTranscriptCC,
       processSession: mockProcessSessionCC,
     };
   }),
@@ -277,15 +278,38 @@ describe('CodeMieCodePlugin', () => {
   });
 });
 
+describe('CodeMieCodePlugin onSessionStart', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hands processEvent the wrapper owner and the sync URL from the env, so the record stores it and the hook can send', async () => {
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-owner', {
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com/code-assistant-api',
+    } as NodeJS.ProcessEnv);
+
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'SessionStart' }),
+      expect.objectContaining({
+        ownerPid: 4242,
+        ownerStartedAt: 1_790_000_000_000,
+        syncApiUrl: 'https://sync.example.com/code-assistant-api',
+      }),
+    );
+  });
+});
+
 describe('CodeMieCodePlugin onSessionEnd', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('uses clientType codemie-code in context', async () => {
-    mockDiscoverSessionsCC.mockResolvedValue([
-      { sessionId: 'test-session', filePath: '/path/to/session' },
-    ]);
+  it('uses clientType codemie-code in context; the event carries the CodeMie id and the located transcript', async () => {
+    mockLocateSessionTranscriptCC.mockResolvedValue({ transcript: '/path/to/session', sessionIds: ['ses_run'] });
     mockProcessEvent.mockResolvedValue(undefined);
 
     const env = {
@@ -305,6 +329,19 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     );
   });
 
+  it('locates the transcript of its own record\'s run; none located → an empty transcript_path under the CodeMie id', async () => {
+    mockLocateSessionTranscriptCC.mockResolvedValue(undefined);
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, { CODEMIE_SESSION_ID: 'test-456' } as NodeJS.ProcessEnv);
+
+    expect(mockLocateSessionTranscriptCC).toHaveBeenCalledWith('test-456');
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'test-456', transcript_path: '' }),
+      expect.anything()
+    );
+  });
+
   it('skips when no CODEMIE_SESSION_ID', async () => {
     const env = {} as NodeJS.ProcessEnv;
 
@@ -316,7 +353,7 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
   });
 
   it('handles errors gracefully', async () => {
-    mockDiscoverSessionsCC.mockResolvedValue([]);
+    mockLocateSessionTranscriptCC.mockResolvedValue(undefined);
     mockProcessEvent.mockRejectedValue(new Error('hook error'));
 
     const env = {

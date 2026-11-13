@@ -14,6 +14,7 @@
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import type {
   CodexRolloutRecord,
@@ -32,7 +33,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
     return session.messages.length > 0;
   }
 
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       if (!hasCodexMetadata(session.metadata)) {
         return {
@@ -53,7 +54,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
       const existingCallIds = new Set(existing.map((d) => d.recordId));
 
       const records = session.messages as CodexRolloutRecord[];
-      const functionCalls: Array<{ callId: string; item: CodexResponseItem }> = [];
+      const functionCalls: Array<{ callId: string; item: CodexResponseItem; timestamp?: string }> = [];
       const outputs = new Map<string, CodexResponseItem>();
 
       for (const record of records) {
@@ -62,7 +63,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
         if (!item.call_id) continue;
 
         if (item.type === 'function_call') {
-          functionCalls.push({ callId: item.call_id, item });
+          functionCalls.push({ callId: item.call_id, item, timestamp: record.timestamp });
         } else if (item.type === 'function_call_output') {
           outputs.set(item.call_id, item);
         }
@@ -71,29 +72,41 @@ export class CodexMetricsProcessor implements SessionProcessor {
       const baseTimestamp = resolveTimestamp(meta.createdAt);
       const resolvedBranch = await resolveBranch(meta);
 
-      let deltasWritten = 0;
+      const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
 
-      for (const { callId, item } of functionCalls) {
+      for (const { callId, item, timestamp } of functionCalls) {
         if (existingCallIds.has(callId)) continue;
+        // No output yet: the call gets its delta, with its real status, once the output appears.
+        if (!outputs.has(callId)) continue;
 
         const toolName = (item.name ?? 'unknown').toLowerCase();
-        const success = outputs.has(callId);
-        const status = success ? { success: 1, failure: 0 } : { success: 0, failure: 1 };
 
         const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
           recordId: callId,
           sessionId: session.sessionId,
           agentSessionId: meta.codexSessionId,
-          timestamp: baseTimestamp,
+          timestamp: typeof timestamp === 'string' && !isNaN(Date.parse(timestamp)) ? Date.parse(timestamp) : baseTimestamp,
           tools: { [toolName]: 1 },
-          toolStatus: { [toolName]: status },
+          toolStatus: { [toolName]: { success: 1, failure: 0 } },
           ...(resolvedBranch ? { gitBranch: resolvedBranch } : {}),
           ...(meta.model ? { models: [meta.model] } : {}),
         };
 
-        await writer.appendDelta(delta);
+        deltas.push(delta);
         existingCallIds.add(callId);
-        deltasWritten++;
+      }
+
+      let deltasWritten = 0;
+      if (deltas.length > 0) {
+        // ponytail: a call without a timestamped line gets the session's createdAt, earlier than a resumed record's
+        // start, so the window's lower bound stays off; enable it once every call carries its own line time.
+        const window = await resolveRunWindow(session.sessionId, context);
+        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        if (appended.gone) {
+          logger.warn(`[codex-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+          return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
+        }
+        deltasWritten = appended.written;
       }
 
       logger.debug(

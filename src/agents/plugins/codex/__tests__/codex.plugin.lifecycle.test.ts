@@ -31,6 +31,7 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
       CODEMIE_AGENT: 'codex',
       CODEMIE_PROVIDER: 'ai-run-sso',
       CODEMIE_BASE_URL: 'http://127.0.0.1:49152',
+      CODEMIE_TARGET_API_URL: 'https://codemie.example.com/code-assistant-api',
       CODEMIE_URL: 'https://codemie.example.com',
       CODEMIE_CLI_VERSION: '0.1.0',
       CODEMIE_PROJECT: 'p',
@@ -103,6 +104,58 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
     expect(processEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ clientType: 'codemie-codex' }),
+    );
+  });
+
+  it('with no started proxy and no sync URL, the timer gets no send path: CODEMIE_BASE_URL is the LLM host', async () => {
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent: vi.fn().mockResolvedValue(undefined) }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-no-send-path', {
+      CODEMIE_AGENT: 'codex',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_URL: 'https://codemie.example.com',
+      CODEMIE_BASE_URL: 'https://llm.example.com',
+    });
+
+    const opts = startSync.mock.calls[0][0];
+    expect(opts.syncApiUrl).toBeUndefined();
+    expect(opts.buildContext().apiBaseUrl).toBe('');
+  });
+
+  it('with the started proxy, the timer sends through it', async () => {
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent: vi.fn().mockResolvedValue(undefined) }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-proxy', {
+      CODEMIE_AGENT: 'codex',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_URL: 'https://codemie.example.com',
+      CODEMIE_BASE_URL: 'http://127.0.0.1:4000',
+      CODEMIE_TARGET_API_URL: 'https://codemie.example.com/code-assistant-api',
+    });
+
+    const opts = startSync.mock.calls[0][0];
+    expect(opts.syncApiUrl).toBe('http://127.0.0.1:4000');
+    expect(opts.buildContext().apiBaseUrl).toBe('http://127.0.0.1:4000');
+  });
+
+  it('hands processEvent the wrapper owner from the env, so the record stores it', async () => {
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-owner', {
+      CODEMIE_AGENT: 'codex',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'http://127.0.0.1:49152',
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+    });
+
+    expect(processEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'SessionStart' }),
+      expect.objectContaining({ ownerPid: 4242, ownerStartedAt: 1_790_000_000_000 }),
     );
   });
 

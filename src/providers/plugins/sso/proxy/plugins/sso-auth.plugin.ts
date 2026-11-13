@@ -12,6 +12,7 @@ import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
 import { CredentialRefresher } from './credential-refresh.js';
+import { buildCookieHeader, droppedCookieKeys } from '../../session/cookie-auth.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -44,33 +45,12 @@ class SSOAuthInterceptor implements ProxyInterceptor {
 
   constructor(private readonly credentials: CredentialRefresher<SSOCredentials>) {}
 
-  private hasInvalidHeaderChars(value: string): boolean {
-    // RFC 7230 field-vchar / obs-text; disallow control chars except HTAB.
-    for (let i = 0; i < value.length; i++) {
-      const code = value.charCodeAt(i);
-      if ((code <= 0x1f && code !== 0x09) || code === 0x7f) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   async onRequest(context: ProxyContext): Promise<void> {
     const current = await this.credentials.refresh();
 
-    const invalidCookieKeys: string[] = [];
-    const cookiePairs: string[] = [];
+    const cookieHeader = buildCookieHeader(current.cookies);
 
-    for (const [key, value] of Object.entries(current.cookies)) {
-      const safeKey = String(key).trim();
-      const safeValue = String(value);
-      if (!safeKey || this.hasInvalidHeaderChars(safeKey) || this.hasInvalidHeaderChars(safeValue)) {
-        invalidCookieKeys.push(safeKey || '<empty>');
-        continue;
-      }
-      cookiePairs.push(`${safeKey}=${safeValue}`);
-    }
-
+    const invalidCookieKeys = droppedCookieKeys(current.cookies);
     if (invalidCookieKeys.length > 0) {
       logger.warn(`[${this.name}] Ignoring invalid cookie entries`, {
         invalidCookieCount: invalidCookieKeys.length,
@@ -78,13 +58,11 @@ class SSOAuthInterceptor implements ProxyInterceptor {
       });
     }
 
-    if (cookiePairs.length === 0) {
+    if (!cookieHeader) {
       throw new AuthenticationError(
         'Stored SSO session cookies are invalid. Run `codemie profile login` and reconnect the proxy.'
       );
     }
-
-    const cookieHeader = cookiePairs.join('; ');
 
     // Use lowercase 'cookie' to match Node.js HTTP header conventions
     context.headers['cookie'] = cookieHeader;

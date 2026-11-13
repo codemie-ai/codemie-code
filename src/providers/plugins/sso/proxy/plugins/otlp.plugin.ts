@@ -1,16 +1,22 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
+import type { ProxyPlugin, PluginContext, ProxyInterceptor, AnalyticsHealthReply } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { withVerifiedOwner } from '../../../../core/credential-owner.js';
+import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { listSessionIds } from './otlp-spool/spool-paths.js';
+import { maskOtlpJson } from './otlp-json-masking.js';
+import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
-import { appendSpool } from './otlp-spool/spool-io.js';
+import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
+import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
+import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
+import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
 /**
@@ -28,11 +34,16 @@ export interface OtlpHookSpoolData {
   agentName: string;
   /** The complete wire-ready event, built at hook time by the adapter. */
   hookEvent: string;
+  /** Provenance marker: the hook stamped a durable evidence record before spooling. Envelope only. */
+  evidence_v?: 1;
 }
 
 /** One hook invocation's batch, as the hook process POSTs it. */
 export interface OtlpHookBatchRequest {
   agentName: string;
+  evidence_v?: 1;
+  /** The hook could not stamp and dropped `events` events of the session: recorded as a visible loss, nothing spooled. */
+  evidence_loss?: { session_id: string; reason: string; events: number };
   hookEvents: Record<string, unknown>[];
 }
 
@@ -49,12 +60,17 @@ class OtlpInterceptor implements ProxyInterceptor {
   private tickHandle?: NodeJS.Timeout;
   private sweepHandle?: NodeJS.Timeout;
   private ticking = false;
+  private lastStoredRead = 0;
   private stopped = false;
 
   constructor(
     private credentials: SSOCredentials | JWTCredentials | undefined,
     private readonly config: ProxyConfig | undefined
   ) {}
+
+  healthStatus(): AnalyticsHealthReply {
+    return { credentials: areCredentialsStale() ? 'stale' : 'ok' };
+  }
 
   async onProxyStart(): Promise<void> {
     // Recovery pass for anything a previous process left on disk (crash, or a
@@ -78,10 +94,18 @@ class OtlpInterceptor implements ProxyInterceptor {
     this.sweepHandle = undefined;
 
     // Bounded final flush: better delivery latency, but shutdown must never hang.
-    await Promise.race([
-      this.tick().catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
-    ]);
+    // The cap timer is cleared once the flush settles so it never holds the exit.
+    let flushTimeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.tick().catch(() => undefined),
+        new Promise((resolve) => {
+          flushTimeout = setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(flushTimeout);
+    }
   }
 
   /** Serialize ticks: a slow backlog drain must not stack up concurrent passes. */
@@ -117,18 +141,24 @@ class OtlpInterceptor implements ProxyInterceptor {
   /**
    * Re-reads the credential store when `markCredentialsStale()` is set, so a
    * successful SSO re-login the user completes while this daemon keeps running
-   * is picked up without a restart. A no-op whenever credentials aren't stale.
+   * is picked up without a restart. Outside the tick it is a no-op whenever credentials aren't stale;
+   * the tick (`periodic`) also re-reads the store at most once per `CREDENTIAL_REFRESH_INTERVAL_MS`.
    */
-  private async refreshCredentialsIfStale(): Promise<void> {
-    if (!areCredentialsStale() || !this.config) {
+  private async refreshCredentialsIfStale(periodic = false): Promise<void> {
+    const stale = areCredentialsStale();
+    // The tick also re-reads on a throttle: hooks stamp with the stored login, and a re-login (account
+    // switch) rejects nothing outgoing, so no stale marker would ever move this snapshot to it.
+    const due = periodic && Date.now() - this.lastStoredRead >= CREDENTIAL_REFRESH_INTERVAL_MS;
+    if ((!stale && !due) || !this.config) {
       return;
     }
+    this.lastStoredRead = Date.now();
 
     try {
       const refreshed = await resolveFreshCredentials(this.config);
       if (refreshed) {
         this.credentials = refreshed;
-        clearCredentialsStale();
+        if (stale) clearCredentialsStale();
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -137,10 +167,12 @@ class OtlpInterceptor implements ProxyInterceptor {
   }
 
   private async tick(): Promise<void> {
-    await this.refreshCredentialsIfStale();
+    await this.refreshCredentialsIfStale(true);
 
-    const creds = this.credentials;
+    // Same owner the hook stamps with: the forwarder's evidence key must match it.
+    const creds = this.credentials && (await withVerifiedOwner(this.credentials));
     if (!creds) {
+      await processPendingOwner(undefined); // still expires held hook events
       return;
     }
 
@@ -159,6 +191,10 @@ class OtlpInterceptor implements ProxyInterceptor {
         })
       )
     );
+
+    // Hook events held for a login whose owner was unknown: replay under this login, expire past retention (no hook
+    // needed). After the walk, so a replayed session is sent by the next tick.
+    await processPendingOwner(creds);
   }
 
   async handleRequest(
@@ -225,6 +261,23 @@ class OtlpInterceptor implements ProxyInterceptor {
       return sendError(res, 400, 'invalid_request_error', 'Agent validation failed');
     }
 
+    const loss = batch.evidence_loss;
+    if (loss && batch.hookEvents.length === 0) {
+      if (typeof loss.session_id !== 'string' || !isSafeSessionId(loss.session_id) || typeof loss.reason !== 'string') {
+        return sendError(res, 400, 'invalid_request_error', 'Invalid evidence_loss');
+      }
+      try {
+        await recordStampLoss(loss.session_id, loss.reason, Number.isInteger(loss.events) && loss.events > 0 ? loss.events : 1);
+      } catch (err) {
+        logger.warn('[otlp-ingest] stamp loss record error', ...sanitizeLogArgs({ sessionId: loss.session_id, err: err instanceof Error ? err.message : String(err) }));
+        return sendError(res, 500, 'api_error', 'Failed to record evidence loss');
+      }
+      res.statusCode = 202;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ accepted: true }));
+      return true;
+    }
+
     // A batch is one hook invocation, so it is single-session. Events without a
     // session_id are discarded individually; a batch mixing more than one non-empty
     // session_id is rejected whole, so the client's commit stays all-or-nothing.
@@ -237,12 +290,15 @@ class OtlpInterceptor implements ProxyInterceptor {
         logger.debug('[otlp-ingest] hooks: no session_id in hookEvent, discarding');
         continue;
       }
+      if (!isSafeSessionId(eventSessionId)) {
+        return sendError(res, 400, 'invalid_request_error', 'Invalid session_id');
+      }
       if (!sessionId) {
         sessionId = eventSessionId;
       } else if (sessionId !== eventSessionId) {
         return sendError(res, 400, 'invalid_request_error', 'Mixed session_id in one batch');
       }
-      const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event) };
+      const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event), ...(batch.evidence_v === 1 ? { evidence_v: 1 as const } : {}) };
       lines.push(JSON.stringify(spoolRecord));
       projectNames.push(...hookEventProjectNames(event));
     }
@@ -261,6 +317,13 @@ class OtlpInterceptor implements ProxyInterceptor {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
       return sendError(res, 500, 'api_error', 'Failed to persist hooks batch');
+    }
+
+    // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
+    try {
+      scheduleCopilotUsageEnrichment(batch.agentName, batch.hookEvents as Record<string, unknown>[]);
+    } catch (err) {
+      logger.warn('[otlp-ingest] copilot usage scheduling failed', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
     }
 
     res.statusCode = 202;
@@ -285,8 +348,63 @@ class OtlpInterceptor implements ProxyInterceptor {
       return true;
     }
 
-    const bytes = ctx.requestBody;
+    const contentType = (ctx.headers['content-type'] ?? '').toLowerCase();
+    if (contentType.startsWith('application/json')) {
+      return this.handleOtlpJson(ctx.requestBody, res, signal);
+    }
+    return this.handleOtlpBinary(ctx.requestBody, res, signal);
+  }
 
+  /** `application/json` OTLP: parsed, masked, and NDJSON-spooled into the signal's `*Json` stream. */
+  private async handleOtlpJson(
+    body: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
+    const text = body.toString('utf8');
+    const jsonMatch = UUID_V4_RE.exec(text);
+    const sessionId = jsonMatch ? jsonMatch[0] : '';
+
+    if (!sessionId) {
+      // No session id found: same as the byte-blind path's no-session-id case —
+      // log and 200, nothing spooled. Never falls through to the byte-blind branch:
+      // these bytes are JSON, not protobuf, so re-parsing them there would be wrong.
+      logger.debug(
+        '[otlp-ingest] no session id in JSON payload, dropping',
+        ...sanitizeLogArgs({ signal, bytes: body.length })
+      );
+      res.statusCode = 200;
+      res.end();
+      return true;
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      const masked = maskOtlpJson(parsed);
+      const line = JSON.stringify(masked);
+      await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
+    } catch (err) {
+      // Masking is the guarantee this path exists for: a parse/mask/spool failure drops
+      // the record (logged) rather than falling through to spool the original bytes
+      // unmasked through the byte-blind branch below.
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[otlp-ingest] ${signal} JSON parse/mask/spool failure, dropping record`,
+        ...sanitizeLogArgs({ sessionId, err: msg })
+      );
+    }
+
+    res.statusCode = 200;
+    res.end();
+    return true;
+  }
+
+  /** Anything else (protobuf, or no Content-Type): byte-blind, unmasked, unchanged. */
+  private async handleOtlpBinary(
+    bytes: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
     // Extract session ID via UUID v4 regex on latin1-decoded bytes
     const latin1Str = Buffer.from(bytes).toString('latin1');
     const match = UUID_V4_RE.exec(latin1Str);

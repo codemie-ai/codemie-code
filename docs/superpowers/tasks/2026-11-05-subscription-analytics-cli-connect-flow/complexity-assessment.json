@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "task": "CLI child of EPMCDME-16849: emit explicit folder-connection and funding-route signals, enforce folder allowlist/disable, handle /clear, resume and folder-change boundaries with suspension notification, negotiate backend capability, and own the final CLI-to-backend consumer check.",
+  "generated": "2026-11-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches claude-code-otlp hook/plugin, evidence (stamp/classify/routing/record-store), session pin and project seal, OTLP spool/forwarder, header injection, allowlist/config, plus a new capability-negotiation path and a shared e2e check; new suspension/notification abstraction." },
+    { "dimension": "requirements_clarity", "reason": "Open design: no explicit folder-to-project signal distinct from project_source, no funding-route field defined, /clear/resume/folder-change behaviour unverified and gated by a spike whose findings reshape the backend contract; suspension UX undesigned. Story lists no open questions, but the spike leaves rework risk." },
+    { "dimension": "technical_risk", "reason": "Privacy-critical, security-sensitive publication gating with no exact precedent (nothing branches on SessionStart clear; no suspension implementation). Closest pattern is the pure classify() fail-closed function and the project pin/seal, which do not cover transition-level disclosure of personal history or duplicate consumption. AC enumerates edge cases (contradictory inputs, per-transition cases) with no existing test template for /clear/resume across personal/work boundaries. Old-backend compatibility adds rollout ordering risk." },
+    { "dimension": "file_change_estimate", "reason": "Estimated 11-15 modified plus several new files across evidence, otlp-spool, plugin, cli commands, config and tests/integration (including a real-backend e2e)." },
+    { "dimension": "affected_layers", "reason": "CLI hook (API/entry), service (evidence/classification), persistence (record store, pin, spool), config/infrastructure (settings, allowlist), and external backend integration with capability negotiation; user notification surface." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk: security/privacy requirement and affects what is published under project permissions",
+    "Component Scope: integration with external backend contract and multiple workflows (hook, spool, forwarder)",
+    "Borderline 26/27: leaned higher because Technical Risk is XL and Component Scope is XL"
+  ],
+  "split_recommendation": {
+    "strategy": "by-dependency",
+    "secondary_strategy": "by-phase",
+    "ordering_note": "Spike and transition handling first (its findings feed the backend contract), then signals, then capability negotiation and e2e activation after the backend capability ships.",
+    "slices": [
+      {
+        "title": "Session transition spike and suspension handling",
+        "slice_slug": "session-transitions",
+        "component": "codemie-code",
+        "feature": "subscription-analytics",
+        "scope": "Record session_id, cwd and project across /clear, resume and folder change on an isolated compatible build, report findings to the backend contract, and implement per-transition evaluation with publication suspension and an actionable notification when separation cannot be guaranteed.",
+        "depends_on": null
+      },
+      {
+        "title": "Explicit-connect and funding-route evidence signals",
+        "slice_slug": "connect-funding-signals",
+        "component": "codemie-code",
+        "feature": "subscription-analytics",
+        "scope": "Emit an explicit folder-connection signal separate from profile-sourced project, add api_based/subscription/unknown funding-route evidence from effective route and authentication, and enforce the folder allowlist and global disable so unconnected folders publish nothing.",
+        "depends_on": "Session transition spike and suspension handling"
+      },
+      {
+        "title": "Capability negotiation and end-to-end consumer check",
+        "slice_slug": "capability-e2e",
+        "component": "codemie-code",
+        "feature": "subscription-analytics",
+        "scope": "Negotiate backend capability so an old backend never reports publication as succeeded or freezes a session into an unexpected private destination, and own the real CLI-to-backend e2e check covering AC1, AC2, AC3, AC5, AC8 and AC9/AC11.",
+        "depends_on": "Explicit-connect and funding-route evidence signals"
+      }
+    ]
+  }
+}

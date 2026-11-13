@@ -1,0 +1,46 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran; the ticket's five acceptance criteria pass and the fix is sound, but one security-guide violation (CR-001: a JSON.parse error message that can quote part of a secret-bearing CODEMIE_PROFILE_CONFIG is written to the debug log) and one plan-required test assertion that is missing (CR-002) must be fixed. The ticket text was supplied inline as the acceptance source (sdlc-light has no spec.md). Dismissed ~14 lens concerns (CODEMIE_PROFILE_CONFIG/CLAUDE_PROJECT_DIR env trust is the existing codebase trust model, launch-snapshot precedence is intended, partial launcher-config shapes are unreachable because the launcher always writes provider and baseUrl, stale inherited env travels with the matching proxy env). Deferred 3 pre-existing/out-of-scope items: Copilot hook payload cwd vs process.cwd(), the malformed-launch-config fallback reading a loopback CODEMIE_BASE_URL via ConfigLoader, and walk-up helper coupling to identity-fields.",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    { "kind": "story-ac", "item": "AC1: SSO validation uses the same profile as the active Claude Code session", "status": "pass", "notes": "resolveHookAuthProfile() prefers the launch profile in CODEMIE_PROFILE_CONFIG (exported at AgentCLI.ts:418); claude-code-otlp ensureProxyAuth now uses it; plugin test asserts the gate receives the session profile even when ConfigLoader.load would return Preview." },
+    { "kind": "story-ac", "item": "AC2: Explicit --profile selection is preserved", "status": "pass", "notes": "CODEMIE_PROFILE_CONFIG is the resolved launch config with --profile already applied and wins over any config lookup; covered by the 'regardless of cwd' helper test." },
+    { "kind": "story-ac", "item": "AC3: Moving between repository subdirectories does not change the authentication environment", "status": "pass", "notes": "Env path ignores cwd; no-env fallback walks up from CLAUDE_PROJECT_DIR or cwd to the nearest local .codemie; covered by nested-cwd and CLAUDE_PROJECT_DIR tests." },
+    { "kind": "story-ac", "item": "AC4: Production sessions never open Preview SSO unexpectedly", "status": "pass", "notes": "Ticket repro (Production env profile, no local config in cwd, global Preview active) yields Production gate input in the helper test; same fix applied to copilot-cli-otlp and copilot-chat-otlp." },
+    { "kind": "story-ac", "item": "AC5: Regression tests cover nested directories and different local/global profiles", "status": "pass", "notes": "hook-auth-profile.test.ts uses the real ConfigLoader with a global Preview profile and a repo-local Production profile; each plugin test adds a session-profile case." },
+    { "kind": "spec", "item": "Fail-closed preserved: a ConfigLoader.load failure in the fallback propagates to the plugin catch", "status": "pass", "notes": "Helper does not catch; 'propagates ConfigLoader.load failures' test; Copilot 'disk full' tests now reject via the helper." },
+    { "kind": "spec", "item": "CODEMIE_BASE_URL never read on the launch path; ssoUrl stays codeMieUrl || baseUrl; gate contract unchanged", "status": "pass", "notes": "Gate signatures and call shapes are unchanged; ssoUrl derivation matches in both paths." },
+    { "kind": "spec", "item": "One shared helper used by all three ensureProxyAuth() copies; ConfigLoader untouched", "status": "pass", "notes": "All three plugins wired; unused ConfigLoader imports dropped; identity-fields.ts only gains an export." },
+    { "kind": "spec", "item": "Plan test detail: plugin regression tests also assert ConfigLoader.load was not called", "status": "partial", "notes": "The three plugin tests assert the gate argument but never assert the ConfigLoader.load decoy was left unused, so the decoy is vestigial (raised as CR-002)." }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "Three commits use type fix, allowed scope agents, subjects under 100 chars, ticket key present." },
+    { "kind": "code-quality", "status": "pass", "notes": "ESM with .js imports, interface for shapes, explicit return types on exports, no any, lint and typecheck clean." },
+    { "kind": "security", "status": "partial", "notes": "No attribution headers touched; but the debug log of a raw JSON.parse error message for CODEMIE_PROFILE_CONFIG may echo part of a secret-bearing config (AGENTS.md: never log raw secrets; see CR-001)." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/hook-auth-profile.ts",
+      "line": 204,
+      "title": "Debug log may echo secret-bearing config text",
+      "problem": "readLaunchProfile logs `error.message` of a failed JSON.parse of CODEMIE_PROFILE_CONFIG. V8 JSON.parse messages quote a snippet of the input, and this variable holds the whole resolved launch config, which can include apiKey or JWT values.",
+      "impact": "A malformed/truncated CODEMIE_PROFILE_CONFIG with debug logging enabled can write part of a credential to the log, contrary to the repo rule to never log raw secrets.",
+      "recommendation": "Log a fixed string (e.g. 'ignoring malformed CODEMIE_PROFILE_CONFIG') without the parse error text. Also reword the doc comment so it says the launch path never reads CODEMIE_BASE_URL (the ConfigLoader fallback still honours CODEMIE_* env)."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts",
+      "line": 1658,
+      "title": "Plugin tests leave the ConfigLoader decoy unasserted",
+      "problem": "The session-profile test in each of the three plugin test files (claude-code-otlp, copilot-cli-otlp, copilot-chat-otlp) plants a Preview ConfigLoader.load decoy but never asserts it stayed unused, and never pins that the plugin calls resolveHookAuthProfile() with no arguments; the plan required the not-called assertion.",
+      "impact": "The decoy is vestigial and the tests only prove pass-through of a mocked value, so a regression that reads the cwd config alongside the helper, or passes an argument that bypasses launch env, would go unnoticed.",
+      "recommendation": "In each of the three tests add `expect(resolveHookAuthProfile).toHaveBeenCalledWith()` and, where the plugin has no other ConfigLoader.load caller on that path, `expect(ConfigLoader.load).not.toHaveBeenCalled()`; if a remaining caller makes the not-called assertion unreliable, drop the decoy instead and say why."
+    }
+  ]
+}

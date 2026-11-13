@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "task": "Sync the updated codemie-html-report skill and the new humanizer skill from codemie-public-skills into the CodeMie Claude plugin, bump the plugin version, and validate the result.",
+  "generated": "2026-11-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Several design decisions are still open. (1) Keep the source <skill-dir> and bare references/ paths, or rewrite them to the repo's ${CLAUDE_PLUGIN_ROOT}/skills/<name>/ convention? sync-plugin.ts copies only SKILL.md, so the bare paths break there. (2) Remove the stale bundle.css or keep it. (3) Update the codemie-analytics SKILL.md consumer, which still documents the old /*__CSS__*/ flow with no build.js. (4) Decide what to do with the EPAM 'All rights reserved' LICENSE and headers in an Apache-2.0 repo. (5) Decide whether evals/ and vendor-assets.mjs ship. (6) 'Fully validate' has no defined harness or acceptance criteria." },
+    { "dimension": "file_change_estimate", "reason": "About 14 files are modified: 12 changed html-report files, plugin.json, and likely codemie-analytics SKILL.md and CHANGELOG. About 39 are new: 23 html-report files and 16 humanizer files. The new-file count alone reaches the XXL threshold (6+ new). I scored XL because nearly all new files are verbatim asset copies inside two skill directories under one plugin tree, with no effect on project structure or shared foundations. The project L example (profile-provider-decoupling) applied file counts literally, so a calibrator could argue for XXL here. That would make the total 21 (L), and the routing would still be brainstorming." },
+    { "dimension": "component_scope", "reason": "2-3 components in the Claude plugin asset tree: the codemie-html-report skill (replaced and extended), the new humanizer skill, and the plugin manifest version. The codemie-analytics SKILL.md is a likely consumer to update. No TypeScript source has to change: copy-plugins.js, sync-plugin.ts and BaseExtensionInstaller pick up the change automatically." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

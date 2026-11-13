@@ -179,6 +179,14 @@ If npm reports `404 Not Found`, verify that you are installing `@codemieai/code`
 
 If the installer says `@codemieai/code` is not visible in the registry, ask IT to expose the package through the approved virtual npm repository.
 
+On Windows, run the read-only diagnostic script to collect system requirements, user rights, PATH and installation state, and network reachability in one report:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install\windows\clidiag.ps1
+```
+
+Group Policy PATH checks are skipped by default; add `-RunGpoCheck` to include them. See [install/README.md](install/README.md#windows-diagnostics-installwindowsclidiagps1) for all parameters.
+
 ### From Source
 
 ```bash
@@ -534,8 +542,9 @@ codemie-pi --resume <session-id>              # open a specific session
 |---|---|
 | **Managed agent dir** | `~/.pi/agent` is copied once to `<project>/.pi/codemie/agent`; Pi runs against the copy via `PI_CODING_AGENT_DIR`. Your skills, prompts, and extensions carry over — your Pi home is never modified. |
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
-| **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
+| **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
@@ -603,7 +612,74 @@ Existing CodeMie-tracked sessions and other agents are still included as usual.
 Use an absolute path for scheduled jobs and set the variable in the job's environment;
 an alias or function in your interactive shell does not configure the scheduler.
 
-For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
+### Claude Code OTLP analytics
+
+Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
+
+```bash
+# Track every project (the default; same as --scope user). Asks for confirmation first.
+codemie proxy connect --claude-code-otlp
+
+# Track only the current project; run from its root (explicit opt-in)
+codemie proxy connect --claude-code-otlp --scope project
+
+# Unattended or CI run: skip the confirmation prompt
+codemie proxy connect --claude-code-otlp --silent
+
+# Optional: use the preview profile for this command only
+codemie proxy connect --claude-code-otlp --scope project --profile preview
+```
+
+| Option | Description |
+|---|---|
+| `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
+| `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
+| `--silent` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
+| `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
+| `--force` | Discard an invalid project allowlist so setup can continue; valid allowlists are not changed. |
+| `--verbose` | Show detailed command output. |
+
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--silent` writes the Global scope and replaces any listed projects; with `--scope project --silent` the current project is added and existing entries are kept.
+
+Disconnect a project or remove the integration entirely:
+
+```bash
+# Stop tracking the current project
+codemie proxy disconnect --claude-code-otlp --scope project
+
+# Remove the Claude Code hooks, OTel environment variables, and project allowlist
+codemie proxy disconnect --claude-code-otlp
+```
+
+Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
+
+```bash
+# Stop all analytics collection; hooks stay installed
+codemie proxy analytics disable
+
+# Exclude the current project, even when Global scope is enabled
+codemie proxy analytics exclude
+
+# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+codemie proxy analytics status
+```
+
+`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
+
+`include`/`enable` only undo `disable`/`exclude`; they do not add a project to the Project-scope allowlist. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
+
+For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
+
+The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+
+```bash
+# Copilot CLI or VS Code Copilot Chat
+codemie proxy analytics disable --copilot-cli-otlp
+codemie proxy analytics exclude --copilot-chat-otlp
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
 
 ## Codebase Memory MCP
 
@@ -624,6 +700,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -634,8 +711,12 @@ Flags are composable: a single run configures every target you pass, prints a pe
 Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
+codemie proxy disconnect --claude-desktop --vscode-claude-code
 codemie proxy disconnect --codex-desktop
+codemie proxy disconnect --omp
 ```
+
+`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. Quit and reopen the app afterwards.
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
 
@@ -669,7 +750,7 @@ No plaintext key or generated placeholder is written to that file. On first setu
 
 ## Connect Claude Desktop via CodeMie Proxy
 
-Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations. Cowork sessions also appear on the CLI Analytics tab — turns, tools, subagents, tokens and cost — under your user and the profile's CodeMie project.
 
 ### Prerequisites
 
@@ -692,8 +773,11 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 ```bash
 codemie proxy status
 codemie proxy inspect desktop --limit 5
+codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
+
+With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-11-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 40,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "The diffstat reports 40 files changed (+9348/-472), which maps to XXL. Most of them are content: the codemie-html-report skill was replaced wholesale (references, CSS bundle, fonts, a vendored Chart.js, deck JS, build and inject scripts, with the old CommonJS inject-*.js removed) and the new codemie-humanizer skill was added. Only the manifest bump and one new test touch code that the project runs." },
+    { "dimension": "component_scope", "reason": "The change spans three plugin skills (codemie-html-report updated, codemie-humanizer new, a codemie-analytics handoff edit), the Claude plugin manifest and one drift-guard test, all inside src/agents/plugins/claude/. That is several components but a single subsystem." },
+    { "dimension": "requirements_clarity", "reason": "The request was to copy two skills, update one and bump the plugin version, with 'fully validate it'. It left open how far to adapt the copies, and the follow-up commits show that adaptation happened: CLAUDE_PLUGIN_ROOT path resolution, the ESM-only scripts, dropped licence headers and the analytics handoff." },
+    { "dimension": "technical_risk", "reason": "An exact pattern exists: copy and adapt from a sibling skill repo, with rollback by revert. The scripts spawn node and headless Chrome locally but are not part of the CLI runtime. The new skills-shared-files.test.ts checks that slop-scan.mjs and glossary.md stay byte-identical between the two skills, and that the scripts are ESM and never call require()." },
+    { "dimension": "dependencies", "reason": "No package manifests changed. Chart.js (chart.umd.min.js) and OFL-licensed fonts are vendored as static skill assets, so the score is S rather than XS." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

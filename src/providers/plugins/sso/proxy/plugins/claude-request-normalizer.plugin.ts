@@ -40,9 +40,33 @@ const MODEL_CAPABILITY_TABLE: ReadonlyArray<{ pattern: RegExp; capabilities: Mod
     capabilities: { thinking: 'none', effort: false, sampling: true, preserveDisabledThinking: false },
   },
   {
+    // claude-haiku-5 / 5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; keeps thinking.type="disabled".
+    pattern: /claude-haiku-5(?:-5)?(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
+  },
+  {
     // claude-opus-4-7/8/9 (+ date-tagged; excludes 4-70+): adaptive thinking + effort.
     pattern: /claude-opus-4-[7-9](?:[^0-9]|$)/i,
     capabilities: { thinking: 'adaptive', effort: true, sampling: true, preserveDisabledThinking: false },
+  },
+  {
+    // claude-opus-5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; removes thinking.type="disabled" (upstream 400s if sent).
+    pattern: /claude-opus-5-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: false },
+  },
+  {
+    // claude-opus-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; keeps thinking.type="disabled".
+    pattern: /claude-opus-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
+  },
+  {
+    // claude-sonnet-5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; removes thinking.type="disabled" (upstream 400s if sent).
+    pattern: /claude-sonnet-5-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: false },
   },
   {
     // claude-sonnet-5 (+ date-tagged): adaptive thinking + effort; rejects manual
@@ -313,9 +337,11 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
+      // Whole catalog, not one project's: this only looks up metadata for requests
+      // the client already sends, so a model outside the project must still resolve.
       const models = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies)
-        : await fetchCodeMieLlmModels(apiUrl, credentials.token);
+        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, undefined)
+        : await fetchCodeMieLlmModels(apiUrl, credentials.token, undefined);
 
       this.availableModels = models
         .filter((model) => model.enabled !== false)

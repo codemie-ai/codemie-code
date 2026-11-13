@@ -30,6 +30,11 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
   supportsStreaming: true,
+  customProperties: {
+    // Analytics project per global profile; may be kept off CodeMie (EPMCDME-15411)
+    carriesCodeMieProject: true,
+    canStayOffCodeMie: true
+  },
 
   agentHooks: {
     '*': {

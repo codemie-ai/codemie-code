@@ -71,6 +71,18 @@ export class UpstreamError extends ProxyError {
 }
 
 /**
+ * Node quotes the offending header name in its invalid-header messages
+ * (`["X-CodeMie-Branch"]`, `for header "x-codemie-branch"`); only a quoted
+ * name counts, so a message that merely mentions X-CodeMie elsewhere does not.
+ */
+function findCodeMieHeaderName(message: string): string | undefined {
+  for (const match of message.matchAll(/"([^"]+)"/g)) {
+    if (/^x-codemie-/i.test(match[1])) return match[1];
+  }
+  return undefined;
+}
+
+/**
  * Convert unknown errors to ProxyError
  */
 export function normalizeError(error: unknown, context?: Record<string, unknown>): ProxyError {
@@ -82,14 +94,24 @@ export function normalizeError(error: unknown, context?: Record<string, unknown>
     const errorCode = (error as any).code as string | undefined;
     const message = error.message || '';
 
-    // Node may throw synchronously for malformed header values (for example,
-    // corrupted/invalid cookie bytes). Treat this as an auth/session issue so
-    // users get a recovery action instead of a generic 500.
+    // Node may throw synchronously for malformed header values. Corrupted
+    // cookie/session bytes are an auth issue, so users get a recovery action
+    // instead of a generic 500. X-CodeMie-* headers are not session data, so
+    // re-login cannot fix them and they are reported separately.
     if (
       errorCode === 'ERR_INVALID_CHAR' ||
       errorCode === 'ERR_HTTP_INVALID_HEADER_VALUE' ||
       /header content|header value|cookie/i.test(message)
     ) {
+      const codemieHeader = findCodeMieHeaderName(message);
+      if (codemieHeader) {
+        return new ProxyError(
+          `Invalid value for ${codemieHeader} header`,
+          500,
+          'INVALID_HEADER_VALUE',
+          { ...context, errorCode, header: codemieHeader }
+        );
+      }
       return new AuthenticationError(
         'Invalid authentication session data. Run `codemie profile login` and restart the proxy.',
         {

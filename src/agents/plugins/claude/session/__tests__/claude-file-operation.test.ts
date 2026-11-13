@@ -34,4 +34,44 @@ describe('extractClaudeFileOperation', () => {
   it('returns undefined for a non-file tool', () => {
     expect(extractClaudeFileOperation('Bash', { command: 'ls' }, {})).toBeUndefined();
   });
+
+  it('does not overcount lines when Write content ends with a trailing newline', () => {
+    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\nb\nc\n' }, {
+      filePath: '/repo/a.ts',
+      content: 'a\nb\nc\n',
+    });
+    expect(op).toMatchObject({ linesAdded: 3 });
+  });
+
+  it('counts a single-line Write with no trailing newline as 1', () => {
+    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a' }, {
+      filePath: '/repo/a.ts',
+      content: 'a',
+    });
+    expect(op).toMatchObject({ linesAdded: 1 });
+  });
+
+  it('counts a blank line in the middle of a Write', () => {
+    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\n\nb' }, {
+      filePath: '/repo/a.ts',
+      content: 'a\n\nb',
+    });
+    expect(op).toMatchObject({ linesAdded: 3 });
+  });
+
+  it('treats CRLF-terminated Write content the same as LF-terminated', () => {
+    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\r\nb\r\nc\r\n' }, {
+      filePath: '/repo/a.ts',
+      content: 'a\r\nb\r\nc\r\n',
+    });
+    expect(op).toMatchObject({ linesAdded: 3 });
+  });
+
+  it('reports linesAdded: 0 for an empty-content Write, not undefined', () => {
+    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: '' }, {
+      filePath: '/repo/a.ts',
+      content: '',
+    });
+    expect(op).toMatchObject({ linesAdded: 0 });
+  });
 });

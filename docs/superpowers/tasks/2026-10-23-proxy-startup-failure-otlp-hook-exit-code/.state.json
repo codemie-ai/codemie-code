@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-light",
+  "slug": "proxy-startup-failure-otlp-hook-exit-code",
+  "branch": "fix/EPMCDME-15369",
+  "phase": "maintenance",
+  "started_at": "2026-10-23T00:00:00Z",
+  "completed_at": "2026-10-23T13:30:00Z",
+  "last_sync_commit": "ee001bc7e2df9f366a49ac2b26b1a72fa8902370"
+}

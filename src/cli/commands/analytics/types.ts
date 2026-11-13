@@ -255,6 +255,11 @@ export interface AnalyticsOptions {
   /** @deprecated Alias for {@link output}; kept for backward compatibility. `-o/--output` wins when both are set. Will be removed on November 1, 2026. */
   reportOutput?: string;
   open?: boolean;
+  /**
+   * When true (via --redact), the exported report omits session titles (first user prompt)
+   * and reduces absolute project paths to their basename; native log paths are dropped.
+   */
+  redact?: boolean;
   /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;
 }

@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+import { synthesizeRawSession, loadNativeSessions, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
@@ -142,6 +142,21 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   });
 });
 
+describe('transcriptPathKey', () => {
+  it('gives the same key on win32 for one file recorded with a different drive, folder case or separators', () => {
+    const recorded = 'c:/Users/Dev/.claude/projects/c--Users-Dev-repo/96972b5c.jsonl';
+    const discovered = 'C:\\Users\\dev\\.claude\\projects\\C--Users-Dev-repo\\96972b5c.jsonl';
+
+    expect(transcriptPathKey(recorded, 'win32')).toBe(transcriptPathKey(discovered, 'win32'));
+  });
+
+  it('keeps paths case-sensitive on other platforms', () => {
+    expect(transcriptPathKey('/tmp/does-not-exist/A.jsonl', 'linux')).not.toBe(
+      transcriptPathKey('/tmp/does-not-exist/a.jsonl', 'linux')
+    );
+  });
+});
+
 describe('loadNativeSessions', () => {
   it('skips logs already tracked by CodeMie and synthesizes the rest', async () => {
     const deps: NativeLoaderDeps = {
@@ -164,6 +179,22 @@ describe('loadNativeSessions', () => {
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['fresh']); // tracked one deduped out
     expect(out[0].agentSessionFile).toBe('/logs/fresh.jsonl');
+  });
+
+  it('on win32, dedups a tracked transcript recorded in a different case instead of adding it as native-external', async () => {
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set([transcriptPathKey('c:\\p\\c--repo\\s.jsonl', 'win32')]),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 's', filePath: 'C:\\p\\C--repo\\s.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse: async () => {
+        throw new Error('a tracked transcript must not be parsed again');
+      },
+      realPath: (p) => transcriptPathKey(p, 'win32'),
+      hasOwnershipMarker: () => false,
+    };
+
+    expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
 
   it('drops sessions whose log fails to parse', async () => {
@@ -209,6 +240,140 @@ describe('loadNativeSessions', () => {
 
     expect(parseCalls).toBe(1);
     expect(index.get('growing')?.tokens.input).toBe(1_000_000);
+  });
+});
+
+describe('loadNativeSessions — sessionId short-circuit', () => {
+  it('parses only the descriptor matching filter.sessionId, skipping non-matching non-Pi descriptors', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'codex', descriptor: { sessionId: 'other-codex', filePath: '/logs/other.jsonl', createdAt: 1, agentName: 'codex' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledWith('claude', '/logs/target.jsonl', 'target');
+    expect(results).toHaveLength(1);
+  });
+
+  it('never parses an unrelated Pi descriptor when the requested session is not Pi-family (CR-002: Pi volume must not OOM a Claude/Codex session report)', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'pi', descriptor: { sessionId: 'other-pi', filePath: '/logs/other-pi.jsonl', createdAt: 1, agentName: 'pi' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledWith('claude', '/logs/target.jsonl', 'target');
+    expect(results.map((s) => s.sessionId)).toEqual(['target']);
+  });
+
+  it('returns an empty array and calls parse zero times when no descriptor matches filter.sessionId', async () => {
+    const parse = vi.fn(async () => null);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'unrelated', filePath: '/logs/unrelated.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'nonexistent' }, deps);
+
+    expect(parse).not.toHaveBeenCalled();
+    expect(results).toEqual([]);
+  });
+
+  it('parses every discovered descriptor when filter.sessionId is absent (no regression)', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'a', filePath: '/logs/a.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'claude', descriptor: { sessionId: 'b', filePath: '/logs/b.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions(undefined, deps);
+
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('loadNativeSessions — windowDays', () => {
+  it('passes 3650 (effectively all time) to discover when filter has no fromDate, even when sessionId is set (CR-003: a sessionId-scoped request must still be able to discover a session older than any adapter default — the memory fix is the scoped parse short-circuit, not a narrower discovery window)', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(discover).toHaveBeenCalledWith(3650);
+  });
+
+  it('passes 3650 to discover for a broad (no filter) listing, preserving the pre-existing "effectively all history" default for unscoped analytics reports', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions(undefined, deps);
+
+    expect(discover).toHaveBeenCalledWith(3650);
+  });
+
+  it('still derives a day count from filter.fromDate when it is set', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+    const fromDate = new Date(Date.now() - 5 * 86_400_000);
+
+    await loadNativeSessions({ fromDate }, deps);
+
+    const calledWith = discover.mock.calls[0]?.[0] as number;
+    expect(calledWith).toBeGreaterThanOrEqual(5);
+    expect(calledWith).toBeLessThanOrEqual(7);
   });
 });
 
@@ -428,6 +593,78 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
 
     const { realNativeDeps } = await import('../native-loader.js');
     expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
+  });
+
+  it('adopts a transcript named by a sidecar of either naming scheme', async () => {
+    writeFileSync(
+      join(mockSessionsDir, '1a2b3c4d-codemie-session-3-codemie-marker.json'),
+      JSON.stringify({ transcriptPath: ownedTranscript, codemieSessionId: 'codemie-session-3', codemieAgent: 'claude' })
+    );
+    writeFileSync(
+      join(mockSessionsDir, 'external-codemie-marker.json'),
+      JSON.stringify({ transcriptPath: externalTranscript, codemieSessionId: 'codemie-session-4', codemieAgent: 'claude' })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(true);
+  });
+
+  it('tracks and owns the switched transcript of a record whose agentSessionFile no longer exists', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-3.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: join(mockSessionsDir, 'moved-away.jsonl') },
+        runtimeCheckpoint: { transcriptPath: ownedTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.trackedLogPaths().has(realNativeDeps.realPath(ownedTranscript))).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+  });
+
+  it('tracks and owns both transcripts of a record whose agentSessionFile and switched transcript both exist', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-4.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: ownedTranscript },
+        runtimeCheckpoint: { transcriptPath: externalTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    const tracked = realNativeDeps.trackedLogPaths();
+    expect(tracked.has(realNativeDeps.realPath(ownedTranscript))).toBe(true);
+    expect(tracked.has(realNativeDeps.realPath(externalTranscript))).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(true);
+  });
+
+  it('adopts a transcript from an earlier version by its in-band codemie_session_start line, with no sidecar', async () => {
+    const legacyTranscript = join(mockSessionsDir, 'legacy.jsonl');
+    writeFileSync(
+      legacyTranscript,
+      '{"type":"user"}\n{"type":"codemie_session_start","uuid":"u1","codemie_session_id":"cm-old","codemie_agent":"claude"}\n'
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(legacyTranscript)).toBe(true);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(false);
+  });
+
+  it('tracks only the string transcript paths of a record with a malformed one', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-5.json'),
+      JSON.stringify({
+        correlation: { agentSessionFile: 42 },
+        runtimeCheckpoint: { transcriptPath: ownedTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect([...realNativeDeps.trackedLogPaths()]).toEqual([realNativeDeps.realPath(ownedTranscript)]);
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
   });
 });
 

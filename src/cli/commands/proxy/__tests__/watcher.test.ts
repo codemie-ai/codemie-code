@@ -83,20 +83,49 @@ describe('ProxyWatcher', () => {
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('did not recover after 3 restart attempts');
   });
 
-  it('gives up immediately on an unauthorized failure without restarting', async () => {
+  it('records an unauthorized failure once, never restarts, and keeps watching for a later sign-in', async () => {
     mockedHealth.mockResolvedValue(UNAUTHORIZED);
-    const cb = makeCallbacks();
+    const onUnauthorized = vi.fn().mockResolvedValue(undefined);
+    const cb = { ...makeCallbacks(), onUnauthorized };
     const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
 
     watcher.start();
-    await vi.advanceTimersByTimeAsync(1000);
-    // Further time must not produce more activity (watcher stopped itself).
-    await vi.advanceTimersByTimeAsync(5000);
-    watcher.stop();
+    await vi.advanceTimersByTimeAsync(3000);
 
     expect(cb.restart).not.toHaveBeenCalled();
     expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('SSO session expired');
+    expect(onUnauthorized).toHaveBeenCalledTimes(3);
+
+    // Signed in again: the next check is healthy, so the watcher is still alive and reports it.
+    mockedHealth.mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a failing recovery hook', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const onUnauthorized = vi.fn().mockRejectedValue(new Error('port busy'));
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, { ...makeCallbacks(), onUnauthorized });
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(2000);
+    watcher.stop();
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops on unauthorized when no sign-in recovery callback is registered', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+    expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
+    expect(cb.restart).not.toHaveBeenCalled();
   });
 
   it('recovers and resets attempts when health returns after a restart', async () => {

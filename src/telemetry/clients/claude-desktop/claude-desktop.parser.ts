@@ -118,6 +118,12 @@ export async function parseClaudeDesktopSession(
 
     backfillTimestampsFromAuditLog(messages);
     const aliased = aliasAuditToolResults(messages);
+    // Both fix-ups skip a line already fixed, so the lines shared with `messages` are untouched here.
+    if (parsed.conversationMessages) {
+      const conversationMessages = parsed.conversationMessages as ClaudeMessage[];
+      backfillTimestampsFromAuditLog(conversationMessages);
+      aliasAuditToolResults(conversationMessages);
+    }
 
     return {
       ...parsed,

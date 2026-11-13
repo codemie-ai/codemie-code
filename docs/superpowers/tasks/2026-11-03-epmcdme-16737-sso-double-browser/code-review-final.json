@@ -1,0 +1,254 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved after check round (CR-001/CR-002 resolved); DF-001 and stamp-spend note fixed afterwards without a further automated round, verified by unit suites + typecheck."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix CR-001 (readWithDeadline stuck flag: allow a fresh read after the deadline) and CR-002 (JSDoc on new public cookie-auth exports)."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User wants two more fixes before approval: DF-001 (initial store read has no deadline) and the CR-001 impact note (refresh() consumes the new sign-in stamp before the read, so a null/failed read spends the signal). No third automated review round; fixes get Stage 7 qa-gates."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved after check round (CR-001/CR-002 resolved); DF-001 and stamp-spend note fixed afterwards without a further automated round, verified by unit suites + typecheck."
+    }
+  ],
+  "reviewed_head": "1e46f427c820c6b9743a1177ac4c69c451aa787a",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Both prior blocking findings verified resolved against current source: readWithDeadline no longer short-circuits and starts a fresh read per call (tests cover fresh read and late-result isolation), and the four cookie-auth exports now carry JSDoc. Deferred DF-001 not re-checked; business_review and standards_review carried forward from the prior verdict.",
+  "confidence": "low",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/cookie-auth.ts",
+      "line": 48,
+      "title": "readWithDeadline never retries after a timed-out read",
+      "problem": "readWithDeadline sets a stuck flag on deadline and returns null without reading while the abandoned read is unsettled. The spec (Item 2 / AC4) requires the next refreshNow() to start a fresh read after the deadline; credential-refresh.test.ts:2501 asserts the deviating single-call behavior instead.",
+      "impact": "With a keychain read that never settles, refresh() and refreshNow() return null for the process life with no log: the superseded check always answers not-superseded and stale cookies persist, partly defeating the double-browser fix. refresh() also consumes the new sign-in stamp before the read, so a null read spends the signal.",
+      "recommendation": "Do not short-circuit while an abandoned read is unsettled: start a fresh read on the next call, ignore the late result of the abandoned one, and update the test that asserts one store call.",
+      "status": "resolved",
+      "check_notes": "cookie-auth.ts readWithDeadline has no stuck flag; each call starts a fresh read, late result of abandoned read dropped. Tests in cookie-auth.test.ts and credential-refresh.test.ts:307 assert fresh read and late-result isolation.",
+      "fix": {
+        "change": "readWithDeadline no longer short-circuits while an abandoned read is unsettled; each call starts a fresh read and the late result is dropped",
+        "test": "cookie-auth.test.ts 'starts a fresh read on the next call while the timed-out read is still unsettled'; credential-refresh.test.ts never-answering store case"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/cookie-auth.ts",
+      "line": 29,
+      "title": "Missing JSDoc on new public cookie-auth exports",
+      "problem": "code-quality.md requires JSDoc on all public APIs; exported buildCookieHeader, readCookieAuth, readAnalyticsCookieAuth and the CredentialsSupersededCheck type have none, while other exports in the file do.",
+      "impact": "Documented code-quality standard unmet for a new module shared by hook.ts, DesktopTelemetryRuntime.ts, sso-auth.plugin.ts and credential-refresh.ts.",
+      "recommendation": "Add short JSDoc to those exports stating what they return and when they yield an empty string or null.",
+      "status": "resolved",
+      "check_notes": "JSDoc present on buildCookieHeader, readCookieAuth, readAnalyticsCookieAuth and CredentialsSupersededCheck in cookie-auth.ts.",
+      "fix": {
+        "change": "JSDoc on buildCookieHeader, readCookieAuth, readAnalyticsCookieAuth, CredentialsSupersededCheck",
+        "test": "n/a"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/providers/plugins/sso/session/cookie-auth.ts",
+      "line": 122,
+      "title": "Initial credential read has no deadline",
+      "problem": "readCookieAuth awaits the first store read without STORE_READ_DEADLINE_MS, so a hung keychain blocks the hook, sync or desktop caller.",
+      "preexisting": "The replaced inline getStoredAnalyticsCredentials calls were equally unguarded."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Item 0: getLastSignInAt(source) returns lock succeededAt or null, never throws, ignores source",
+      "status": "pass",
+      "notes": "Covered by getLastSignInAt tests."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 1: refresh() bypasses throttle on changed stamp; refreshNow records stamp; followers share bypass read",
+      "status": "pass",
+      "notes": "credential-refresh.ts refresh() and tests."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 2: refreshNow shared reader, numbered reads, joins only refreshNow reads",
+      "status": "pass",
+      "notes": "readAndAssign with readsStarted/lastAssignedRead."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 2: store read runs under STORE_READ_DEADLINE_MS; timeout is a failed read, late result ignored, next read fresh",
+      "status": "partial",
+      "notes": "readWithDeadline stuck flag returns null without a fresh read until the abandoned read settles."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 2: shared buildCookieHeader replaces onRequest rule and session-sync private builder",
+      "status": "pass",
+      "notes": "Warning log and throw kept in sso-auth.plugin.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 2: sentCredentialsSuperseded true only on differing non-empty headers, never throws",
+      "status": "pass",
+      "notes": "Unit cases in cookie-auth.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 2: expiry interceptor on superseded redirect drains body, no mark, no sign-in, synthetic 401",
+      "status": "pass",
+      "notes": "sso-session-expiry.plugin.ts; refresher supplied via context.credentialRefresher."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 3: gate clears provably stale marker, re-reads marker and stamp before clear",
+      "status": "pass",
+      "notes": "dropMarkerOlderThanSignIn in sso.auth-gate.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 4: signed-in-recently outcome for post-success; cooldown kept for post-failure",
+      "status": "pass",
+      "notes": "describeLogin text split verified."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 5: MetricsApiClient credentialsSuperseded skips marker write; plumbing through contexts and senders",
+      "status": "pass",
+      "notes": "All non-test MetricsSender sites pass the callback."
+    },
+    {
+      "kind": "spec",
+      "item": "Item 5: readCookieAuth/readAnalyticsCookieAuth wiring at daemon, hook, desktop, codex, pi, opencode",
+      "status": "pass",
+      "notes": "No inline cookie joins remain."
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: refresh() returns new credentials on changed stamp; unchanged no bypass; followers share one read",
+      "status": "pass",
+      "notes": "credential-refresh.test.ts suites."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: redirect with superseded header gives 401, no marker, no sign-in, body drained",
+      "status": "pass",
+      "notes": "sso-session-expiry.plugin.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: header equal to fresh one marks invalid and starts one sign-in",
+      "status": "pass",
+      "notes": "Equal-header and dropped-entry cases."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: refreshNow null/throw still 401; never-answering store ends after deadline and next refreshNow starts fresh read",
+      "status": "partial",
+      "notes": "Fallback works, but stuck flag blocks the fresh read; test at credential-refresh.test.ts:2501 asserts that."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: gate clears marker older than succeededAt; keeps newer/equal, other profile, API-key",
+      "status": "pass",
+      "notes": "sso.auth-gate tests with real marker files."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: describeLogin('signed-in-recently') text constraints; cooldown unchanged",
+      "status": "pass",
+      "notes": "sso.detached-login.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: fail/timeout/interrupt recovery, API-key no-retry guards, JWT guard unchanged",
+      "status": "pass",
+      "notes": "Branches intact."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: manual s4.sh harness 8a-8d against rebuilt build and restarted daemon",
+      "status": "pending-stage-7",
+      "notes": "Manual runtime evidence outstanding."
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: metrics writer with real marker files and mocked fetch",
+      "status": "pass",
+      "notes": "metrics-api-client.superseded.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: sentCredentialsSuperseded and readCookieAuth unit cases; caller set",
+      "status": "pass",
+      "notes": "cookie-auth.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: wiring cases per site; every MetricsSender passes callback or is unwired",
+      "status": "pass",
+      "notes": "Grep of non-test sources clean."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "git log diff_base..HEAD returned no commits (HEAD equals diff_base; the change is uncommitted in the working tree), so there are no subjects to check against .ai-run/guides/standards/git-workflow.md"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Conforms on .js extensions, import type, return types, no console.log/any/TODOs. Unmet: JSDoc missing on exported buildCookieHeader, readCookieAuth, readAnalyticsCookieAuth, CredentialsSupersededCheck in cookie-auth.ts"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No credentials or cookie values logged; control-character rejection kept; Cookie header still set only in the sso-auth proxy plugin."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "readWithDeadline's stuck flag leaves AC4 partially met (no fresh read after a timed-out store read) and new public cookie-auth exports lack required JSDoc. Standards coverage gap: code-quality adjudicated partially and commit-format could not be checked (no commits between diff base and HEAD). 1 deferred (initial read has no deadline, pre-existing; see code-review-deferred.local.md), 13 filtered as noise.",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

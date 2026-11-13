@@ -1,0 +1,182 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved. Reviewer confidence was low only because commit format could not be checked on an uncommitted change; at the user's explicit request code-review-final.json confidence was edited by hand from low to high before committing. 0 findings, all 14 ACs pass."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix CR-001 (index.ts over 500 lines) and CR-002 (no real-server /health analytics test). No commits."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved; CR-001 and CR-002 resolved."
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved. Reviewer confidence was low only because commit format could not be checked on an uncommitted change; at the user's explicit request code-review-final.json confidence was edited by hand from low to high before committing. 0 findings, all 14 ACs pass."
+    }
+  ],
+  "reviewed_head": "a934ae96357ae735199bb5e9fb31f32b90aea9da",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "All four lenses ran; every acceptance criterion passes and no candidate survived reachability checks against the real code (20 dismissed as handled, spec-mandated or below the floor). Confidence is low because the standards commit-format row could not be adjudicated: the change is uncommitted, so there were no commit subjects to check (coverage_gap).",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [
+    "public-api",
+    "data-contract"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: One collector serves both commands, no per-connector delivery logic, never throws",
+      "status": "pass",
+      "notes": "collectDeliveryHealth wraps all work in try/catch returning unknown; used by proxy status and analytics status."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: Each of the four reasons detected under its rule, stated precedence applies",
+      "status": "pass",
+      "notes": "Chain: stale > applicableAuthMarker > mismatchHeld > sendFailed; precedence test present."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: auth_rejected ignores marker older than latest sign-in and marker not matching daemon's profile/URLs",
+      "status": "pass",
+      "notes": "applicableAuthMarker reuses markerAppliesToProfile/isOlderThan with DaemonState-derived source; never clears marker."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: send_failed ignores delivery record failing the forwarder's liveness check",
+      "status": "pass",
+      "notes": "delivery-summary.ts calls exported liveDelivery; cursor-moved and short-file cases covered."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: analytics_endpoint_mismatch hold gives identity_mismatch; other hold reasons leave health unchanged",
+      "status": "pass",
+      "notes": "Requires pendingBytes>0 and hold reason analytics_endpoint_mismatch; other reasons tested."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: Adding a reason code without a label is a compile error",
+      "status": "pass",
+      "notes": "DELIVERY_REASONS is Record<DeliveryReason, ...>, read by both commands."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: /health returns analytics.credentials, existing fields unchanged, awaiting-login listener returns stale",
+      "status": "pass",
+      "notes": "OtlpInterceptor.healthStatus spread additively into /health; listener returns stale; tests updated."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: checkProxyHealth exposes analytics only when reply pid matches and field shape is valid",
+      "status": "pass",
+      "notes": "parseAnalyticsReply checks pid and exact ok|stale; optional member on ProxyHealthResult."
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: proxy status prints green/yellow/dim Analytics line plus reason tip only when an OTLP connector is enabled",
+      "status": "pass",
+      "notes": "formatAnalyticsLines gated by hasActiveAnalyticsConnector; printed after Uptime."
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: proxy status --json adds only analytics: DeliveryHealth, existing fields unchanged",
+      "status": "pass",
+      "notes": "payload.analytics set only when visible; reason is the code; test in index.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: Daemon stopped leaves text and JSON byte-identical",
+      "status": "pass",
+      "notes": "No collection on the stopped path; contract tests assert stopped output."
+    },
+    {
+      "kind": "spec",
+      "item": "AC12: analytics status prints Delivery section first for every connector flag when an OTLP connector is enabled",
+      "status": "pass",
+      "notes": "showStatus builds sections only if a connector is active; 'proxy not running' when stopped; covered for all flag sets."
+    },
+    {
+      "kind": "spec",
+      "item": "AC13: Connector section in new style, at most one Run line, no Hint line, dim sentence last",
+      "status": "pass",
+      "notes": "renderConnectorSection emits aligned details, single run, dim sentence; wording uses 'and' where spec example uses 'or'."
+    },
+    {
+      "kind": "spec",
+      "item": "AC14: analytics status --json keeps shape and adds delivery (null when stopped or no connector enabled)",
+      "status": "pass",
+      "notes": "JSON is { ...status, delivery } with delivery null unless a connector is active and the daemon runs."
+    },
+    {
+      "kind": "spec",
+      "item": "Status is unknown (not healthy) when no rule applies and /health has no usable analytics.credentials",
+      "status": "pass",
+      "notes": "healthy only when reply.credentials === 'ok'; no-reply and throw cases tested."
+    },
+    {
+      "kind": "spec",
+      "item": "pendingBytes is the sum of unsent bytes (size - cursor) across all spool streams",
+      "status": "pass",
+      "notes": "summarizeSession sums max(0, size - cursor) over SPOOL_STREAMS, aggregated across sessions."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no new on-disk state file; DaemonState unchanged",
+      "status": "pass",
+      "notes": "delivery-summary.ts is read-only over existing spool/status files; DaemonState untouched."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "git log diff_base..HEAD is empty (HEAD equals diff_base), so the change is uncommitted and there are no commit subjects to check against git-workflow.md; commit-format could not be adjudicated"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "range-based changed-file list was empty, so the staged and unstaged name-only list against HEAD was used (15 non-test src files plus tests). Checked against code-quality.md: .js import extensions and @/ alias used, explicit return types on exported functions, interface for shapes, no any, no require(), kebab-case file names. console.log calls in proxy status and analytics commands are intentional CLI user output, not debug logging. New files stay under 500 lines; index.ts is 484 lines"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "checked against .ai-run/guides/security/security-practices.md (the table path development/security-patterns.md does not exist in this repo). No attribution headers or Responses user field touched. New logging in delivery-state.ts and delivery-summary.ts goes through sanitizeLogArgs. The /health reply is trusted only when its pid matches the expected daemon and credentials is exactly ok or stale. No hardcoded secrets, no new file-path inputs, no new exec calls"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses ran; every acceptance criterion passes and no candidate survived reachability checks against the real code (20 dismissed as handled, spec-mandated or below the floor). Confidence is low because the standards commit-format row could not be adjudicated: the change is uncommitted, so there were no commit subjects to check (coverage_gap).",
+    "confidence": "high",
+    "risk_flags": [
+      "public-api",
+      "data-contract"
+    ]
+  }
+}

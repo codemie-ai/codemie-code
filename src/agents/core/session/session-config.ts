@@ -14,18 +14,6 @@ import { getCodemieHome } from '@/utils/paths.js';
  */
 export const METRICS_CONFIG: MetricsConfig = {
   /**
-   * Metrics only enabled for ai-run-sso provider
-   * Can be disabled at runtime via CODEMIE_METRICS_DISABLED env var
-   */
-  enabled: (provider: string) => {
-    // Check if metrics are disabled at runtime
-    if (process.env.CODEMIE_METRICS_DISABLED === '1') {
-      return false;
-    }
-    return provider === 'ai-run-sso';
-  },
-
-  /**
    * Retry configuration for correlation
    * Exponential backoff: 500ms → 1s → 2s → 4s → 8s → 16s → 32s → 32s
    * Total wait time: ~1.6 minutes
@@ -65,4 +53,20 @@ export function getSessionMetricsPath(sessionId: string): string {
  */
 export function getSessionConversationPath(sessionId: string): string {
   return join(getCodemieHome(), 'sessions', `${sessionId}_conversation.jsonl`);
+}
+
+/**
+ * Get the lock file guarding a session's metrics JSONL
+ * Format: ~/.codemie/sessions/{sessionId}.metrics.lock
+ */
+export function getSessionMetricsLockPath(sessionId: string): string {
+  return join(getCodemieHome(), 'sessions', `${sessionId}.metrics.lock`);
+}
+
+/**
+ * Get the lock file guarding a session's conversation JSONL
+ * Format: ~/.codemie/sessions/{sessionId}.conversation.lock
+ */
+export function getSessionConversationLockPath(sessionId: string): string {
+  return join(getCodemieHome(), 'sessions', `${sessionId}.conversation.lock`);
 }

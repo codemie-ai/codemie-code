@@ -295,5 +295,86 @@ describe('ClaudeSessionAdapter', () => {
 
       expect(parsed.metrics).toBeDefined();
     });
+
+    it('drops api-request-blob lines before counting', async () => {
+      const sessionFile = join(tempDir, 'blob-session.jsonl');
+      const readUse = { type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: 'test.ts' } };
+      const blob = (role: string, content: unknown) =>
+        ({ type: 'api-request-blob', sessionId: 'session-blob', hash: 'h', message: { role, content } });
+      const messages = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-blob',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: '<command-message>probe</command-message>\n<command-name>/probe</command-name>' }
+        },
+        blob('user', '<command-message>probe</command-message>\n<command-name>/probe</command-name>'),
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-blob',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: { role: 'assistant', content: [readUse] }
+        },
+        blob('assistant', [readUse])
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-blob');
+
+      expect(parsed.messages.map((m) => (m as { type: string }).type)).toEqual(['user', 'assistant']);
+      expect(parsed.metrics?.tools?.Read).toBe(1);
+    });
+
+    describe('re-written lines', () => {
+      const line = (type: string, uuid: string, timestamp: string, extra: Record<string, unknown> = {}) => ({
+        type,
+        uuid,
+        sessionId: 'session-rewrite',
+        timestamp,
+        ...(type === 'user' || type === 'assistant' ? { message: { role: type, content: `${uuid} text` } } : {}),
+        ...extra
+      });
+      const uuids = (lines: unknown[] | undefined) => (lines ?? []).map((m) => (m as { uuid: string }).uuid);
+      const stamp = (lines: unknown[] | undefined, uuid: string) =>
+        (lines ?? []).find((m) => (m as { uuid: string }).uuid === uuid) as { timestamp: string };
+
+      it('keeps head lines re-written after compact_boundary at their first position in conversationMessages', async () => {
+        const sessionFile = join(tempDir, 'compact-rewrite.jsonl');
+        await writeJSONLAtomic(sessionFile, [
+          line('user', 'u1', '2024-01-01T00:00:00Z'),
+          line('assistant', 'a1', '2024-01-01T00:00:01Z'),
+          line('system', 'cb', '2024-01-01T00:01:00Z', { subtype: 'compact_boundary' }),
+          line('user', 'u1', '2024-01-01T00:01:01Z'),
+          line('assistant', 'a1', '2024-01-01T00:01:02Z'),
+          line('user', 'u2', '2024-01-01T00:02:00Z'),
+          line('assistant', 'a2', '2024-01-01T00:02:01Z')
+        ]);
+
+        const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-compact');
+
+        expect(uuids(parsed.messages)).toEqual(['cb', 'u1', 'a1', 'u2', 'a2']);
+        expect(uuids(parsed.conversationMessages)).toEqual(['u1', 'a1', 'cb', 'u2', 'a2']);
+      });
+
+      it('keeps the later copy of a Desktop init re-write in both messages and conversationMessages', async () => {
+        const sessionFile = join(tempDir, 'init-rewrite.jsonl');
+        await writeJSONLAtomic(sessionFile, [
+          line('user', 'u1', '2024-01-01T00:00:00Z'),
+          line('system', 's1', '2024-01-01T00:00:01Z', { subtype: 'init' }),
+          line('user', 'u1', '2024-01-01T00:00:02Z'),
+          line('assistant', 'a1', '2024-01-01T00:00:03Z')
+        ]);
+
+        const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-init');
+
+        expect(uuids(parsed.messages)).toEqual(['s1', 'u1', 'a1']);
+        expect(stamp(parsed.messages, 'u1').timestamp).toBe('2024-01-01T00:00:02Z');
+        expect(uuids(parsed.conversationMessages)).toEqual(['s1', 'u1', 'a1']);
+        expect(stamp(parsed.conversationMessages, 'u1').timestamp).toBe('2024-01-01T00:00:02Z');
+      });
+    });
   });
 });

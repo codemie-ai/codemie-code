@@ -37,7 +37,7 @@ const TENANT     = 'common';
 const AUTH_URL   = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`;
 const TOKEN_URL  = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
 const SCOPES     = [
-  'User.Read', 'Mail.Read', 'Mail.Send',
+  'User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send',
   'Calendars.Read', 'Calendars.ReadWrite',
   'Files.Read', 'Files.ReadWrite',
   'Sites.Read.All', 'Sites.ReadWrite.All', 'Chat.Read', 'Chat.ReadWrite',
@@ -51,6 +51,20 @@ const CACHE_FILE  = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 const GRAPH_BETA  = 'https://graph.microsoft.com/beta';
 const TIMEOUT_MS  = 5 * 60 * 1000;
+
+// Graph accepts file attachments below 3 MB in a single POST; larger ones (up to 150 MB)
+// need an upload session whose chunks are a multiple of 320 KiB.
+const ATTACH_INLINE_MAX = 3 * 1024 * 1024;
+const ATTACH_MAX        = 150 * 1024 * 1024;
+const ATTACH_CHUNK      = 320 * 1024 * 10;
+const MIME_TYPES = {
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
+  '.html': 'text/html', '.htm': 'text/html', '.zip': 'application/zip',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 // ── HTTP Helpers ──────────────────────────────────────────────────────────────
 function httpsRequest(urlStr, options = {}, body = null) {
@@ -155,7 +169,15 @@ function graphDownload(endpoint, token) {
         }
         const chunks = [];
         res.on('data', c => chunks.push(c));
-        res.on('end',  () => resolve(Buffer.concat(chunks)));
+        res.on('end',  () => {
+          if (res.statusCode >= 400) {
+            const err = new Error(`HTTP ${res.statusCode}`);
+            err.statusCode   = res.statusCode;
+            err.responseBody = Buffer.concat(chunks).toString('utf8');
+            return reject(err);
+          }
+          resolve(Buffer.concat(chunks));
+        });
         res.on('error', reject);
       }).on('error', reject);
     });
@@ -470,6 +492,99 @@ async function cmdMe(args) {
   console.log(`User ID    : ${me.id              || 'N/A'}`);
 }
 
+function splitList(v) {
+  return typeof v === 'string' ? v.split(',').map(x => x.trim()).filter(Boolean) : [];
+}
+
+function toRecipients(v) {
+  return splitList(v).map(address => ({ emailAddress: { address } }));
+}
+
+// Validate every attachment up front so a bad path never leaves a half-built draft behind.
+function resolveAttachments(v) {
+  return splitList(v).map(p => {
+    const file = path.resolve(p);
+    let st;
+    try { st = fs.statSync(file); } catch { throw new Error(`Attachment not found: ${p}`); }
+    if (!st.isFile()) throw new Error(`Attachment is not a file: ${p}`);
+    if (st.size > ATTACH_MAX) throw new Error(`Attachment too large (${fmtSize(st.size)}, max ${fmtSize(ATTACH_MAX)}): ${p}`);
+    const name = path.basename(file);
+    return { file, name, size: st.size, contentType: MIME_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' };
+  });
+}
+
+async function addAttachment(token, messageId, att) {
+  const base = `/me/messages/${encodeURIComponent(messageId)}/attachments`;
+  if (att.size < ATTACH_INLINE_MAX) {
+    await graphPost(base, token, {
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name:          att.name,
+      contentType:   att.contentType,
+      contentBytes:  fs.readFileSync(att.file).toString('base64'),
+    });
+    return;
+  }
+  const session = await graphPost(`${base}/createUploadSession`, token, {
+    AttachmentItem: { attachmentType: 'file', name: att.name, size: att.size, contentType: att.contentType },
+  });
+  const fd = fs.openSync(att.file, 'r');
+  try {
+    for (let start = 0; start < att.size; start += ATTACH_CHUNK) {
+      const len = Math.min(ATTACH_CHUNK, att.size - start);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      // The upload URL is pre-authorised: sending the Graph bearer token to it is rejected.
+      await httpsRequest(session.uploadUrl, {
+        method:  'PUT',
+        headers: {
+          'Content-Length': len,
+          'Content-Range':  `bytes ${start}-${start + len - 1}/${att.size}`,
+          'Content-Type':   'application/octet-stream',
+        },
+      }, buf);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Create a draft in the Drafts folder. Never sends: the user reviews and sends it from Outlook.
+async function cmdEmailDraft(args, token) {
+  for (const k of ['to', 'cc', 'bcc', 'subject', 'body', 'bodyFile', 'attach']) {
+    if (args[k] === true) throw new Error(`--${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())} needs a value`);
+  }
+  if (args.body !== undefined && args.bodyFile !== undefined) throw new Error('Use either --body or --body-file, not both');
+
+  let content = args.body || '';
+  if (args.bodyFile !== undefined) {
+    try { content = fs.readFileSync(args.bodyFile, 'utf8'); } catch { throw new Error(`Cannot read --body-file: ${args.bodyFile}`); }
+  }
+  const html        = !!args.html || /\.html?$/i.test(args.bodyFile || '');
+  const attachments = resolveAttachments(args.attach);
+
+  const draft = await graphPost('/me/messages', token, {
+    subject:       args.subject || '(no subject)',
+    body:          { contentType: html ? 'HTML' : 'Text', content },
+    toRecipients:  toRecipients(args.to),
+    ccRecipients:  toRecipients(args.cc),
+    bccRecipients: toRecipients(args.bcc),
+  });
+
+  for (const att of attachments) {
+    try {
+      await addAttachment(token, draft.id, att);
+    } catch (e) {
+      throw new Error(`Draft ${draft.id} was created but attaching "${att.name}" failed: ${(e.responseBody || e.message).slice(0, 200)}`);
+    }
+  }
+
+  if (args.json) { console.log(JSON.stringify({ id: draft.id, webLink: draft.webLink, attachments: attachments.map(a => a.name) }, null, 2)); return; }
+  console.log(`Draft created (not sent): ${draft.subject}`);
+  console.log(`ID       : ${draft.id}`);
+  for (const a of attachments) console.log(`Attached : ${a.name} (${fmtSize(a.size)})`);
+  if (draft.webLink) console.log(`Open     : ${draft.webLink}`);
+}
+
 async function cmdEmails(args) {
   const token = await getValidToken();
 
@@ -482,6 +597,11 @@ async function cmdEmails(args) {
       },
     });
     console.log(`Email sent to ${args.send}`);
+    return;
+  }
+
+  if (args.draft) {
+    await cmdEmailDraft(args, token);
     return;
   }
 
@@ -672,6 +792,72 @@ async function cmdSharepoint(args) {
     return;
   }
 
+  // --- Any document library (drive) of a site, not just the default one ---
+  const encPath = p => p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+
+  if (args.drives) {
+    const data   = await graphGet(`/sites/${args.drives}/drives`, token, { $select: 'id,name,webUrl,driveType' });
+    const drives = data.value || [];
+    if (args.json) { console.log(JSON.stringify(drives, null, 2)); return; }
+    console.log(`\nDocument libraries in site ${args.drives}:`);
+    console.log('─'.repeat(60));
+    for (const d of drives) {
+      console.log(`${d.id}  ${d.name}`);
+      console.log(`  URL: ${d.webUrl || 'N/A'}`);
+    }
+    return;
+  }
+
+  if (args.drive && args.drive !== true) {
+    const driveId = args.drive;
+    const max     = parseInt(args.limit) || 200;
+    const select  = { $top: 200, $select: 'id,name,size,lastModifiedDateTime,file,folder,webUrl' };
+    const childrenEp = (itemId, p) => itemId ? `/drives/${driveId}/items/${itemId}/children`
+      : (p ? `/drives/${driveId}/root:/${encPath(p)}:/children` : `/drives/${driveId}/root/children`);
+
+    async function listFolder(itemId, p) {
+      const out = [];
+      let data = await graphGet(childrenEp(itemId, p), token, select);
+      for (;;) {
+        out.push(...(data.value || []));
+        const next = data['@odata.nextLink'];
+        if (!next || out.length >= max) break;
+        data = await graphGet(next.slice(GRAPH_BASE.length), token);
+      }
+      return out.slice(0, max);
+    }
+
+    const rows = [];
+    async function walk(itemId, p, prefix) {
+      for (const it of await listFolder(itemId, p)) {
+        rows.push({ ...it, relPath: prefix + it.name });
+        if (args.recursive && it.folder) await walk(it.id, null, `${prefix}${it.name}/`);
+      }
+    }
+    await walk(args.item, args.path, '');
+
+    if (args.json) { console.log(JSON.stringify(rows, null, 2)); return; }
+    console.log(`\nDrive ${driveId} / ${args.item ? 'item ' + args.item : (args.path || 'root')}:`);
+    console.log('─'.repeat(60));
+    for (const it of rows) {
+      const kind = it.folder ? '📁' : '📄';
+      const size = it.file ? fmtSize(it.size) : '';
+      console.log(`  ${kind} ${pad(it.relPath, 60)} ${pad(size, 10)} ${fmtDt(it.lastModifiedDateTime)}  ${it.id}`);
+    }
+    return;
+  }
+
+  if (args.driveFile) {
+    if (!args.path && !args.item) { console.error('Error: --drive-file DRIVE_ID requires --path FILE_PATH or --item ITEM_ID'); process.exit(1); }
+    const ep      = args.item ? `/drives/${args.driveFile}/items/${args.item}/content`
+                              : `/drives/${args.driveFile}/root:/${encPath(args.path)}:/content`;
+    const outPath = args.output || (args.path ? path.basename(args.path) : `downloaded_${String(args.item).slice(0, 8)}`);
+    const content = await graphDownload(ep, token);
+    fs.writeFileSync(outPath, content);
+    console.log(`Downloaded ${content.length} bytes to ${outPath}`);
+    return;
+  }
+
   if (args.download) {
     const outPath = args.output || `downloaded_${args.download.slice(0, 8)}`;
     const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
@@ -693,6 +879,27 @@ async function cmdSharepoint(args) {
   console.log('            --sites | --site SITE_ID [--path PATH]');
   console.log('            --download ITEM_ID [--output FILE]');
   console.log('            --site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]');
+  console.log('            --drives SITE_ID                                 (list all document libraries)');
+  console.log('            --drive DRIVE_ID [--path P | --item ID] [--recursive] [--limit N]');
+  console.log('            --drive-file DRIVE_ID (--path P | --item ID) [--output LOCAL_PATH]');
+}
+
+// Teams the user is a member of, read from /me/memberOf (Group.Read.All). The endpoint returns
+// every kind of group, and the team filter is applied client-side, so a single page cuts off
+// teams for users who belong to many groups. Follow @odata.nextLink to get them all.
+async function listMemberTeams(token) {
+  const teams = [];
+  let next = '/me/memberOf';
+  let params = { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 999 };
+  while (next) {
+    const page = await graphGet(next, token, params);
+    for (const g of page.value || [])
+      if (Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team')) teams.push(g);
+    const nl = page['@odata.nextLink'];
+    next = nl ? nl.replace(GRAPH_BASE, '') : null;
+    params = {};
+  }
+  return teams;
 }
 
 async function cmdTeams(args) {
@@ -795,8 +1002,7 @@ async function cmdTeams(args) {
       teams = data.value || [];
     } catch (e) {
       if (!/403|Forbidden/.test(e.message)) throw e;
-      const data = await graphGet('/me/memberOf', token, { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 200 });
-      teams = (data.value || []).filter(g => Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team'));
+      teams = await listMemberTeams(token);
     }
     if (args.json) { console.log(JSON.stringify(teams, null, 2)); return; }
     for (const t of teams) console.log(`${(t.id || '').slice(0, 36)}  ${t.displayName}`);
@@ -1620,7 +1826,8 @@ async function cmdTodo(args) {
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
     'manager','reports','availability','notebooks','list','vtt','help','force',
-    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members']);
+    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members','recursive',
+    'draft','html']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1656,12 +1863,16 @@ Data:
   me [--json]                          Your profile
   emails [--limit N] [--unread] [--search Q] [--folder NAME]
          [--read ID] [--conversation CONV_ID] [--send TO --subject S --body B] [--json]
+         [--draft [--to A,B] [--cc A,B] [--bcc A,B] --subject S (--body B | --body-file F) [--html]
+                  [--attach FILE1,FILE2]]   (saves to Drafts, never sends)
   calendar [--limit N] [--json]
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
   sharepoint [--resolve-site HOSTNAME_PATH]
              [--sites] [--site ID [--path P]] [--download ID [--output FILE]]
-             [--site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]] [--json]
+             [--site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]]
+             [--drives SITE_ID] [--drive DRIVE_ID [--path P | --item ID] [--recursive]]
+             [--drive-file DRIVE_ID (--path P | --item ID) [--output LOCAL_PATH]] [--json]
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-22T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 6,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "6 files changed per diffstat (2 source: usage-request.ts, subagent-usage.ts; 4 test/fixture), plus a 2-file fix-up; all within one transcript module directory." },
+    { "dimension": "component_scope", "reason": "Self-contained helper isOutputTokensPartial in usage-request.ts consumed by buildUsageTotals in subagent-usage.ts; one layer, established pattern." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

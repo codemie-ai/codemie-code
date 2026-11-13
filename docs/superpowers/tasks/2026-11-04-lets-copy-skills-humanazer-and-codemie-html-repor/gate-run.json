@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "branch": "feat/copy-humanizer-html-report-skills",
+  "head": "78585bf8b2e0a7cad2465d753a32f09a459f7a5f",
+  "runner": "npm",
+  "started_at": "2026-11-04T17:55:18Z",
+  "completed_at": "2026-11-04T17:58:06Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1456,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2209,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Guide documents '{src,tests}/**/*.ts'; package.json script also lints src/agents/plugins/pi/extension/*.js. Ran the real script."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2734,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4147,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Guide documents 'tsc && tsc-alias && npm run copy-plugin'; package.json also runs 'npm run bundle-statusline'. Ran the real script."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 56084,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "3 timeouts (30000ms) in src/utils/__tests__/system-proxy-dispatcher.test.ts, a file outside the branch diff; the tests spin up local listen() HTTP/proxy servers, so the sandbox may be blocking loopback networking. Not re-run outside the sandbox. 485/486 files passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30878,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 236,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan'. scripts/validate-secrets.js only scans the staged diff and nothing is staged, so the branch commits were not scanned. CI's secrets-detection job (reusable Gitleaks workflow) is still owed; to run it locally, stage the branch changes or run gitleaks over the merge_base..HEAD range (Docker daemon is up)."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 250,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Covers HEAD~1..HEAD only; the full branch range is covered by hook-commitlint-range."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5043,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 63308,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Fails at the vitest --project unit step (same system-proxy-dispatcher timeouts); license-check, lint, build passed before it."
+    },
+    {
+      "id": "hook-lint-staged-eslint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 533,
+      "command": "npx eslint --max-warnings=0 --no-warn-ignored src/agents/plugins/claude/__tests__/skills-shared-files.test.ts",
+      "exit_code": 0,
+      "notes": "lint-staged equivalent from .lintstagedrc.mjs (eslint step) applied to the one .ts file in the branch diff, since nothing is staged. Guide says lint-staged runs 'vitest related'; .lintstagedrc.mjs actually runs adjacent __tests__ files."
+    },
+    {
+      "id": "hook-lint-staged-vitest",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 500,
+      "command": "npx vitest run --passWithNoTests src/agents/plugins/claude/__tests__/skills-shared-files.test.ts",
+      "exit_code": 0,
+      "notes": "lint-staged equivalent from .lintstagedrc.mjs (vitest step) for the changed test file; 3/3 tests passed."
+    },
+    {
+      "id": "hook-commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 343,
+      "command": "npx --no -- commitlint --from 916710fbeb309fcaf07fb412c2e08b9711eb1755 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": ".husky/commit-msg commitlint applied to all 7 commits in merge_base..HEAD."
+    },
+    {
+      "id": "ui",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "",
+      "exit_code": null,
+      "notes": "UI surface changed but no configured UI test script; browser verification is a separate caller decision. (Diff touches .html/.css under codemie-html-report/style-guide.)"
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Requires a Windows runner. Still owed to CI; the guide's CRLF repro (perl CRLF conversion + npx vitest run <test>) is the local approximation for the new .mjs/.js scripts."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml",
+      "exit_code": null,
+      "notes": "Remote reusable workflow, cannot run locally; local counterpart 'secrets' self-skipped. Still owed to CI."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": ".github/workflows/codeql.yml",
+      "exit_code": null,
+      "notes": "GitHub CodeQL analysis needs GitHub infrastructure. Still owed to CI."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows reusable-commit-lint.yml",
+      "exit_code": null,
+      "notes": "Lints the PR title; no PR exists yet. Commit messages are covered by hook-commitlint-range."
+    }
+  ],
+  "failures": {
+    "unit": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:53597, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:163:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 485 passed (486)\n      Tests  3 failed | 8231 passed (8234)\n   Start at  20:55:29\n   Duration  55.66s (transform 18.64s, setup 0ms, import 72.01s, tests 194.35s, environment 21ms)\n\n",
+    "ci": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:53984, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:163:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 485 passed (486)\n      Tests  3 failed | 8231 passed (8234)\n   Start at  20:57:09\n   Duration  55.46s (transform 15.10s, setup 0ms, import 71.73s, tests 191.68s, environment 24ms)\n\n"
+  }
+}

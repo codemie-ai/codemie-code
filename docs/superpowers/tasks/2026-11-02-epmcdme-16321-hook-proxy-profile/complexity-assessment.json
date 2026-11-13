@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Persist the connected proxy profile identity in ~/.codemie/proxy-connection.json so the claude-code-otlp hook cold start restarts the daemon with that profile, with a non-exiting SSO pre-check and the profile name in the Starting proxy output (EPMCDME-16321).",
+  "generated": "2026-11-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches daemon-manager (record constant, I/O, write in spawnDaemon), connect-orchestrator (ensureOtlpProxy, ensureDaemon message, verifySsoCredentials split), launch-daemon (second verifySsoCredentials consumer) and likely disconnect-orchestrator. verifySsoCredentials is a shared utility with process.exit semantics relied on by existing tests. All within the proxy command layer." },
+    { "dimension": "requirements_clarity", "reason": "Acceptance criteria are clear, but the agreed design has open or contradicted points. Connect against an already-running matching daemon skips spawnDaemon, so no record is written. Disconnect semantics are unsettled (per-target, project scope, no Claude Desktop target). One record has many writers (proxy start and restart overwrite it). Upgrade behaviour with no record, same-named local profile overlay and project precedence are undecided." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the readState/writeState tmp+rename code in daemon-manager.ts, but it does not cover record shape validation, an empty profile name falling back to the cwd profile, or ConfigLoader returning a normal-looking config for an unknown name. The change is credential and profile-selection sensitive (never start on another profile, non-exiting SSO check, no console output in hooks). The AC and design enumerate edge cases (missing, malformed, unloadable record) with no existing parameterized test template for them." },
+    { "dimension": "file_change_estimate", "reason": "About 4-5 source files modified (daemon-manager, connect-orchestrator, launch-daemon, disconnect-orchestrator, possibly restart/docs), plus roughly 4-5 test files that need updates (connect-orchestrator, OtlpAgentAdapter, daemon-manager, hook-stdout integration, possibly index and disconnect tests), spread across src/cli/commands/proxy, __tests__, tests/integration and docs." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: affects credential verification and profile/identity selection (authentication-adjacent), and the edge-case AC has no existing defensive test template",
+    "Requirements Clarity scored L: the agreed design is contradicted in part by the code (record write timing, disconnect semantics, single-record multi-writer), which is rework risk"
+  ],
+  "split_recommendation": null
+}
