@@ -39,7 +39,12 @@ import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector } from './analytics-connectors.js';
+import {
+  ANALYTICS_CONNECTORS,
+  hasActiveAnalyticsConnector,
+  listActiveAnalyticsConnectors,
+  type AnalyticsConnector,
+} from './analytics-connectors.js';
 import { checkStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
 import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
@@ -272,6 +277,16 @@ async function collectStatusDelivery(): Promise<DeliveryHealth | null> {
   return collectDeliveryHealth(state, health.analytics);
 }
 
+/**
+ * The connectors the status reports on: the one the flag selects, or without a flag every connected
+ * connector. When none is connected the default connector reports it is not connected.
+ */
+async function selectStatusConnectors(opts: ConnectorOptions, selected: AnalyticsConnector): Promise<AnalyticsConnector[]> {
+  const flagGiven = Boolean(opts.claudeCodeOtlp || opts.copilotCliOtlp || opts.copilotChatOtlp);
+  const connected = flagGiven ? [] : await listActiveAnalyticsConnectors();
+  return connected.length > 0 ? connected : [selected];
+}
+
 async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<void> {
   await withErrorHandling(async () => {
     const connectorId = resolveAnalyticsConnector(opts);
@@ -281,17 +296,19 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
     }
     // Delivery is shared by every connector, so it is shown when any connector is connected, not
     // only the selected one; leftover unsent data alone never makes it visible.
-    const [status, anyConnectorActive] = await Promise.all([
-      connector.collect(process.cwd()),
-      hasActiveAnalyticsConnector(),
-    ]);
+    const anyConnectorActive = await hasActiveAnalyticsConnector();
     const delivery = anyConnectorActive ? await collectStatusDelivery() : null;
+    const shown = await selectStatusConnectors(opts, connector);
+    const statuses = await Promise.all(shown.map(async (entry) => ({ entry, status: await entry.collect() })));
     if (opts.json) {
-      console.log(JSON.stringify({ ...status, delivery }, null, 2));
+      // Mirrors the text report: the delivery first, then one object per shown connector.
+      const connectors = statuses.map(({ entry, status }) => ({ ...status, connector: entry.id }));
+      console.log(JSON.stringify({ delivery, connectors }, null, 2));
       return;
     }
-    const sections = anyConnectorActive ? [...formatDeliveryLines(delivery), connector.format(status)] : [connector.format(status)];
-    console.log(sections.join('\n'));
+    const sections = await Promise.all(statuses.map(({ entry, status }) => entry.format(status)));
+    const report = sections.join('\n\n');
+    console.log(anyConnectorActive ? [...formatDeliveryLines(delivery), '', report].join('\n') : report);
   });
 }
 

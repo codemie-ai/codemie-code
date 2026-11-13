@@ -1,9 +1,6 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import type {
-  AllowlistScope,
-  AllowlistState,
-} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import type { AllowlistState } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
 /** `enable` applies the analytics configuration; `cancel` covers Decline and a closed prompt. */
 export type AnalyticsConfirmationResult = 'enable' | 'cancel';
@@ -14,16 +11,12 @@ export interface AnalyticsConfirmationOptions {
   profile: string;
   /** CodeMie URL of that profile, shown in the header only when configured. */
   codeMieUrl?: string;
-  /** Which allowlist scope the write will target: all projects (`user`) or the current one (`project`). */
-  scope: AllowlistScope;
   /** Current state of the Claude Code project allowlist; only used to warn when it cannot be read. */
   allowlist: AllowlistState;
-  /** Canonical path of the current project, shown under the message for project scope. */
-  currentProjectPath: string;
+  /** Analytics project name of the current project; set only for project scope, where it is shown. */
+  projectName?: string;
 }
 
-const GLOBAL_MESSAGE = 'Global analytics will be enabled for all your Claude Code sessions.';
-const PROJECT_MESSAGE = 'Analytics will be enabled for your Claude Code sessions in the project:';
 const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot be read and will be replaced.';
 
 /**
@@ -60,29 +53,29 @@ export async function promptAnalyticsConfirmation(
 
 /**
  * Render the text shown above the choice list (pure, so it is testable without a TTY):
- * profile, CodeMie URL and one message naming what is being enabled. For project
- * scope the project path follows on its own line so it is never re-wrapped.
+ * profile, CodeMie URL, the project name for project scope, and a note when the
+ * project allowlist cannot be read.
  */
 export function buildAnalyticsConfirmationMessage(options: AnalyticsConfirmationOptions): string {
-  const width = getWrapWidth();
   const lines = [
     chalk.cyan(`Using profile: ${options.profile}`),
-    ...(options.codeMieUrl ? [chalk.cyan(`CodeMie URL: ${options.codeMieUrl}`)] : []),
-    '',
+    ...buildAnalyticsDetailLines(options),
   ];
 
   if (options.allowlist.kind === 'invalid') {
-    lines.push(...wrapText(INVALID_ALLOWLIST_NOTE, width), '');
-  }
-
-  if (options.scope === 'user') {
-    lines.push(...wrapText(GLOBAL_MESSAGE, width));
-  } else {
-    lines.push(...wrapText(PROJECT_MESSAGE, width), options.currentProjectPath);
+    lines.push('', ...wrapText(INVALID_ALLOWLIST_NOTE, getWrapWidth()));
   }
   lines.push('');
 
   return lines.join('\n');
+}
+
+/** The `CodeMie URL:` line (only when configured) and the `Project:` line (project scope only), shown below `Using profile:`. */
+export function buildAnalyticsDetailLines(options: Pick<AnalyticsConfirmationOptions, 'codeMieUrl' | 'projectName'>): string[] {
+  return [
+    ...(options.codeMieUrl ? [chalk.cyan(`CodeMie URL: ${options.codeMieUrl}`)] : []),
+    ...(options.projectName ? [chalk.cyan(`Project: ${options.projectName}`)] : []),
+  ];
 }
 
 /** Width available to the body text: the terminal width (80 when unknown). */

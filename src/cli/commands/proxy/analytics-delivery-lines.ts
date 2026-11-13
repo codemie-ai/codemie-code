@@ -22,7 +22,7 @@ export async function collectVisibleDeliveryHealth(
 }
 
 /**
- * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip when there is a remedy,
+ * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip only when the user can act,
  * then the `Last dropped:` detail when the spool records a drop.
  */
 export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
@@ -37,7 +37,7 @@ function analyticsHeadline(delivery: DeliveryHealth): string[] {
     const entry = delivery.reason ? DELIVERY_REASONS[delivery.reason] : undefined;
     return [
       `Analytics: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      `  Run: ${entry?.run ?? 'codemie proxy analytics status'}`,
+      ...(entry?.run ? [`  Run: ${entry.run}`] : []),
     ];
   }
   return [`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`];
