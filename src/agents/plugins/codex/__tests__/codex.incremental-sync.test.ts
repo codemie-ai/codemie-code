@@ -64,7 +64,7 @@ describe('codex.incremental-sync', () => {
 
   afterEach(async () => {
     const { stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
-    stopCodexIncrementalSync(currentSessionId);
+    await stopCodexIncrementalSync(currentSessionId);
     // Drain any in-flight tick that started before stop.
     await new Promise((resolve) => setTimeout(resolve, 60));
     discoverSessions.mockReset();
@@ -145,7 +145,7 @@ describe('codex.incremental-sync', () => {
       expect(linked.correlation.agentSessionFile).toBe('/tmp/rollout-linked.jsonl');
     } finally {
       const { stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
-      stopCodexIncrementalSync(currentSessionId);
+      await stopCodexIncrementalSync(currentSessionId);
       if (previousHome === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previousHome;
       rmSync(home, { recursive: true, force: true });
@@ -216,10 +216,57 @@ describe('codex.incremental-sync', () => {
 
     const { startCodexIncrementalSync, stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
     startCodexIncrementalSync(commonOptions());
-    stopCodexIncrementalSync(currentSessionId);
+    await stopCodexIncrementalSync(currentSessionId);
 
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(discoverSessions).not.toHaveBeenCalled();
+  });
+
+  it('stopCodexIncrementalSync resolves only after an in-flight tick finishes', async () => {
+    process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '20';
+    let release: () => void = () => undefined;
+    discoverSessions.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve([]);
+    }));
+
+    const { startCodexIncrementalSync, stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+    startCodexIncrementalSync(commonOptions());
+    await waitFor(() => discoverSessions.mock.calls.length >= 1);
+
+    let stopped = false;
+    const stopping = stopCodexIncrementalSync(currentSessionId).then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(stopped).toBe(false);
+
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it('stop still waits for the running tick after later interval firings found it in flight', async () => {
+    process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '20';
+    let release: () => void = () => undefined;
+    discoverSessions.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve([]);
+    }));
+
+    const { startCodexIncrementalSync, stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+    startCodexIncrementalSync(commonOptions());
+    await waitFor(() => discoverSessions.mock.calls.length >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    let stopped = false;
+    const stopping = stopCodexIncrementalSync(currentSessionId).then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(stopped).toBe(false);
+
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 
   it('calls SessionSyncer.sync() on tick when ssoUrl/syncApiUrl set and credentials available', async () => {

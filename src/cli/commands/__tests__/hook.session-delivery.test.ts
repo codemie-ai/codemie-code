@@ -2905,7 +2905,7 @@ describe('the own-record step at exit', () => {
         finishedAt = Date.now();
       });
       while (finishedAt === undefined && Date.now() - exitStart < 30 * SECOND) {
-        await vi.advanceTimersByTimeAsync(25);
+        await vi.advanceTimersByTimeAsync(5);
         await new Promise((resolve) => realSetTimeout(resolve, 1));
       }
       await step;
