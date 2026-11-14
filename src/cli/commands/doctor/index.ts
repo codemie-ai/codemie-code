@@ -17,6 +17,7 @@ import {
   AIConfigCheck,
   JWTAuthCheck,
   AgentsCheck,
+  PromptCacheCheck,
   WorkflowsCheck,
   FrameworksCheck
 } from './checks/index.js';
@@ -100,6 +101,7 @@ export function createDoctorCommand(): Command {
         new AIConfigCheck(),
         new JWTAuthCheck(),
         new AgentsCheck(),
+        new PromptCacheCheck(),
         new WorkflowsCheck(),
         new FrameworksCheck()
       ];
