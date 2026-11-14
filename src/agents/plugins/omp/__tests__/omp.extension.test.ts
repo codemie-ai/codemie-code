@@ -49,14 +49,21 @@ describe('omp extension materialization', () => {
     });
   });
 
-  it('writes the run\'s provider list owner-only and removes it afterwards', async () => {
+  it.skipIf(process.platform === 'win32')('writes the run\'s provider list owner-only', async () => {
+    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
+
+    const path = await writeOmpProvidersConfig('sid-1', { providers: {} });
+
+    expect(statSync(path).mode & 0o077).toBe(0);
+  });
+
+  it('writes the run\'s provider list under the home and removes it afterwards', async () => {
     const { writeOmpProvidersConfig, removeOmpProvidersConfig } = await import('../omp.extension.js');
 
     const path = await writeOmpProvidersConfig('sid-1', { providers: {} });
 
     expect(path.startsWith(home)).toBe(true);
     expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ providers: {} });
-    expect(statSync(path).mode & 0o077).toBe(0);
 
     await removeOmpProvidersConfig(path);
     expect(existsSync(path)).toBe(false);
@@ -84,7 +91,7 @@ describe('omp beforeRun', () => {
 });
 
 describe('omp providers file lifetime', () => {
-  it('creates the providers directory owner-only', async () => {
+  it.skipIf(process.platform === 'win32')('creates the providers directory owner-only', async () => {
     const { writeOmpProvidersConfig } = await import('../omp.extension.js');
 
     const path = await writeOmpProvidersConfig('sid-3', { providers: {} });
