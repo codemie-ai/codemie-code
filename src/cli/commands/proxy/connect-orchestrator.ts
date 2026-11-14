@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -320,14 +321,17 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveProfileCodeMieUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -335,8 +339,8 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
-      `  Run: codemie profile login --url ${loginUrl}`
+      `No active CodeMie session for profile '${profileName}'.\n` +
+      `  Run: codemie profile login${loginUrl}`
     );
   }
 }
@@ -344,10 +348,11 @@ export async function assertSsoCredentials(
 export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
     const [firstLine, ...rest] = (err as Error).message.split('\n');
     console.error(chalk.red(`✗ ${firstLine}`));
@@ -358,12 +363,12 @@ export async function verifySsoCredentials(
   }
 }
 
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -934,7 +939,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await verifySsoCredentials(
       config.baseUrl,
       profile,
-      config.codeMieUrl
+      config.codeMieUrl,
+      config.provider
     );
     if (targets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
