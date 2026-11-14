@@ -30,18 +30,18 @@ export type AnalyticsConnectorStatus = ClaudeAnalyticsStatus | CopilotAnalyticsS
 
 export interface AnalyticsConnector {
   id: AnalyticsConnectorId;
-  /** The connector's effective analytics configuration for `cwd`. */
-  collect: (cwd: string) => Promise<AnalyticsConnectorStatus>;
+  /** The connector's effective analytics configuration. */
+  collect: () => Promise<AnalyticsConnectorStatus>;
   /** Renders a status produced by this same connector's `collect`. */
-  format: (status: AnalyticsConnectorStatus) => string;
+  format: (status: AnalyticsConnectorStatus) => Promise<string>;
   /** Whether the connector is connected (hooks installed / scope enabled), whatever the collection preference. */
   isActive: () => Promise<boolean>;
 }
 
 interface ConnectorSpec<S extends AnalyticsConnectorStatus> {
   id: AnalyticsConnectorId;
-  collect: (cwd: string) => Promise<S>;
-  format: (status: S) => string;
+  collect: () => Promise<S>;
+  format: (status: S) => Promise<string>;
   isActive: () => Promise<boolean>;
 }
 
@@ -53,7 +53,7 @@ function connector<S extends AnalyticsConnectorStatus>(spec: ConnectorSpec<S>): 
 function copilotConnector(id: AnalyticsConnectorId): AnalyticsConnector {
   return connector<CopilotAnalyticsStatus>({
     id,
-    collect: (cwd) => collectCopilotAnalyticsStatus(id, cwd),
+    collect: () => collectCopilotAnalyticsStatus(id),
     format: formatCopilotAnalyticsStatus,
     isActive: async () => {
       const scope = await readCopilotConnectorScope(id);
@@ -73,12 +73,8 @@ export const ANALYTICS_CONNECTORS: readonly AnalyticsConnector[] = [
   copilotConnector(COPILOT_CHAT_OTLP_AGENT_NAME),
 ];
 
-/**
- * Whether any connector is connected, or Claude Desktop is connected to a local gateway (its Cowork
- * sessions go through the same delivery). A check that fails counts as inactive; never throws.
- */
-export async function hasActiveAnalyticsConnector(): Promise<boolean> {
-  if (await readDesktopGateway()) return true;
+/** The connectors that are connected, in table order. A check that fails counts as inactive; never throws. */
+export async function listActiveAnalyticsConnectors(): Promise<AnalyticsConnector[]> {
   const results = await Promise.all(
     ANALYTICS_CONNECTORS.map(async (entry) => {
       try {
@@ -89,5 +85,14 @@ export async function hasActiveAnalyticsConnector(): Promise<boolean> {
       }
     })
   );
-  return results.some(Boolean);
+  return ANALYTICS_CONNECTORS.filter((_, index) => results[index]);
+}
+
+/**
+ * Whether any connector is connected, or Claude Desktop is connected to a local gateway (its Cowork
+ * sessions go through the same delivery). A check that fails counts as inactive; never throws.
+ */
+export async function hasActiveAnalyticsConnector(): Promise<boolean> {
+  if (await readDesktopGateway()) return true;
+  return (await listActiveAnalyticsConnectors()).length > 0;
 }
