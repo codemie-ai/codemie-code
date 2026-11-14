@@ -10,7 +10,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Changed
 
-- `codemie proxy connect --omp` now runs the proxy daemon as the `codemie-omp` client instead of the generic `codemie-daemon`, changing the `X-CodeMie-Client` attribution of omp traffic; a daemon already running as `codemie-daemon` is restarted under the new identity by the next connect
+- `codemie proxy connect --omp` now runs the proxy daemon as the `codemie-omp` client instead of the generic `codemie-daemon` when `--omp` is the only target and Claude Desktop is not connected, changing the `X-CodeMie-Client` attribution of omp traffic; a daemon already running as `codemie-daemon` is restarted under the new identity by the next connect. With Claude Desktop connected the daemon keeps the `claude-desktop` identity and omp traffic is attributed to it, as before
 
 ## [0.16.8] - 2026-11-12
 

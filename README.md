@@ -724,7 +724,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
-codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog (reported as the codemie-omp client)
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog (reported as the codemie-omp client; as claude-desktop while Claude Desktop is connected)
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run

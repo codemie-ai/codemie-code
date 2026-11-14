@@ -39,7 +39,7 @@ Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plug
 | `X-CodeMie-Request-ID` | Per-request correlation ID |
 | `X-CodeMie-Session-ID` (+ `x-litellm-session-id`) | Session attribution |
 | `X-CodeMie-CLI` / `X-CodeMie-CLI-Model` / `X-CodeMie-CLI-Timeout` | Client attribution |
-| `X-CodeMie-Client` | Agent client type (e.g. `codemie-omp` — one value for both the managed `codemie omp` agent and the `proxy connect --omp` daemon, which no longer reports `codemie-daemon`) |
+| `X-CodeMie-Client` | Agent client type (e.g. `codemie-omp` — one value for both the managed `codemie omp` agent and the `proxy connect --omp` daemon, which no longer reports `codemie-daemon` — unless Claude Desktop is connected, when the shared daemon keeps `claude-desktop`) |
 | `X-CodeMie-Integration` | Integration/tenant identity |
 | `X-CodeMie-Repository` / `X-CodeMie-Branch` / `X-CodeMie-Project` | Repository/branch/project attribution |
 
