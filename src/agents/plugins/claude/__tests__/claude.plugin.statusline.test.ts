@@ -115,6 +115,9 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
       });
 
       await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+      // beforeRun reads the Claude settings layers (read-only) for its prompt-cache debug line;
+      // what this test pins is that afterRun touches nothing.
+      vi.mocked(fsp.readFile).mockClear();
       await afterRun(0, {}); // must be a no-op — persistent `codemie install statusline` config must survive
 
       expect(fsp.readFile).not.toHaveBeenCalled();

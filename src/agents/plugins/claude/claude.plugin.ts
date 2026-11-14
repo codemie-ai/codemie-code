@@ -28,7 +28,12 @@ import {
 } from '../../../utils/installation-detector.js';
 import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
-import { TOOL_SEARCH_VERIFIED_PROVIDERS, claudeCacheDefaults } from './prompt-cache.js';
+import {
+  TOOL_SEARCH_VERIFIED_PROVIDERS,
+  claudeCacheDefaults,
+  describePromptCacheSource,
+  resolvePromptCacheSetup,
+} from './prompt-cache.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -260,6 +265,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // TOOL_SEARCH_VERIFIED_PROVIDERS. CODEMIE_PROVIDER is populated before this hook runs.
       const toolSearchVerified = TOOL_SEARCH_VERIFIED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '');
 
+      // The environment as the user's shell left it, before any CodeMie default: what the
+      // prompt-cache debug line below resolves from.
+      const shellEnv = { ...env };
+
       // Allow experimental betas on a verified provider. This is a prerequisite for tool search
       // below: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS suppresses the tool-search beta header
       // (`tool-search-tool-2025-10-19`) and wins over ENABLE_TOOL_SEARCH, so leaving it at '1'
@@ -277,6 +286,26 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // CLAUDE_MINIMUM_SUPPORTED_VERSION, so every launchable version understands it.
       // https://code.claude.com/docs/en/settings
       Object.assign(env, claudeCacheDefaults(env));
+
+      // Record which prompt-cache TTL this session will ask for and what decided it (a shell
+      // variable, a Claude settings file, or the default above). Debug log only, read-only, and
+      // never allowed to fail a launch; `codemie doctor` reports the same resolution.
+      try {
+        const { ttl, decidedBy, source, confirmed, variables } = await resolvePromptCacheSetup({
+          env: shellEnv,
+          codemieDefaults: true,
+          cwd: process.cwd(),
+        });
+        logger.debug('[claude] prompt cache', {
+          ttl,
+          decidedBy,
+          source: describePromptCacheSource(source),
+          confirmed,
+          variables,
+        });
+      } catch (error) {
+        logger.debug('[claude] prompt cache', { error: getErrorMessage(error) });
+      }
 
       // Don't ask the server for auto mode classifier review where the gateway can't carry it
       // (see AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS). Classifier requests stay client-side and
