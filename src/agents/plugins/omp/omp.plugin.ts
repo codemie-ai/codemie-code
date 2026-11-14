@@ -13,6 +13,7 @@ import {
   OMP_LEDGER_EXTENSION_ENV,
   OMP_PROVIDERS_CONFIG_ENV,
   OMP_PROVIDERS_EXTENSION_ENV,
+  clearInheritedOmpProviders,
   ensureOmpLedgerExtension,
   ensureOmpProvidersExtension,
   removeOmpProvidersConfig,
@@ -26,6 +27,15 @@ const OMP_SUPPORTED_VERSION = '18.18.6';
 const OMP_CLIENT_TYPE = 'codemie-omp';
 
 const OMP_IDENTITY: PiFamilyIdentity = { agentName: 'omp', clientType: OMP_CLIENT_TYPE };
+
+/** The providers file this process's run wrote — the only one it may remove. */
+let ownedProvidersConfig: string | undefined;
+
+async function releaseProvidersConfig(): Promise<void> {
+  const path = ownedProvidersConfig;
+  ownedProvidersConfig = undefined;
+  await removeOmpProvidersConfig(path);
+}
 
 /**
  * Reconcile CodeMie's CLI surface with omp's session flags.
@@ -115,6 +125,9 @@ export const OmpPluginMetadata: AgentMetadata = {
     async beforeRun(env: NodeJS.ProcessEnv, _config: AgentConfig) {
       const sessionId = env.CODEMIE_SESSION_ID;
 
+      // A providers file inherited from a parent omp session belongs to that session.
+      clearInheritedOmpProviders(env);
+
       // Have omp report which transcripts this run writes (the run ledger, shared with Pi).
       const ledger = await ensureOmpLedgerExtension(env);
       if (ledger.installed && ledger.path && sessionId) {
@@ -138,6 +151,7 @@ export const OmpPluginMetadata: AgentMetadata = {
         sessionId ?? `run-${process.pid}`,
         await buildPiModelsConfig(env)
       );
+      ownedProvidersConfig = configPath;
       const providersEntry = join(providers.path, 'index.js');
       for (const target of [env, process.env]) {
         target[OMP_PROVIDERS_CONFIG_ENV] = configPath;
@@ -178,7 +192,7 @@ export const OmpPluginMetadata: AgentMetadata = {
       try {
         await endPiFamilySession(exitCode, env, OMP_IDENTITY);
       } finally {
-        await removeOmpProvidersConfig(env[OMP_PROVIDERS_CONFIG_ENV]);
+        await releaseProvidersConfig();
       }
     },
   },
@@ -216,7 +230,7 @@ export class OmpPlugin extends BaseAgentAdapter {
     } finally {
       // The providers file carries the run's key. onSessionEnd removes it after a real run, but
       // --dry-run and an abort between beforeRun and the spawn (e.g. no model) never reach it.
-      await removeOmpProvidersConfig(process.env[OMP_PROVIDERS_CONFIG_ENV]);
+      await releaseProvidersConfig();
     }
   }
 }

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -25,6 +25,13 @@ afterEach(() => {
   process.env = { ...savedEnv };
   rmSync(home, { recursive: true, force: true });
 });
+
+function mockProfileModels(): void {
+  vi.doMock('../../pi/pi.models.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../pi/pi.models.js')>()),
+    buildPiModelsConfig: vi.fn().mockResolvedValue({ providers: {} }),
+  }));
+}
 
 describe('omp extension materialization', () => {
   it('installs the ledger and providers extensions under the CodeMie home', async () => {
@@ -102,19 +109,63 @@ describe('omp providers file lifetime', () => {
   it.each([
     ['a dry run, which never reaches onSessionEnd', undefined, { dryRun: true }],
     ['an abort before the spawn', new Error('No model configured'), undefined],
-  ])('removes the key-bearing file after %s', async (_label, failure, runOptions) => {
-    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
-    const { OmpPlugin } = await import('../omp.plugin.js');
+  ])('removes the key-bearing file this run wrote after %s', async (_label, failure, runOptions) => {
+    mockProfileModels();
+    const { OmpPlugin, OmpPluginMetadata } = await import('../omp.plugin.js');
     const { BaseAgentAdapter } = await import('../../../core/BaseAgentAdapter.js');
-    const path = await writeOmpProvidersConfig('sid-4', { providers: {} });
-    process.env.CODEMIE_OMP_PROVIDERS = path;
-    const superRun = vi.spyOn(BaseAgentAdapter.prototype, 'run');
-    if (failure) superRun.mockRejectedValue(failure);
-    else superRun.mockResolvedValue(undefined);
+    const env: NodeJS.ProcessEnv = { CODEMIE_SESSION_ID: 'sid-4' };
+    // super.run is where the base class runs beforeRun; drive it so the plugin records its own path.
+    vi.spyOn(BaseAgentAdapter.prototype, 'run').mockImplementation(async () => {
+      await OmpPluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+      if (failure) throw failure;
+    });
 
     await new OmpPlugin().run([], undefined, runOptions).catch(() => undefined);
 
-    expect(existsSync(path)).toBe(false);
+    expect(env.CODEMIE_OMP_PROVIDERS).toBeDefined();
+    expect(existsSync(env.CODEMIE_OMP_PROVIDERS!)).toBe(false);
+  });
+
+  it('does not delete an inherited providers file when beforeRun fails before writing', async () => {
+    vi.doMock('../omp.extension.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../omp.extension.js')>()),
+      ensureOmpProvidersExtension: vi.fn().mockResolvedValue({ installed: false, reason: 'missing' }),
+    }));
+    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
+    const { OmpPlugin, OmpPluginMetadata } = await import('../omp.plugin.js');
+    const { BaseAgentAdapter } = await import('../../../core/BaseAgentAdapter.js');
+    const parentFile = await writeOmpProvidersConfig('parent', { providers: {} });
+    const env: NodeJS.ProcessEnv = { CODEMIE_SESSION_ID: 'child', CODEMIE_OMP_PROVIDERS: parentFile };
+    process.env.CODEMIE_OMP_PROVIDERS = parentFile;
+    vi.spyOn(BaseAgentAdapter.prototype, 'run').mockImplementation(async () => {
+      await OmpPluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+    });
+
+    await expect(new OmpPlugin().run([])).rejects.toThrow('providers extension');
+
+    expect(existsSync(parentFile)).toBe(true);
+    expect(env.CODEMIE_OMP_PROVIDERS).toBeUndefined();
+  });
+
+  it('refuses to remove a path outside the providers directory', async () => {
+    const { removeOmpProvidersConfig } = await import('../omp.extension.js');
+    const outside = join(home, 'precious.json');
+    writeFileSync(outside, '{}');
+
+    await removeOmpProvidersConfig(outside);
+
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('tightens an existing providers directory to owner-only', async () => {
+    const { writeOmpProvidersConfig } = await import('../omp.extension.js');
+    const dir = join(home, 'omp', 'providers');
+    mkdirSync(dir, { recursive: true, mode: 0o755 });
+    chmodSync(dir, 0o755);
+
+    await writeOmpProvidersConfig('sid-5', { providers: {} });
+
+    expect(statSync(dir).mode & 0o077).toBe(0);
   });
 });
 

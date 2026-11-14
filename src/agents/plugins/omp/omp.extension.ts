@@ -7,7 +7,7 @@
  * the CodeMie home and reaches omp through explicit `-e <file>` flags.
  */
 
-import { chmod, mkdir, rm, writeFile } from 'fs/promises';
+import { chmod, mkdir, realpath, rm, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
@@ -66,16 +66,40 @@ export async function writeOmpProvidersConfig(
 ): Promise<string> {
   const path = getOmpProvidersConfigPath(sessionId);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  // `mode` only applies to a directory this call creates; tighten one that already exists.
+  await chmod(dirname(path), 0o700).catch(() => undefined);
   await writeFile(path, JSON.stringify(config), { encoding: 'utf-8', mode: 0o600 });
   // `mode` only applies on creation; a file left by an earlier run of the same session keeps its own.
   await chmod(path, 0o600).catch(() => undefined);
   return path;
 }
 
-/** Best-effort removal of this run's provider list. */
+/**
+ * Forget a providers file / extension path inherited from a parent process (e.g. `codemie-omp`
+ * started from inside another omp session): this run neither reuses nor deletes it.
+ */
+export function clearInheritedOmpProviders(env: NodeJS.ProcessEnv): void {
+  for (const target of [env, process.env]) {
+    delete target[OMP_PROVIDERS_CONFIG_ENV];
+    delete target[OMP_PROVIDERS_EXTENSION_ENV];
+  }
+}
+
+/**
+ * Best-effort removal of a provider list this run wrote. Refuses any path whose real directory is
+ * not the providers directory, so a stray or inherited path can never delete an unrelated file.
+ */
 export async function removeOmpProvidersConfig(path: string | undefined): Promise<void> {
   if (!path) return;
   try {
+    const [actual, expected] = await Promise.all([
+      realpath(dirname(path)),
+      realpath(dirname(getOmpProvidersConfigPath('_'))),
+    ]);
+    if (actual !== expected) {
+      logger.debug(`[omp] Refusing to remove ${path}: not in the providers directory`);
+      return;
+    }
     await rm(path, { force: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

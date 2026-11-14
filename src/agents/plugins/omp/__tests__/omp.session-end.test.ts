@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OmpPluginMetadata } from '../omp.plugin.js';
-import { getOmpProvidersConfigPath, writeOmpProvidersConfig } from '../omp.extension.js';
+import { getOmpProvidersConfigPath } from '../omp.extension.js';
 import { getPiRunLedgerPath } from '../../pi/pi.extension.js';
 
 const processEvent = vi.fn();
@@ -17,6 +17,10 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('../../pi/pi.models.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../pi/pi.models.js')>()),
+  buildPiModelsConfig: vi.fn().mockResolvedValue({ providers: {} }),
+}));
 const SESSION = 'cm-omp-owner-1';
 let codemieHome: string;
 let projectDir: string;
@@ -49,6 +53,13 @@ function writeLedger(): string {
   return file;
 }
 
+/** The run's own beforeRun writes the providers file — only a file this run wrote is removed. */
+async function startRun(): Promise<{ env: NodeJS.ProcessEnv; providersFile: string }> {
+  const env: NodeJS.ProcessEnv = { CODEMIE_SESSION_ID: SESSION };
+  await OmpPluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+  return { env, providersFile: env.CODEMIE_OMP_PROVIDERS! };
+}
+
 function markers(): Array<{ transcriptPath: string; codemieAgent: string }> {
   const dir = join(codemieHome, 'sessions');
   return readdirSync(dir)
@@ -59,12 +70,9 @@ function markers(): Array<{ transcriptPath: string; codemieAgent: string }> {
 describe('omp onSessionEnd', () => {
   it('claims each ledger transcript as omp and removes the providers file', async () => {
     const transcript = writeLedger();
-    const providersFile = await writeOmpProvidersConfig(SESSION, { providers: {} });
+    const { env, providersFile } = await startRun();
 
-    await OmpPluginMetadata.lifecycle!.onSessionEnd!(0, {
-      CODEMIE_SESSION_ID: SESSION,
-      CODEMIE_OMP_PROVIDERS: providersFile,
-    });
+    await OmpPluginMetadata.lifecycle!.onSessionEnd!(0, env);
 
     expect(markers()).toEqual([expect.objectContaining({ transcriptPath: transcript, codemieAgent: 'omp' })]);
     expect(existsSync(providersFile)).toBe(false);
@@ -72,13 +80,10 @@ describe('omp onSessionEnd', () => {
 
   it('removes the providers file even when session-end processing rejects', async () => {
     writeLedger();
-    const providersFile = await writeOmpProvidersConfig(SESSION, { providers: {} });
+    const { env, providersFile } = await startRun();
     processEvent.mockRejectedValue(new Error('hook exploded'));
 
-    await OmpPluginMetadata.lifecycle!.onSessionEnd!(0, {
-      CODEMIE_SESSION_ID: SESSION,
-      CODEMIE_OMP_PROVIDERS: providersFile,
-    }).catch(() => undefined);
+    await OmpPluginMetadata.lifecycle!.onSessionEnd!(0, env).catch(() => undefined);
 
     expect(existsSync(providersFile)).toBe(false);
     expect(providersFile).toBe(getOmpProvidersConfigPath(SESSION));
