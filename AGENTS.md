@@ -241,7 +241,7 @@ Proxy plugins live under `src/providers/plugins/sso/proxy/plugins/` — see `.ai
 
 Deterministic docs/knowledge tooling (not agent harnesses): `codebase-memory` (MCP + graph UI), `codegraph` (local code intelligence graph + MCP), `graphify` (knowledge-graph skill for Claude Code). Managed via `codemie docs list|install|init <name>`; also visible in the grouped `codemie install` listing. OpenWiki is the exception — it is model-backed, so it stays an agent plugin (`codemie install openwiki`, `codemie-openwiki`) and is listed by `codemie docs` as a pointer.
 
-> Neither `.ai-run/guides/integration/external-integrations.md` nor `docs/AGENTS.md` covers Pi yet. For Pi work, read `src/agents/plugins/pi/` directly plus the design docs under `docs/superpowers/specs/`.
+> Pi and Oh My Pi are covered in `.ai-run/guides/integration/external-integrations.md` (section "Pi & Oh My Pi Integration"); `docs/AGENTS.md` does not cover them. For deeper Pi work, read `src/agents/plugins/pi/` and `src/agents/plugins/omp/` plus the design docs under `docs/superpowers/specs/`.
 
 ## OTel (OTLP) Ingestion
 
