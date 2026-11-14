@@ -28,6 +28,7 @@ import {
 } from '../../../utils/installation-detector.js';
 import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
+import { TOOL_SEARCH_VERIFIED_PROVIDERS, claudeCacheDefaults } from './prompt-cache.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -52,22 +53,6 @@ export const CLAUDE_SUPPORTED_VERSION = '2.1.281';
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
 const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
-
-/**
- * Providers whose gateway is known to round-trip what tool search requires: the
- * `tool-search-tool-2025-10-19` beta header, `defer_loading` tool fields and `tool_reference`
- * content blocks.
- *
- * - `ai-run-sso` — the local CodeMie proxy forwards every request header except `host`/`connection`
- *   (`sso.proxy.ts`), and this was verified end to end (44,396 -> 24,353 turn-one tokens).
- * - `litellm` — documents passing the beta header, `defer_loading` and `tool_reference` through.
- *
- * `beforeRun` is provider-agnostic and runs for bedrock, ollama and subscription endpoints too, for
- * which no such evidence exists — and a gateway that takes the body fields without the header answers
- * HTTP 400. So the tool-search defaults below are applied only here; every other provider keeps the
- * conservative values, and either variable set explicitly in the environment still wins everywhere.
- */
-const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
 
 /**
  * Providers whose gateway cannot carry auto mode's server-side classifier review: the
@@ -284,9 +269,14 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // Set to '1' in the environment to opt back out (e.g. if a gateway rejects
       // `context_management` / `output_config` body fields with HTTP 400).
       // https://code.claude.com/docs/en/llm-gateway-protocol
-      if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = toolSearchVerified ? '0' : '1';
-      }
+      //
+      // Ask for the 1-hour prompt-cache TTL (ENABLE_PROMPT_CACHING_1H='1') instead of the upstream
+      // 5-minute default, so a cached prefix survives the pauses of an ordinary working session.
+      // Set the variable in the environment to opt out: any non-empty value is kept as is.
+      // Upstream honours it from Claude Code v2.1.108, which is below
+      // CLAUDE_MINIMUM_SUPPORTED_VERSION, so every launchable version understands it.
+      // https://code.claude.com/docs/en/settings
+      Object.assign(env, claudeCacheDefaults(env));
 
       // Don't ask the server for auto mode classifier review where the gateway can't carry it
       // (see AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS). Classifier requests stay client-side and
@@ -346,10 +336,6 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // https://code.claude.com/docs/en/agent-sdk/tool-search
       if (!env.ENABLE_TOOL_SEARCH) {
         env.ENABLE_TOOL_SEARCH = toolSearchVerified ? 'true' : '0';
-      }
-
-      if (!env.ENABLE_PROMPT_CACHING_1H) {
-        env.ENABLE_PROMPT_CACHING_1H = '1';
       }
 
       if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
