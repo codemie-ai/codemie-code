@@ -12,6 +12,7 @@
 | Azure OpenAI | GPT via Azure | API Key + Endpoint | `AZURE_OPENAI_*` |
 | LiteLLM | 100+ provider proxy | Provider-specific | `LITELLM_BASE_URL` |
 | OpenCode | Open-source AI assistant | SSO/API Key | Via CodeMie proxy |
+| Pi / Oh My Pi | Pi coding agent and its `omp` fork | SSO/API Key/Ollama | Via CodeMie proxy |
 | MCP Servers | Remote MCP tool servers | OAuth 2.0 (auto) | `codemie-mcp-proxy` |
 | Enterprise SSO | Corporate auth | SAML/OAuth | `SSO_BASE_URL` |
 | OTLP hook ingestion | Coding tool's own native hook/telemetry events → analytics pipeline | Via CodeMie proxy daemon | `codemie hook --agent <adapter-name>` |
@@ -169,6 +170,29 @@ CodeMie injects model config via env vars before spawning OpenCode:
 
 ---
 
+## Pi & Oh My Pi Integration
+
+Two managed agents share one implementation (`PiFamilyIdentity` seam, see the architecture guide's Pi-family exception):
+
+| Agent | Package | `codemie_client` | Conversation folder | Where CodeMie puts its files |
+|-------|---------|------------------|---------------------|------------------------------|
+| `pi` (`codemie-pi`) | `@earendil-works/pi-coding-agent` | `codemie-pi` | `pi` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; writes `models.json` there |
+| `omp` (`codemie-omp`) | `@oh-my-pi/pi-coding-agent` | `codemie-omp` | `omp` | `~/.codemie/omp/` only — never writes into `~/.omp` |
+
+**Oh My Pi launch** (`omp.plugin.ts`): `beforeRun` installs two CodeMie-owned extensions under `~/.codemie/omp/extensions` — the run ledger (shared asset with Pi) and `codemie-providers` — and `enrichArgs` hands both to omp as `-e <entry>` plus `--model <provider>/<model>`. omp has no `--session-id`; the run ledger, not an injected id, ties transcripts to the run. `prepareOmpInvocation` rewrites `--resume <id>` to omp's `--resume=<id>`; `--task` maps to `-p`.
+
+**Providers extension** (`omp/extension/index.js`, shipped byte-identical by `scripts/copy-plugins.js`, linted via an explicit `eslint.config.mjs` block): `buildPiModelsConfig(env)` (the model list Pi writes to `models.json`) is serialized per run to `~/.codemie/omp/providers/<sessionId>.json`; the path travels in `CODEMIE_OMP_PROVIDERS`, and the extension calls `pi.registerProvider` for each whitelisted provider. It must stay import-free (node builtins only), never throw, never log, and treat the file as untrusted — a load failure ends the user's omp session. The file holds the run's base URL and key: dir `0o700`, file `0o600`, removed in `onSessionEnd` and in `OmpPlugin.run()`'s `finally` (`--dry-run` and aborted launches never reach `onSessionEnd`). See the security guide's File System Security.
+
+**Ledger and subagents**: the shared Pi ledger extension skips oh-my-pi subagent sessions (`ctx.agent.kind === 'sub'`), so a subagent transcript is never recorded or uploaded as a session of its own.
+
+**Managed vs native upload boundary**: only `codemie omp` runs are tracked — recorded as agent `omp`, uploaded as `codemie-omp` (web Analytics → CLI Insights), with an ownership marker for their transcripts in `~/.codemie/sessions`. Bare `omp` runs in `~/.omp/agent/sessions` stay local-only (`codemie analytics --include-external`): analytics reads them through the Pi adapter (`cost/pi-agent.ts` maps `omp` → `pi`); CodeMie never uploads or modifies them.
+
+**`proxy connect --omp`**: when `--omp` is the only target and Claude Desktop is not connected, the persistent daemon identifies as `codemie-omp` (`deriveDaemonIdentity`, `src/cli/commands/proxy/connect-orchestrator.ts`), not the generic `codemie-daemon`, so its traffic lands in the same analytics bucket as `codemie omp`. While Claude Desktop's gateway config is applied, `withDesktopIdentity` rewrites every identity except `codex-desktop`/`vscode-byok` to `claude-desktop` (the shared daemon must keep the Desktop runtime), so omp traffic is attributed to `claude-desktop`, as it was before this change when it was `codemie-daemon`. It triggers no client-specific request normalization; the Responses reasoning sanitizer allow-list (`codex-encrypted-content-sanitizer.plugin.ts`) lists `codemie-omp`.
+
+`file:src/agents/plugins/omp/omp.plugin.ts`, `file:src/agents/plugins/omp/omp.extension.ts`, `file:src/agents/plugins/pi/pi.plugin.ts` (`startPiFamilySession` / `endPiFamilySession`)
+
+---
+
 ## MCP Server Integration
 
 The MCP proxy bridges stdio JSON-RPC to streamable HTTP with automatic OAuth 2.0.
@@ -316,6 +340,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 | LiteLLM connection error | Proxy not running | `litellm --port 4000` |
 | OpenCode not found | Not installed | `codemie install opencode` |
 | OpenCode sessions not syncing | Metrics processing failed | `codemie opencode-metrics --discover --verbose` |
+| `codemie-omp` fails with "Could not install the CodeMie providers extension" | `omp/extension` asset missing from the install or failed its load self-test | Reinstall `@codemieai/code`, or run `codemie doctor` |
 | Sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Finalized by the next wrapper start of any agent once the owner process is gone (`stale-session-reconciliation.ts`); a legacy record without `ownerPid` after 72 h idle |
 | Codex `money_spent` is 0 | Backend `cost_config` missing model entry | Add model pricing in backend `cost_config` |
 
@@ -327,6 +352,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 - Provider core types: `src/providers/core/types.ts`
 - OTLP hook-event adapters: `docs/ARCHITECTURE-OTLP-PLUGIN.md`
 - OpenCode plugin: `src/agents/plugins/opencode/`
+- Pi / Oh My Pi plugins: `src/agents/plugins/pi/`, `src/agents/plugins/omp/`
 - Codex plugin: `src/agents/plugins/codex/`
 - Claude plugin: `src/agents/plugins/claude/`
 - MCP proxy: `src/mcp/`

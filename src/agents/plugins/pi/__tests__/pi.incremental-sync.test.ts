@@ -574,6 +574,26 @@ describe('upload', () => {
     );
   });
 
+  it('uploads under the metadata client type, so a managed omp run is not attributed to codemie-pi', async () => {
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+    const { startPiIncrementalSync } = await import('../pi.incremental-sync.js');
+    startPiIncrementalSync(
+      options({
+        metadata: { name: 'omp', dataPaths: { home: '.omp' }, ssoConfig: { enabled: true, clientType: 'codemie-omp' } },
+        ssoUrl: 'https://codemie.example.com',
+        syncApiUrl: 'https://sync.example.com',
+      })
+    );
+
+    await waitFor(() => mockSync.mock.calls.length >= 1);
+    expect(mockSync).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({ clientType: 'codemie-omp' })
+    );
+  });
+
   it('hands the sender a supersede check that re-reads the same credentials', async () => {
     mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });

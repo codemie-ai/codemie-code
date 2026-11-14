@@ -113,6 +113,7 @@ $KnownCommands = @(
   'codemie-opencode',
   'codemie-opencode-acp',
   'codemie-pi',
+  'codemie-omp',
   'codemie-kimi',
   'codemie-kimi-acp',
   'codemie-openwiki',

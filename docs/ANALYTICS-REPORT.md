@@ -285,7 +285,7 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 
 ## Automatic Per-Session Report on Exit
 
-When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `./docs/codemie/analytics/codemie-analytics-<session_id>.json`.
+When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-omp`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `./docs/codemie/analytics/codemie-analytics-<session_id>.json`.
 
 - **Enabled by default** — it runs in-process as part of session finalization, not as a separate command.
 - **Disable per run** with `--no-analytics-report`, e.g. `codemie claude --no-analytics-report ...` (the flag is available on every agent that supports the feature).
@@ -302,6 +302,8 @@ CodeMie merges two sources to give the most complete picture:
 
 Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
+**Managed vs native oh-my-pi.** `codemie-omp` runs are tracked sessions (agent `omp`, client `codemie-omp`): they are uploaded to CodeMie, appear in web Analytics → CLI Insights, and their transcripts in `~/.omp/agent/sessions` carry an ownership marker, so they count as `native` here and are never counted a second time as `native-external`. Only bare `omp` runs, with no CodeMie involvement, are `native-external` and appear solely with `--include-external`.
+
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
 
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
@@ -314,7 +316,7 @@ Finding a native log is not the same as counting it. Every discovered session is
 
 | Provenance | Meaning | In the report by default? |
 |---|---|---|
-| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its ownership marker — a sidecar in `~/.codemie/sessions`, one per session and transcript — says so; transcripts written by earlier versions carry a `codemie_session_start` line instead. | ✅ Yes |
+| `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, `codemie-omp`, …). Its ownership marker — a sidecar in `~/.codemie/sessions`, one per session and transcript — says so; transcripts written by earlier versions carry a `codemie_session_start` line instead. | ✅ Yes |
 | `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `omp`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
 | `native-unmanaged` | Reserved for agents CodeMie can only ever read analytics for and never launches. No agent currently carries this tag. | ✅ Yes |
 

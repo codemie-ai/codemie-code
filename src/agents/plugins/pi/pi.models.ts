@@ -252,7 +252,7 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
 }
 
 // Pi validates provider `compat` against a strict schema; an unknown `thinkingFormat` literal makes Pi drop the whole file.
-interface PiModelsConfig {
+export interface PiModelsConfig {
   providers: Record<string, {
     baseUrl: string;
     api: string;
@@ -395,19 +395,18 @@ function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: stri
   return buildModelsConfig([entry], baseUrl, apiKey);
 }
 
-export async function fetchAndBuildPiModels(
-  env: NodeJS.ProcessEnv,
-  cwd: string = process.cwd(),
-): Promise<void> {
-  const agentDir = getPiAgentDir(cwd);
-  await mkdir(agentDir, { recursive: true });
-
+/**
+ * Resolve the provider/model configuration for this run: the live CodeMie model list, the
+ * configured model alone when the list cannot be fetched, or the Ollama catalog.
+ *
+ * Shared by Pi, which writes it to `models.json`, and oh-my-pi, which hands it to a
+ * run-scoped extension that registers the providers (`omp.extension.ts`).
+ */
+export async function buildPiModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModelsConfig> {
   // Ollama profiles have no CodeMie backend - build the model list from the
   // Ollama daemon / ollama.com directly.
   if (env.CODEMIE_PROVIDER === 'ollama') {
-    const config = await buildOllamaModelsConfig(env);
-    await writeFile(getPiModelsPath(cwd), JSON.stringify(config, null, 2), 'utf-8');
-    return;
+    return buildOllamaModelsConfig(env);
   }
 
   const baseUrl = env.CODEMIE_BASE_URL || '';
@@ -427,15 +426,21 @@ export async function fetchAndBuildPiModels(
     if (!configuredModel) {
       throw new Error('No CodeMie model configured and live model fetch failed.');
     }
-    const fallback = buildStaticFallbackModel(configuredModel, baseUrl, apiKey);
-    await writeFile(getPiModelsPath(cwd), JSON.stringify(fallback, null, 2), 'utf-8');
-    return;
+    return buildStaticFallbackModel(configuredModel, baseUrl, apiKey);
   }
 
   if (entries.length === 0) {
     throw new Error('CodeMie returned no enabled models for codemie-pi.');
   }
 
-  const config = buildModelsConfig(entries, baseUrl, apiKey);
+  return buildModelsConfig(entries, baseUrl, apiKey);
+}
+
+export async function fetchAndBuildPiModels(
+  env: NodeJS.ProcessEnv,
+  cwd: string = process.cwd(),
+): Promise<void> {
+  await mkdir(getPiAgentDir(cwd), { recursive: true });
+  const config = await buildPiModelsConfig(env);
   await writeFile(getPiModelsPath(cwd), JSON.stringify(config, null, 2), 'utf-8');
 }

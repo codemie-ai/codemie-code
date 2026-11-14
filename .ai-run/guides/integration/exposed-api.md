@@ -130,6 +130,8 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 
 **`HookProcessingConfig` required fields**: `agentName`, `sessionId`. Optional: `provider`, `apiBaseUrl`, `cookies`, `apiKey`, `clientType`, `version`, `profileName`, `project`, `model`, `ssoUrl`.
 
+`agentName` and `clientType` select the agent and `codemie_client` attribution the session is recorded and uploaded under. The Pi family sets them from `PiFamilyIdentity` (`pi` → `codemie-pi`, `omp` → `codemie-omp`) via `buildPiHookConfig`; `PiConversationsProcessor` files conversations under the folder named after the agent (`pi`, `omp`) and the shared `resolveConversationFolder` maps both client types likewise.
+
 **Per-event processing**:
 
 | Event | Steps |

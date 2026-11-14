@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 44,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New managed omp agent plugin (plugin, extension, providers extension, bin entry) plus changes to the shared Pi family (pi.plugin, pi.session, pi.models, incremental sync, conversations processor), agent registry, AgentCLI, session next-record-start, proxy connect-orchestrator, codex sanitizer proxy plugin and SSO conversations syncProcessor. Pi machinery was generalised via PiFamilyIdentity, a new abstraction." },
+    { "dimension": "technical_risk", "reason": "Closest precedent is the Pi plugin, which covers ledger and transcript sync but not omp's providers file (carries credentials, hardened in the final commit), the subagent-session guard, or the --resume= flag translation. Proxy sanitizer allow-list and shared Pi code are touched, so regressions can affect existing agents. No auth/authz redesign, no schema or data migration." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 44 files, mapped to XXL (16+). Roughly 15 are tests and about 10 are docs/config (AGENTS.md, README, CHANGELOG, docs/*), so real production-code surface is closer to 18 files; the score follows the mapping rule." },
+    { "dimension": "affected_layers", "reason": "CLI/agent plugin layer, proxy infrastructure (sanitizer, connect-orchestrator), analytics/session sync service, and the external omp binary and analytics API. No DB or schema change and no UI." }
+  ],
+  "red_flags_applied": [
+    "Touches core shared utilities: Pi family code reused by omp (Component Scope scored XL)",
+    "Credential-bearing providers config file for omp counted toward Technical Risk L"
+  ],
+  "split_recommendation": null
+}

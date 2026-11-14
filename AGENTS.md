@@ -220,7 +220,8 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | `codex` / `codex-acp` | `codex/` | `@openai/codex`, `@agentclientprotocol/codex-acp` | Responses API; reasoning state handled by proxy plugins. ACP variant wraps `@openai/codex` via a separate JSON-RPC adapter package, configured through an injected `CODEX_CONFIG` env var (no `--config` flags) |
 | `gemini` / `gemini-acp` | `gemini/` | `@google/gemini-cli` | ACP variant prepends `--acp` to argv (native Gemini CLI mode, no extra package) |
 | `opencode` / `opencode-acp` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics`. ACP variant prepends `acp` subcommand (native OpenCode mode, no extra package) |
-| `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger; analytics also discovers oh-my-pi transcripts in `~/.omp/agent/sessions` via this adapter and reports them as the separate `omp` agent (`cost/pi-agent.ts` maps `omp` back to the `pi` adapter and readers) |
+| `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger; analytics also discovers bare (unmanaged) oh-my-pi transcripts in `~/.omp/agent/sessions` via this adapter and reports them as the separate `omp` agent (`cost/pi-agent.ts` maps `omp` back to the `pi` adapter and readers) |
+| `omp` | `omp/` | `@oh-my-pi/pi-coding-agent` | Managed Oh My Pi launcher reusing the Pi machinery (`PiSessionAdapter`, processors, incremental sync, ledger, model builder), reporting `codemie_client` `codemie-omp`. Never touches `~/.omp`: CodeMie extensions (run ledger + providers) live under `~/.codemie/omp/extensions` and load via `-e`; `--model <provider>/<model>`; no `--session-id` (omp has none). Ledger skips subagent sessions (`ctx.agent.kind === 'sub'`). Also the `codemie proxy connect --omp` daemon client type |
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
 | `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |
 | `copilot-cli` | `copilot-cli/` | `copilot` (GitHub Copilot CLI) | Managed launcher — launches the real `copilot` binary and syncs conversations/usage to the shared spool; **not** analytics-only |
@@ -240,7 +241,7 @@ Proxy plugins live under `src/providers/plugins/sso/proxy/plugins/` — see `.ai
 
 Deterministic docs/knowledge tooling (not agent harnesses): `codebase-memory` (MCP + graph UI), `codegraph` (local code intelligence graph + MCP), `graphify` (knowledge-graph skill for Claude Code). Managed via `codemie docs list|install|init <name>`; also visible in the grouped `codemie install` listing. OpenWiki is the exception — it is model-backed, so it stays an agent plugin (`codemie install openwiki`, `codemie-openwiki`) and is listed by `codemie docs` as a pointer.
 
-> Neither `.ai-run/guides/integration/external-integrations.md` nor `docs/AGENTS.md` covers Pi yet. For Pi work, read `src/agents/plugins/pi/` directly plus the design docs under `docs/superpowers/specs/`.
+> Pi and Oh My Pi are covered in `.ai-run/guides/integration/external-integrations.md` (section "Pi & Oh My Pi Integration"); `docs/AGENTS.md` does not cover them. For deeper Pi work, read `src/agents/plugins/pi/` and `src/agents/plugins/omp/` plus the design docs under `docs/superpowers/specs/`.
 
 ## OTel (OTLP) Ingestion
 
