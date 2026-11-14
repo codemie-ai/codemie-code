@@ -18,6 +18,13 @@
  *   3. Input is untrusted: the JSON is parsed defensively and only whitelisted fields reach
  *      `registerProvider`. No env var, a missing/unreadable/invalid file, or an empty list
  *      registers nothing.
+ *
+ * ## Pi-only fields
+ *
+ * The file is built by the Pi model builder. oh-my-pi's `registerProvider` reads provider-level
+ * `compat` and per-model `compat` (merged), so both are forwarded when they are plain objects.
+ * `thinkingLevelMap` has no omp counterpart and is dropped; `forceAdaptiveThinking` inside a
+ * `compat` object is unknown to omp but harmless.
  *   4. Nothing is logged: the file holds the run's base URL and key.
  *
  * @see src/agents/plugins/omp/omp.extension.ts — writes the JSON file and materializes this asset
@@ -29,6 +36,9 @@ const MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'contextWindow'
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** `{ compat }` when the value is a plain object, else nothing to spread. */
+const compatOf = (value) => (isRecord(value.compat) ? { compat: value.compat } : {});
+
 /** The model entry reduced to the fields oh-my-pi's `registerProvider` accepts. */
 function toModel(entry) {
   if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id) return null;
@@ -36,7 +46,7 @@ function toModel(entry) {
   for (const field of MODEL_FIELDS) {
     if (entry[field] !== undefined) model[field] = entry[field];
   }
-  return model;
+  return { ...model, ...compatOf(entry) };
 }
 
 function toProvider(provider) {
@@ -50,6 +60,7 @@ function toProvider(provider) {
     apiKey: typeof provider.apiKey === 'string' ? provider.apiKey : 'proxy-handled',
     api: provider.api,
     ...(provider.authHeader === true && { authHeader: true }),
+    ...compatOf(provider),
     models,
   };
 }

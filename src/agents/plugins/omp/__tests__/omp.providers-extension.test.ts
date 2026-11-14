@@ -63,7 +63,7 @@ describe('providers extension', () => {
   it('hands omp only the model fields it understands', async () => {
     writeConfig({
       providers: {
-        p: { baseUrl: 'http://x/v1', api: 'openai-completions', models: [{ ...model, thinkingLevelMap: { off: null }, compat: { x: 1 } }] },
+        p: { baseUrl: 'http://x/v1', api: 'openai-completions', models: [{ ...model, thinkingLevelMap: { off: null }, unknown: 1 }] },
       },
     });
 
@@ -71,6 +71,27 @@ describe('providers extension', () => {
 
     expect((config.models as unknown[])[0]).toEqual(model);
     expect(config.apiKey).toBe('proxy-handled');
+  });
+
+  it('forwards provider-level and model-level compat when it is a plain object', async () => {
+    writeConfig({
+      providers: {
+        p: {
+          baseUrl: 'http://x/v1', api: 'openai-completions', compat: { supportsReasoningEffort: true },
+          models: [{ ...model, compat: { forceAdaptiveThinking: true } }, { ...model, id: 'b', compat: [1] }, { ...model, id: 'c' }],
+        },
+        bad: { baseUrl: 'http://x/v1', api: 'openai-completions', compat: 'nope', models: [model] },
+      },
+    });
+
+    const [{ config }, { config: bad }] = await activate();
+    const models = config.models as Record<string, unknown>[];
+
+    expect(config.compat).toEqual({ supportsReasoningEffort: true });
+    expect(models[0].compat).toEqual({ forceAdaptiveThinking: true });
+    expect(models[1]).toEqual({ ...model, id: 'b' });
+    expect(models[2]).toEqual({ ...model, id: 'c' });
+    expect(bad).not.toHaveProperty('compat');
   });
 
   it.each([
