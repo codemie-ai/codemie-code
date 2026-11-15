@@ -209,7 +209,7 @@ export interface Session {
   startMetricDeferred?: string;
   /** Delivery attempts of a completed but undelivered record */
   deliveryAttempts?: number;
-  /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), in a row */
+  /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), counted over the record's life */
   localFinalizeFailures?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;

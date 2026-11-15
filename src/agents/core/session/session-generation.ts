@@ -8,6 +8,7 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { getSessionConversationLockPath, getSessionMetricsLockPath, getSessionPath } from './session-config.js';
 import { acquireSessionFileLock, type LockBounds } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import type { PidLock } from '@/utils/pid-lock.js';
+import { stampRejectedLines } from './rejected-lines.js';
 
 /** The three files of a session set under a name prefix (`''` live, `completed_`). */
 function sessionSetFiles(sessionsDir: string, name: string): { json: string; metrics: string; conversation: string } {
@@ -269,6 +270,9 @@ export async function renameSessionFiles(sessionId: string, bounds?: LockBounds)
     }
     // ponytail: same generation — lines only in the older completed_ files are lost locally (already delivered)
   }
+
+  // A record that leaves the queue with a line the server refused is a drop, whichever path renames it
+  if (existsSync(live.json)) await stampRejectedLines(sessionId);
 
   const { renamedFiles, errors } = await renameLiveSet(sessionId, live, completed, bounds);
 

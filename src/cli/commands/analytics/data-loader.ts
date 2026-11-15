@@ -175,7 +175,10 @@ export class MetricsDataLoader {
   private isRekeyedFrom(sessionFile: string, filterId: string): boolean {
     if (!UUID_PATTERN.test(filterId)) return false;
     try {
-      return (JSON.parse(readFileSync(join(this.sessionsDir, sessionFile), 'utf-8')) as { originSessionId?: string }).originSessionId === filterId;
+      const raw = readFileSync(join(this.sessionsDir, sessionFile), 'utf-8');
+      // Most files never name the id: skip the parse for them
+      if (!raw.includes(filterId)) return false;
+      return (JSON.parse(raw) as { originSessionId?: string }).originSessionId === filterId;
     } catch {
       return false;
     }

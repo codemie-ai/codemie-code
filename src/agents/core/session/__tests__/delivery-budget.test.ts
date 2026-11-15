@@ -218,6 +218,49 @@ describe('delivery budget', () => {
       expect(await hasUndeliveredData(makeSession({ endMetricSentAt: NOW, legacyMetricsWithheld: 'no-work-consent' }))).toBe(false);
     });
 
+    it('the drop of the rest of a record replaces the earlier mark of a rejected line, so the exit notice reports it', async () => {
+      const { leaveQueue } = await import('../delivery-budget.js');
+      const earlier = NOW - 5 * HOUR;
+      const s = makeSession({ endMetricSentAt: NOW, droppedAt: earlier, droppedReason: 'rejected by the server' });
+      writeFileSync(livePath(), JSON.stringify(s));
+      writeDeltas('pending');
+      await leaveQueue(s, 'retry budget exhausted', NOW);
+      const done = JSON.parse(readFileSync(join(sessionsDir, `completed_${ID}.json`), 'utf-8')) as Session;
+      expect(done.droppedAt).toBe(NOW);
+      expect(done.droppedReason).toBe('retry budget exhausted');
+    });
+
+    it('an earlier mark of another reason stays', async () => {
+      const { leaveQueue } = await import('../delivery-budget.js');
+      const s = makeSession({ endMetricSentAt: NOW, droppedAt: NOW - HOUR, droppedReason: 'retention expired' });
+      writeFileSync(livePath(), JSON.stringify(s));
+      writeDeltas('pending');
+      await leaveQueue(s, 'retry budget exhausted', NOW);
+      const done = JSON.parse(readFileSync(join(sessionsDir, `completed_${ID}.json`), 'utf-8')) as Session;
+      expect(done.droppedAt).toBe(NOW - HOUR);
+      expect(done.droppedReason).toBe('retention expired');
+    });
+
+    it('renaming a record that holds a rejected line stamps the drop, whichever path renames it', async () => {
+      const { renameSessionFiles } = await import('../session-generation.js');
+      const s = makeSession({ endMetricSentAt: NOW });
+      writeFileSync(livePath(), JSON.stringify(s));
+      writeDeltas('synced', 'rejected');
+      await renameSessionFiles(ID);
+      const done = JSON.parse(readFileSync(join(sessionsDir, `completed_${ID}.json`), 'utf-8')) as Session;
+      expect(done.droppedAt).toBeTypeOf('number');
+      expect(done.droppedReason).toBe('rejected by the server');
+    });
+
+    it('renaming a fully delivered record, or one with a stamp already, adds none', async () => {
+      const { renameSessionFiles } = await import('../session-generation.js');
+      writeFileSync(livePath(), JSON.stringify(makeSession({ endMetricSentAt: NOW })));
+      writeDeltas('synced', 'synced');
+      await renameSessionFiles(ID);
+      const done = JSON.parse(readFileSync(join(sessionsDir, `completed_${ID}.json`), 'utf-8')) as Session;
+      expect(done.droppedAt).toBeUndefined();
+    });
+
     it('leaveQueue marks a record with data unsent and renames it', async () => {
       const { leaveQueue } = await import('../delivery-budget.js');
       const s = makeSession({ endMetricSentAt: NOW });

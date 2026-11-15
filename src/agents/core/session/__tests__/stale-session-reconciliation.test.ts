@@ -748,7 +748,7 @@ describe('reconcileOtherSessions', () => {
     expect(load(stranded.sessionId).droppedAt).toBeUndefined();
   });
 
-  it('a local finalize failure that repeats closes the record locally at the cap and is reported dropped (its data was never sent); fewer in a row leave it for a later start', async () => {
+  it('a local finalize failure that repeats closes the record locally at the cap and is reported dropped (its data was never sent); fewer leave it for a later start', async () => {
     const { LOCAL_FINALIZE_FAILURE_CAP } = await import('../stale-session-reconciliation.js');
     const stuck = record();
     save(stuck);

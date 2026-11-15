@@ -143,7 +143,7 @@ export function isExpiredCredentialAnswer(status: number, _bodyIsJson: boolean, 
  * What one request under a caller's signal came to:
  * - `ok`: served and accepted;
  * - `auth`: the credentials are expired or rejected (see {@link isExpiredCredentialAnswer});
- * - `rejected`: the server read the request and refused it for good (JSON 400 or 422);
+ * - `rejected`: the server read the request and refused it for good (JSON 400, 409 or 422; a 409 is the backend's "Conversation is finished": a finished conversation never takes more messages);
  * - `outage`: no server served it (never connected, timed out, reset, 5xx, 429, a non-JSON 4xx); spends no real attempt;
  * - `counted`: a server answered with a verdict that is none of the above (a JSON 4xx, a 2xx that is not a success);
  * - `not-attempt`: the caller's abort or deadline stopped it.
@@ -155,7 +155,7 @@ export function classifyAnswer(status: number, bodyIsJson: boolean, success: boo
   if (success) return 'ok';
   if (isExpiredCredentialAnswer(status, bodyIsJson, body)) return 'auth';
   if (isFailingServerAnswer(status, bodyIsJson)) return 'outage';
-  if (bodyIsJson && (status === 400 || status === 422)) return 'rejected';
+  if (bodyIsJson && (status === 400 || status === 409 || status === 422)) return 'rejected';
   return 'counted';
 }
 

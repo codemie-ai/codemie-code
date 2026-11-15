@@ -12,7 +12,9 @@ import { renameSessionFiles } from './session-generation.js';
 import { legacyMetricsWithheld } from './legacy-metrics-gate.js';
 import { getSessionConversationPath, getSessionMetricsPath } from './session-config.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
-import { getPayloadId } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
+import { getPayloadId, isSendCandidate } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
+import type { MetricDelta } from '@/agents/core/metrics/types.js';
+import { isDeltaSendCandidate } from '@/providers/plugins/sso/session/processors/metrics/delta-queue.js';
 import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import type { RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { evidenceRecordIdleDays } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
@@ -88,14 +90,13 @@ export async function hasUndeliveredData(record: Session): Promise<boolean> {
   try {
     // A legacy-gate skip withholds the metric deltas for good: only the conversation payloads still count
     if (!legacyMetricsWithheld(record)) {
-      const deltas = await readJSONLTolerant<{ syncStatus?: string }>(getSessionMetricsPath(record.sessionId), '[delivery]');
-      // The lines the metrics processor will send (pending/failed): a line it never resends cannot hold the record queued
-      if (deltas.some((delta) => delta.syncStatus === 'pending' || delta.syncStatus === 'failed')) return true;
+      const deltas = await readJSONLTolerant<Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>>(getSessionMetricsPath(record.sessionId), '[delivery]');
+      // The lines the metrics processor will send: a line it never resends cannot hold the record queued
+      if (deltas.some(isDeltaSendCandidate)) return true;
     }
     const payloads = await readJSONLTolerant<ConversationPayloadRecord>(getSessionConversationPath(record.sessionId), '[delivery]');
     const sent = new Set(payloads.filter((p) => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).map(getPayloadId));
-    return payloads.some((p) =>
-      (p.status === CONVERSATION_SYNC_STATUS.PENDING || p.status === CONVERSATION_SYNC_STATUS.FAILED) && !sent.has(getPayloadId(p)));
+    return payloads.some((p) => isSendCandidate(p) && !sent.has(getPayloadId(p)));
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`[delivery] ${record.sessionId}: cannot read its pending data; counted undelivered: ${msg}`);
@@ -106,7 +107,7 @@ export async function hasUndeliveredData(record: Session): Promise<boolean> {
 /**
  * Takes the record out of the delivery queue (renames its files; `rename` replaces the plain rename when the caller
  * bounds it by a deadline or an abort signal, and returns whether the files moved). With a `reason` and data still unsent it
- * first writes `droppedAt` and `droppedReason` (an earlier drop mark stays); without a reason the close is
+ * first writes `droppedAt` and `droppedReason` (an earlier drop mark stays, except a rejected line's, which the drop of the rest replaces); without a reason the close is
  * local-by-design and is never marked. When the files did not move the record stays queued: `s` is saved as given, so
  * the mark just written is cleared and the caller's state (clock, counters) is kept.
  */
@@ -118,7 +119,13 @@ export async function leaveQueue(
 ): Promise<boolean> {
   const store = new SessionStore();
   if (reason && (await hasUndeliveredData(s))) {
-    await store.saveSession({ ...s, droppedAt: s.droppedAt ?? now, droppedReason: s.droppedReason ?? reason });
+    // An earlier mark of a rejected line is superseded by the final drop of the rest, so the notice reports that drop too
+    const supersedes = s.droppedReason === 'rejected by the server' && reason !== s.droppedReason;
+    await store.saveSession({
+      ...s,
+      droppedAt: supersedes ? now : s.droppedAt ?? now,
+      droppedReason: supersedes ? reason : s.droppedReason ?? reason
+    });
     logger.warn(`[delivery] ${s.sessionId}: leaves the delivery queue with data unsent (${reason}); marked dropped`);
   }
   const renamed = await rename(s.sessionId);

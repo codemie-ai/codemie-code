@@ -28,14 +28,9 @@ import type { Session } from '../../../../../../agents/core/session/types.js';
 import { awaitsDestination, legacyMetricsVerdict, persistLegacyMetricsWithheld } from '@/agents/core/session/legacy-metrics-gate.js';
 import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { SessionFileLockTimeoutError } from '@/utils/errors.js';
+import { isDeltaSendCandidate } from './delta-queue.js';
 
-/**
- * Whether a metric delta may still be sent: pending or failed, however many attempts it has
- * (`syncAttempts` is diagnostic only; a `rejected` delta is terminal).
- */
-export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
-  return delta.syncStatus === 'pending' || delta.syncStatus === 'failed';
-}
+export { isDeltaSendCandidate };
 
 /**
  * Per branch: the last model of the newest delta on that branch that names one, else of the newest such delta

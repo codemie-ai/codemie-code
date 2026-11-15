@@ -363,7 +363,7 @@ async function markTranscriptUnsent(sessionId: string, reason: DropReason): Prom
   logger.warn(`[reconcile] ${sessionId}: closes with its transcript unsent (${reason}); marked dropped`);
 }
 
-/** Local failures of its own (a file, a transcript) in a row after which a record is closed locally and, when it was to deliver, reported dropped ('local errors'). */
+/** Local failures of its own (a file, a transcript), counted over the record's life, after which a record is closed locally and, when it was to deliver, reported dropped ('local errors'). */
 export const LOCAL_FINALIZE_FAILURE_CAP = 5;
 
 /** Counts one more local finalize failure on the live record; true once the cap is reached. A failed save counts as not reached. */
@@ -384,7 +384,7 @@ async function localFinalizeFailuresSpent(sessionId: string): Promise<boolean> {
  * The synthetic end of a stranded / legacy record, delivered when `deliver`. `flushSpent` is why the record may leave the
  * queue before this attempt sends anything (the evidence retention ended): the end then goes without the flush. True
  * when the finalize failed and the record was closed locally instead: with its budget spent by this attempt's own
- * counted failure, or after {@link LOCAL_FINALIZE_FAILURE_CAP} local failures in a row (reported dropped as 'local errors' when it was to deliver).
+ * counted failure, or after {@link LOCAL_FINALIZE_FAILURE_CAP} local failures in total (reported dropped as 'local errors' when it was to deliver).
  */
 async function finalizeRecord(
   record: Session,
@@ -415,7 +415,7 @@ async function finalizeRecord(
 
 /**
  * A finalize that failed: closed locally, nothing sent, when this attempt's own counted failure spent the budget (the
- * evidence retention spends it at any outcome) or after {@link LOCAL_FINALIZE_FAILURE_CAP} failures of its own in a row
+ * evidence retention spends it at any outcome) or after {@link LOCAL_FINALIZE_FAILURE_CAP} failures of its own in total
  * (marked dropped as 'local errors' when it was to deliver); any other failure is rethrown and leaves the record for a later start.
  */
 async function closeAfterFinalizeFailure(

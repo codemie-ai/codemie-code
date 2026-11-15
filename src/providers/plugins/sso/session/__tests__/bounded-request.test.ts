@@ -86,6 +86,8 @@ describe('classifyAnswer', () => {
     [401, true, false, 'auth'], [401, false, false, 'auth'],
     [403, true, false, 'auth'], [403, false, false, 'auth'],
     [400, true, false, 'rejected'], [422, true, false, 'rejected'],
+    // The backend's "Conversation is finished": a finished conversation never takes more messages
+    [409, true, false, 'rejected'], [409, false, false, 'outage'],
     [404, true, false, 'counted'], [408, true, false, 'counted'], [413, true, false, 'counted'],
     [200, true, false, 'counted'],
     [500, true, false, 'outage'], [503, false, false, 'outage'], [429, true, false, 'outage'],

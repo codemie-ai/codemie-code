@@ -4024,6 +4024,60 @@ describe('EPMCDME-17068 regressions', () => {
     expect(readRecord(other.sessionId, 'completed_').droppedReason).toBe('retry budget exhausted');
   });
 
+  it('one session from its first failing launch to its drop: queued lines while the window runs, then the dropped line naming it', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => json(404, 'not found');
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Three launches inside the window: each spends a real attempt, none drops, each notice says it is still queued
+    for (let launch = 1; launch <= 3; launch++) {
+      const startedAt = Date.now();
+      await startPass();
+      await noticeDeliveryAtExit('own', startedAt, true);
+      expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(true);
+      expect(readRecord(session.sessionId).droppedAt).toBeUndefined();
+    }
+    expect(readRecord(session.sessionId).deliveryRealAttempts).toBe(3);
+    const queued = stderrLines(stderr).filter((line) => line.includes('still queued for retry'));
+    expect(queued.length).toBeGreaterThanOrEqual(1);
+    expect(stderrLines(stderr).some((line) => line.includes('were dropped'))).toBe(false);
+
+    // The 24 h window runs out (the failing clock moves back a day, as the passing time would): the next real failure drops it,
+    // and that launch's notice names it with the reason
+    writeRecord({ ...readRecord(session.sessionId), deliveryFailingSince: Date.now() - 25 * HOUR });
+    stderr.mockClear();
+    const startedAt = Date.now();
+    await startPass();
+    await noticeDeliveryAtExit('own', startedAt, true);
+
+    const done = readRecord(session.sessionId, 'completed_');
+    expect(done.droppedReason).toBe('retry budget exhausted');
+    const dropped = stderrLines(stderr).filter((line) => line.includes('were dropped'));
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toContain(session.sessionId.slice(0, 8));
+    expect(dropped[0]).toContain('retry budget exhausted');
+  });
+
+  it('a rejected conversation line of a session whose end metric then goes through is reported dropped, not lost with the rename', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: Date.parse('2026-10-01T10:10:00Z'), syncStatus: 'rejected' }]);
+    respond = () => ok();
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const startedAt = Date.now();
+
+    await startPass();
+    await noticeDeliveryAtExit('own', startedAt, true);
+
+    const done = readRecord(session.sessionId, 'completed_');
+    expect(done.endMetricSentAt).toBeTypeOf('number');
+    expect(done.droppedReason).toBe('rejected by the server');
+    const dropped = stderrLines(stderr).filter((line) => line.includes('were dropped'));
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toContain(session.sessionId.slice(0, 8));
+  });
+
   it('/clear during an outage over a generation whose stored budget is spent: no counted failure in this close, so it stays queued unmarked', async () => {
     const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
     const session = baseRecord({
