@@ -107,8 +107,8 @@ export async function listExitDelivery(ownSessionId: string, since: number, now:
     } else if (
       // Queued only when this launch's own pass tried a closed record: another wrapper's live record, or one only
       // rewritten since the start, is not this launch's to report
-      record.status === 'completed' && (record.deliveryAttemptedAt ?? 0) >= since &&
-      (record.deliveryFailingSince != null || (record.deliveryRealAttempts ?? 0) > 0)
+      // (an attempt cut by the exit deadline gives itself back and starts no clock, yet the record is still queued)
+      record.status === 'completed' && (record.deliveryAttemptedAt ?? 0) >= since
     ) {
       queued.push({ ...base, kind: 'queued', notDroppedBefore: notDroppedBefore(record, now) });
     }

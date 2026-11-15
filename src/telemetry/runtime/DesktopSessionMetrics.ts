@@ -129,7 +129,7 @@ export class DesktopSessionMetrics {
     try {
       await this.sendEnd(context, session, endTime, stretchStart);
     } catch (error) {
-      // A refusal for good (a JSON 400/422) is terminal, as on the CLI: never re-sent, and the drop is stamped
+      // A refusal for good (a JSON 400/409/422) is terminal, as on the CLI: never re-sent, and the drop is stamped
       if ((error as { outcome?: RequestOutcome } | null)?.outcome === 'rejected') {
         await markEndMetricRejected(this.sessionStore, session.sessionId);
         return;

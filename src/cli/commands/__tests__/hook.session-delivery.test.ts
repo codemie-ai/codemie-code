@@ -4059,6 +4059,17 @@ describe('EPMCDME-17068 regressions', () => {
     expect(dropped[0]).toContain('retry budget exhausted');
   });
 
+  it('a record whose attempt this launch was cut by the exit deadline (no clock, no real attempt) is still reported queued', async () => {
+    const startedAt = Date.now();
+    const cut = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), deliveryAttemptedAt: startedAt + 1 });
+    writeRecord(cut);
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await noticeDeliveryAtExit('own', startedAt, true);
+
+    expect(stderrLines(stderr).filter((line) => line.includes('still queued for retry'))).toHaveLength(1);
+  });
+
   it('a rejected conversation line of a session whose end metric then goes through is reported dropped, not lost with the rename', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);

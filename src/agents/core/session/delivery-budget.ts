@@ -53,7 +53,7 @@ export function noteOutcome(s: Session, outcome: RequestOutcome, now: number): S
 }
 
 /**
- * The record with the drop of a server rejection (a JSON 400/422) stamped, so the exit notice reports it; an earlier
+ * The record with the drop of a server rejection (a JSON 400/409/422) stamped, so the exit notice reports it; an earlier
  * stamp stays. Spends no attempt and starts no clock: for a rejection met outside an attempt (a timer run).
  */
 export function stampRejection(s: Session, now: number): Session {

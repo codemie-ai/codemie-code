@@ -21,7 +21,7 @@ async function markEndMetric(
 }
 
 /**
- * Marks an end metric the server refused for good (a JSON 400/422) as terminal: it is never re-sent, and the drop is
+ * Marks an end metric the server refused for good (a JSON 400/409/422) as terminal: it is never re-sent, and the drop is
  * stamped (an earlier one stays) so the exit notice reports it even when the record leaves the queue in this delivery.
  */
 export async function markEndMetricRejected(sessionStore: SessionStore, sessionId: string): Promise<void> {

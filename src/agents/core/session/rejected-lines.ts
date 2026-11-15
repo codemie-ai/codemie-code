@@ -8,7 +8,7 @@ import { logger } from '@/utils/logger.js';
 
 /**
  * Whether the record holds data the server refused for good (a metric line or a conversation payload `rejected`, a JSON
- * 400/422) that was never delivered another way. Such a line is terminal, so it no longer keeps the record queued; the
+ * 400/409/422) that was never delivered another way. Such a line is terminal, so it no longer keeps the record queued; the
  * record leaving the queue with one is a drop that must be reported. A file that cannot be read counts as none.
  */
 export async function hasRejectedData(record: Session): Promise<boolean> {

@@ -281,7 +281,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
         logger.warn(`[${this.name}] Sync had failures: ${result.message}`);
       }
 
-      // A line the server refused for good (a JSON 400/422) is terminal on disk now; stamp the drop, or the record
+      // A line the server refused for good (a JSON 400/409/422) is terminal on disk now; stamp the drop, or the record
       // later leaves the queue unmarked and the exit notice never names it.
       if (attemptOutcome(run.signal) === 'rejected') {
         await this.stampRejection();

@@ -97,6 +97,19 @@ describe('ConversationApiClient request timers', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it("classifies a JSON 409 (the backend's \"Conversation is finished\") as rejected after one attempt, never retried", async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 409, statusText: 'Conflict', headers: jsonHeaders,
+        text: () => Promise.resolve('{"error":{"message":"Conversation is finished"}}'),
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1' });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'rejected' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('classifies a JSON 404 as counted, not rejected', async () => {
       fetchMock.mockResolvedValue({
         ok: false, status: 404, statusText: 'Not Found', headers: jsonHeaders,

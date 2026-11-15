@@ -207,7 +207,7 @@ export interface Session {
   legacyMetricsWithheld?: string;
   /** The start metric was withheld by a transient legacy-gate verdict (its reason, e.g. `startup`): sent before the end metric */
   startMetricDeferred?: string;
-  /** Delivery attempts of a completed but undelivered record */
+  /** Retired: nothing reads or writes it; a record written by an older CLI may still carry it */
   deliveryAttempts?: number;
   /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), counted over the record's life */
   localFinalizeFailures?: number;
