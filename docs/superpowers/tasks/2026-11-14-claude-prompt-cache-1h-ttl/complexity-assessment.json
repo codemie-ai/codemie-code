@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "task": "Make the existing ENABLE_PROMPT_CACHING_1H default reach Claude Code for every provider (bedrock currently loses the agent default beforeRun hook in resolveHook) and pin the behavior with tests.",
+  "generated": "2026-11-14T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components in reach across the agent and provider plugin layers: the Claude agent plugin's default beforeRun hook, the agent-core hook resolution (resolveHook), and the Bedrock provider template's claude-specific hook. The pattern for env defaults is clear. The 'touches core shared utilities' red flag was considered and NOT applied: the fix location is still open, and the narrowest option (Bedrock template or Claude plugin) leaves resolveHook untouched. If the plan chooses to change resolveHook chaining, this dimension becomes L (4) and the total 15 (M, brainstorming), because resolveHook serves all 18 adapters and six provider templates."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The goal and the root cause for bedrock are defined, but one design decision is open (change resolveHook chaining globally vs. fix in the Bedrock claude hook vs. move the default elsewhere), and the original premise (5-minute default) is contradicted for sso, jwt, litellm, anthropic-subscription and ollama, where the flag is already set. Whether the upstream binary and the gateway honour the flag is unverified and outside this repository."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest existing pattern: the guarded `!env.X` defaults in the Claude plugin beforeRun with per-concern tests (claude.plugin.tool-search / auto-update tests) — it covers the env default itself but not hook chaining, which has no test template at all. Bedrock + claude currently receives none of the agent defaults, so chaining the default hook would also switch on the other defaults (experimental betas, tool search, autoupdater, autocompact) for bedrock, not only the cache flag. 1h cache writes are priced above 5m writes in the repo rate card, so the spend effect is not guaranteed in the intended direction. Rollback is trivial (env default)."
+    },
+    {
+      "dimension": "calibration",
+      "reason": "Checked against bundled S example epmcdme-10102-add-validation-to-form-field (total 11) and bundled M example epmcdme-10202-create-agent-with-custom-tool (total 15); no project examples exist for S or M. This task sits above the S example on scope, clarity and risk, and below the M example on file count and layers, so 14 at the top of S agrees with both. Borderline 14/15 resolved lower: Technical Risk is M and existing patterns cover more than half of the implementation."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

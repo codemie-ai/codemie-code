@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "branch": "fix/claude-prompt-cache-1h-ttl",
+  "head": "68ba3dc4a2b91039b4353c401fab3528bea1d694",
+  "runner": "npm",
+  "started_at": "2026-11-15T08:19:57Z",
+  "completed_at": "2026-11-15T09:05:38.495Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8854,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 27291,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 35372,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 62619,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 182487,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "8 failed / 10713 passed (2 failed of 600 files + 1 worker OOM crash). CODEMIE_*/NO_PROXY unset. system-proxy-dispatcher.test.ts (3): 127.0.0.2:59999 connect timeout, lo0 has no 127.0.0.2 alias, predates the branch per caller. copilot-managed-report.test.ts (4): worker heap OOM + 30s timeouts; fails the same way in isolation on an origin/main export (git archive), so it predates the branch. pi.incremental-sync.test.ts (1): waitFor/30s timeout under load, passes in isolation. None of the failing files are in the diff. Host load average was about 160-230 during the run."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 326850,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "8 failed / 315 passed / 39 skipped (11 failed files), all hook/test timeouts at host load average ~230. doctor.test.ts: in the full run its beforeAll timed out at 120000ms, so all 7 tests were SKIPPED (did not execute). Isolated rerun (npx vitest run --project cli tests/integration/cli-commands/doctor.test.ts): 7/7 PASSED, ~96s wall. Isolated reruns: error-handling, help, profile, version, workflow, proxy-otlp-respawn-recovery, skills, list PASS. analytics-secret-egress: flaky 10s beforeAll timeout (passed 1 of 3 isolated branch runs; passed on origin/main). hook-stdout: 3 what is-new tests fail on branch (codemie list did not exit within 20000ms); built origin/main export fails 5 tests in the same file the same way, and codemie list takes ~87s on main vs ~89s on branch, so the slowdown is host load, not the diff."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1412,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" - the script scans only git diff --staged. Covered by secrets-branch (gitleaks over origin/main...HEAD), which passed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1736,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run check:pre-commit",
+      "exit_code": null,
+      "notes": "Composite of typecheck + lint, both ran separately and passed."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Composite of license-check, lint, build, unit, cli, all ran separately (unit/cli FAIL)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Hook runs eslint + vitest related on staged *.ts. Nothing staged. Covered by the lint, unit and integration gates."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 2538,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "commit-msg hook checks every commit. The guide only checks HEAD~1, so this run checked the whole branch range."
+    },
+    {
+      "id": "secrets-branch",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 2116,
+      "command": "git diff origin/main...HEAD | docker run --rm -i -v \"$PWD/.gitleaks.toml:/gitleaks.toml\" ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "CI reusable-secrets-detection equivalent: gitleaks v8.30.1 with .gitleaks.toml over the branch diff. no leaks found."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "CI test-windows job needs a windows-latest runner. Only CI can settle it; CRLF local repro is described in quality-gates.md."
+    }
+  ],
+  "failures": {
+    "unit": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:134:3\n    132|   });\n    133|\n    134|   it('keeps the report shape the Collector consumes', async () => {\n       |   ^\n    135|     const r = await report('copilot-cli');\n    136|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > leaves Claude output unchanged by the Copilot data\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:148:3\n    146|   });\n    147|\n    148|   it('leaves Claude output unchanged by the Copilot data', async () =>…\n       |   ^\n    149|     const r = await report('claude');\n    150|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯\n\n⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯\n\nVitest caught 1 unhandled error during the test run.\nThis might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.\n\n⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯\nError: [vitest-pool]: Worker forks emitted error.\n ❯ EventEmitter.<anonymous> node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3445:22\n ❯ EventEmitter.emit node:events:514:28\n ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3012:22\n ❯ ChildProcess.emit node:events:514:28\n ❯ Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\nCaused by: Error: Worker exited unexpectedly\n ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3011:33\n ❯ ChildProcess.emit node:events:514:28\n ❯ Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n\n Test Files  2 failed | 597 passed (600)\n      Tests  8 failed | 10713 passed (10725)\n     Errors  1 error\n   Start at  10:23:16\n   Duration  178.99s (transform 138.20s, setup 0ms, import 919.32s, tests 912.84s, environment 505ms)",
+    "integration": "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/16]⎯\n\n FAIL  |cli| tests/integration/proxy-otlp-respawn-recovery.test.ts > OTLP endpoint after a daemon respawn on another port > rewrites the endpoint and key when the respawned daemon lands on a different port\nToolExecutionError: Tool proxy-daemon failed: Daemon failed to start within 5 seconds. Check logs: ~/.codemie/logs/\n ❯ spawnDaemon src/cli/commands/proxy/daemon-manager.ts:377:9\n    375|   }\n    376|\n    377|   throw new ToolExecutionError(\n       |         ^\n    378|     'proxy-daemon',\n    379|     `Daemon failed to start within ${DAEMON_READY_TIMEOUT_MS / 1000} s…\n ❯ ensureDaemon src/cli/commands/proxy/connect-orchestrator.ts:494:13\n ❯ startDaemon src/cli/commands/proxy/otlp-cold-start.ts:99:27\n ❯ coldStartOnWorkingDirectoryProfile src/cli/commands/proxy/otlp-cold-start.ts:133:5\n ❯ ensureOtlpProxy src/cli/commands/proxy/otlp-cold-start.ts:158:5\n ❯ tests/integration/proxy-otlp-respawn-recovery.test.ts:143:5\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/16]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/16]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > blocks every subcommand on unauthenticated invocation (spec §7)\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:129:3\n    127|   });\n    128|\n    129|   it('blocks every subcommand on unauthenticated invocation (spec §7)'…\n       |   ^\n    130|     // Point credentials lookup at a brand-new URL never logged in to …\n    131|     // fallback global credentials in the user's keychain will not mat…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/16]⎯\n\n\n Test Files  11 failed | 35 passed | 1 skipped (47)\n      Tests  8 failed | 315 passed | 39 skipped (362)\n   Start at  10:32:21\n   Duration  321.03s (transform 108.34s, setup 0ms, import 202.31s, tests 1517.64s, environment 48ms)"
+  }
+}
