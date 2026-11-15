@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { ClaudePluginMetadata } from '../claude.plugin.js';
 import { claudeCacheDefaults } from '../prompt-cache.js';
 
@@ -109,6 +110,20 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — prompt-cache debug line',
 
     expect(cacheLines()).toHaveLength(1);
     expect(cacheLines()[0][1]).toMatchObject({ ttl: '5m', decidedBy: 'FORCE_PROMPT_CACHING_5M', source: 'shell' });
+  });
+
+  it('passes the logged values through the log sanitizer', async () => {
+    const secretShaped = `sk-${'a1B2c3D4'.repeat(6)}`;
+    const [masked] = sanitizeLogArgs({ value: secretShaped }) as [{ value: string }];
+    expect(masked.value).not.toBe(secretShaped);
+
+    await runBeforeRun({ CODEMIE_PROVIDER: 'ai-run-sso', CLAUDE_CODE_PROMPT_CACHE_TTL: secretShaped });
+
+    expect(cacheLines()).toHaveLength(1);
+    expect(JSON.stringify(cacheLines()[0])).not.toContain(secretShaped);
+    expect((cacheLines()[0][1] as { variables: Record<string, string> }).variables.CLAUDE_CODE_PROMPT_CACHE_TTL).toBe(
+      masked.value
+    );
   });
 
   it('still launches with the same environment when the resolver fails (Review Focus 4)', async () => {

@@ -40,13 +40,23 @@ function decide(
 }
 
 describe('decidePromptCacheSetup — precedence', () => {
-  it('keeps the order in one exported table', () => {
-    expect(PROMPT_CACHE_PRECEDENCE.map((row) => row.name)).toEqual([
+  it('keeps every order in one exported table: variable sources, main TTL, subagent TTL', () => {
+    expect(PROMPT_CACHE_PRECEDENCE.variableSources.map((row) => row.name)).toEqual([
+      'settings env',
+      'shell',
+      'CodeMie default',
+    ]);
+    expect(PROMPT_CACHE_PRECEDENCE.ttl.map((row) => row.name)).toEqual([
       'DISABLE_PROMPT_CACHING*',
       'FORCE_PROMPT_CACHING_5M',
       'CLAUDE_CODE_PROMPT_CACHE_TTL',
       'promptCacheTtl',
       'ENABLE_PROMPT_CACHING_1H',
+      'blank settings env entry',
+    ]);
+    expect(PROMPT_CACHE_PRECEDENCE.subagent.map((row) => row.name)).toEqual([
+      'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL',
+      'subagentPromptCacheTtl',
     ]);
   });
 
@@ -78,6 +88,26 @@ describe('decidePromptCacheSetup — precedence', () => {
   it('a switch that is set but not truthy does not decide', () => {
     const setup = decide({ DISABLE_PROMPT_CACHING: '0', FORCE_PROMPT_CACHING_5M: 'false' });
     expect(setup).toMatchObject({ ttl: '1h', decidedBy: 'ENABLE_PROMPT_CACHING_1H' });
+  });
+
+  it.each([
+    ['DISABLE_PROMPT_CACHING', 'yes'],
+    ['DISABLE_PROMPT_CACHING_SONNET', 'on'],
+    ['FORCE_PROMPT_CACHING_5M', 'on'],
+  ])('%s=%s is unknown, never a confident 1h', (name, value) => {
+    expect(decide({ [name]: value })).toMatchObject({
+      ttl: 'unknown',
+      decidedBy: name,
+      value,
+      source: { kind: 'shell' },
+    });
+  });
+
+  it('a clearly disabling variant wins over an ambiguous one', () => {
+    expect(decide({ DISABLE_PROMPT_CACHING: 'yes', DISABLE_PROMPT_CACHING_SONNET: '1' })).toMatchObject({
+      ttl: 'disabled',
+      decidedBy: 'DISABLE_PROMPT_CACHING_SONNET',
+    });
   });
 });
 
@@ -128,6 +158,28 @@ describe('decidePromptCacheSetup — sources', () => {
     expect(setup.variables).toMatchObject({ ENABLE_PROMPT_CACHING_1H: 'off', FORCE_PROMPT_CACHING_5M: '0' });
   });
 
+  it('a settings env entry that blanks the variable is unknown, naming that file', () => {
+    const setup = decide(
+      { ENABLE_PROMPT_CACHING_1H: '1' },
+      layers({ [LOCAL]: { env: { ENABLE_PROMPT_CACHING_1H: '' } } })
+    );
+    expect(setup).toMatchObject({
+      ttl: 'unknown',
+      decidedBy: 'ENABLE_PROMPT_CACHING_1H',
+      value: '',
+      source: { kind: 'settings', path: LOCAL },
+    });
+  });
+
+  it('a blanked settings entry does not decide when a lower row does', () => {
+    const setup = decide({}, layers({ [LOCAL]: { env: { FORCE_PROMPT_CACHING_5M: '' } } }));
+    expect(setup).toMatchObject({ ttl: '1h', decidedBy: 'ENABLE_PROMPT_CACHING_1H', source: { kind: 'codemie-default' } });
+  });
+
+  it('an empty shell value is still treated as unset', () => {
+    expect(decide({ ENABLE_PROMPT_CACHING_1H: '' })).toMatchObject({ ttl: '1h', source: { kind: 'codemie-default' } });
+  });
+
   it('names the highest settings file that sets promptCacheTtl', () => {
     const setup = decide({}, layers({ [USER]: { promptCacheTtl: '1h' }, [PROJECT]: { promptCacheTtl: '5m' } }));
     expect(setup).toMatchObject({ ttl: '5m', source: { kind: 'settings', path: PROJECT } });
@@ -168,6 +220,10 @@ describe('decidePromptCacheSetup — confirmed', () => {
 
   it.each(['1', 'true'])('is not confirmed when the shell sets the betas switch to %s', (value) => {
     expect(decide({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: value })).toMatchObject({ ttl: '1h', confirmed: false });
+  });
+
+  it('is not confirmed when the betas switch holds a value that is neither on nor off', () => {
+    expect(decide({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 'yes' })).toMatchObject({ ttl: '1h', confirmed: false });
   });
 });
 

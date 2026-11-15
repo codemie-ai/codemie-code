@@ -19,8 +19,8 @@ import {
 } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
+import { safeTerminalValue } from '../../../utils/terminal-text.js';
 import chalk from 'chalk';
-import stripAnsi from 'strip-ansi';
 import { resolveHomeDir } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
@@ -113,43 +113,6 @@ const CLAUDE_INSTALLER_URLS = {
   windows: 'https://claude.ai/install.cmd',
   linux: 'https://claude.ai/install.sh',
 };
-
-/**
- * Sanitize a config-sourced value before rendering it to the terminal.
- *
- * Shared by the settings-conflict banner and the model-substitution notice: both print
- * profile/settings values (URLs, model IDs) that the user does not necessarily control.
- *
- * ASCII allowlist: accept only printable ASCII (0x20–0x7E) after stripping ANSI
- * sequences. This blocks C0/C1 bytes, Bidi override chars, soft hyphen,
- * zero-width chars, combining marks, and every other non-ASCII Unicode vector.
- *
- * DCS pre-strip: strip-ansi only removes the 2-byte introducer (\x1bP etc.),
- * leaving the payload as plain ASCII. Strip the full sequence — from introducer
- * to BEL/ST/C1-ST terminator — before handing off to strip-ansi. If no terminator
- * is found, consume to end-of-string (greedy fallback) to prevent partial leakage.
- *
- * URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
- * ASCII so the allowlist cannot catch it — URL parsing is required.
- */
-function safeTerminalValue(s: string): string {
-  // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9d(OSC) \x9e \x9f
-  const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
-  const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
-  try {
-    const url = new URL(stripped);
-    if (url.username || url.password || url.search || url.hash) {
-      url.username = '';
-      url.password = '';
-      url.search = '';
-      url.hash = '';
-      return `[credentials removed] ${url.toString()}`;
-    }
-  } catch {
-    // Not a parseable URL — return stripped string as-is
-  }
-  return stripped;
-}
 
 /**
  * Claude Code Plugin Metadata
@@ -296,15 +259,18 @@ export const ClaudePluginMetadata: AgentMetadata = {
           codemieDefaults: true,
           cwd: process.cwd(),
         });
-        logger.debug('[claude] prompt cache', {
-          ttl,
-          decidedBy,
-          source: describePromptCacheSource(source),
-          confirmed,
-          variables,
-        });
+        logger.debug(
+          '[claude] prompt cache',
+          ...sanitizeLogArgs({
+            ttl,
+            decidedBy,
+            source: describePromptCacheSource(source),
+            confirmed,
+            variables,
+          })
+        );
       } catch (error) {
-        logger.debug('[claude] prompt cache', { error: getErrorMessage(error) });
+        logger.debug('[claude] prompt cache', ...sanitizeLogArgs({ error: getErrorMessage(error) }));
       }
 
       // Don't ask the server for auto mode classifier review where the gateway can't carry it

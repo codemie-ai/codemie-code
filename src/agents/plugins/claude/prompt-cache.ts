@@ -53,7 +53,7 @@ export interface PromptCacheSetup {
   /** Raw deciding value. */
   value?: string;
   source: CacheSource;
-  /** False when the resolved CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS is '1'/'true': the request is made, its effect is not verified. */
+  /** False unless the resolved CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS is unset, empty or '0'/'false': the request is made, its effect is not verified. */
   confirmed: boolean;
   /** Only when a subagent override exists. */
   subagent?: { ttl: CacheTtl; decidedBy: string; source: CacheSource };
@@ -73,6 +73,21 @@ interface Resolved {
   source: CacheSource;
 }
 
+/** Where a variable can come from, as a source row sees it. */
+interface VariableSourceInput {
+  /** Readable settings layers, highest precedence first. */
+  layers: ClaudeSettingsLayer[];
+  /** The shell environment, before CodeMie defaults. */
+  shell: NodeJS.ProcessEnv;
+  /** What CodeMie would set at launch; empty where its defaults are not applied. */
+  defaults: Record<string, string | undefined>;
+}
+
+export interface PromptCacheVariableSourceRow {
+  name: string;
+  read(variable: string, input: VariableSourceInput): Resolved | undefined;
+}
+
 /** What a precedence row sees: resolved variables and settings keys, never the raw layers. */
 interface PrecedenceContext {
   variable(name: string): Resolved | undefined;
@@ -88,6 +103,15 @@ interface PrecedenceMatch extends Resolved {
 export interface PromptCachePrecedenceRow {
   name: string;
   match(ctx: PrecedenceContext): PrecedenceMatch | undefined;
+}
+
+export interface PromptCachePrecedenceTable {
+  /** Where the value of a variable is taken from: the first source that has it wins. */
+  variableSources: readonly PromptCacheVariableSourceRow[];
+  /** What decides the main prompt-cache TTL: the first matching row wins. */
+  ttl: readonly PromptCachePrecedenceRow[];
+  /** What decides the subagent override, when there is one: the first matching row wins. */
+  subagent: readonly PromptCachePrecedenceRow[];
 }
 
 const BETAS_SWITCH = 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS';
@@ -107,9 +131,27 @@ function isTruthy(value: string): boolean {
   return normalized === '1' || normalized === 'true';
 }
 
+function isFalsy(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === '0' || normalized === 'false';
+}
+
 function ttlOf(value: string): CacheTtl {
   const normalized = value.trim().toLowerCase();
   return normalized === '1h' || normalized === '5m' ? normalized : 'unknown';
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * An on/off switch: 1 / true decides `ttl`, 0 / false and an empty value do not decide. Any other
+ * value is unknown, because whether Claude Code reads it as on has not been verified.
+ */
+function switchMatch(name: string, resolved: Resolved | undefined, ttl: CacheTtl): PrecedenceMatch | undefined {
+  if (!resolved?.value || isFalsy(resolved.value)) return undefined;
+  return { ...resolved, ttl: isTruthy(resolved.value) ? ttl : 'unknown', decidedBy: name };
 }
 
 /** A row for a value that names the TTL itself ('1h' / '5m'); any other non-empty value is unknown. */
@@ -124,65 +166,118 @@ function ttlValueRow(name: string, read: (ctx: PrecedenceContext) => Resolved | 
 }
 
 /**
- * Which setting decides the prompt-cache TTL: the first matching row wins.
+ * Everything about precedence, in one place: where a variable's value comes from, which setting
+ * decides the prompt-cache TTL, and which one decides the subagent override. In each list the
+ * first row that answers wins.
  *
  * The order is the documented intent of each setting and has not been verified against the Claude
  * Code binary. It lives only here, so a correction is one edit.
  */
-export const PROMPT_CACHE_PRECEDENCE: readonly PromptCachePrecedenceRow[] = [
-  {
-    name: `${DISABLE_PREFIX}*`,
-    match(ctx) {
-      for (const name of ctx.variableNames()) {
-        if (!name.startsWith(DISABLE_PREFIX)) continue;
-        const resolved = ctx.variable(name);
-        if (resolved && isTruthy(resolved.value)) return { ...resolved, ttl: 'disabled', decidedBy: name };
-      }
-      return undefined;
+export const PROMPT_CACHE_PRECEDENCE: PromptCachePrecedenceTable = {
+  variableSources: [
+    {
+      // An `env` block of a Claude settings file replaces the process value, even with an empty string.
+      name: 'settings env',
+      read(variable, { layers }) {
+        for (const layer of layers) {
+          const block = layer.settings?.env;
+          if (isPlainObject(block) && block[variable] !== undefined && block[variable] !== null) {
+            return { value: String(block[variable]), source: { kind: 'settings', path: layer.path } };
+          }
+        }
+        return undefined;
+      },
     },
-  },
-  {
-    name: 'FORCE_PROMPT_CACHING_5M',
-    match(ctx) {
-      const resolved = ctx.variable('FORCE_PROMPT_CACHING_5M');
-      return resolved && isTruthy(resolved.value)
-        ? { ...resolved, ttl: '5m', decidedBy: 'FORCE_PROMPT_CACHING_5M' }
-        : undefined;
+    {
+      // An empty shell value is the same as unset.
+      name: 'shell',
+      read(variable, { shell }) {
+        const value = shell[variable];
+        return value ? { value, source: { kind: 'shell' } } : undefined;
+      },
     },
-  },
-  ttlValueRow('CLAUDE_CODE_PROMPT_CACHE_TTL', (ctx) => ctx.variable('CLAUDE_CODE_PROMPT_CACHE_TTL')),
-  ttlValueRow('promptCacheTtl', (ctx) => ctx.setting('promptCacheTtl')),
-  {
-    name: 'ENABLE_PROMPT_CACHING_1H',
-    match(ctx) {
-      const resolved = ctx.variable('ENABLE_PROMPT_CACHING_1H');
-      if (!resolved?.value) return undefined;
-      return { ...resolved, ttl: isTruthy(resolved.value) ? '1h' : 'unknown', decidedBy: 'ENABLE_PROMPT_CACHING_1H' };
+    {
+      name: 'CodeMie default',
+      read(variable, { defaults }) {
+        const value = defaults[variable];
+        return value ? { value, source: { kind: 'codemie-default' } } : undefined;
+      },
     },
-  },
-];
+  ],
+  ttl: [
+    {
+      name: `${DISABLE_PREFIX}*`,
+      match(ctx) {
+        const matches = ctx
+          .variableNames()
+          .filter((name) => name.startsWith(DISABLE_PREFIX))
+          .map((name) => switchMatch(name, ctx.variable(name), 'disabled'))
+          .filter((match): match is PrecedenceMatch => match !== undefined);
+        // A variant that clearly disables wins over one whose value cannot be read either way.
+        return matches.find((match) => match.ttl === 'disabled') ?? matches[0];
+      },
+    },
+    {
+      name: 'FORCE_PROMPT_CACHING_5M',
+      match: (ctx) => switchMatch('FORCE_PROMPT_CACHING_5M', ctx.variable('FORCE_PROMPT_CACHING_5M'), '5m'),
+    },
+    ttlValueRow('CLAUDE_CODE_PROMPT_CACHE_TTL', (ctx) => ctx.variable('CLAUDE_CODE_PROMPT_CACHE_TTL')),
+    ttlValueRow('promptCacheTtl', (ctx) => ctx.setting('promptCacheTtl')),
+    {
+      name: 'ENABLE_PROMPT_CACHING_1H',
+      match(ctx) {
+        const resolved = ctx.variable('ENABLE_PROMPT_CACHING_1H');
+        if (!resolved?.value) return undefined;
+        return { ...resolved, ttl: isTruthy(resolved.value) ? '1h' : 'unknown', decidedBy: 'ENABLE_PROMPT_CACHING_1H' };
+      },
+    },
+    {
+      // Reached only when nothing above decided. A settings file that sets a cache variable to an
+      // empty string hides the shell value and the CodeMie default, so the outcome is that file's
+      // doing: name it instead of reporting the upstream default.
+      name: 'blank settings env entry',
+      match(ctx) {
+        for (const name of ctx.variableNames()) {
+          if (name === SUBAGENT_TTL_VARIABLE || name === BETAS_SWITCH) continue;
+          const resolved = ctx.variable(name);
+          if (resolved?.value === '' && resolved.source.kind === 'settings') {
+            return { ...resolved, ttl: 'unknown', decidedBy: name };
+          }
+        }
+        return undefined;
+      },
+    },
+  ],
+  subagent: [
+    ttlValueRow(SUBAGENT_TTL_VARIABLE, (ctx) => ctx.variable(SUBAGENT_TTL_VARIABLE)),
+    ttlValueRow(SUBAGENT_TTL_SETTING, (ctx) => ctx.setting(SUBAGENT_TTL_SETTING)),
+  ],
+};
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function firstMatch(rows: readonly PromptCachePrecedenceRow[], ctx: PrecedenceContext): PrecedenceMatch | undefined {
+  for (const row of rows) {
+    const match = row.match(ctx);
+    if (match) return match;
+  }
+  return undefined;
 }
 
 function buildContext(input: PromptCacheInput, layers: ClaudeSettingsLayer[]): PrecedenceContext {
   // Highest precedence first, so the first hit is the layer Claude Code would use.
   const readable = layers.filter((layer) => layer.state === 'ok' && layer.settings).reverse();
-  const defaults: Record<string, string | undefined> = input.codemieDefaults ? { ...claudeCacheDefaults(input.env) } : {};
+  const sources: VariableSourceInput = {
+    layers: readable,
+    shell: input.env,
+    defaults: input.codemieDefaults ? { ...claudeCacheDefaults(input.env) } : {},
+  };
 
   return {
     variable(name) {
-      for (const layer of readable) {
-        const block = layer.settings?.env;
-        if (isPlainObject(block) && block[name] !== undefined && block[name] !== null) {
-          return { value: String(block[name]), source: { kind: 'settings', path: layer.path } };
-        }
+      for (const source of PROMPT_CACHE_PRECEDENCE.variableSources) {
+        const resolved = source.read(name, sources);
+        if (resolved) return resolved;
       }
-      const shell = input.env[name];
-      if (shell) return { value: shell, source: { kind: 'shell' } };
-      const fallback = defaults[name];
-      return fallback ? { value: fallback, source: { kind: 'codemie-default' } } : undefined;
+      return undefined;
     },
     variableNames() {
       const names = new Set<string>([...CACHE_VARIABLES, ...Object.keys(input.env)]);
@@ -224,8 +319,9 @@ export function decidePromptCacheSetup(input: PromptCacheInput, layers: ClaudeSe
     const resolved = ctx.variable(name);
     if (resolved) variables[name] = resolved.value;
   }
+  // Confirmed only while the betas switch is clearly off (unset, empty, 0 / false).
   const betas = ctx.variable(BETAS_SWITCH);
-  const confirmed = !(betas && isTruthy(betas.value));
+  const confirmed = !(betas?.value && !isFalsy(betas.value));
 
   const untrusted = untrustedLayer(layers);
   if (untrusted) {
@@ -238,27 +334,15 @@ export function decidePromptCacheSetup(input: PromptCacheInput, layers: ClaudeSe
     };
   }
 
-  let decision: PrecedenceMatch | undefined;
-  for (const row of PROMPT_CACHE_PRECEDENCE) {
-    decision = row.match(ctx);
-    if (decision) break;
-  }
-
-  const subagentVariable = ctx.variable(SUBAGENT_TTL_VARIABLE);
-  const subagentSetting = ctx.setting(SUBAGENT_TTL_SETTING);
-  let subagent: PromptCacheSetup['subagent'];
-  if (subagentVariable?.value) {
-    subagent = { ttl: ttlOf(subagentVariable.value), decidedBy: SUBAGENT_TTL_VARIABLE, source: subagentVariable.source };
-  } else if (subagentSetting?.value) {
-    subagent = { ttl: ttlOf(subagentSetting.value), decidedBy: SUBAGENT_TTL_SETTING, source: subagentSetting.source };
-  }
+  const decision = firstMatch(PROMPT_CACHE_PRECEDENCE.ttl, ctx);
+  const subagent = firstMatch(PROMPT_CACHE_PRECEDENCE.subagent, ctx);
 
   return {
     ...(decision
       ? { ttl: decision.ttl, decidedBy: decision.decidedBy, value: decision.value, source: decision.source }
       : { ttl: '5m', decidedBy: 'upstream default', source: { kind: 'upstream-default' } }),
     confirmed,
-    ...(subagent ? { subagent } : {}),
+    ...(subagent ? { subagent: { ttl: subagent.ttl, decidedBy: subagent.decidedBy, source: subagent.source } } : {}),
     variables,
   };
 }
