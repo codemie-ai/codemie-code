@@ -71,6 +71,9 @@ export async function setGenerationAside(sessionId: string, ours: boolean, bound
     const queuedAs = await requeueSetUnderNewId(sessionId, bounds);
     if (queuedAs) return queuedAs;
   }
+  // A generation that leaves the queue here with data unsent is a drop, even when only the evidence retention ended it
+  const spent = ours && record?.status === 'completed' ? budgetSpent(record, outcome, Date.now()) : undefined;
+  if (record && spent) await leaveQueue(record, spent, Date.now(), async () => true);
   return moveSetToGeneration(sessionId, '', bounds);
 }
 

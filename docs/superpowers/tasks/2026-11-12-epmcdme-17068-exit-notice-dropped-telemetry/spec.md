@@ -24,7 +24,7 @@ On `/clear`, a generation still undelivered when `GENERATION_CLOSE_BUDGET_MS` en
 
 **One classifier.** `bounded-request.ts` gives each request one outcome. The client stores it on the line, and the attempt's signal records it. The outcomes:
 - `auth`: a 401, or a 403 that means expired credentials (JSON or not). The data is kept until the user logs in again. The plan must verify what the sync API and the SSO proxy path return for expired credentials.
-- `rejected`: a JSON 400 or 422. The line is dropped at once with reason `rejected by the server`.
+- `rejected`: a JSON 400, 409 or 422 (a 409 is the backend's "Conversation is finished", `ConversationService._guard_finished`, which no retry changes; added after the backend was read). The line is dropped at once with reason `rejected by the server`.
 - `outage`: no connection, 5xx, 429, a non-JSON 4xx, the proxy's JSON 502/504, or the request's own timeout or a reset after sending. Outage outcomes are given back as today, up to evidence retention.
 - `counted`: a 2xx with `success:false`, or any other JSON 4xx (404, 408, 413…).
 
@@ -33,7 +33,7 @@ Only a `counted` outcome is a real attempt. A request is not an attempt when it 
 **Budget.** The clock starts at the first failed outcome the owner is told of. A path that makes no request starts nothing. A record is dropped as `retry budget exhausted` only after a `counted` failure, and only when both hold: 24h have passed since the clock started, **and** there have been at least 3 real attempts. No drop is decided before a send. Evidence retention (90 days) stays the outer bound (`retention expired`). An env variable named by the plan overrides the 24h.
 
 **Lines.** Lines have no budget of their own. A line's status is `pending | failed | synced | rejected`. A line is dropped only when it is rejected or when its record leaves the queue, and then it carries the record's reason. `syncAttempts` is diagnostic only. The 3-send caps are removed. Bounds:
-- a line is sent at most once per start pass, exit, or timer run;
+- a line is sent at most once per start pass, exit, or timer run (transport retries within one request are not further sends);
 - a timer run uses its own signal and stops at its first failure that is not `ok`;
 - deltas carry a stable id built from their record ids (payloads are already a PUT per id).
 
@@ -56,7 +56,7 @@ Only a `counted` outcome is a real attempt. A request is not an attempt when it 
 2. An `outage` longer than 24h with 3+ starts during it drops nothing, whether it is a 503 or a server that hangs in direct mode (timeout or reset after send). Its data is delivered after recovery.
 3. A record past 24h with fewer than 3 real attempts is not dropped. It is dropped only after the `counted` failure that brings it to 3.
 4. A healthy start sends every record it reconciles before any drop, including records at the old caps (`deliveryAttempts`/`finalizeAttempts: 3`).
-5. A JSON 400 or 422 drops the line at once with reason `rejected by the server`. A JSON 404 or 408 does not.
+5. A JSON 400, 409 or 422 drops the line at once with reason `rejected by the server`. A JSON 404 or 408 does not.
 6. Credentials that expire during delivery leave the queued data in place and spend no real attempt, whether the server answers 401 or 403 (JSON or not). It is delivered after re-login.
 7. A send cut by the exit deadline spends no real attempt.
 8. A `/clear` during a 503 outage keeps the previous generation queued and unmarked, and the next healthy start delivers it.
@@ -89,7 +89,7 @@ Only a `counted` outcome is a real attempt. A request is not an attempt when it 
 - Retry budget of 24 hours from the first failed attempt AND at least 3 real attempts, over a pure time window or a pure count; answers how long data is retried — user.
 - No minimum spacing between real attempts, and no drop before 24 hours whatever the count, over spacing the attempts out; answers whether 3 tries in the first hour suffice — user.
 - JSON 4xx (non-401) is a final rejection dropped right away with reason "rejected by the server", over treating it as an outage; answers how JSON 4xx counts against the budget — user.
-- Only JSON 400/422 are final and other JSON 4xx are `counted` attempts, over every JSON 4xx being final. This narrows the bullet above. Answers which 4xx is the application's verdict — user, answers AR-3.
+- Only JSON 400/409/422 are final (409 added once the backend showed it only means a finished conversation) and other JSON 4xx are `counted` attempts, over every JSON 4xx being final. This narrows the bullet above. Answers which 4xx is the application's verdict — user, answers AR-3.
 - A 403 meaning expired credentials (JSON or not) is `auth`, over `counted` or `rejected`; the plan verifies what the sync API and SSO proxy return. Answers how expiry mid-delivery keeps data — user.
 - Verification uses repro mode 503 for the outage path and json400 for immediate honest drops, over a single json400 run; answers which repro mode verifies the fix — user.
 - Per-line 3-send caps are removed and lines follow the record's budget and 4xx rule, over keeping the caps and reporting capped lines as dropped; answers how the delivered-yet-dropped inconsistency is fixed — user.
