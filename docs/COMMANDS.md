@@ -457,6 +457,30 @@ codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions
 
 **Note**: Configuration options (`--profile`, `--model`, etc.) are handled by CodeMie CLI wrapper. All other options are passed directly to the underlying agent binary.
 
+### Non-Claude Models in Claude Code and Claude Desktop
+
+The Claude Code `/model` picker and Claude Desktop's model list offer only Claude-family models by default. To offer other models from your project's catalog as well, pick them per profile:
+
+```bash
+codemie-claude models select [--profile <name>]   # checkbox list of the project's non-Claude models
+codemie-claude models list   [--profile <name>]   # show what is selected
+codemie-claude models add    <model...> [--profile <name>]   # add by catalog ID or name, e.g. gemini-3.1-pro
+codemie-claude models remove <model...> [--profile <name>]   # remove by the ID shown in `models list`
+```
+
+`add` and `remove` are the scriptable counterparts of `select`: `add` accepts only non-Claude models the project catalog serves, and `remove` works from the profile alone, so it also clears a model the catalog no longer offers.
+
+The choice is saved as `claudeExtraModels` in the profile, and the list offered is the profile's project catalog (its Models tab). Claude Code picks it up on its next start; restart Claude Desktop to refresh its model list. Non-Claude models may not support every Claude-specific feature (thinking, prompt caching, some tools).
+
+**Claude Code** lists an extra model under its real ID, marked *Not a Claude model* in `/model`. Anthropic does not support Claude Code with non-Claude models; CodeMie's proxy forwards the request to the model as-is.
+
+**Claude Desktop** rejects any model whose ID does not read as Claude, in model discovery and in a fixed `inferenceModels` list alike. So the proxy's `GET /v1/models` lists an extra model under an opaque ID, `claude-x-<10 hex characters>` (a hash of the real ID), with its real name as the display name, and maps that ID back to the real model on every request. In practice:
+
+- The picker shows the real name (for example *Grok 4.6*); transcripts and logs record the `claude-x-…` ID Desktop sent and the real model the response came from.
+- Desktop and the Claude Code session it runs treat the model as an unknown Claude model: default context window, no model-specific Effort control. Claude Code logs `unrecognized_model` for it, which is harmless.
+- The ID is stable for a given model, so a conversation keeps working across restarts. After `models remove` it is no longer listed, and a request that still names it is passed through unchanged and fails upstream with an unknown-model error.
+- This works around a check in Claude Desktop rather than a documented integration, so a Desktop update may stop it. Claude models are not affected.
+
 ## Headless Mode (`--task`)
 
 The `--task` flag runs a single prompt non-interactively: the agent executes the task, prints the result, and exits. No user interaction is required. This is the primary way to use CodeMie agents in CI/CD pipelines and automated scripts.
