@@ -8,7 +8,7 @@
  * @group unit
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PromptCacheSetup } from '@/agents/plugins/claude/prompt-cache.js';
 
 const h = vi.hoisted(() => ({
@@ -36,6 +36,18 @@ vi.mock('@/agents/plugins/claude/prompt-cache.js', async (importOriginal) => {
 });
 
 import { PromptCacheCheck } from '../PromptCacheCheck.js';
+import { ProviderRegistry } from '@/providers/core/registry.js';
+// Registers the real bedrock template, whose 'claude' beforeRun replaces the agent's default hook.
+import '@/providers/plugins/bedrock/bedrock.template.js';
+
+ProviderRegistry.registerProvider({
+  name: 'fake-claude-hook',
+  agentHooks: { claude: { beforeRun: async (env: NodeJS.ProcessEnv) => env } },
+} as never);
+ProviderRegistry.registerProvider({
+  name: 'fake-wildcard-hook',
+  agentHooks: { '*': { beforeRun: async (env: NodeJS.ProcessEnv) => env } },
+} as never);
 
 const SETTINGS = '/proj/.claude/settings.local.json';
 
@@ -60,6 +72,10 @@ async function run(provider: string, resolved: PromptCacheSetup): Promise<Awaite
 beforeEach(() => {
   vi.clearAllMocks();
   h.getInstalledAgentsMock.mockResolvedValue([{ name: 'claude', displayName: 'Claude Code' }]);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('PromptCacheCheck', () => {
@@ -95,6 +111,74 @@ describe('PromptCacheCheck', () => {
     expect(input.env.CODEMIE_PROVIDER).toBe('ai-run-sso');
   });
 
+  it('hands the shell environment to the resolver', async () => {
+    vi.stubEnv('FORCE_PROMPT_CACHING_5M', '1');
+    vi.stubEnv('CLAUDE_CONFIG_DIR', '/custom/claude');
+
+    await run('ai-run-sso', setup());
+
+    const input = h.resolveMock.mock.calls[0][0];
+    expect(input.env.FORCE_PROMPT_CACHING_5M).toBe('1');
+    expect(input.env.CLAUDE_CONFIG_DIR).toBe('/custom/claude');
+  });
+
+  it.each([
+    ['fake-claude-hook', false],
+    ['fake-wildcard-hook', true],
+    ['bedrock', false],
+    ['not-a-registered-provider', true],
+  ])('provider %s resolves with codemieDefaults=%s, as the launch path would', async (provider, expected) => {
+    await run(provider, setup());
+
+    expect(h.resolveMock.mock.calls[0][0].codemieDefaults).toBe(expected);
+  });
+
+  it('is info "not confirmed" on bedrock when the shell asks for 1h', async () => {
+    const result = await run('bedrock', setup({ source: { kind: 'shell' }, confirmed: true }));
+
+    expect(result.details[1]).toEqual({
+      status: 'info',
+      message: '1h requested, not confirmed on this provider path',
+    });
+  });
+
+  it('warns when a settings file blanks the variable, naming the file to edit', async () => {
+    const result = await run(
+      'ai-run-sso',
+      setup({ ttl: 'unknown', decidedBy: 'ENABLE_PROMPT_CACHING_1H', value: '', source: { kind: 'settings', path: SETTINGS } })
+    );
+
+    expect(result.details[1].status).toBe('warn');
+    expect(result.details[1].message).toContain('ENABLE_PROMPT_CACHING_1H=(empty)');
+    expect(result.details[1].message).toContain(SETTINGS);
+    expect(result.details[1].hint).toBe(`Remove ENABLE_PROMPT_CACHING_1H from ${SETTINGS}`);
+  });
+
+  it('strips terminal control sequences from repository-controlled names, values and paths', async () => {
+    const result = await run(
+      'ai-run-sso',
+      setup({
+        ttl: 'disabled',
+        decidedBy: 'DISABLE_PROMPT_CACHING_\x1b]0;owned\x07EVIL',
+        value: '\x1b[2K\x1b[32m1\u202e',
+        source: { kind: 'settings', path: '/proj/\x1b[1A.claude/settings.json' },
+        subagent: {
+          ttl: 'unknown',
+          decidedBy: 'subagentPromptCacheTtl',
+          source: { kind: 'settings', path: '/proj/\x1b[1A.claude/settings.json' },
+        },
+      })
+    );
+
+    // details[1] is the outcome, details[2] the subagent warning: the two lines built from settings text.
+    for (const detail of result.details.slice(1, 3)) {
+      expect(`${detail.message}${detail.hint ?? ''}`).not.toMatch(/[^\x20-\x7e]/);
+    }
+    expect(result.details[2].hint).toBe('Remove subagentPromptCacheTtl from /proj/.claude/settings.json');
+    expect(result.details[1].message).toContain('DISABLE_PROMPT_CACHING_EVIL=1, from /proj/.claude/settings.json');
+    expect(result.details[1].hint).toBe('Remove DISABLE_PROMPT_CACHING_EVIL from /proj/.claude/settings.json');
+  });
+
   it('is ok on a clean ai-run-sso profile, naming the source', async () => {
     const result = await run('ai-run-sso', setup());
 
@@ -122,6 +206,7 @@ describe('PromptCacheCheck', () => {
     expect(result.details[1].status).toBe('info');
     expect(result.details[1].message).toContain('bedrock');
     expect(result.details[1].message).toContain('known gap');
+    expect(result.details[1].message).toContain('codemie-claude');
     expect(result.details.some((d) => d.status === 'warn')).toBe(false);
   });
 

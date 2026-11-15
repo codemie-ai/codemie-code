@@ -49,6 +49,11 @@ describe('Doctor Command', () => {
     expect(doctorResult.output).toMatch(/uv/i);
   });
 
+  it('should report the Claude prompt-cache setup', () => {
+    // The check is registered in the doctor command and prints its section
+    expect(doctorResult.output).toMatch(/Claude Prompt Cache/);
+  });
+
   it('should execute without crashing', () => {
     // Doctor may return non-zero exit code if no profile configured
     // but it should still run and not crash

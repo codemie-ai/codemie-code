@@ -15,9 +15,11 @@ import {
   type CacheSource,
   type PromptCacheSetup,
 } from '@/agents/plugins/claude/prompt-cache.js';
+import { ProviderRegistry } from '@/providers/core/registry.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { getErrorMessage } from '@/utils/errors.js';
-import { HealthCheck, HealthCheckDetail, HealthCheckResult } from '../types.js';
+import { stripTerminalControls } from '@/utils/terminal-text.js';
+import type { HealthCheck, HealthCheckDetail, HealthCheckResult } from '../types.js';
 
 const CONFIRM_DETAIL: HealthCheckDetail = {
   status: 'info',
@@ -28,34 +30,57 @@ const CONFIRM_DETAIL: HealthCheckDetail = {
 
 const UNREADABLE = 'unreadable settings';
 
+/**
+ * Names, values and paths below can come from the Claude settings files of whatever repository
+ * doctor runs in, and doctor prints them as is: strip anything that could drive the terminal.
+ */
+const clean = stripTerminalControls;
+
+/**
+ * Whether a `codemie-claude` launch on this provider runs the Claude plugin's default `beforeRun`,
+ * which is what applies CodeMie's cache defaults. Same fact as `resolveHook` in
+ * lifecycle-helpers.ts: a provider that declares its own `claude` beforeRun replaces the default.
+ */
+function appliesCodemieDefaults(provider: string | undefined): boolean {
+  return !ProviderRegistry.getProvider(provider ?? '')?.agentHooks?.claude?.beforeRun;
+}
+
 /** How to remove what decided: unset the variable, delete the key from the file, or repair the file. */
 function removalHint(decidedBy: string, source: CacheSource): string {
   if (source.kind === 'settings') {
     return decidedBy === UNREADABLE
-      ? `Fix the JSON or the permissions of ${source.path}`
-      : `Remove ${decidedBy} from ${source.path}`;
+      ? `Fix the JSON or the permissions of ${clean(source.path)}`
+      : `Remove ${clean(decidedBy)} from ${clean(source.path)}`;
   }
-  if (source.kind === 'shell') return `unset ${decidedBy}`;
+  if (source.kind === 'shell') return `unset ${clean(decidedBy)}`;
   return 'Set ENABLE_PROMPT_CACHING_1H=1 in the shell';
 }
 
 function decidedByText(decidedBy: string, value: string | undefined, source: CacheSource): string {
-  return `${decidedBy}${value === undefined ? '' : `=${value}`}, from ${describePromptCacheSource(source)}`;
+  const shown = value === undefined ? '' : `=${value === '' ? '(empty)' : clean(value)}`;
+  return `${clean(decidedBy)}${shown}, from ${clean(describePromptCacheSource(source))}`;
 }
 
-function outcomeDetail(setup: PromptCacheSetup, provider: string | undefined): HealthCheckDetail {
+function outcomeDetail(
+  setup: PromptCacheSetup,
+  provider: string | undefined,
+  codemieDefaults: boolean
+): HealthCheckDetail {
   const decided = decidedByText(setup.decidedBy, setup.value, setup.source);
 
   if (setup.ttl === '1h') {
-    return setup.confirmed
+    // ok only where CodeMie's own launch defaults apply; elsewhere a requested 1h is not verified.
+    return setup.confirmed && codemieDefaults
       ? { status: 'ok', message: `1h cache TTL requested (${decided})` }
       : { status: 'info', message: '1h requested, not confirmed on this provider path' };
   }
 
-  if (provider === 'bedrock' && setup.source.kind === 'upstream-default') {
+  if (!codemieDefaults && setup.source.kind === 'upstream-default') {
     return {
       status: 'info',
-      message: "CodeMie's 1h default is not applied on bedrock (known gap); the Claude Code default TTL is in effect",
+      message:
+        `CodeMie's 1h default is not applied to codemie-claude on ${clean(provider ?? 'this provider')} ` +
+        '(known gap); the Claude Code default TTL is in effect',
     };
   }
 
@@ -83,15 +108,15 @@ export class PromptCacheCheck implements HealthCheck {
       const config = await ConfigLoader.load();
       const provider = config.provider;
       const cwd = process.cwd();
+      const codemieDefaults = appliesCodemieDefaults(provider);
       const setup = await resolvePromptCacheSetup({
         env: { ...process.env, CODEMIE_PROVIDER: provider },
-        // bedrock replaces the agent's default beforeRun, so CodeMie's cache defaults are not applied there.
-        codemieDefaults: provider !== 'bedrock',
+        codemieDefaults,
         cwd,
       });
 
       details.push({ status: 'info', message: `Profile "${config.name ?? 'default'}", evaluated in ${cwd}` });
-      details.push(outcomeDetail(setup, provider));
+      details.push(outcomeDetail(setup, provider, codemieDefaults));
 
       if (setup.subagent && setup.subagent.ttl !== '1h') {
         const { ttl, decidedBy, source } = setup.subagent;
