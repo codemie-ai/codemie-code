@@ -63,8 +63,15 @@ consumer of state that already exists.
 
 ## Decisions
 
-- Reuse `policy-cache.ts`'s existing read-only `getPolicyState` over `refreshPolicy`, to keep the
-  new code strictly read-only and never trigger a network probe from a status command.
+- Reuse `policy-cache.ts`'s existing read-only `getPolicyState` over `refreshPolicy`, so the status
+  command never fetches the classification policy. Resolving the namespace still runs the stored
+  credential through `withVerifiedOwner`: for a login without an owner claim that may make one
+  bounded `GET /v1/user` (5 s timeout, cached per login, failures remembered for 30 s) and write the
+  owner record, exactly as the daemon's tick does. Accepted, because dropping it would resolve such
+  logins to the wrong namespace; the limit is that a claim-less login with `/v1/user` unreachable
+  cannot be resolved, so nothing is reported for it.
+- `getPolicyState` exposes `organizationEncodings` past policy expiry, like `publicationContracts`, so
+  an expired cache reads as an outage rather than as a missing encoding.
 - Resolve the single active `NamespaceId` once per `collectDeliveryHealth` call, via the same
   credential-lookup helpers (`getStoredAnalyticsCredentials` + `forwarderIdentity` + `state.profile`)
   the file already uses for the auth marker, over re-deriving it per session — the daemon serves

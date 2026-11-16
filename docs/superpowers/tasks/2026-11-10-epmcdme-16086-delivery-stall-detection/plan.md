@@ -4,13 +4,13 @@
 
 **Goal:** Add a new, additive `DeliveryReason` — `classification_unreachable` — so `codemie proxy status` / `codemie proxy analytics status` stop reporting `Delivery: healthy` for the whole duration of an outage when a session's local classification never completed because the backend never answered.
 
-**Architecture:** Read-only, two layers. The otlp-spool layer (`delivery-summary.ts`) gains a boolean computed from already-persisted state (`status.holds.session.reason` + a backend `Capability` passed in). The CLI presentation layer (`delivery-health.ts`) resolves that `Capability` once per call from the on-disk stored credential (never the daemon's live one, never a network probe) and appends the new reason last in the existing precedence chain.
+**Architecture:** Read-only, two layers. The otlp-spool layer (`delivery-summary.ts`) gains a boolean computed from already-persisted state (`status.holds.session.reason` + a backend `Capability` passed in). The CLI presentation layer (`delivery-health.ts`) resolves that `Capability` once per call from the on-disk stored credential (never the daemon's live one, never a policy fetch) and appends the new reason last in the existing precedence chain.
 
 **Tech Stack:** TypeScript, Vitest.
 
 ## Global Constraints
 
-- Strictly read-only: no `refreshPolicy` call, no network probe, no `status.holds`/`status.delivery` write, no change to `evaluateSessionEvidence` or any `tick-processor.ts` write path (spec Approach / Non-goals).
+- Strictly read-only for classification state: no `refreshPolicy` call, no policy fetch (owner resolution may make one bounded `GET /v1/user`, see spec Decisions), no `status.holds`/`status.delivery` write, no change to `evaluateSessionEvidence` or any `tick-processor.ts` write path (spec Approach / Non-goals).
 - Exactly two qualifying hold reasons — `publication_contract_unavailable` and `organization_encoding_unsupported` — combined with capability `!== 'evidence'`; never `publication_stopped` (spec Decision 3/4).
 - When the active `NamespaceId` cannot be resolved at all, `classification_unreachable` must never fire, for any session — a false negative is required, a false positive is forbidden (spec AC3, Decision 2-3).
 - New reason is strictly last in `collectDeliveryHealth`'s precedence chain, after `send_failed` (spec Decision 7 / AC5).
