@@ -107,7 +107,7 @@ describe('DesktopModelsPlugin', () => {
     expect(fetchCodeMieLlmModels).not.toHaveBeenCalled();
   });
 
-  it('answers with the project\'s curated Claude models in the Anthropic Models API shape', async () => {
+  it('answers with every Claude model the project allows in the Anthropic Models API shape', async () => {
     fetchCodeMieLlmModels.mockResolvedValue([
       { base_name: 'claude-opus-5', label: 'Bedrock Claude Opus 5', enabled: true },
       { base_name: 'claude-opus-5-5', label: 'Bedrock Claude Opus 5.5', enabled: true },
@@ -130,10 +130,11 @@ describe('DesktopModelsPlugin', () => {
       data: [
         { type: 'model', id: 'claude-opus-5-5', display_name: 'Bedrock Claude Opus 5.5', created_at: '1970-01-01T00:00:00Z' },
         { type: 'model', id: 'sy-signal-claude-v1', display_name: 'SY Signal Claude v1', created_at: '1970-01-01T00:00:00Z' },
+        { type: 'model', id: 'claude-opus-5', display_name: 'Bedrock Claude Opus 5', created_at: '1970-01-01T00:00:00Z' },
       ],
       has_more: false,
       first_id: 'claude-opus-5-5',
-      last_id: 'sy-signal-claude-v1',
+      last_id: 'claude-opus-5',
     });
   });
 

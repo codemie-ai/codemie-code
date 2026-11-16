@@ -292,7 +292,7 @@ describe('fetchClaudeModels', () => {
       .rejects.toThrow('Local proxy model discovery could not reach');
   });
 
-  it('falls back to preferred Claude ids when the proxy upstream returns 5xx', async () => {
+  it('returns null when the proxy upstream returns 5xx', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -301,19 +301,7 @@ describe('fetchClaudeModels', () => {
       json: async () => ({ data: [] }),
     }) as unknown as typeof globalThis.fetch;
 
-    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(ids(models)).toEqual([
-      'claude-opus-5-5',
-      'claude-opus-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6',
-      'claude-sonnet-5-5',
-      'claude-sonnet-5',
-      'claude-sonnet-4-6',
-      'claude-haiku-5-5',
-      'claude-haiku-4-5',
-    ]);
+    expect(await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy')).toBeNull();
   });
 
   it('throws when response is not ok', async () => {
@@ -471,7 +459,7 @@ describe('selectPreferredClaudeModels', () => {
 });
 
 describe('selectDesktopClaudeModels', () => {
-  it('exposes Opus 5.5, Sonnet 5.5, and Haiku 5.5 when available', () => {
+  it('puts Opus 5.5, Sonnet 5.5 and Haiku 5.5 first, then every other model', () => {
     const result = selectDesktopIds([
       'claude-sonnet-5',
       'claude-sonnet-5-5',
@@ -484,18 +472,21 @@ describe('selectDesktopClaudeModels', () => {
       'claude-opus-5-5',
       'claude-sonnet-5-5',
       'claude-haiku-5-5',
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-haiku-4-5-20251001',
     ]);
   });
 
-  it('collapses Haiku to a single highest-priority model', () => {
+  it('puts the highest-priority Haiku first', () => {
     const result = selectDesktopIds([
       'claude-haiku-4-5-20251001',
       'claude-haiku-5-5',
     ]);
-    expect(result).toEqual(['claude-haiku-5-5']);
+    expect(result).toEqual(['claude-haiku-5-5', 'claude-haiku-4-5-20251001']);
   });
 
-  it('exposes only Opus 4.8 when the gateway serves it', () => {
+  it('puts Opus 4.8 first when the gateway serves it', () => {
     const result = selectDesktopIds([
       'claude-sonnet-4-6',
       'claude-opus-4-8',
@@ -507,10 +498,12 @@ describe('selectDesktopClaudeModels', () => {
       'claude-opus-4-8',
       'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-        ]);
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+    ]);
   });
 
-  it('falls back to the highest available opus when 4.8 is absent', () => {
+  it('puts the highest available opus first when 4.8 is absent', () => {
     const result = selectDesktopIds([
       'claude-sonnet-4-6',
       'claude-opus-4-7',
@@ -521,7 +514,8 @@ describe('selectDesktopClaudeModels', () => {
       'claude-opus-4-7',
       'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-        ]);
+      'claude-opus-4-6-20260205',
+    ]);
   });
 
   it('uses the next opus down when only 4.6 is available', () => {
@@ -529,16 +523,49 @@ describe('selectDesktopClaudeModels', () => {
       .toEqual(['claude-opus-4-6-20260205']);
   });
 
-  it('keeps a single dated Opus 4.8 over older canonical opus ids', () => {
+  it('puts a dated Opus 4.8 before older canonical opus ids', () => {
     expect(selectDesktopIds([
       'claude-opus-4-8-20260601',
       'claude-opus-4-7',
-    ])).toEqual(['claude-opus-4-8-20260601']);
+    ])).toEqual(['claude-opus-4-8-20260601', 'claude-opus-4-7']);
   });
 
   it('returns no opus entry when the gateway serves none', () => {
     expect(selectDesktopIds(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
       .toEqual(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
+  });
+
+  it('keeps unlisted and version-first ids at the end in catalog order', () => {
+    expect(selectDesktopIds([
+      'claude-opus-4-5',
+      'claude-4-5-sonnet',
+      'claude-sonnet-4-6',
+      'claude-3-haiku-20240307',
+    ])).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-5',
+      'claude-4-5-sonnet',
+      'claude-3-haiku-20240307',
+    ]);
+  });
+
+  it('puts routers between the curated pick and the other models', () => {
+    expect(ids(selectDesktopClaudeModels([
+      { id: 'claude-opus-5', isRouter: false },
+      { id: 'claude-router-standard', isRouter: true },
+      { id: 'claude-opus-5-5', isRouter: false },
+    ]))).toEqual(['claude-opus-5-5', 'claude-router-standard', 'claude-opus-5']);
+  });
+
+  it('starts with the routers when no model matches the curated set', () => {
+    expect(ids(selectDesktopClaudeModels([
+      { id: 'claude-opus-4-5', isRouter: false },
+      { id: 'claude-router-standard', isRouter: true },
+    ]))).toEqual(['claude-router-standard', 'claude-opus-4-5']);
+  });
+
+  it('returns an empty list for an empty catalog', () => {
+    expect(selectDesktopClaudeModels([])).toEqual([]);
   });
 });
 
@@ -612,6 +639,31 @@ describe('writeDesktopConfig', () => {
 
     await expect(writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'no-claude'))
       .rejects.toThrow(/Project "no-claude" does not allow any Claude models/);
+  });
+
+  it('connects a project whose Claude models match none of the curated set', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'claude-opus-4-5-20251101' }, { base_name: 'claude-3-haiku-20240307' }],
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'legacy-claude');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
+  });
+
+  it('still writes the config when the upstream model catalog fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: { get: () => 'application/json' },
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'p1');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('reuses appliedId from existing _meta.json when present', async () => {
