@@ -91,7 +91,9 @@ async function resolvePolicyState(state: DaemonState): Promise<PolicyState | nul
 
 /**
  * Whether analytics reach CodeMie, judged from the daemon's `/health` reply, the auth marker and the
- * OTLP spool. Makes no request; the auth marker is matched against the daemon's recorded profile,
+ * OTLP spool. Sends no analytics request. For a login without an owner claim, resolving the namespace
+ * may make one bounded `GET /v1/user` (5 s timeout, then cached per login) and write the owner record,
+ * as the daemon's tick does. The auth marker is matched against the daemon's recorded profile,
  * never the calling process's. Never throws: any failure reads as `unknown`.
  */
 export async function collectDeliveryHealth(
@@ -122,11 +124,12 @@ export async function collectDeliveryHealth(
       // the negotiated publication contract — a stalled session under it is just as stuck as under
       // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
       // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
-      // organization-encoding stall does not, so it is judged by the encodings the policy advertises.
+      // organization-encoding stall does not, so it is judged by the encodings the last policy advertised,
+      // which stay readable after the policy expires: an expired cache is an outage, not a missing encoding.
       : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
       : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
       : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
-      : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.policy?.organization_encodings?.includes(ORG_ENCODING_V1)
+      : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.organizationEncodings?.includes(ORG_ENCODING_V1)
         ? 'classification_unsupported'
       : undefined;
 

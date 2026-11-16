@@ -295,7 +295,7 @@ describe('collectDeliveryHealth', () => {
 
     it('reports classification_unsupported when the backend advertises the contract but not the organization encoding', async () => {
       getPolicyState.mockResolvedValue({
-        policy: { organization_encodings: [] },
+        policy: {},
         capability: 'evidence',
         usable: true,
         refreshDue: false,
@@ -309,7 +309,7 @@ describe('collectDeliveryHealth', () => {
       });
     });
 
-    it('reports classification_unsupported when the cached policy has expired and advertises the contract only', async () => {
+    it('reports classification_unsupported when the cached policy has expired and its last answer lacked the organization encoding', async () => {
       getPolicyState.mockResolvedValue({
         policy: null,
         capability: 'evidence',
@@ -321,13 +321,27 @@ describe('collectDeliveryHealth', () => {
       expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'unhealthy', reason: 'classification_unsupported' });
     });
 
+    it('stays quiet when the cached policy has expired but its last answer advertised the organization encoding (an outage, not a missing encoding)', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: null,
+        capability: 'evidence',
+        usable: false,
+        refreshDue: true,
+        publicationContracts: ['1'],
+        organizationEncodings: [ORG_ENCODING_V1],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
+    });
+
     it('stays healthy when the policy already advertises the organization encoding (the hold is stale and clears on the next tick)', async () => {
       getPolicyState.mockResolvedValue({
-        policy: { organization_encodings: [ORG_ENCODING_V1] },
+        policy: {},
         capability: 'evidence',
         usable: true,
         refreshDue: false,
         publicationContracts: ['1'],
+        organizationEncodings: [ORG_ENCODING_V1],
       });
       summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
       expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
@@ -342,7 +356,7 @@ describe('collectDeliveryHealth', () => {
     });
 
     it('keeps send_failed ahead of the organization-encoding stall in precedence', async () => {
-      getPolicyState.mockResolvedValue({ policy: { organization_encodings: [] }, capability: 'evidence', usable: true, refreshDue: false });
+      getPolicyState.mockResolvedValue({ policy: {}, capability: 'evidence', usable: true, refreshDue: false });
       summarizeSpoolDelivery.mockResolvedValue({ ...stalledOnEncoding, sendFailure: { nextAt: 2000 } });
       expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
     });
