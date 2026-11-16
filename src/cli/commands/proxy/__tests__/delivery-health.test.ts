@@ -519,23 +519,26 @@ describe('formatDeliveryLines', () => {
     ]);
   });
 
-  it('says the spool could not be read, not to restart the proxy, when the spool is incomplete', () => {
+  it('says the local analytics data could not be read, not to restart the proxy, when the spool is incomplete', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', incomplete: true }))).toEqual([
-      'Delivery: unknown (the spool could not be read)',
+      'Delivery: unknown (local analytics data could not be read)',
       'Unsent data: unknown',
     ]);
   });
 
-  it('says the spool-derived reasons cover the whole machine', () => {
-    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
-    expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
+  it('says the identity_mismatch label covers the whole machine', () => {
+    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('all sessions on this computer');
   });
 
-  it('writes classification_unreachable/classification_unsupported for a non-technical reader', () => {
-    expect(DELIVERY_REASONS.classification_unreachable.label).toBe('waiting for the CodeMie server to respond');
-    expect(DELIVERY_REASONS.classification_unsupported.label).toBe(
-      "the CodeMie server isn't set up to accept this data yet — contact your CodeMie administrator"
-    );
+  it('writes every reason for a non-technical reader, calling the service CodeMie', () => {
+    expect(Object.fromEntries(Object.entries(DELIVERY_REASONS).map(([code, { label }]) => [code, label]))).toEqual({
+      credentials_expired: 'CodeMie sign-in has expired',
+      auth_rejected: 'CodeMie asked you to sign in again',
+      identity_mismatch: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
+      send_failed: 'last send to CodeMie failed, retrying',
+      classification_unreachable: 'waiting for CodeMie to respond',
+      classification_unsupported: "CodeMie isn't set up to accept this data yet — contact your CodeMie administrator",
+    });
   });
 
   it('reports a stopped proxy for null, with no other rows', () => {

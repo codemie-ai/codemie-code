@@ -34,12 +34,12 @@ export interface DeliveryHealth {
 
 /**
  * Label and remedy per reason; keyed by `Record` so a new code without a label fails to compile.
- * `identity_mismatch` and `send_failed` come from the spool, which is shared by the whole machine,
- * so their labels say so. `classification_unreachable` and `classification_unsupported` are
- * deliberately written for a non-technical reader instead — plain wording over machine-scope
- * precision — and neither has a `run`: there is nothing the CLI can do locally — the first clears
- * on its own once the server responds, the second needs a CodeMie administrator to enable the
- * feature server-side.
+ * Every label is written for a non-technical reader, and calls the service "CodeMie". Only
+ * `identity_mismatch` states its machine-wide scope in the label, because it comes from the spool,
+ * which is shared by the whole machine; the `Unsent data` row states that scope for the rest.
+ * `send_failed`, `classification_unreachable` and `classification_unsupported` have no `run`: there is
+ * nothing the CLI can do locally — the first two clear on their own once CodeMie responds, the last
+ * needs a CodeMie administrator to enable the feature on the backend.
  *
  * Known limitation: `classification_unreachable`/`classification_unsupported` read the active
  * profile's capability against every session in the shared spool (see `SpoolDeliverySummary`'s
@@ -47,12 +47,15 @@ export interface DeliveryHealth {
  * judged by the wrong capability until it drains or is lost to retention.
  */
 export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
-  credentials_expired: { label: 'credentials expired', run: 'codemie profile login' },
-  auth_rejected: { label: 'analytics auth rejected', run: 'codemie profile login' },
-  identity_mismatch: { label: 'analytics identity mismatch on this machine', run: 'codemie proxy restart' },
-  send_failed: { label: 'sending to analytics failed on this machine' },
-  classification_unreachable: { label: 'waiting for the CodeMie server to respond' },
-  classification_unsupported: { label: "the CodeMie server isn't set up to accept this data yet — contact your CodeMie administrator" },
+  credentials_expired: { label: 'CodeMie sign-in has expired', run: 'codemie profile login' },
+  auth_rejected: { label: 'CodeMie asked you to sign in again', run: 'codemie profile login' },
+  identity_mismatch: {
+    label: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
+    run: 'codemie proxy restart',
+  },
+  send_failed: { label: 'last send to CodeMie failed, retrying' },
+  classification_unreachable: { label: 'waiting for CodeMie to respond' },
+  classification_unsupported: { label: "CodeMie isn't set up to accept this data yet — contact your CodeMie administrator" },
 };
 
 const UNKNOWN: DeliveryHealth = { status: 'unknown' };
@@ -191,7 +194,7 @@ function deliveryRow(health: DeliveryHealth): ReportRow {
 
 /** Why delivery cannot be judged: an unreadable spool is not fixed by a restart, a missing health reply is. */
 export function unknownHint(health: DeliveryHealth): string {
-  return health.incomplete ? 'the spool could not be read' : 'restart the proxy to enable all checks';
+  return health.incomplete ? 'local analytics data could not be read' : 'restart the proxy to enable all checks';
 }
 
 /** An amount that could not be read is `unknown`, never `none`. */
