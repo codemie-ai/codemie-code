@@ -37,6 +37,7 @@ interface RawBlock {
 interface RawMessage {
   promptId?: unknown;
   isMeta?: unknown;
+  isSidechain?: unknown;
   message?: { role?: string; content?: unknown };
 }
 
@@ -117,25 +118,30 @@ export function extractOrderedNamedInvocations(
     return names;
   };
 
-  // The skill a slash command dispatched to, when the very next message is the assistant's
+  // The skill a slash command dispatched to, when the next substantive message (skipping any
+  // isMeta/isSidechain bookkeeping lines Claude Code writes in between) is the assistant's
   // matching `Skill` tool_use call — the seam EPMCDME-17201 covers: such a command is counted
   // once, as the skill, not also as a command.
-  const nextMessageSkillName = (raw: unknown): string => {
-    const msg = raw as RawMessage;
-    if (msg?.message?.role !== 'assistant') return '';
-    const content = msg.message.content;
-    if (!Array.isArray(content)) return '';
-    for (const item of content as RawBlock[]) {
-      if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
-        const skill = item.input.skill.trim();
-        if (skill) return skill;
+  const nextSkillName = (fromIndex: number): string => {
+    for (let j = fromIndex; j < messages.length; j++) {
+      const msg = messages[j] as RawMessage;
+      if (msg?.isMeta || msg?.isSidechain) continue;
+      if (msg?.message?.role !== 'assistant') return '';
+      const content = msg.message.content;
+      if (!Array.isArray(content)) return '';
+      for (const item of content as RawBlock[]) {
+        if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
+          const skill = item.input.skill.trim();
+          if (skill) return skill;
+        }
       }
+      return '';
     }
     return '';
   };
 
-  const recordCommand = (cmd: string, next: unknown): void => {
-    const skillAhead = nextMessageSkillName(next);
+  const recordCommand = (cmd: string, fromIndex: number): void => {
+    const skillAhead = nextSkillName(fromIndex);
     if (skillAhead && skillAhead.replace(/^\//, '') === cmd) return;
     bump(commandInvocations, cmd);
     commandsInOrder.push(cmd);
@@ -143,7 +149,6 @@ export function extractOrderedNamedInvocations(
 
   for (let i = 0; i < messages.length; i++) {
     const raw = messages[i];
-    const next = messages[i + 1];
     const msg = raw as RawMessage;
     const content = msg?.message?.content;
     const isUser = msg?.message?.role === 'user';
@@ -160,7 +165,7 @@ export function extractOrderedNamedInvocations(
 
     // Real slash commands arrive as plain string content (the CLI shape).
     if (typeof content === 'string') {
-      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, next);
+      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, i + 1);
       continue;
     }
     if (!Array.isArray(content)) {
@@ -180,7 +185,7 @@ export function extractOrderedNamedInvocations(
           if (subtype) bump(agentInvocations, subtype);
         }
       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
-        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, next);
+        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, i + 1);
       }
     }
   }

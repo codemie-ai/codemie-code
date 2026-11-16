@@ -23,6 +23,11 @@ function userStringContent(text: string) {
   return { message: { role: 'user', content: text } };
 }
 
+/** A bookkeeping line Claude Code writes between a command and the model's real reply. */
+function metaLine() {
+  return { isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } };
+}
+
 describe('extractNamedInvocations', () => {
   it('extracts skill names from Skill tool_use blocks', () => {
     const out = extractNamedInvocations([
@@ -152,6 +157,17 @@ describe('extractOrderedNamedInvocations', () => {
     ]);
     expect(out.commandInvocations).toEqual({ plan: 1 });
     expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
+  });
+
+  it('counts a skill-backed command once even when a meta/bookkeeping line sits between it and the Skill call (CR-001)', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('codemie-humanizer')),
+      metaLine(),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandInvocations).toEqual({});
+    expect(out.commandsInOrder).toEqual([]);
   });
 
   it('returns an empty list when there are no genuine commands', () => {

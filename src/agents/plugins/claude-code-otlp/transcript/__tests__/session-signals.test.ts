@@ -219,6 +219,16 @@ describe('countTurns', () => {
       ])
     ).toBe(3); // typed prompt + /compact + /init
   });
+
+  it('does not exclude a bare mention of a local-only command name lacking the genuine command-message wrapper (CR-002)', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        user('<command-name>/model</command-name>'), // no <command-message> sibling: not a genuine invocation
+      ])
+    ).toBe(2);
+  });
 });
 
 describe('collectCompactions', () => {
