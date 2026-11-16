@@ -30,6 +30,7 @@ import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
@@ -129,6 +130,12 @@ export class AgentCLI {
       setupCommand.addCommand(createAssistantsSetupCommand(this.adapter.name).name('assistants'));
       setupCommand.addCommand(createSkillsSetupCommand(this.adapter.name).name('skills'));
       this.program.addCommand(setupCommand);
+    }
+
+    // Non-Claude models a profile offers alongside Claude ones (Claude Code /model picker and
+    // Claude Desktop). Claude Code has no `models` subcommand of its own, so nothing is shadowed.
+    if (this.adapter.name === ClaudePluginMetadata.name && !this.adapter.ownedSubcommands?.includes('models')) {
+      this.program.addCommand(createClaudeModelsCommand());
     }
 
     // Add init command for frameworks, but only when the agent binary doesn't
