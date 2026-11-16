@@ -28,12 +28,12 @@ import {
 } from '../../../utils/installation-detector.js';
 import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
-import {
-  TOOL_SEARCH_VERIFIED_PROVIDERS,
-  claudeCacheDefaults,
-  describePromptCacheSource,
-  resolvePromptCacheSetup,
-} from './prompt-cache.js';
+import { describePromptCacheSource, resolvePromptCacheSetup } from './prompt-cache.js';
+import { CLAUDE_LAUNCH_ENV_DEFAULTS, CLAUDE_LAUNCH_ENV_ROWS } from './launch-env-defaults.js';
+import { applyLaunchEnvDefaults } from '../../core/launch-env.js';
+import { describeClaudeLaunchConfig, toLaunchSettingsLayers } from './launch-config-report.js';
+import { readClaudeSettingsLayers } from '../claude-code-otlp/event-fields/claude-settings-env.js';
+import type { LaunchConfigContext, LaunchConfigLine, LaunchSettingsLayer } from '../../core/types.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -58,23 +58,6 @@ export const CLAUDE_SUPPORTED_VERSION = '2.1.281';
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
 const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
-
-/**
- * Providers whose gateway cannot carry auto mode's server-side classifier review: the
- * `safeguards` request field and the `safeguard_results` response field.
- *
- * `ai-run-sso` goes through the CodeMie backend to LiteLLM's unified `/v1/messages`, which drops
- * `safeguards` before v1.99.3 and, on any version, never returns `safeguard_results` from
- * `bedrock_converse` deployments. Claude Code then falls back to its own (billed) classifier
- * requests and shows an "isn't eligible" notice that blocks the first checked action until the
- * user answers it.
- *
- * Every other provider is left alone: direct connections (anthropic-subscription, bedrock)
- * support server review, and a user-run `litellm` gateway may be a version that passes the
- * contract through. Remove a provider from this set once its gateway does.
- * https://code.claude.com/docs/en/auto-mode-classifier-billing
- */
-const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
 
 /**
  * Upper bound on the pre-spawn OTLP endpoint refresh (EPMCDME-16647 QA fix): ensureOtlpProxy can
@@ -218,37 +201,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
     },
   },
 
+  launchEnvDefaults: CLAUDE_LAUNCH_ENV_ROWS,
+
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     // `this: BaseAgentAdapter` explicit: the pre-spawn OTLP refresh below reads
     // this.metadata.name, and hook.call(context, ...) in lifecycle-helpers.ts binds
     // `this` to the launching adapter instance (claude or claude-acp).
     async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
-      // Whether this provider's gateway is known to carry the tool-search payload — see
-      // TOOL_SEARCH_VERIFIED_PROVIDERS. CODEMIE_PROVIDER is populated before this hook runs.
-      const toolSearchVerified = TOOL_SEARCH_VERIFIED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '');
-
       // The environment as the user's shell left it, before any CodeMie default: what the
-      // prompt-cache debug line below resolves from.
+      // prompt-cache debug line below resolves from. CODEMIE_PROVIDER is populated before this hook runs.
       const shellEnv = { ...env };
-
-      // Allow experimental betas on a verified provider. This is a prerequisite for tool search
-      // below: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS suppresses the tool-search beta header
-      // (`tool-search-tool-2025-10-19`) and wins over ENABLE_TOOL_SEARCH, so leaving it at '1'
-      // makes the tool-search default unreachable.
-      // Parsed as a boolean upstream, so '0' reads as false — do NOT use '' here: the
-      // `!env.X` guard treats an empty string as unset and would restore the default.
-      // Set to '1' in the environment to opt back out (e.g. if a gateway rejects
-      // `context_management` / `output_config` body fields with HTTP 400).
-      // https://code.claude.com/docs/en/llm-gateway-protocol
-      //
-      // Ask for the 1-hour prompt-cache TTL (ENABLE_PROMPT_CACHING_1H='1') instead of the upstream
-      // 5-minute default, so a cached prefix survives the pauses of an ordinary working session.
-      // Set the variable in the environment to opt out: any non-empty value is kept as is.
-      // Upstream honours it from Claude Code v2.1.108, which is below
-      // CLAUDE_MINIMUM_SUPPORTED_VERSION, so every launchable version understands it.
-      // https://code.claude.com/docs/en/settings
-      Object.assign(env, claudeCacheDefaults(env));
 
       // Record which prompt-cache TTL this session will ask for and what decided it (a shell
       // variable, a Claude settings file, or the default above). Debug log only, read-only, and
@@ -273,80 +236,12 @@ export const ClaudePluginMetadata: AgentMetadata = {
         logger.debug('[claude] prompt cache', ...sanitizeLogArgs({ error: getErrorMessage(error) }));
       }
 
-      // Don't ask the server for auto mode classifier review where the gateway can't carry it
-      // (see AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS). Classifier requests stay client-side and
-      // billed as before, but the "isn't eligible" notice no longer interrupts the session.
-      // Set to '1' in the environment to opt back in.
-      if (
-        !env.CLAUDE_CODE_AUTO_MODE_SERVER &&
-        AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '')
-      ) {
-        env.CLAUDE_CODE_AUTO_MODE_SERVER = '0';
-      }
-
-      // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
-      // when using proxy (telemetry endpoint doesn't exist on CodeMie backend)
-      // https://code.claude.com/docs/en/settings
-      if (!env.CLAUDE_CODE_ENABLE_TELEMETRY) {
-        env.CLAUDE_CODE_ENABLE_TELEMETRY = '0';
-      }
-
-      // CRITICAL: Disable Claude Code auto-updater to maintain version control
-      // CodeMie manages Claude versions explicitly via installVersion() for compatibility
-      // Auto-updates could break version compatibility with CodeMie backend
-      // https://code.claude.com/docs/en/settings
-      if (!env.DISABLE_AUTOUPDATER) {
-        env.DISABLE_AUTOUPDATER = '1';
-      }
-
-      // ...but keep *plugin* auto-updates working. Upstream gates them on the
-      // same predicate as the binary updater:
-      //   Pmt() = autoUpdaterDisabled() && !FORCE_AUTOUPDATE_PLUGINS
-      // which both skips the background plugin update pass and hides the
-      // per-marketplace "Enable auto-update" item from the /plugin Marketplaces
-      // menu entirely. Without this, pinning the binary above silently leaves
-      // every CodeMie user on whatever plugin version they first installed,
-      // with no visible control to change it.
-      // https://code.claude.com/docs/en/discover-plugins#configure-auto-updates
-      if (!env.FORCE_AUTOUPDATE_PLUGINS) {
-        env.FORCE_AUTOUPDATE_PLUGINS = '1';
-      }
-
-      // Enable tool search: MCP/deferrable tool definitions are withheld from the context
-      // window and loaded on demand instead of upfront, which cuts a large fixed cost from
-      // every turn. Measured on a trivial prompt: 44,396 -> 24,353 turn-one tokens (-45%).
-      //
-      // This must be forced explicitly rather than left unset. Claude Code turns tool search
-      // off by itself whenever ANTHROPIC_BASE_URL is not a first-party Anthropic host, on the
-      // assumption that a proxy will not round-trip `tool_reference` blocks — and CodeMie
-      // always points it at the local SSO proxy. Ours does forward them (sso.proxy.ts strips
-      // only `host`/`connection`, and LiteLLM passes the beta header, `defer_loading` and
-      // `tool_reference` through), so the assumption does not hold here.
-      //
-      // Superseded the pre-2.1.69 '0' workaround, which no longer reproduces.
-      // Only enabled for a verified provider (see toolSearchVerified above); everything else keeps
-      // the conservative '0', because a gateway that receives `tool_reference` blocks it cannot
-      // round-trip answers HTTP 400 rather than degrading.
-      // Set to '0'/'false' in the environment to opt out; 'true'/'auto:N' to opt in anywhere.
-      // https://code.claude.com/docs/en/agent-sdk/tool-search
-      if (!env.ENABLE_TOOL_SEARCH) {
-        env.ENABLE_TOOL_SEARCH = toolSearchVerified ? 'true' : '0';
-      }
-
-      if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
-        let autocompactPct = 85;
-        if (env.CODEMIE_PROFILE_CONFIG) {
-          try {
-            const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
-            if (typeof profileConfig.claudeAutocompactPct === 'number') {
-              autocompactPct = profileConfig.claudeAutocompactPct;
-            }
-          } catch {
-            // ignore malformed profile config
-          }
-        }
-        env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
-      }
+      // Set every launch default CodeMie owns (prompt-cache TTL, betas, auto mode server,
+      // telemetry, auto-updaters, tool search, auto-compaction), each only when unset or empty.
+      // The list, with the reason for each value, is CLAUDE_LAUNCH_ENV_DEFAULTS; `codemie doctor`
+      // describes the same list. Applied after the debug line above, which resolves from
+      // `shellEnv` and so is unaffected by the order.
+      applyLaunchEnvDefaults(env, CLAUDE_LAUNCH_ENV_DEFAULTS);
 
       // Keep an already-installed statusline in step with this CLI version: the deployed script is
       // a copy, so without this an upgrade (e.g. a corrected rate card) never reaches it.
@@ -708,6 +603,16 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getExtensionInstaller(): BaseExtensionInstaller {
     return this.extensionInstaller;
+  }
+
+  /** Claude settings files whose `env` block overrides launch variables, lowest to highest precedence. Reads only. */
+  async readLaunchSettingsLayers(cwd: string, env: NodeJS.ProcessEnv): Promise<LaunchSettingsLayer[]> {
+    return toLaunchSettingsLayers(await readClaudeSettingsLayers(cwd, env));
+  }
+
+  /** The resolved prompt-cache TTL lines `codemie doctor` shows under this agent (claude or claude-acp). */
+  async describeLaunchConfig(ctx: LaunchConfigContext): Promise<LaunchConfigLine[]> {
+    return describeClaudeLaunchConfig(ctx, this.metadata.name);
   }
 
   /**

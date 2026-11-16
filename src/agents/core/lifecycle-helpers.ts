@@ -47,6 +47,7 @@ import type { AgentLifecycle, AgentConfig, ProviderLifecycleHooks } from './type
 // Provider plugins register themselves on import via registerProvider() decorator
 import '../../providers/index.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
+import { applyProviderAgentEnv } from './launch-env.js';
 
 /**
  * Resolve the appropriate hook based on provider with automatic chaining
@@ -67,7 +68,10 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
  * @param agentName - Current agent name
  * @returns Resolved/composed hook function or undefined
  */
-async function resolveHook<K extends keyof ProviderLifecycleHooks>(
+/** The hook functions a provider can register (`env` is data, applied by applyProviderAgentEnv). */
+type ProviderHookName = Exclude<keyof ProviderLifecycleHooks, 'env'>;
+
+async function resolveHook<K extends ProviderHookName>(
   lifecycle: AgentLifecycle | undefined,
   hookName: K,
   provider: string | undefined,
@@ -181,6 +185,11 @@ export async function executeBeforeRun(
   config: AgentConfig
 ): Promise<NodeJS.ProcessEnv> {
   const provider = env.CODEMIE_PROVIDER;
+
+  // The provider's declared values for this agent (agentHooks.<agent>.env) go in first and only
+  // where unset, so the user's shell wins over them and the hooks below see them as already set.
+  applyProviderAgentEnv(env, agentName);
+
   const hook = await resolveHook(lifecycle, 'beforeRun', provider, agentName);
 
   if (hook) {

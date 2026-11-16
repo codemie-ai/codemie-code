@@ -12,6 +12,20 @@ import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
+/**
+ * Claude Code values for a direct subscription connection (applied only where the user's shell
+ * leaves them unset). The hook below deletes ANTHROPIC_BASE_URL, so Claude Code talks to Anthropic
+ * itself: no gateway can reject the tool-search payload, and Claude's gateway-safe defaults
+ * (tool search off, betas disabled) would only cost tokens. Measured on the same model and prompt:
+ * with those defaults 21,466 input tokens per request stayed uncached and ~36k extra tokens of tool
+ * definitions loaded up front (131,073 total input); with these values the run matched plain
+ * `claude` (93,765 vs 93,594).
+ */
+const SUBSCRIPTION_CLAUDE_ENV = {
+  ENABLE_TOOL_SEARCH: 'true',
+  CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0',
+} as const;
+
 export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>({
   name: 'anthropic-subscription',
   displayName: 'Anthropic Subscription',
@@ -98,6 +112,7 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
       }
     },
     'claude': {
+      env: SUBSCRIPTION_CLAUDE_ENV,
       enrichArgs(args: string[], _config: AgentConfig): string[] {
         const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
 
@@ -107,6 +122,9 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
 
         return ['--plugin-dir', pluginDir, ...args];
       }
+    },
+    'claude-acp': {
+      env: SUBSCRIPTION_CLAUDE_ENV,
     }
   },
 

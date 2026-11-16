@@ -14,6 +14,9 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { ClaudePluginMetadata } from '../claude.plugin.js';
 import { claudeCacheDefaults } from '../prompt-cache.js';
+import { applyProviderAgentEnv } from '@/agents/core/launch-env.js';
+// Registers the real ai-run-sso template, which declares CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='0'.
+import '@/providers/plugins/sso/sso.template.js';
 
 const h = vi.hoisted(() => ({ resolverFails: false }));
 
@@ -83,7 +86,9 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — prompt-cache debug line',
     vi.restoreAllMocks();
   });
 
+  // Launch order: the provider's declared agent env first (executeBeforeRun), then Claude's hook.
   async function runBeforeRun(env: Record<string, string>): Promise<Record<string, string>> {
+    applyProviderAgentEnv(env, 'claude');
     await ClaudePluginMetadata.lifecycle?.beforeRun?.(env as never);
     return env;
   }
@@ -151,14 +156,10 @@ describe('claudeCacheDefaults', () => {
     ).toEqual({});
   });
 
-  it.each(['ai-run-sso', 'litellm'])('allows experimental betas on the verified provider %s', (provider) => {
-    expect(claudeCacheDefaults({ CODEMIE_PROVIDER: provider })).toEqual({
-      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0',
-      ENABLE_PROMPT_CACHING_1H: '1',
-    });
-  });
-
-  it.each(['ollama', 'bedrock', undefined])('keeps experimental betas off for %s', (provider) => {
+  // Provider-neutral: a provider that allows betas (ai-run-sso, litellm, anthropic-subscription)
+  // declares CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='0' in agentHooks.claude.env, which the launcher
+  // applies before these defaults, so they never see it unset there.
+  it.each(['ai-run-sso', 'litellm', 'anthropic-subscription', 'ollama', 'bedrock', undefined])('keeps experimental betas off by default for %s', (provider) => {
     expect(claudeCacheDefaults({ CODEMIE_PROVIDER: provider })).toEqual({
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
       ENABLE_PROMPT_CACHING_1H: '1',
@@ -167,7 +168,7 @@ describe('claudeCacheDefaults', () => {
 
   it('fills only the variable that is empty or unset', () => {
     expect(claudeCacheDefaults({ CODEMIE_PROVIDER: 'ai-run-sso', ENABLE_PROMPT_CACHING_1H: 'true' })).toEqual({
-      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0',
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
     });
     expect(claudeCacheDefaults({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '', ENABLE_PROMPT_CACHING_1H: '1' })).toEqual({
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',

@@ -208,8 +208,10 @@ describe('decidePromptCacheSetup — sources', () => {
 });
 
 describe('decidePromptCacheSetup — confirmed', () => {
-  it('is confirmed on ai-run-sso, where experimental betas are allowed', () => {
-    const setup = decide({});
+  // At launch ai-run-sso's declared agent env (CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS='0') is already
+  // in the environment the resolver sees: applyProviderAgentEnv runs before Claude's hook.
+  it('is confirmed when the provider allows experimental betas, as ai-run-sso declares', () => {
+    const setup = decide({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0' });
     expect(setup.confirmed).toBe(true);
     expect(setup.variables).toEqual({ CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0', ENABLE_PROMPT_CACHING_1H: '1' });
   });

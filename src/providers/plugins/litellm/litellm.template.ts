@@ -10,6 +10,17 @@
 import type { ProviderTemplate } from '../../core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 
+/**
+ * Claude Code values for a LiteLLM gateway (applied only where the user's shell leaves them unset).
+ * LiteLLM documents passing the tool-search beta header, `defer_loading` and `tool_reference`
+ * through, so tool search is on and experimental betas are allowed. Auto-mode server review is left
+ * to Claude Code: a user-run gateway may be a version that carries the safeguards contract.
+ */
+const LITELLM_CLAUDE_ENV = {
+  ENABLE_TOOL_SEARCH: 'true',
+  CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0',
+} as const;
+
 export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   name: 'litellm',
   displayName: 'LiteLLM',
@@ -25,6 +36,10 @@ export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   capabilities: ['streaming', 'tools', 'function-calling'],
   supportsModelInstallation: false,
   supportsStreaming: true,
+  agentHooks: {
+    claude: { env: LITELLM_CLAUDE_ENV },
+    'claude-acp': { env: LITELLM_CLAUDE_ENV },
+  },
   setupInstructions: `
 # LiteLLM Setup Instructions
 

@@ -91,6 +91,15 @@ export interface ReasoningEffortConfig {
  */
 export interface ProviderLifecycleHooks {
   /**
+   * Environment values this provider sets for the agent, as data. Applied before the `beforeRun`
+   * hooks, only where a variable is unset or empty (a value from the user's shell wins), and
+   * without replacing the agent's default `beforeRun` the way an agent-specific `beforeRun` does.
+   * `codemie doctor` reads the same map, so it can name the provider that set a value.
+   * Only meaningful under an agent key (e.g. `agentHooks.claude.env`).
+   */
+  env?: Readonly<Record<string, string>>;
+
+  /**
    * Called before agent execution (provider-specific)
    * Can modify environment variables before agent starts
    */
@@ -318,6 +327,12 @@ export interface AgentMetadata {
   postInstallHints?: PostInstallHint[];
 
   lifecycle?: AgentLifecycle;
+
+  /**
+   * Environment variables the launcher sets when they are unset or empty, in the order it sets them.
+   * The default `beforeRun` applies them and `codemie doctor` describes them, from this one list.
+   */
+  launchEnvDefaults?: readonly LaunchEnvDefault[];
 
   // === Built-in Agent Support ===
   isBuiltIn?: boolean;
@@ -889,4 +904,62 @@ export interface AgentAdapter {
    * @returns Installation method: 'npm', 'native', or 'unknown'
    */
   getInstallationMethod?(): Promise<'npm' | 'native' | 'unknown'>;
+
+  /** The environment variables this agent's launcher sets when they are unset (see AgentMetadata.launchEnvDefaults). */
+  getLaunchEnvDefaults?(): readonly LaunchEnvDefault[];
+
+  /** The agent's settings files that can override launch variables, lowest to highest precedence. Reads only. */
+  readLaunchSettingsLayers?(cwd: string, env: NodeJS.ProcessEnv): Promise<LaunchSettingsLayer[]>;
+
+  /** Extra launch-config lines `codemie doctor` shows under this agent (e.g. the resolved prompt-cache TTL). Reads only. */
+  describeLaunchConfig?(ctx: LaunchConfigContext): Promise<LaunchConfigLine[]>;
+}
+
+// ============================================================================
+// Launch environment (what an agent's launcher sets, and what doctor reports)
+// ============================================================================
+
+/** A value an agent's launcher would set, and whether it comes from the profile or CodeMie's default. */
+export interface LaunchEnvValue {
+  value: string;
+  from: 'codemie-default' | 'profile';
+}
+
+/** One environment variable an agent's launcher sets when it is unset or empty. */
+export interface LaunchEnvDefault {
+  name: string;
+  /** `env` is the environment BEFORE defaults; `undefined` means the variable is not set on this path. */
+  value(env: NodeJS.ProcessEnv): LaunchEnvValue | undefined;
+  /** One line: why the launcher sets it, and how to opt out. */
+  why: string;
+}
+
+/** One agent settings file: where it is, whether it could be read, and its `env` block when it has one. */
+export interface LaunchSettingsLayer {
+  path: string;
+  /** `unreadable` also covers a file whose `env` block is not an object. */
+  state: 'ok' | 'absent' | 'unreadable';
+  env?: Record<string, unknown>;
+}
+
+export type LaunchConfigStatus = 'ok' | 'warn' | 'error' | 'info';
+
+/** One line of launch configuration, shaped like a doctor health-check detail. */
+export interface LaunchConfigLine {
+  status: LaunchConfigStatus;
+  message: string;
+  hint?: string;
+  /** Lines shown indented under this one. */
+  children?: LaunchConfigLine[];
+}
+
+/** What an agent needs to describe its launch configuration for `codemie doctor`. */
+export interface LaunchConfigContext {
+  /** The environment before any launch default. */
+  shellEnv: NodeJS.ProcessEnv;
+  provider?: string;
+  profileName: string;
+  cwd: string;
+  /** Whether this provider runs the agent's default `beforeRun` (and so its launch defaults). */
+  defaultsApply: boolean;
 }

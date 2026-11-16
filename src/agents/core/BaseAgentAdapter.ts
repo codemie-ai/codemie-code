@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType, type LaunchEnvDefault } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import {
@@ -177,6 +177,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
   get description(): string {
     return this.metadata.description;
+  }
+
+  /** The variables this agent's launcher sets when unset; empty when the agent declares none. */
+  getLaunchEnvDefaults(): readonly LaunchEnvDefault[] {
+    return this.metadata.launchEnvDefaults ?? [];
   }
 
   /**
