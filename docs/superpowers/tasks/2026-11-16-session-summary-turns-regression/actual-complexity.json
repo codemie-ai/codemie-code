@@ -1,0 +1,76 @@
+{
+  "task": "Fix EPMCDME-15582 (Turns regression: local-only slash commands like /context, /usage, /cost, /exit, /model counted as turns) via a LOCAL_ONLY_COMMANDS denylist and wrappedCommandName() helper, folded in EPMCDME-17201 (skill-backed slash commands double-counted as both Skill and Slash Command) via a one-message lookahead in extractOrderedNamedInvocations(), then fixed two code-review findings (CR-001 lookahead not skipping isMeta/isSidechain lines, CR-002 missing bare-command-mention test) in a follow-up round.",
+  "generated": "2026-11-16T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "claude-code-otlp transcript session-signals module (countTurns / wrappedCommandName, LOCAL_ONLY_COMMANDS denylist), claude named-invocations shared module (extractOrderedNamedInvocations / nextSkillName lookahead, used by both the claude and claude-acp plugins), OTLP plugin architecture doc",
+      "layers": "Agent-Tool (session/transcript parsing shared across claude-code-otlp and claude/claude-acp plugins)"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "Root cause and fix approach for both regressions were precisely specified upfront (exact function, exact denylist, exact dedup rule), but the first implementation round missed two real edge cases that a code-review round had to surface: CR-001 (the one-message lookahead didn't skip isMeta/isSidechain bookkeeping lines before checking for a matching Skill call) and CR-002 (no test proving a bare <command-name> mention without its <command-message> sibling stays excluded from turns)."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Logic-correctness risk in shared turn-counting and named-invocation extraction that feeds the session-summary analytics Turns metric; no exact precedent in the codebase for the new one-message lookahead pattern (nextSkillName) used to dedupe skill-backed slash commands; a wrong lookahead silently miscounts an analytics metric rather than causing a visible failure, which is exactly the class of bug this change is itself fixing (a prior silent regression, EPMCDME-15582); the code-review round proved the risk was real by catching CR-001 before merge.",
+      "mitigation": "Reused the existing denylist/helper shape (LOCAL_ONLY_COMMANDS + wrappedCommandName) instead of inventing new parsing; extended unit tests in session-signals.test.ts, orchestrator.test.ts, and claude-named-invocations.test.ts to cover both regressions and the two CR findings; one request-changes code-review round caught both edge cases pre-merge and the fix-up round was approved clean; QA gates (lint, typecheck, build, license) all passed with only pre-existing unrelated test flakiness noted."
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 6,
+      "modified_file_list": [
+        "src/agents/plugins/claude-code-otlp/transcript/session-signals.ts",
+        "src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts",
+        "src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts",
+        "src/agents/plugins/claude/session/claude-named-invocations.ts",
+        "src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts",
+        "docs/ARCHITECTURE-OTLP-PLUGIN.md"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["src", "docs"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 6,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two previously-independent shared modules were touched in the same effort: claude-code-otlp's session-signals.ts (Turns counting) and claude's claude-named-invocations.ts (skill/command dedup), both consumed by multiple agent plugins (claude-code-otlp, claude, claude-acp) plus a docs update. Red flag applied: 'Affects multiple workflows or agents' bumped Component Scope from M to L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The fix introduces a genuinely new pattern (one-message isMeta/isSidechain-aware lookahead, nextSkillName) with no exact precedent in the codebase, feeding an analytics metric (session Turns) where incorrect logic fails silently rather than visibly — and the task itself exists because a prior version of this logic already broke silently once. A code-review round caught a real edge-case bug (CR-001) before merge, confirming the risk was not merely theoretical."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files modified (2 production modules, 3 test files, 1 architecture doc), 0 new files — lands in the M band (5-7 modified files) per the guide."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): the fix touches shared session/transcript logic consumed by multiple agent plugins (claude-code-otlp, claude, claude-acp)."
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,136 @@
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+index b7752f2f..32de72eb 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+@@ -219,6 +219,16 @@ describe('countTurns', () => {
+       ])
+     ).toBe(3); // typed prompt + /compact + /init
+   });
++
++  it('does not exclude a bare mention of a local-only command name lacking the genuine command-message wrapper (CR-002)', () => {
++    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
++    expect(
++      countTurns([
++        user('typed prompt'),
++        user('<command-name>/model</command-name>'), // no <command-message> sibling: not a genuine invocation
++      ])
++    ).toBe(2);
++  });
+ });
+ 
+ describe('collectCompactions', () => {
+diff --git a/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts b/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
+index c92087c3..331957cd 100644
+--- a/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
++++ b/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
+@@ -23,6 +23,11 @@ function userStringContent(text: string) {
+   return { message: { role: 'user', content: text } };
+ }
+ 
++/** A bookkeeping line Claude Code writes between a command and the model's real reply. */
++function metaLine() {
++  return { isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } };
++}
++
+ describe('extractNamedInvocations', () => {
+   it('extracts skill names from Skill tool_use blocks', () => {
+     const out = extractNamedInvocations([
+@@ -154,6 +159,17 @@ describe('extractOrderedNamedInvocations', () => {
+     expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
+   });
+ 
++  it('counts a skill-backed command once even when a meta/bookkeeping line sits between it and the Skill call (CR-001)', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('codemie-humanizer')),
++      metaLine(),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++    expect(out.commandInvocations).toEqual({});
++    expect(out.commandsInOrder).toEqual([]);
++  });
++
+   it('returns an empty list when there are no genuine commands', () => {
+     const out = extractOrderedNamedInvocations([
+       userText('docs mention <command-name>/plan</command-name> only'),
+diff --git a/src/agents/plugins/claude/session/claude-named-invocations.ts b/src/agents/plugins/claude/session/claude-named-invocations.ts
+index 63306a00..caa5c229 100644
+--- a/src/agents/plugins/claude/session/claude-named-invocations.ts
++++ b/src/agents/plugins/claude/session/claude-named-invocations.ts
+@@ -37,6 +37,7 @@ interface RawBlock {
+ interface RawMessage {
+   promptId?: unknown;
+   isMeta?: unknown;
++  isSidechain?: unknown;
+   message?: { role?: string; content?: unknown };
+ }
+ 
+@@ -117,25 +118,30 @@ export function extractOrderedNamedInvocations(
+     return names;
+   };
+ 
+-  // The skill a slash command dispatched to, when the very next message is the assistant's
++  // The skill a slash command dispatched to, when the next substantive message (skipping any
++  // isMeta/isSidechain bookkeeping lines Claude Code writes in between) is the assistant's
+   // matching `Skill` tool_use call — the seam EPMCDME-17201 covers: such a command is counted
+   // once, as the skill, not also as a command.
+-  const nextMessageSkillName = (raw: unknown): string => {
+-    const msg = raw as RawMessage;
+-    if (msg?.message?.role !== 'assistant') return '';
+-    const content = msg.message.content;
+-    if (!Array.isArray(content)) return '';
+-    for (const item of content as RawBlock[]) {
+-      if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
+-        const skill = item.input.skill.trim();
+-        if (skill) return skill;
++  const nextSkillName = (fromIndex: number): string => {
++    for (let j = fromIndex; j < messages.length; j++) {
++      const msg = messages[j] as RawMessage;
++      if (msg?.isMeta || msg?.isSidechain) continue;
++      if (msg?.message?.role !== 'assistant') return '';
++      const content = msg.message.content;
++      if (!Array.isArray(content)) return '';
++      for (const item of content as RawBlock[]) {
++        if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
++          const skill = item.input.skill.trim();
++          if (skill) return skill;
++        }
+       }
++      return '';
+     }
+     return '';
+   };
+ 
+-  const recordCommand = (cmd: string, next: unknown): void => {
+-    const skillAhead = nextMessageSkillName(next);
++  const recordCommand = (cmd: string, fromIndex: number): void => {
++    const skillAhead = nextSkillName(fromIndex);
+     if (skillAhead && skillAhead.replace(/^\//, '') === cmd) return;
+     bump(commandInvocations, cmd);
+     commandsInOrder.push(cmd);
+@@ -143,7 +149,6 @@ export function extractOrderedNamedInvocations(
+ 
+   for (let i = 0; i < messages.length; i++) {
+     const raw = messages[i];
+-    const next = messages[i + 1];
+     const msg = raw as RawMessage;
+     const content = msg?.message?.content;
+     const isUser = msg?.message?.role === 'user';
+@@ -160,7 +165,7 @@ export function extractOrderedNamedInvocations(
+ 
+     // Real slash commands arrive as plain string content (the CLI shape).
+     if (typeof content === 'string') {
+-      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, next);
++      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, i + 1);
+       continue;
+     }
+     if (!Array.isArray(content)) {
+@@ -180,7 +185,7 @@ export function extractOrderedNamedInvocations(
+           if (subtype) bump(agentInvocations, subtype);
+         }
+       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
+-        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, next);
++        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, i + 1);
+       }
+     }
+   }
