@@ -80,6 +80,30 @@ describe('isFailingServerAnswer', () => {
   });
 });
 
+describe("classifyAnswer with the backend's permission denial", () => {
+  const body = (message: string): unknown => ({ error: { message, details: 'x' } });
+
+  it.each([
+    [401, 'Access denied', 'counted'],
+    [403, 'Access denied', 'counted'],
+    [401, 'access denied ', 'counted'],
+    [401, 'Authentication failed', 'auth'],
+    [403, 'Project access denied', 'auth'],
+    [403, 'something else', 'auth'],
+  ])('status %i JSON body "%s" → %s', (status, message, expected) => {
+    expect(classifyAnswer(status, true, false, body(message))).toBe(expected);
+  });
+
+  it('a 401 or 403 with no body, or a body that is not JSON, stays auth', () => {
+    expect(classifyAnswer(401, true, false)).toBe('auth');
+    expect(classifyAnswer(403, false, false, 'Access denied')).toBe('auth');
+  });
+
+  it('reads a top-level message too', () => {
+    expect(classifyAnswer(401, true, false, { message: 'Access denied' })).toBe('counted');
+  });
+});
+
 describe('classifyAnswer', () => {
   it.each([
     [200, true, true, 'ok'],

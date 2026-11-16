@@ -33,7 +33,7 @@ import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
-import { attemptOutcome, authWasRejected, awaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
+import { attemptOutcome, authWasRejected, awaitingDestination, hadLocalFailure, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 
@@ -249,15 +249,15 @@ export interface ReconcilePass {
  * What an attempt amounts to, once it ran to its end or threw: rejected credentials first (they never spend the budget,
  * whatever else its requests noted); else the worst outcome its requests noted; a legacy metric awaiting its
  * destination is no failure; an abort of the pass or the exit deadline is never an attempt, whether or not a request
- * ran before it (a cut is no server verdict); a throw nothing noted is a local failure (a flush, a lookup, a file), no
- * request reached a server: no attempt; otherwise it went through.
+ * ran before it (a cut is no server verdict); a throw nothing noted, or a processor failure the sync caught that no request explains, is a local failure (a flush, a
+ * lookup, a file, a lock), no request reached a server: no attempt; otherwise it went through.
  */
 export function attemptResult(signal: AbortSignal, thrown: boolean): RequestOutcome {
   if (authWasRejected(signal)) return 'auth';
   const noted = attemptOutcome(signal);
   if (noted) return noted;
   if (awaitingDestination(signal)) return 'ok';
-  if (signal.aborted) return 'not-attempt';
+  if (signal.aborted || hadLocalFailure(signal)) return 'not-attempt';
   return thrown ? 'not-attempt' : 'ok';
 }
 

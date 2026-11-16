@@ -217,7 +217,7 @@ class MetricsApiClient {
         (error as MetricsRequestError).outcome = request.noteAnswer(response.status, false, false);
         throw error;
       }
-      const outcome = request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true);
+      const outcome = request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true, data);
 
       if (!response.ok) {
         if ('code' in data && 'details' in data) {
@@ -229,7 +229,7 @@ class MetricsApiClient {
           const error = new Error(errorMessage) as MetricsRequestError;
           error.statusCode = response.status;
           error.response = data;
-          error.isAuthFailure = response.status === 401;
+          error.isAuthFailure = response.status === 401 && outcome === 'auth';
           error.outcome = outcome;
           throw error;
         }
@@ -238,7 +238,7 @@ class MetricsApiClient {
         const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
-        error.isAuthFailure = response.status === 401;
+        error.isAuthFailure = response.status === 401 && outcome === 'auth';
         error.outcome = outcome;
         throw error;
       }

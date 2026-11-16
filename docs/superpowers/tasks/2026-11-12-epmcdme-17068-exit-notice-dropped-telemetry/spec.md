@@ -23,7 +23,7 @@ The following callers only report outcomes:
 On `/clear`, a generation still undelivered when `GENERATION_CLOSE_BUDGET_MS` ends stays queued, under a name the start pass lists. It is not marked dropped. A stranded record is flushed unless the verdict says its budget is spent.
 
 **One classifier.** `bounded-request.ts` gives each request one outcome. The client stores it on the line, and the attempt's signal records it. The outcomes:
-- `auth`: a 401, or a 403 that means expired credentials (JSON or not). The data is kept until the user logs in again. The plan must verify what the sync API and the SSO proxy path return for expired credentials.
+- `auth`: a 401, or a 403 that means expired credentials (JSON or not), except the backend's JSON "Access denied" (401 from `raise_access_denied`), which is a permission denial and `counted`. A plain 403 stays `auth` because no gateway 403 was captured; a permanent one waits until the 90-day retention. The data is kept until the user logs in again. The plan must verify what the sync API and the SSO proxy path return for expired credentials.
 - `rejected`: a JSON 400, 409 or 422 (a 409 is the backend's "Conversation is finished", `ConversationService._guard_finished`, which no retry changes; added after the backend was read). The line is dropped at once with reason `rejected by the server`.
 - `outage`: no connection, 5xx, 429, a non-JSON 4xx, the proxy's JSON 502/504, or the request's own timeout or a reset after sending. Outage outcomes are given back as today, up to evidence retention.
 - `counted`: a 2xx with `success:false`, or any other JSON 4xx (404, 408, 413…).
@@ -40,7 +40,7 @@ Only a `counted` outcome is a real attempt. A request is not an attempt when it 
 **Fields.**
 - `deliveryFailingSince` (merge: earliest).
 - `deliveryRealAttempts` (merge: larger). It is incremented before the send, so a crash spends it, and given back unless the outcome is `counted`.
-- `droppedReason` travels with `droppedAt` (first set wins).
+- `droppedReason` travels with `droppedAt`. The first set wins, except that the drop of the rest of a record replaces an earlier `rejected by the server` mark (a partial rejection), so the launch that drops the rest reports it too; a mark of any other reason stays.
 
 `deliveryAttempts` and `finalizeAttempts` are no longer read. Consumers: `mergeCompleted`, `restoreCounter` (`:358-370`), and Desktop `reopenCompleted`, which clears the new fields too (`DesktopTelemetryRuntime.ts:461-463`).
 

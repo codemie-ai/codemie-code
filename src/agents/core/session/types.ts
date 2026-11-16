@@ -213,7 +213,7 @@ export interface Session {
   localFinalizeFailures?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;
-  /** Why the record is dropped; set together with `droppedAt` */
+  /** Why the record is dropped; set together with `droppedAt`. The first one wins, but the drop of the rest of a record replaces an earlier `rejected by the server` mark (a rejected line while the record stayed queued) */
   droppedReason?: DropReason;
   /** The session id a `/clear` generation was kept under before it was re-keyed to stay in the delivery queue */
   originSessionId?: string;

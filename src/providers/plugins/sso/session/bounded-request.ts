@@ -85,6 +85,22 @@ export function awaitingDestination(signal: AbortSignal): boolean {
   return signalsAwaitingDestination.has(signal);
 }
 
+const signalsWithLocalFailure = new WeakSet<AbortSignal>();
+
+/**
+ * Records that a processor under `signal` failed locally (a lock timeout, a file error) and the sync caught it into a
+ * failed result: no request reached a server for it, so the caller that owns the signal gives the attempt back, as it
+ * does for a thrown local failure, and the failing clock is not cleared.
+ */
+export function noteLocalFailure(signal: AbortSignal | undefined): void {
+  if (signal) signalsWithLocalFailure.add(signal);
+}
+
+/** Whether a processor under `signal` failed locally (see {@link noteLocalFailure}). */
+export function hadLocalFailure(signal: AbortSignal): boolean {
+  return signalsWithLocalFailure.has(signal);
+}
+
 /** Node system error codes of a connection that never opened: the request was never sent. */
 const NEVER_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
 
@@ -121,22 +137,41 @@ export function isFailingServerAnswer(status: number, bodyIsJson: boolean): bool
 }
 
 /**
- * Whether a sync API answer means "the credentials are expired or rejected": any 401 or 403.
- *
- * A 401 is rejected credentials whatever its body, as the sync clients already treat it
- * (bounded-request.ts isFailingServerAnswer, conversations/apiClient.ts:207,
- * metrics/metrics-api-client.ts:215,223). A 403 is counted too: no captured expired-credential
- * answer exists (proxy/plugins/session-rejection.ts:21-25), the one known JSON 403 body
- * ("Project access denied", conversations/__tests__/apiClient.test.ts:63-68) cannot be told from an
- * expiry 403 by its text, and the OTLP forwarder already treats 401, 403 and 302 alike as auth failure
- * (proxy/plugins/otlp-spool/forwarder.ts:151-154,212-214). So the body and `bodyIsJson` are not
- * consulted. This is broader than session-rejection.ts:27-29, which says a 403 is "authenticated but
- * not allowed": a project-access 403 is therefore reported as an auth problem (accepted false positive).
- * Not covered here: a 2xx HTML SSO login page and a 302 to /oauth2/start (they carry no 401/403 status;
- * see conversations/apiClient.ts:27-34 and sso-session-expiry.plugin.ts:103-110).
+ * Whether a sync API answer is the backend's permission denial, not an expiry: a JSON 401 or 403 whose message is
+ * "Access denied". The backend raises exactly that 401 for a conversation the user cannot write
+ * (`raise_access_denied` in `rest_api/routers/utils.py`, used by `PUT /v1/conversations/{id}/history`), while an
+ * expired, missing or invalid session is its 401 "Authentication failed" (`authenticate`). Signing in again cannot
+ * fix a denial, so it is a counted failure and goes through the retry budget, not `auth`, which never spends it.
  */
-export function isExpiredCredentialAnswer(status: number, _bodyIsJson: boolean, _body?: unknown): boolean {
-  return status === 401 || status === 403;
+export function isAccessDeniedAnswer(status: number, bodyIsJson: boolean, body?: unknown): boolean {
+  if (!bodyIsJson || (status !== 401 && status !== 403)) return false;
+  const parsed = body as { error?: { message?: unknown }; message?: unknown } | null | undefined;
+  const message = parsed?.error?.message ?? parsed?.message;
+  return typeof message === 'string' && message.trim().toLowerCase() === 'access denied';
+}
+
+/**
+ * Whether a sync API answer means "the credentials are expired or rejected": any 401 or 403, except the backend's
+ * "Access denied" (see {@link isAccessDeniedAnswer}).
+ *
+ * A 401 is rejected credentials, as the sync clients already treat it (conversations/apiClient.ts,
+ * metrics/metrics-api-client.ts), unless its body is the backend's "Access denied".
+ *
+ * A plain 403 stays `auth` on purpose, though it is NOT backend-verified as an expiry. What the backend and the
+ * deployment show: the backend answers an expired, missing or invalid session with a 401 "Authentication failed"
+ * (`authenticate`) and has no 403 on `PUT /v1/conversations/{id}/history` or `POST /v1/metrics`; the ingress sends
+ * the session check to oauth2-proxy (`deploy-templates/values.yaml`: `auth-url` `/oauth2/auth`, `auth-signin`
+ * `/oauth2/start`), where an expired cookie becomes the 302 to `/oauth2/start` the clients already treat as auth
+ * (conversations/apiClient.ts, sso-session-expiry.plugin.ts), and a 403 of that check is an authorization refusal.
+ * oauth2-proxy's own configuration is not in the repository and no real capture of a gateway 403 exists
+ * (proxy/plugins/session-rejection.ts says the same of an expiry 401), so a 403 is kept `auth`: if it were an expiry,
+ * counting it would drop data a re-login delivers, while as `auth` a permanent denial waits until the evidence
+ * retention ends (90 days). The OTLP forwarder treats 401, 403 and 302 alike as auth failure
+ * (proxy/plugins/otlp-spool/forwarder.ts). Revisit with a captured gateway 403.
+ * Not covered here: a 2xx HTML SSO login page and a 302 to /oauth2/start (they carry no 401/403 status).
+ */
+export function isExpiredCredentialAnswer(status: number, bodyIsJson: boolean, body?: unknown): boolean {
+  return (status === 401 || status === 403) && !isAccessDeniedAnswer(status, bodyIsJson, body);
 }
 
 /**

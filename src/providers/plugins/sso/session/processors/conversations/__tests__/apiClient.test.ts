@@ -97,6 +97,37 @@ describe('ConversationApiClient request timers', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it("classifies the backend's 401 'Access denied' as counted after one attempt, and does not reject the credentials", async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 401, statusText: 'Unauthorized', headers: jsonHeaders,
+        text: () => Promise.resolve('{"error":{"message":"Access denied","details":"You do not have the necessary permissions to write this entity."}}'),
+      });
+      const controller = new AbortController();
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: controller.signal });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'counted' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const { authWasRejected } = await import('../../../bounded-request.js');
+      expect(authWasRejected(controller.signal)).toBe(false);
+    });
+
+    it('classifies the 401 "Authentication failed" as auth and rejects the credentials', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false, status: 401, statusText: 'Unauthorized', headers: jsonHeaders,
+        text: () => Promise.resolve('{"error":{"message":"Authentication failed","details":"expired"}}'),
+      });
+      const controller = new AbortController();
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: controller.signal });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result).toMatchObject({ success: false, outcome: 'auth' });
+      const { authWasRejected } = await import('../../../bounded-request.js');
+      expect(authWasRejected(controller.signal)).toBe(true);
+    });
+
     it("classifies a JSON 409 (the backend's \"Conversation is finished\") as rejected after one attempt, never retried", async () => {
       fetchMock.mockResolvedValue({
         ok: false, status: 409, statusText: 'Conflict', headers: jsonHeaders,

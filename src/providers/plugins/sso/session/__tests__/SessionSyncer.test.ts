@@ -126,6 +126,37 @@ describe('SessionSyncer', () => {
     expect(mockConvProcess).not.toHaveBeenCalled();
   });
 
+  describe('a processor failure no request explains', () => {
+    it("is noted as a local failure on the attempt's signal", async () => {
+      mockLoadSession.mockResolvedValue(makeSession());
+      mockMetricsProcess.mockImplementationOnce(async () => ({ success: false, message: 'lock timeout' }));
+      const { hadLocalFailure } = await import('../bounded-request.js');
+      const signal = new AbortController().signal;
+
+      const { SessionSyncer } = await import('../SessionSyncer.js');
+      await new SessionSyncer().sync('session-1', { ...context, abortSignal: signal });
+
+      expect(hadLocalFailure(signal)).toBe(true);
+    });
+
+    it('is not one when a request outcome explains it (a server answered 503)', async () => {
+      mockLoadSession.mockResolvedValue(makeSession());
+      const { boundedRequest, hadLocalFailure } = await import('../bounded-request.js');
+      const signal = new AbortController().signal;
+      mockMetricsProcess.mockImplementationOnce(async (_session: unknown, ctx: ProcessingContext) => {
+        const request = boundedRequest(1000, { abortSignal: ctx.abortSignal });
+        request.noteAnswer(503, false, false);
+        request.dispose();
+        return { success: false, message: 'Sync failed: 503' };
+      });
+
+      const { SessionSyncer } = await import('../SessionSyncer.js');
+      await new SessionSyncer().sync('session-1', { ...context, abortSignal: signal });
+
+      expect(hadLocalFailure(signal)).toBe(false);
+    });
+  });
+
   describe('a timer run (stopAtFirstFailure)', () => {
     it('ends at the metrics request answered 503: the conversation processor is not run', async () => {
       mockLoadSession.mockResolvedValue(makeSession());

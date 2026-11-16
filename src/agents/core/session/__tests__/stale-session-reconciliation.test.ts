@@ -1900,6 +1900,25 @@ describe('attemptResult', () => {
     expect(attemptResult(new AbortController().signal, true)).toBe('not-attempt');
   });
 
+  it('a processor failure the sync caught, with no request outcome, is a local failure: no attempt, the failing clock stays', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const { noteLocalFailure } = await import('@/providers/plugins/sso/session/bounded-request.js');
+    const signal = new AbortController().signal;
+    noteLocalFailure(signal);
+    expect(attemptResult(signal, false)).toBe('not-attempt');
+  });
+
+  it('a request outcome still wins over a caught local failure of the same attempt', async () => {
+    const { attemptResult } = await import('../stale-session-reconciliation.js');
+    const { noteLocalFailure } = await import('@/providers/plugins/sso/session/bounded-request.js');
+    const signal = new AbortController().signal;
+    const request = boundedRequest(1000, { abortSignal: signal });
+    request.noteAnswer(404, true, false);
+    request.dispose();
+    noteLocalFailure(signal);
+    expect(attemptResult(signal, false)).toBe('counted');
+  });
+
   it('rejected credentials win over a counted answer of the same attempt', async () => {
     const { attemptResult } = await import('../stale-session-reconciliation.js');
     const { noteAuthFailure } = await import('@/providers/plugins/sso/session/bounded-request.js');

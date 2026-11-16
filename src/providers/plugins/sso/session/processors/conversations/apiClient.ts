@@ -200,7 +200,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               bodyIsJson = false;
               errorData = { message: errorText };
             }
-            lastOutcome = request.noteAnswer(response.status, bodyIsJson, false);
+            lastOutcome = request.noteAnswer(response.status, bodyIsJson, false, errorData);
 
             const apiMessage = errorData?.error?.message
               || errorData?.message
@@ -208,7 +208,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             const apiDetails = errorData?.error?.details
               || errorData?.details;
             const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
-            if (response.status === 401) {
+            // A 401 that is the backend's "Access denied" is no expiry: nothing to sign in again for
+            if (response.status === 401 && lastOutcome === 'auth') {
               await rejectCredentials(bounds.abortSignal, message);
             }
 
