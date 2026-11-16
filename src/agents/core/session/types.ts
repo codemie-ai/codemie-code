@@ -73,7 +73,10 @@ export const CONTINUE_SESSION_ENV_KEY = 'CODEMIE_CONTINUE_SESSION';
 /**
  * Sync status (used by all processors)
  */
-export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'rejected';
+
+/** Why a record left the delivery queue with data unsent. */
+export type DropReason = 'rejected by the server' | 'retry budget exhausted' | 'retention expired' | 'local errors';
 
 /**
  * Conversations sync state (ConversationsProcessor)
@@ -193,12 +196,33 @@ export interface Session {
   endMetricSentAt?: number;
   /** Why no end metric applies to this session (e.g. no analytics auth configured) */
   endMetricSkipped?: string;
-  /** Delivery attempts of a completed but undelivered record */
+  /** Work consent frozen at SessionStart for the legacy /v1/metrics gate (anthropic-subscription only). Hashes, no PII. */
+  legacyMetricsConsent?: { ref: string; apiIdentity: string; ownerHash: string };
+  /**
+   * SessionStart could not read the work consent store (not "no entry"): the signed-in identity of that moment. The legacy
+   * gate looks the consent up again under it at send time; an entry connected after `startTime` does not count.
+   */
+  legacyMetricsConsentUnresolved?: { apiIdentity: string; ownerHash: string };
+  /** A final legacy-gate skip met by any legacy sender: no /v1/metrics is sent for this session and its deltas count as delivered */
+  legacyMetricsWithheld?: string;
+  /** The start metric was withheld by a transient legacy-gate verdict (its reason, e.g. `startup`): sent before the end metric */
+  startMetricDeferred?: string;
+  /** Retired: nothing reads or writes it; a record written by an older CLI may still carry it */
   deliveryAttempts?: number;
-  /** Finalization attempts of a stranded or legacy record */
-  finalizeAttempts?: number;
+  /** Finalize failures of a stranded or legacy record that made no request (a file or transcript error), counted over the record's life */
+  localFinalizeFailures?: number;
   /** Unix ms when this record left the delivery queue with data it was to send still unsent */
   droppedAt?: number;
+  /** Why the record is dropped; set together with `droppedAt`. The first one wins, but the drop of the rest of a record replaces an earlier `rejected by the server` mark (a rejected line while the record stayed queued) */
+  droppedReason?: DropReason;
+  /** The session id a `/clear` generation was kept under before it was re-keyed to stay in the delivery queue */
+  originSessionId?: string;
+  /** Unix ms of the first delivery failure that was not an `ok` since the last successful attempt; the retry window runs from it. `null`: cleared by a successful attempt */
+  deliveryFailingSince?: number | null;
+  /** Unix ms the latest real delivery attempt began; the exit notice counts a record as queued only when it was attempted since the wrapper started */
+  deliveryAttemptedAt?: number;
+  /** Delivery attempts that reached the server or could not be told apart from that; counted toward the retry budget */
+  deliveryRealAttempts?: number;
   /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */
   clientType?: string;
   /** The agent session id the launch named (e.g. `--session <ses_>`), selected exactly by the agent's transcript lookup */

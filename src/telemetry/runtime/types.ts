@@ -12,6 +12,8 @@ export interface LocalTelemetryDiscoveredSession {
   updatedAt: number;
   model?: string;
   isArchived?: boolean;
+  /** The session's title in Claude Desktop, when its metadata has one. */
+  title?: string;
 }
 
 export interface DesktopTelemetryRuntimeConfig {

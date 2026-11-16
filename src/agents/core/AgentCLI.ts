@@ -4,13 +4,7 @@ import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
-import {
-  ConfigLoader,
-  CodeMieConfigOptions,
-  resolveAgentModelSet,
-  resolveProfileModels,
-  withAgentModelView
-} from '../../utils/config.js';
+import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -34,9 +28,9 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
-import { classifyModelForAgent, isActiveModelOnly } from './model-compat.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
@@ -138,6 +132,12 @@ export class AgentCLI {
       this.program.addCommand(setupCommand);
     }
 
+    // Non-Claude models a profile offers alongside Claude ones (Claude Code /model picker and
+    // Claude Desktop). Claude Code has no `models` subcommand of its own, so nothing is shadowed.
+    if (this.adapter.name === ClaudePluginMetadata.name && !this.adapter.ownedSubcommands?.includes('models')) {
+      this.program.addCommand(createClaudeModelsCommand());
+    }
+
     // Add init command for frameworks, but only when the agent binary doesn't
     // already own an 'init' subcommand (avoids shadowing the binary's native command).
     if (!this.adapter.ownedSubcommands?.includes('init')) {
@@ -225,7 +225,11 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
-      const loadedConfig = await ConfigLoader.load(process.cwd(), {
+      // Every managed agent reads config from the nearest `.codemie` up from the cwd (the project it
+      // exports is what its session records carry); `.env` and the agent itself stay in process.cwd().
+      const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
+      const configDir = await findNearestConfigDir(process.cwd());
+      const config = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,
         model: options.model as string | undefined,
@@ -233,18 +237,7 @@ export class AgentCLI {
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
-      });
-
-      // An explicit --model or CODEMIE_MODEL is the user's own choice for this run: it beats the
-      // agent's persisted active model, and the persisted-model harness check does not apply to it.
-      // With --profile, ConfigLoader.load ignores CODEMIE_MODEL (profile protection), so an
-      // inherited value (e.g. from a parent codemie session) must not count as an override either.
-      const modelOverridden = Boolean(options.model) || (Boolean(process.env.CODEMIE_MODEL) && !options.profile);
-      // A per-agent profile launches with this agent's own active model and model list.
-      const config = withAgentModelView(loadedConfig, this.adapter.name);
-      if (modelOverridden) {
-        config.model = loadedConfig.model;
-      }
+      }, process.cwd());
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
@@ -253,7 +246,7 @@ export class AgentCLI {
 
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
-          && !(await ConfigLoader.hasLocalConfig(process.cwd()));
+          && !(await ConfigLoader.hasLocalConfig(configDir));
 
         if (hasNoConfig) {
           config.provider = ProviderName.BEARER_AUTH;
@@ -356,7 +349,7 @@ export class AgentCLI {
       const { canPromptForProject } = await import('../../utils/interactive.js');
       const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
       const launchIdentity = await resolveLaunchIdentity(config, {
-        workingDir: process.cwd(),
+        workingDir: configDir,
         canPrompt: canPromptForProject({ task: options.task }),
         surface: 'agent',
         jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
@@ -398,7 +391,7 @@ export class AgentCLI {
       }
 
       // Validate provider and model compatibility
-      if (!this.validateCompatibility(config, modelOverridden)) {
+      if (!this.validateCompatibility(config)) {
         process.exit(1);
       }
 
@@ -524,6 +517,16 @@ export class AgentCLI {
             Object.assign(providerEnv, buildResumeEnvOverride(true));
             appendAuditEvent('resume_external_confirmed', auditData);
             logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
+          }
+
+          // The user may have passed an id the agent does not know (e.g. a CodeMie session id
+          // shown by analytics). Hand the agent the native id the resolver mapped it to.
+          // Only the `--resume` option is rewritten; a native positional resume stays as typed.
+          const resolvedNativeId = ownership?.nativeResumeId?.replace(/\p{Cc}/gu, '');
+          if (options.resume && resolvedNativeId && resolvedNativeId !== resumeId) {
+            logger.info(`[AgentCLI] Resuming session ${resumeId} as native ${this.adapter.name} session ${resolvedNativeId}`);
+            options.resume = resolvedNativeId;
+            providerEnv[RESUME_SESSION_ENV_KEY] = resolvedNativeId;
           }
         }
       }
@@ -723,7 +726,7 @@ export class AgentCLI {
   /**
    * Validate provider and model compatibility
    */
-  private validateCompatibility(config: CodeMieConfigOptions, modelOverridden = false): boolean {
+  private validateCompatibility(config: CodeMieConfigOptions): boolean {
     const metadata = this.getAgentMetadata();
     if (!metadata) {
       logger.error(`Unknown agent '${this.adapter.name}'`);
@@ -765,13 +768,6 @@ export class AgentCLI {
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
         console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
         console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
-
-        // When the agent has 2+ models (or switches from the catalog), point at the in-place switch
-        // command too — it's narrower than --model (only ever offers this
-        // profile's own list) and persists, unlike the one-off override above.
-        if (resolveProfileModels(config, this.adapter.name).length >= 2 || this.switchesFromCatalog(config)) {
-          console.log(chalk.white('  Or run: ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick a compatible model from this profile.'));
-        }
       } else {
         console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }
@@ -779,61 +775,7 @@ export class AgentCLI {
       return false;
     }
 
-    // Persisted active model vs the launching harness (EPMCDME-15641). Only a model that
-    // classifies as `incompatible` acts; `unverified` and unrestricted agents print nothing.
-    if (!modelOverridden && config.model) {
-      return this.checkHarnessCompatibility(config, config.model);
-    }
-
     return true;
-  }
-
-  /**
-   * A per-agent profile (`agentModels`, set up by `codemie setup`) blocks the launch on a mismatch;
-   * a legacy profile only gets a warning, because nothing was ever validated for it.
-   */
-  private checkHarnessCompatibility(config: CodeMieConfigOptions, model: string): boolean {
-    const agentSet = resolveAgentModelSet(config, this.adapter.name);
-    const opts = { confirmedModels: agentSet?.confirmedModels, provider: config.provider };
-    if (classifyModelForAgent(this.adapter.name, model, opts) !== 'incompatible') {
-      return true;
-    }
-
-    const name = this.adapter.displayName;
-    const siblings = resolveProfileModels(config, this.adapter.name).filter(
-      id => id !== model && classifyModelForAgent(this.adapter.name, id, opts) !== 'incompatible'
-    );
-    const isPerAgentProfile = Boolean(config.agentModels);
-
-    // stderr only: stdout is parsed by ACP/SDK/CI callers, and a legacy profile continues to launch.
-    if (isPerAgentProfile) {
-      logger.error(`Active model '${model}' is not compatible with ${name}`);
-    } else {
-      console.error(chalk.yellow(`\n⚠ Active model '${model}' does not look compatible with ${name}; it may fail at launch.`));
-    }
-
-    if (siblings.length > 0) {
-      console.error(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
-      console.error(chalk.white('Run ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick one.'));
-    } else if (this.switchesFromCatalog(config)) {
-      console.error(chalk.white('Run ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(` to pick a ${name} model.`));
-    } else {
-      console.error(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
-    }
-
-    return !isPerAgentProfile;
-  }
-
-  /** True when `codemie models switch --agent` offers this agent the live catalog (no saved list). */
-  private switchesFromCatalog(config: CodeMieConfigOptions): boolean {
-    return Boolean(resolveAgentModelSet(config, this.adapter.name)) && isActiveModelOnly(this.adapter.name);
-  }
-
-  /** `codemie models switch`, scoped to this agent when the profile sets models per agent. */
-  private modelsSwitchCommand(config: CodeMieConfigOptions): string {
-    return resolveAgentModelSet(config, this.adapter.name)
-      ? `codemie models switch --agent ${this.adapter.name.replace(/-acp$/, '')}`
-      : 'codemie models switch';
   }
 
   private async promptExternalResume(

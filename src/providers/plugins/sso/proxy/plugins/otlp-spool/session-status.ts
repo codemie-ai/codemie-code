@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { writeJsonFileAtomic } from '@/utils/atomic-write.js';
-import { SPOOL_STREAMS, statusFile, type SpoolStream } from './spool-paths.js';
+import { OTEL_JSON_STREAMS, OTEL_STREAMS, SPOOL_STREAMS, statusFile, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { STOP_REASONS, type StopReason } from '@/agents/core/evidence/stop-marker.js';
 import {
@@ -44,6 +44,22 @@ export interface SessionStatus {
    * for any bytes that are still pending or appended afterwards.
    */
   endedAt?: number;
+  /**
+   * The latest forwarded `SessionEnd` (`endedAt` keeps the first). A reopen that already worked is ended
+   * again; bytes written after this time are the next resume's (see reopen-hold.ts).
+   */
+  lastEndedAt?: number;
+  /**
+   * Size of each OTEL spool file when that `SessionEnd` was forwarded: bytes before it belong to the run
+   * that ended, bytes after it to a reopen. Lets the hold tell the reopen's startup records from records of
+   * the earlier run that are still unsent.
+   */
+  endedSizes?: Partial<Record<SpoolStream, number>>;
+  /**
+   * When the proxy saw a reopened (resumed) session do real work, before any hook pass said so. Lets the
+   * hold of the session's startup records stay released across a daemon restart (see reopen-hold.ts).
+   */
+  reopenWorkAt?: number;
   /** Project bound to the session: first usable name seen on a hook, original spelling, set once. */
   project?: string;
   /** Distinct project names seen once the session became ambiguous. Sticky: nothing is sent. */
@@ -57,8 +73,11 @@ export interface SessionStatus {
    * stream hold tracks a head-of-line proof hold of that stream only. `since` survives restarts.
    */
   holds?: Partial<Record<HoldScope, Hold>>;
-  /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
-  lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string };
+  /**
+   * The latest recorded local loss: a hold that reached the retention bound and dropped its backlog, or
+   * the backlog of a session without a project (`no_project`, with the stream it names).
+   */
+  lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string; stream?: SpoolStream };
   /**
    * The latest hook-time stamp failure (no durable evidence record, nothing spooled). Its own single slot:
    * a stamp failure never overwrites `lastLoss` (a retention or delivery loss), and vice versa.
@@ -74,6 +93,11 @@ export interface SessionStatus {
    * advanced, never an accepted send, so it stays visible here (AC18). Reason capped at 200 chars.
    */
   lastDiscard?: Discard;
+  /**
+   * The first discard that ended the session's publication (`endsSessionDiscard`). Sticky: a later benign discard
+   * replaces `lastDiscard`, never this.
+   */
+  endingDiscard?: Discard;
   /** Provenance decided at the last tick: evidence request or today's legacy request. */
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
@@ -88,6 +112,31 @@ export interface SessionStatus {
   stopIntent?: StopReason;
   /** Write-ahead checkpoint of a new-contract network attempt: set durably before the POST, cleared once its outcome is processed (see stop-intent.ts). */
   sendCheckpoint?: true;
+  /** Destination markers the forwarder owes but could not write yet: the status is not swept while set (see destination-intent.ts). */
+  destinationIntent?: DestinationIntent;
+}
+
+/** The record key (a hash, no identity text) and the destination markers still to write for it. */
+export interface DestinationIntent {
+  key: string;
+  /** Tags of the accepted projects (`projectTag`) whose marker is owed. */
+  accepted?: string[];
+  ended?: true;
+}
+
+const RECORD_KEY_RE = /^[0-9a-f]{64}$/;
+const PROJECT_TAG_RE = /^[0-9a-f]{16}$/;
+const MAX_INTENT_TAGS = 16;
+
+function parseDestinationIntent(raw: unknown): DestinationIntent | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { key, accepted, ended } = raw as Record<string, unknown>;
+  if (typeof key !== 'string' || !RECORD_KEY_RE.test(key)) return undefined;
+  const tags = Array.isArray(accepted)
+    ? accepted.filter((t): t is string => typeof t === 'string' && PROJECT_TAG_RE.test(t)).slice(0, MAX_INTENT_TAGS)
+    : [];
+  if (tags.length === 0 && ended !== true) return undefined;
+  return { key, ...(tags.length > 0 && { accepted: tags }), ...(ended === true && { ended: true }) };
 }
 
 export interface AgeSegment {
@@ -188,12 +237,13 @@ function parseLoss(raw: unknown): SessionStatus['lastLoss'] {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const { reason, at, bytes } = raw as Record<string, unknown>;
   if (!(LOSS_REASONS as readonly unknown[]).includes(reason) || toOffset(at) === 0) return undefined;
-  const detail = (raw as Record<string, unknown>)['detail'];
+  const { detail, stream } = raw as Record<string, unknown>;
   return {
     reason: reason as LossReason,
     at: toOffset(at),
     bytes: toOffset(bytes),
     ...(typeof detail === 'string' && detail ? { detail: detail.slice(0, MAX_DETAIL) } : {}),
+    ...((SPOOL_STREAMS as readonly unknown[]).includes(stream) ? { stream: stream as SpoolStream } : {}),
   };
 }
 
@@ -220,6 +270,15 @@ function parseDelivery(raw: unknown): SessionStatus['delivery'] {
     };
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * A discard that ends the session's publication: the backend's project conflict, or any discard of the hooks stream
+ * (a final 422 refusal or a 2xx with `accepted: 0`). A rejected legacy OTEL JSON batch (`payload_rejected`) or an OTLP
+ * partial rejection drops that batch only.
+ */
+export function endsSessionDiscard(discard: Pick<Discard, 'reason' | 'stream'>): boolean {
+  return discard.reason === 'session_project_conflict' || (discard.stream === 'hooks' && discard.reason !== 'payload_rejected');
 }
 
 function parseDiscard(raw: unknown): Discard | undefined {
@@ -261,6 +320,23 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (endedAt > 0) {
     status.endedAt = endedAt;
   }
+  const lastEndedAt = toOffset(source['lastEndedAt']);
+  if (lastEndedAt > 0) {
+    status.lastEndedAt = lastEndedAt;
+  }
+  const endedSizes = source['endedSizes'];
+  if (typeof endedSizes === 'object' && endedSizes !== null) {
+    const sizes: Partial<Record<SpoolStream, number>> = {};
+    for (const stream of SPOOL_STREAMS) {
+      const size = toOffset((endedSizes as Record<string, unknown>)[stream]);
+      if (stream !== 'hooks' && size > 0) sizes[stream] = size;
+    }
+    if (Object.keys(sizes).length > 0) status.endedSizes = sizes;
+  }
+  const reopenWorkAt = toOffset(source['reopenWorkAt']);
+  if (reopenWorkAt > 0) {
+    status.reopenWorkAt = reopenWorkAt;
+  }
   const project = source['project'];
   if (typeof project === 'string' && isSendableProjectName(project)) {
     status.project = project;
@@ -286,9 +362,13 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (delivery) status.delivery = delivery;
   const discard = parseDiscard(source['lastDiscard']);
   if (discard) status.lastDiscard = discard;
+  const ending = parseDiscard(source['endingDiscard']);
+  if (ending) status.endingDiscard = ending;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
   if (source['sendCheckpoint'] === true) status.sendCheckpoint = true;
+  const intent = parseDestinationIntent(source['destinationIntent']);
+  if (intent) status.destinationIntent = intent;
   const carried = parseCarriedAge(source['carriedAge']);
   if (carried) status.carriedAge = carried;
   if (typeof source['stopIntent'] === 'string' && (STOP_REASONS as readonly string[]).includes(source['stopIntent'])) {
@@ -305,6 +385,23 @@ export async function readStatus(sessionId: string): Promise<SessionStatus | nul
     return normalizeStatus(JSON.parse(raw));
   } catch {
     return null;
+  }
+}
+
+/** Like `readStatus`, but keeps "no status file" apart from "a status file that could not be read or parsed". */
+export async function readStatusState(
+  sessionId: string
+): Promise<{ kind: 'absent' } | { kind: 'ok'; status: SessionStatus } | { kind: 'unreadable' }> {
+  let raw: string;
+  try {
+    raw = await readFile(statusFile(sessionId), 'utf-8');
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable' };
+  }
+  try {
+    return { kind: 'ok', status: normalizeStatus(JSON.parse(raw)) };
+  } catch {
+    return { kind: 'unreadable' };
   }
 }
 
@@ -332,8 +429,22 @@ export async function updateStatus(
 }
 
 export async function markSessionEnded(sessionId: string): Promise<void> {
+  // Sizes first, outside the lock: a stat must not hold it.
+  const sizes: Partial<Record<SpoolStream, number>> = {};
+  for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
+    try {
+      const { size } = await stat(streamFile(sessionId, stream));
+      if (size > 0) sizes[stream] = size;
+    } catch {
+      // No file for this stream.
+    }
+  }
   await updateStatus(sessionId, (status) => {
-    status.endedAt ??= Date.now();
+    const now = Date.now();
+    status.endedAt ??= now;
+    status.lastEndedAt = now;
+    if (Object.keys(sizes).length > 0) status.endedSizes = sizes;
+    else delete status.endedSizes;
   });
 }
 
@@ -358,6 +469,7 @@ export async function advanceCursor(
       }
     }
     if (discard) status.lastDiscard = { ...discard, reason: discard.reason.slice(0, 200) };
+    if (discard && !status.endingDiscard && endsSessionDiscard(discard)) status.endingDiscard = status.lastDiscard;
   });
 }
 

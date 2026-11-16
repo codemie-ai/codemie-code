@@ -68,4 +68,27 @@ describe('SSOHealthCheck platform URL resolution', () => {
     expect(result.status).toBe('unhealthy');
     expect(result.message).toBe('SSO Authentication required');
   });
+
+  it('does not report expiry for cookie-only credentials with a past expiresAt', async () => {
+    mockGetStoredCredentials.mockResolvedValue({ ...creds, expiresAt: Date.now() - 3600_000 });
+
+    const result = await new SSOHealthCheck().check({ provider: 'ai-run-sso', baseUrl: P } as never);
+
+    expect(result.status).toBe('healthy');
+    expect(result.details.some(d => d.message === 'SSO session expired')).toBe(false);
+    expect(result.details.some(d => /Session expires in/.test(d.message))).toBe(false);
+  });
+
+  it('still reports expiry for JWT-bearing credentials with a past expiresAt', async () => {
+    mockGetStoredCredentials.mockResolvedValue({
+      ...creds,
+      cookies: { codemie_access_token: 'jwt' },
+      expiresAt: Date.now() - 3600_000,
+    });
+
+    const result = await new SSOHealthCheck().check({ provider: 'ai-run-sso', baseUrl: P } as never);
+
+    expect(result.status).toBe('unhealthy');
+    expect(result.details.some(d => d.message === 'SSO session expired')).toBe(true);
+  });
 });

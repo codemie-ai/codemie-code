@@ -45,6 +45,7 @@ describe('resolveHookAuthProfile', () => {
     // A directory with no local config in it or in any ancestor below the temp root.
     outsideDir = path.join(tempBase, 'outside');
     await fs.mkdir(nestedDir, { recursive: true });
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true }); // the walk stops at the Git worktree root
     await fs.mkdir(outsideDir, { recursive: true });
 
     // The walk-up would otherwise climb out of the temp dir into the real home directory and treat the

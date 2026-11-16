@@ -1,10 +1,11 @@
 import { existsSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { dirname, join } from 'path';
-import { resolveHomeDir, normalizePathSeparators } from '@/utils/paths.js';
+import { resolveHomeDir, normalizePathSeparators, isPathWithinDirectory } from '@/utils/paths.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
 import {
   getClaudeDesktopCodeSessionsRoot,
   getClaudeDesktopLocalSessionsRoot
@@ -21,6 +22,7 @@ interface DesktopMetadata {
   lastActivityAt: number;
   model?: string;
   isArchived?: boolean;
+  title?: unknown;
 }
 
 /**
@@ -36,6 +38,8 @@ function shortSessionId(sessionId: string): string {
  * Claude Desktop has used two directory layouts: one named after the full metadata file
  * (`local_<uuid>/`) and the current one named after the short session id (`89643b28/`).
  * Both are probed so a Desktop update cannot silently drop Cowork sessions from discovery.
+ * A candidate is taken only when its `audit.jsonl` lies within the metadata file's directory:
+ * `sessionId` is read from the metadata file and could otherwise lead outside it.
  */
 function resolveAuditTranscriptPath(metadataPath: string, sessionId: string): string | null {
   const candidates = [
@@ -45,7 +49,7 @@ function resolveAuditTranscriptPath(metadataPath: string, sessionId: string): st
 
   for (const dir of candidates) {
     const candidate = join(dir, 'audit.jsonl');
-    if (existsSync(candidate)) return candidate;
+    if (isPathWithinDirectory(dirname(metadataPath), candidate) && existsSync(candidate)) return candidate;
   }
 
   return null;
@@ -177,7 +181,8 @@ export async function discoverClaudeDesktopSessions(
       // (the conversation id) falls back to the external `local_<id>`, and an early
       // poll syncs an empty stub conversation under it - a duplicate of the real
       // conversation that later syncs under the inner uuid.
-      if (!metadata.cliSessionId) continue;
+      // The id becomes part of file paths, so one that is not a plain name is skipped too.
+      if (!metadata.cliSessionId || !isSafeSessionId(metadata.cliSessionId)) continue;
       if (metadata.lastActivityAt < sinceMs && metadata.createdAt < sinceMs) continue;
       if (seenSessionIds.has(metadata.sessionId)) continue;
 
@@ -210,7 +215,8 @@ export async function discoverClaudeDesktopSessions(
         createdAt: metadata.createdAt,
         updatedAt: metadata.lastActivityAt,
         model: metadata.model || companionMetadata?.model,
-        isArchived: metadata.isArchived
+        isArchived: metadata.isArchived,
+        ...(typeof metadata.title === 'string' && { title: metadata.title })
       });
     } catch (error) {
       logger.debug('[claude-desktop-discovery] Failed to read session metadata', {

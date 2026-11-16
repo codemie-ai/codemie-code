@@ -1,7 +1,6 @@
 import type { BaseSelectionState } from './types.js';
 import type { ActionHandlers } from './actions.js';
 import { KEY, CONFIG, PAGINATION_CONTROL } from './constants.js';
-import { startRawInput } from './raw-input.js';
 
 export interface InteractivePromptOptions {
   state: BaseSelectionState;
@@ -21,13 +20,24 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   let cursorIndex = 0;
   let isActive = false;
   let resolvePromise: (() => void) | null = null;
-  let stopRawInput: (() => void) | null = null;
+  let dataHandler: ((data: Buffer) => void) | null = null;
+  let keepAliveTimer: NodeJS.Timeout | null = null;
   let searchDebounceTimer: NodeJS.Timeout | null = null;
 
   async function start(): Promise<void> {
     isActive = true;
 
-    stopRawInput = startRawInput(createKeyHandler(), { unrefOnStop: true });
+    keepAliveTimer = setInterval(() => {}, CONFIG.KEEP_ALIVE_INTERVAL_MS); // keep event loop running
+
+    process.stdin.resume();
+
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+
+    process.stdin.setEncoding('utf8');
+
+    setupKeyHandlers();
     render();
 
     return new Promise<void>((resolve) => {
@@ -38,15 +48,27 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   function stop(): void {
     isActive = false;
 
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = null;
     }
 
-    if (stopRawInput) {
-      stopRawInput();
-      stopRawInput = null;
+    if (dataHandler) {
+      process.stdin.removeListener('data', dataHandler);
+      dataHandler = null;
     }
+
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+
+    process.stdin.pause();
+    process.stdin.unref();
 
     if (resolvePromise) {
       resolvePromise();
@@ -286,7 +308,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     updateSearchQuery(currentSearch + key);
   }
 
-  function createKeyHandler(): (key: string) => void {
+  function setupKeyHandlers(): void {
     type KeyHandler = () => void;
 
     const keyHandlers: Record<string, KeyHandler> = {
@@ -306,9 +328,10 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       [KEY.CTRL_BRACKET_RIGHT]: handleCtrlBracketRight,
     };
 
-    return (key: string) => {
+    dataHandler = (data: Buffer) => {
       if (!isActive) return;
 
+      const key = data.toString();
       const handler = keyHandlers[key];
 
       if (handler) {
@@ -320,6 +343,8 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
         handleRegularInput(key);
       }
     };
+
+    process.stdin.on('data', dataHandler);
   }
 
   return {

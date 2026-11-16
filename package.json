@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.16.6",
+  "version": "0.16.8",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in CodeMie agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -134,6 +134,7 @@
     "dedent": "^1.7.1",
     "dotenv": "^16.3.1",
     "fast-glob": "^3.3.2",
+    "fflate": "^0.8.3",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.5",
     "inquirer": "^9.2.12",

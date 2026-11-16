@@ -1,0 +1,80 @@
+{
+  "task": "Make `codemie-claude --resume <CodeMie session id>` resolve to the native Claude id, pass the native id to `claude -r`, and keep the session CodeMie-owned (EPMCDME-17189).",
+  "generated": "2026-11-13T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "session-ownership resolver (resolveClaudeResumeSession), AgentCLI resume handling, core agent types (ResumeOwnershipResult contract), Claude agent plugin (resolveResumeOwnership), COMMANDS.md docs",
+      "layers": "Service (session resolution), Workflow (CLI resume flow), Agent-Tool (Claude plugin)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "ID resolution ranking across multiple session records per CodeMie id (generation suffix, completed_ prefix, placeholder or unknown native ids); wrong resolution would mark a session external and drop telemetry; shared AgentCLI resume path used by every agent",
+      "mitigation": "Native-id match still wins, change is additive (optional nativeResumeId on the result), only the --resume option is rewritten, resolver failures fall back to existing behaviour; unit, plugin-level and integration tests added, plus a review fix-up to the ranking logic"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 6,
+      "modified_file_list": [
+        "docs/COMMANDS.md",
+        "src/agents/core/AgentCLI.ts",
+        "src/agents/core/__tests__/session-ownership.test.ts",
+        "src/agents/core/session/session-ownership.ts",
+        "src/agents/core/types.ts",
+        "src/agents/plugins/claude/claude.plugin.ts"
+      ],
+      "new_files": 3,
+      "new_file_list": [
+        "src/agents/core/__tests__/AgentCLI-resume.test.ts",
+        "src/agents/plugins/claude/__tests__/claude.plugin.resume-ownership.test.ts",
+        "tests/integration/agent-resume-codemie-id.test.ts"
+      ],
+      "affected_dirs": [
+        "docs",
+        "src",
+        "tests"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Service", "Workflow", "Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 9,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four production components changed: session-ownership.ts (new resolveClaudeResumeSession with native/CodeMie id matching and record ranking), AgentCLI.ts (rewrites options.resume and RESUME_SESSION_ENV_KEY to the resolved native id), types.ts (ResumeOwnershipResult gains nativeResumeId) and claude.plugin.ts (resolver wiring). Base L, bumped to XL because AgentCLI.ts and types.ts are shared by every agent."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "9 files per diffstat (6 modified, 3 new tests) across docs, src and tests; 3+ top-level directories gives L."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared AgentCLI.ts and the shared ResumeOwnershipResult contract in types.ts used by all agent adapters (the change is additive and optional, so this is a conservative bump)"
+  ],
+  "split_recommendation": null
+}

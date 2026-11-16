@@ -1,8 +1,10 @@
 /**
  * Hook respawn of the proxy daemon on a different port: Claude Code's OTLP settings follow it.
  *
- * Runs the real `ensureOtlpProxy` and the real detached bin/proxy-daemon.js. Port 4001 (then the
- * first fallback port) is held by a throwaway listener so each respawn lands on a different port.
+ * Runs the real `ensureOtlpProxy` and the real detached bin/proxy-daemon.js. The configured port is
+ * an OS-assigned one this test already holds (never the shared default 4001, which daemons from
+ * parallel integration files and the developer's own proxy use); it and then the first fallback port
+ * are held by throwaway listeners so each respawn lands on a different port.
  * The profile has no SSO login, so the daemon holds its port with the placeholder listener, which
  * needs no network. Everything lives in temp CODEMIE_HOME / user-home directories; the developer's
  * real ~/.claude and ~/.codemie are never read or written.
@@ -11,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createServer, type Server } from 'node:net';
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -21,13 +23,12 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DAEMON_DIST = join(REPO_ROOT, 'dist', 'bin', 'proxy-daemon.js');
 
 const AGENT = 'claude-code-otlp';
-const DEFAULT_PORT = 4001;
 const OTLP_PATH = '/v1/analytics/otlp';
 const PROFILE = 'respawn-recovery-test';
 
 type DaemonManager = typeof import('../../src/cli/commands/proxy/daemon-manager.js');
 
-/** Holds `port` on 127.0.0.1; resolves to null when something else already holds it (that also blocks the daemon). */
+/** Holds `port` (0 = any free port) on 127.0.0.1; resolves to null when something else already holds it (that also blocks the daemon). */
 function holdPort(port: number): Promise<Server | null> {
   return new Promise((resolveHold) => {
     const server = createServer();
@@ -51,6 +52,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('OTLP endpoint after a daemon respawn 
   const savedEnv: Record<string, string | undefined> = {};
   const savedCwd = process.cwd();
   let daemonPid = -1;
+  let configuredPort = -1;
 
   const readSettingsEnv = (): Record<string, string> =>
     (JSON.parse(readFileSync(settingsFile, 'utf-8')) as { env: Record<string, string> }).env;
@@ -92,12 +94,18 @@ describe.skipIf(!existsSync(DAEMON_DIST))('OTLP endpoint after a daemon respawn 
       },
     }, null, 2), 'utf-8');
 
+    // Held for the whole test, so the daemon can never bind it: no other process can take it in
+    // between, as it could with a fixed port another daemon releases.
+    const configuredHold = await holdPort(0);
+    blockers.push(configuredHold);
+    configuredPort = (configuredHold!.address() as AddressInfo).port;
+
     // A settings file as `connect --claude-code-otlp` leaves it: CodeMie's pair pointing at the
-    // default port with an old key, next to settings that are not CodeMie's.
+    // configured port with an old key, next to settings that are not CodeMie's.
     writeFileSync(settingsFile, JSON.stringify({
       theme: 'dark',
       env: {
-        OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${DEFAULT_PORT}${OTLP_PATH}`,
+        OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${configuredPort}${OTLP_PATH}`,
         OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer stale-gateway-key',
         MY_OWN_SETTING: 'keep-me',
       },
@@ -131,15 +139,14 @@ describe.skipIf(!existsSync(DAEMON_DIST))('OTLP endpoint after a daemon respawn 
 
   // @case otlp-endpoint-respawn-recovery_TC_001
   it('rewrites the endpoint and key when the respawned daemon lands on a different port', async () => {
-    // First start: the default port is busy, so the daemon falls back to another one.
-    blockers.push(await holdPort(DEFAULT_PORT));
+    // First start: the configured port is busy, so the daemon falls back to another one.
     await ensureOtlpProxy(AGENT);
 
     const first = await dm.readState();
     expect(first, 'first daemon state').not.toBeNull();
     daemonPid = first!.pid;
     const firstPort = first!.port;
-    expect(firstPort).not.toBe(DEFAULT_PORT);
+    expect(firstPort).not.toBe(configuredPort);
 
     const afterFirst = readSettingsEnv();
     expect(afterFirst.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`http://127.0.0.1:${firstPort}${OTLP_PATH}`);
@@ -156,7 +163,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('OTLP endpoint after a daemon respawn 
     expect(second, 'respawned daemon state').not.toBeNull();
     daemonPid = second!.pid;
     expect(second!.port).not.toBe(firstPort);
-    expect(second!.port).not.toBe(DEFAULT_PORT);
+    expect(second!.port).not.toBe(configuredPort);
 
     const settings = JSON.parse(readFileSync(settingsFile, 'utf-8')) as { theme: string; env: Record<string, string> };
     expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${second!.url}${OTLP_PATH}`);

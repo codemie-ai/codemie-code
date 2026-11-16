@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +10,14 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { resolveTenantModelId } from './model-name-resolver.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
+import {
+  toDesktopModels,
+  type DesktopCatalogEntry,
+  type DesktopModel,
+} from '@/providers/plugins/sso/sso.desktop-models.js';
+import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
+import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -20,10 +27,6 @@ const INFERENCE_KEYS = [
   'inferenceGatewayApiKey',
   'inferenceGatewayAuthScheme',
 ] as const;
-
-interface InferenceModelEntry {
-  name: string;
-}
 
 export interface ManagedMcpServerEntry {
   name: string;
@@ -41,38 +44,11 @@ interface ModelsListResponse {
   data?: Array<{ id?: string }>;
 }
 
-interface CodeMieLlmModel {
-  id?: string;
-  base_name?: string;
-  deployment_name?: string;
-}
-
-/**
- * Curated list of Claude models we expose by default.
- *
- * Each entry is matched against the gateway's `/v1/models` response either as
- * an exact ID or as `<entry>-<YYYYMMDD>` (the dated variant). The actual
- * resolved ID is what gets written to the Desktop config so the gateway
- * receives a model name it has registered.
- *
- * Opus, Sonnet, and Haiku entries are listed in descending preference
- * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
- * {@link selectDesktopClaudeModels} collapses each family to the single
- * highest-priority ID the gateway actually serves, so Desktop never shows more
- * than one Opus, Sonnet, or Haiku (matching the latest cloud Desktop lineup).
- */
-export const PREFERRED_CLAUDE_MODELS = [
-  'claude-opus-5-5',
-  'claude-opus-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-opus-4-6',
-  'claude-sonnet-5-5',
-  'claude-sonnet-5',
-  'claude-sonnet-4-6',
-  'claude-haiku-5-5',
-  'claude-haiku-4-5',
-] as const;
+export {
+  selectDesktopClaudeModels,
+  selectPreferredClaudeModels,
+  type DesktopModel,
+} from '@/providers/plugins/sso/sso.desktop-models.js';
 
 export const DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS = ['*'] as const;
 
@@ -81,23 +57,32 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 
 /**
  * Fetch the model list from the gateway's SSO-backed `/v1/llm_models?include_all=true`
- * endpoint and return the IDs of usable Claude-family models. When both canonical
- * and `-vertex` registrations exist, canonical IDs are preferred. When only vertex
- * registrations exist, those IDs are returned so vertex-only tenants can connect.
+ * endpoint and return the usable Claude-family models with their CodeMie names (see
+ * {@link toDesktopModels}).
+ *
+ * When `project` is set it is sent as `project_id`, so the backend narrows the list
+ * to the models that project allows (the project's Models tab).
+ *
+ * Returns `null` when the upstream catalog failed (5xx), distinct from a catalog that
+ * holds no Claude models (`[]`).
  */
-export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): Promise<string[]> {
-  const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+export async function fetchClaudeModels(
+  proxyUrl: string,
+  gatewayKey: string,
+  project: string | undefined
+): Promise<DesktopModel[] | null> {
+  const endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   try {
     logger.info(
       '[proxy] Fetching Claude models from gateway',
       ...sanitizeLogArgs({
         endpoint,
+        project,
         inferenceGatewayBaseUrl: proxyUrl,
         inferenceGatewayApiKey: gatewayKey,
-        preferredModels: [...PREFERRED_CLAUDE_MODELS],
       })
     );
-    const response = await fetch(new URL('/v1/llm_models?include_all=true', proxyUrl), {
+    const response = await fetch(endpoint, {
       headers: { Authorization: `Bearer ${gatewayKey}` },
     });
     if (!response.ok) {
@@ -109,24 +94,23 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
           status: response.status,
           statusText: response.statusText,
           inferenceGatewayBaseUrl: proxyUrl,
-          fallbackToPreferredModels: isUpstreamFailure,
         })
       );
       if (isUpstreamFailure) {
         logger.warn(
-          '[proxy] Falling back to the curated Claude Desktop model list because the upstream model catalog failed',
-          ...sanitizeLogArgs({
-            endpoint,
-            preferredModels: [...PREFERRED_CLAUDE_MODELS],
-          })
+          '[proxy] Upstream model catalog failed; skipping the connect-time Claude model check, Desktop discovers models at launch',
+          ...sanitizeLogArgs({ endpoint })
         );
-        return [...PREFERRED_CLAUDE_MODELS];
+        return null;
       }
       throw new ConfigurationError(
         response.status === 401
           ? `Local proxy model discovery was rejected with 401 Unauthorized at ${endpoint}. ` +
             'The local gateway key was not accepted by the proxy or was forwarded upstream incorrectly.'
-          : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
+          : response.status === 404 && project
+            ? `Local proxy model discovery failed at ${endpoint}: project "${project}" was not found. ` +
+              'Check the project in your CodeMie profile, then run `codemie proxy connect desktop` again.'
+            : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
       );
     }
     const contentType = response.headers.get('content-type') ?? '';
@@ -137,28 +121,19 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
         `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
       );
     }
-    const json = await response.json() as ModelsListResponse | CodeMieLlmModel[];
-    const ids = Array.isArray(json)
-      ? json
-        .map((model) => model.id || model.base_name || model.deployment_name)
-        .filter((id): id is string => typeof id === 'string')
-      : (json.data ?? [])
-        .map((m) => m.id)
-        .filter((id): id is string => typeof id === 'string');
-    const allClaudeIds = ids.filter((id) => /^claude-/i.test(id));
-    const nonVertexClaudeIds = allClaudeIds.filter((id) => !/-vertex$/i.test(id));
-    const claudeIds = nonVertexClaudeIds.length > 0 ? nonVertexClaudeIds : allClaudeIds;
+    const json = await response.json() as ModelsListResponse | DesktopCatalogEntry[];
+    const entries: DesktopCatalogEntry[] = Array.isArray(json) ? json : (json.data ?? []);
+    const claudeModels = toDesktopModels(entries);
     logger.info(
       '[proxy] Gateway model discovery completed',
       ...sanitizeLogArgs({
         endpoint,
-        totalModelCount: ids.length,
-        totalClaudeModelCount: claudeIds.length,
-        availableClaudeModels: claudeIds,
-        usedVertexFallback: nonVertexClaudeIds.length === 0 && allClaudeIds.length > 0,
+        totalModelCount: entries.length,
+        totalClaudeModelCount: claudeModels.length,
+        availableClaudeModels: claudeModels.map((model) => model.id),
       })
     );
-    return claudeIds;
+    return claudeModels;
   } catch (error) {
     if (error instanceof ConfigurationError) {
       throw error;
@@ -176,79 +151,6 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
       `Reason: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-}
-
-/**
- * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
- * model discovery response via {@link resolveTenantModelId} — exact match, a
- * dated variant (latest if multiple), or a `-vertex` variant, in that order.
- * Entries with no available match are dropped silently.
- *
- * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
- */
-export function selectPreferredClaudeModels(
-  available: string[],
-  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
-): string[] {
-  const resolved: string[] = [];
-  const missingPreferredModels: string[] = [];
-  for (const name of preferred) {
-    const match = resolveTenantModelId(name, available);
-    if (match) {
-      resolved.push(match);
-    } else {
-      missingPreferredModels.push(name);
-    }
-  }
-  logger.info(
-    '[proxy] Preferred Claude model selection completed',
-    ...sanitizeLogArgs({
-      preferredModels: [...preferred],
-      availableClaudeModels: available,
-      selectedModels: resolved,
-      missingPreferredModels,
-    })
-  );
-  return resolved;
-}
-
-/**
- * Build the exact model set Claude Desktop should be offered.
- *
- * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus, sonnet, and haiku families to a single entry each:
- * the first (highest-priority) ID that resolved. With preferred order
- * `opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, and
- * `haiku: 5.5 → 4-5` in {@link PREFERRED_CLAUDE_MODELS}, this exposes the
- * highest-priority model in each family when the gateway serves it and
- * otherwise falls back to the next-best available ID. Order is preserved.
- */
-export function selectDesktopClaudeModels(
-  available: string[],
-  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
-): string[] {
-  const resolved = selectPreferredClaudeModels(available, preferred);
-  let opusKept = false;
-  let sonnetKept = false;
-  let haikuKept = false;
-  return resolved.filter((id) => {
-    if (/^claude-opus-/i.test(id)) {
-      if (opusKept) return false;
-      opusKept = true;
-      return true;
-    }
-    if (/^claude-sonnet-/i.test(id)) {
-      if (sonnetKept) return false;
-      sonnetKept = true;
-      return true;
-    }
-    if (/^claude-haiku-/i.test(id)) {
-      if (haikuKept) return false;
-      haikuKept = true;
-      return true;
-    }
-    return true;
-  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -600,6 +502,21 @@ export interface ReconcileResult {
 }
 
 /**
+ * Keys Claude Desktop stamps on entries it stores itself (e.g. `source: "user"`
+ * on servers added through its UI) but rejects inside `managedMcpServers`.
+ * Preserved entries are re-written as managed ones, so drop them.
+ */
+const DESKTOP_LOCAL_MCP_KEYS = ['source'] as const;
+
+function stripDesktopLocalKeys(server: unknown): unknown {
+  if (!isRecord(server)) return server;
+  if (!DESKTOP_LOCAL_MCP_KEYS.some((key) => key in server)) return server;
+  const copy: Record<string, unknown> = { ...server };
+  for (const key of DESKTOP_LOCAL_MCP_KEYS) delete copy[key];
+  return copy;
+}
+
+/**
  * Reconcile the managed MCP set into an existing managedMcpServers array.
  *
  * - `managed`: the entries CodeMie owns this run (public defaults + fetched
@@ -644,7 +561,7 @@ export function reconcileManagedMcpServers(
     if (ownedLower.has(name.toLowerCase())) return false;
     if (url && managedUrls.has(url)) return false;
     return true;
-  });
+  }).map(stripDesktopLocalKeys);
 
   return {
     servers: [...managed.map(cloneManagedEntry), ...filtered],
@@ -713,6 +630,12 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
   };
 }
 
+/** The `appliedId` of a parsed `_meta.json`, only when it is safe as a file name; else no applied config. */
+function appliedConfigId(meta: unknown): string | undefined {
+  const appliedId = isRecord(meta) ? meta.appliedId : undefined;
+  return typeof appliedId === 'string' && isSafeSessionId(appliedId) ? appliedId : undefined;
+}
+
 /**
  * Returns the base directory where Claude Desktop (3P) stores its config.
  * macOS:   ~/Library/Application Support/Claude-3p
@@ -743,7 +666,7 @@ export function describeManagedSettingsOverride(
 
 /**
  * Returns the path to the active inference config JSON file under configLibrary/.
- * If `_meta.json` doesn't exist or has no `appliedId`, returns the path that
+ * If `_meta.json` doesn't exist or has no safe `appliedId`, returns the path that
  * a freshly-generated UUID would use; the caller is responsible for creating
  * `_meta.json` to register it.
  */
@@ -752,8 +675,8 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
   const metaPath = join(libDir, '_meta.json');
   if (existsSync(metaPath)) {
     try {
-      const meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
-      if (meta.appliedId) return join(libDir, `${meta.appliedId}.json`);
+      const appliedId = appliedConfigId(JSON.parse(await readFile(metaPath, 'utf-8')));
+      if (appliedId) return join(libDir, `${appliedId}.json`);
     } catch {
       // Corrupt meta — fall through to fresh UUID
     }
@@ -773,7 +696,8 @@ export async function writeDesktopConfig(
   gatewayKey: string,
   baseDir: string = getDesktopBaseDir(),
   orgMcpServers: ManagedMcpServerEntry[] | null = null,
-  managedStatePath: string = getManagedMcpStatePath()
+  managedStatePath: string = getManagedMcpStatePath(),
+  project?: string
 ): Promise<string> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
@@ -790,7 +714,7 @@ export async function writeDesktopConfig(
     }
   }
 
-  const configId = meta.appliedId ?? randomUUID();
+  const configId = appliedConfigId(meta) ?? randomUUID();
   const configPath = join(libDir, `${configId}.json`);
 
   let existing: Record<string, unknown> = {};
@@ -802,22 +726,20 @@ export async function writeDesktopConfig(
     }
   }
 
-  // Discover available Claude models from the gateway and curate down to the
-  // preferred set (a single opus, preferring 4.8) so the user doesn't have to
-  // type them manually in the GUI.
-  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey);
-  if (discoveredModels.length === 0) {
+  // Check the Claude models the profile's project offers Desktop, so a project with none
+  // fails here with a clear message. The list itself is not written: with no
+  // `inferenceModels` in its config Desktop asks the proxy's `GET /v1/models` on every
+  // start (DesktopModelsPlugin), so later changes on the project's Models tab reach it.
+  // `null` means the upstream catalog failed, so the check is skipped rather than failed.
+  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
+  if (discoveredModels !== null && discoveredModels.length === 0) {
     throw new ConfigurationError(
-      `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
+      project
+        ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
+          'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
+        : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
     );
   }
-  const resolvedModels = selectDesktopClaudeModels(discoveredModels);
-  if (resolvedModels.length === 0) {
-    throw new ConfigurationError(
-      'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
-    );
-  }
-  const inferenceModels: InferenceModelEntry[] = resolvedModels.map((name) => ({ name }));
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
   // failure we must NOT revoke previously-managed org entries (a transient backend
@@ -879,11 +801,8 @@ export async function writeDesktopConfig(
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
-      discoveredModelCount: discoveredModels.length,
-      discoveredModels,
-      resolvedModelCount: resolvedModels.length,
-      resolvedModels,
-      inferenceModelsWritten: inferenceModels.length > 0,
+      discoveredModelCount: discoveredModels?.length ?? null,
+      discoveredModels: discoveredModels?.map((model) => model.id) ?? null,
       managedMcpServerCount: managedMcpServers.length,
       seededDefaultCount: seedDefaults.length,
       displacedDefaultCount: displacedDefaults.length,
@@ -900,13 +819,14 @@ export async function writeDesktopConfig(
     delete existing[key];
   }
   delete existing.inferenceModels;
+  delete existing.modelDiscoveryEnabled;
   delete existing.coworkEgressAllowedHosts;
   delete existing.managedMcpServers;
 
   const merged = {
     ...existing,
     ...buildGatewayConfig(proxyUrl, gatewayKey),
-    ...(inferenceModels.length > 0 ? { inferenceModels: JSON.stringify(inferenceModels) } : {}),
+    modelDiscoveryEnabled: true,
     coworkEgressAllowedHosts: JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS]),
     managedMcpServers: JSON.stringify(managedMcpServers),
   };
@@ -917,8 +837,6 @@ export async function writeDesktopConfig(
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
-      inferenceModelsWritten: inferenceModels.length > 0,
-      resolvedModels,
       managedMcpServerCount: managedMcpServers.length,
       finalConfigKeys: Object.keys(merged),
     })
@@ -942,4 +860,152 @@ export async function writeDesktopConfig(
   await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
 
   return configPath;
+}
+
+export interface RemoveDesktopConfigResult {
+  removed: boolean;
+  /** Config file the gateway settings were removed from; absent when none was found. */
+  configPath?: string;
+  /** True when nothing but CodeMie settings was left, so the config file was deleted. */
+  deletedConfigFile: boolean;
+  /** Why nothing was removed; absent when `removed` is true. */
+  reason?: string;
+}
+
+function isLoopbackGatewayUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    const { hostname } = new URL(value);
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+/** A gateway config pointing at a loopback address: the shape `connect` writes, as opposed to a user's own gateway. */
+function isCodeMieGatewayConfig(config: Record<string, unknown>): boolean {
+  return config.inferenceProvider === 'gateway' && isLoopbackGatewayUrl(config.inferenceGatewayBaseUrl);
+}
+
+/**
+ * The local gateway Claude Desktop's applied config points at, or null when Desktop is not
+ * connected to CodeMie's (no applied config or an unsafe `appliedId`, not a loopback gateway
+ * config, a gateway key other than the local one, a URL without a port, anything unreadable,
+ * an unsupported platform). The local key is the one the daemon state file names, else the
+ * default key. Read-only; never throws.
+ */
+export async function readDesktopGateway(baseDir?: string, stateFile?: string): Promise<{ port: number } | null> {
+  try {
+    const libDir = join(baseDir ?? getDesktopBaseDir(), 'configLibrary');
+    const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
+    const appliedId = appliedConfigId(meta);
+    if (!appliedId) return null;
+    const config: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
+    if (!isRecord(config) || !isCodeMieGatewayConfig(config)) return null;
+    const port = Number.parseInt(new URL(config.inferenceGatewayBaseUrl as string).port, 10);
+    if (!Number.isInteger(port) || port <= 0) return null;
+    const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+    return config.inferenceGatewayApiKey === localKey ? { port } : null;
+  } catch (error) {
+    logger.debug('[proxy] Claude Desktop gateway not readable', ...sanitizeLogArgs(error));
+    return null;
+  }
+}
+
+/**
+ * Reverse {@link writeDesktopConfig}: strip the CodeMie gateway settings and managed MCP
+ * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
+ * normal login.
+ *
+ * Only acts on a config whose gateway points at a loopback address — a gateway anywhere else
+ * was configured by the user, not by `connect`. MCP servers the user added themselves and any
+ * unrelated keys are preserved. When nothing else remains, the config file is deleted and its
+ * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied.
+ */
+export async function removeDesktopConfig(
+  baseDir: string = getDesktopBaseDir(),
+  managedStatePath: string = getManagedMcpStatePath()
+): Promise<RemoveDesktopConfigResult> {
+  const libDir = join(baseDir, 'configLibrary');
+  const metaPath = join(libDir, '_meta.json');
+  if (!existsSync(metaPath)) {
+    return { removed: false, deletedConfigFile: false, reason: 'Claude Desktop config not found' };
+  }
+
+  let meta: ConfigMeta;
+  try {
+    meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Claude Desktop config index at ${metaPath} is unreadable: ` +
+      `${error instanceof Error ? error.message : String(error)}. The file was not changed.`
+    );
+  }
+
+  const configId = appliedConfigId(meta);
+  const configPath = configId ? join(libDir, `${configId}.json`) : undefined;
+  if (!configId || !configPath || !existsSync(configPath)) {
+    return { removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' };
+  }
+
+  let existing: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(configPath, 'utf-8'));
+    if (!isRecord(parsed)) throw new Error('expected a JSON object');
+    existing = parsed;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Claude Desktop config at ${configPath} is unreadable: ` +
+      `${error instanceof Error ? error.message : String(error)}. The file was not changed.`
+    );
+  }
+
+  if (!isCodeMieGatewayConfig(existing)) {
+    return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
+  }
+
+  for (const key of INFERENCE_KEYS) {
+    delete existing[key];
+  }
+  delete existing.inferenceModels;
+  delete existing.modelDiscoveryEnabled;
+  delete existing.coworkEgressAllowedHosts;
+
+  // Drop every server CodeMie manages (names recorded on earlier runs plus the bundled
+  // defaults) but keep the ones the user added. Passing the defaults as the "managed" set
+  // makes the reconcile also match them by URL; the first `defaults.length` results are
+  // those clones, so they are sliced off.
+  const previouslyManagedNames = await readManagedMcpState(managedStatePath);
+  const userServers = reconcileManagedMcpServers(
+    existing.managedMcpServers,
+    [...DEFAULT_MANAGED_MCP_SERVERS],
+    previouslyManagedNames
+  ).servers.slice(DEFAULT_MANAGED_MCP_SERVERS.length);
+  if (userServers.length > 0) {
+    existing.managedMcpServers = JSON.stringify(userServers);
+  } else {
+    delete existing.managedMcpServers;
+  }
+
+  const deletedConfigFile = Object.keys(existing).length === 0;
+  if (deletedConfigFile) {
+    await rm(configPath, { force: true });
+    const updatedMeta: ConfigMeta = {
+      ...meta,
+      entries: (meta.entries ?? []).filter((entry) => entry.id !== configId),
+    };
+    delete updatedMeta.appliedId;
+    await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
+  } else {
+    await writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
+  }
+
+  await rm(managedStatePath, { force: true });
+
+  logger.info(
+    '[proxy] Removed CodeMie config from Claude Desktop',
+    ...sanitizeLogArgs({ configPath, deletedConfigFile, keptUserServerCount: userServers.length })
+  );
+
+  return { removed: true, configPath, deletedConfigFile };
 }

@@ -137,6 +137,19 @@ describe('discoverClaudeDesktopSessions — traversal resilience', () => {
     expect(sessions.map(session => session.externalSessionId)).toEqual(['local_active']);
   });
 
+  it('skips a session whose cliSessionId is not a plain file name', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockImplementation((async (dir: string) =>
+      (dir === LOCAL_ROOT ? [fileEntry('local_escape.json')] : []) as never) as unknown as typeof readdir);
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({
+      sessionId: 'local_escape', cliSessionId: '../../../../tmp/evil', cwd: '/repo', createdAt: 1_000, lastActivityAt: 6_000,
+    }) as never);
+
+    const { discoverClaudeDesktopSessions } = await import('../claude-desktop.discovery.js');
+
+    await expect(discoverClaudeDesktopSessions(5_000)).resolves.toEqual([]);
+  });
+
   it('survives an unreadable sessions root itself', async () => {
     const { readdir } = await import('fs/promises');
     vi.mocked(readdir).mockImplementation((async (dir: string) => {

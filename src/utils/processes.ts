@@ -43,16 +43,21 @@ export async function commandExists(command: string): Promise<boolean> {
  * Get the full path to a command
  *
  * @param command - Command name to locate
+ * @param timeoutMs - Kill the underlying `which`/`where.exe` child and resolve `null` if it
+ *   hasn't exited by this deadline. Omit to run without a deadline (existing behavior).
  * @returns Full path to command, or null if not found
  */
-export async function getCommandPath(command: string): Promise<string | null> {
+export async function getCommandPath(command: string, timeoutMs?: number): Promise<string | null> {
   try {
     const isWindows = os.platform() === 'win32';
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
     // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
-    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
+    const whichArgs = [isWindows ? `$PATH:${command}` : command];
+    const result = timeoutMs
+      ? await exec(whichCommand, whichArgs, { timeout: timeoutMs })
+      : await exec(whichCommand, whichArgs);
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one

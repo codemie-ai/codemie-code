@@ -133,34 +133,11 @@ interface ConfigWithSources {
   "workspace": {},
   "profiles": {
     "default": { "provider": "bedrock", "authMethod": "sso", "model": "claude-3-5-sonnet", "awsRegion": "us-east-1" },
-    "work":    {
-      "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project", "model": "claude-sonnet-5",
-      "agentModels": {
-        "claude": { "models": ["claude-sonnet-5", "claude-haiku-5"], "activeModel": "claude-sonnet-5" },
-        "codex":  { "models": ["gpt-5.6-terra"], "activeModel": "gpt-5.6-terra" }
-      }
-    },
+    "work":    { "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project" },
     "personal": { "provider": "anthropic-subscription", "codeMieProject": null }
   }
 }
 ```
-
-`agentModels` is optional and additive. `codemie setup` fills it from a per-agent
-wizard (agents, then each agent's models and active model), keyed by base agent
-name (ACP variants share it): `models` is what the agent may use, `activeModel` its
-active model, and optional `confirmedModels` the ids accepted despite the agent's
-model-name rule. Agents with no in-session model menu (`activeModelOnly`: gemini,
-kimi, copilot-cli, openwiki) hold only their active model. The top-level `model`
-mirrors the first agent's active model. A profile without `agentModels` (like
-`default` above) is legacy: read as `[model]`, never migrated, and a launch with
-an incompatible model only warns; with `agentModels` that launch is blocked unless
-`--model` or `CODEMIE_MODEL` overrides the model.
-
-At launch each agent sees only its own set: `CODEMIE_MODEL` is its active model
-and `CODEMIE_PROFILE_MODELS` its `models` (empty for a legacy profile or an agent
-not in `agentModels`), which narrows Claude/Codex/OpenCode/codemie-code/Pi's
-in-session model menus. `codemie models switch [--agent <name>]` changes one
-agent's active model in the scope that owns `agentModels`.
 
 ---
 
@@ -231,7 +208,7 @@ export CODEMIE_MODEL=claude-3-5-sonnet
 
 Environment variables override both global and local config for the fields `ConfigLoader.loadFromEnv` reads (`CODEMIE_PROVIDER`, `CODEMIE_BASE_URL`, `CODEMIE_API_KEY`, `CODEMIE_MODEL`, `CODEMIE_TIMEOUT`, `CODEMIE_DEBUG`, `CODEMIE_ALLOWED_DIRS`, `CODEMIE_IGNORE_PATTERNS`, `CODEMIE_URL`, `CODEMIE_AUTH_METHOD`, integration id/alias). No local config file is needed in CI.
 
-`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the profile resolves no `codeMieProject` and is not `own`/`none`; an `own` or `none` profile never inherits it.
+`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the profile resolves no `codeMieProject` and is not `own`/`none`; an `own` or `none` profile never inherits it. Native Claude Code and Copilot CLI hooks follow the same rule, and every managed launcher plus those hooks read config from the nearest `.codemie` up from the working directory, bounded by the Git worktree root (inclusive; a `.git` directory or file marker, detected but not validated). If the marker cannot be read the boundary is unknown and the lookup stays at the working directory. A `.codemie` above the repo root is ignored, and outside a Git worktree only the working directory's own `.codemie` counts, so a config planted in a parent or shared directory is never picked up. `.env` and the agent itself stay in the cwd. An ancestor `.codemie` that is the global config file is never treated as a local override. A native hook is classified by `CODEMIE_SESSION_ID`: a session started from inside a `codemie-*` session inherits it and counts as managed, so the exported/shell project stays authoritative there (Copilot CLI native hooks already skip such sessions for the same reason). A configured project is returned before any of this. Only the shell fallback is gated under configured-wins: it applies only when the profile identity is confirmed as `local`, `unowned` or `not-applicable`, so a failed lookup, an unrecognized state or an existing local/global config file that is not a readable JSON object withholds it (the check is readability, not full schema validation; a non-v2 config fails earlier in the loader). Copilot CLI hooks start the config and `.env` lookup at the hook cwd even when `CLAUDE_PROJECT_DIR` is inherited.
 
 ---
 

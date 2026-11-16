@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16487_analytics-sync-bootstrap",
+  "head": "a641d37fd0f5f6c4c517ff6ec3c95b9016795c7d",
+  "runner": "npm",
+  "started_at": "2026-11-04T22:40:39Z",
+  "completed_at": "2026-11-04T22:48:29Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5450,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Guide says Apache-2.0 header check in src/; actual scripts/license-check.js reports dependency license summary. Guide text stale."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 21434,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Actual script also lints src/agents/plugins/pi/extension/*.js, beyond the guide-described glob. Auto-fix not triggered."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11215,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15328,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Actual script also runs bundle-statusline (not in guide description)."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 94635,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "2 failures in src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts (file not in branch diff)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 132522,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "2 failures in tests/integration/hook-stdout.test.ts: \"Error: codemie list did not exit within 20000ms\" (file not in branch diff)."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 539,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\". Docker available; scan only covers staged changes. CI reusable-secrets-detection workflow still owed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1531,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-branch",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 663,
+      "command": "npx --no -- commitlint --from a56231832226a7042b0999b631ecbac29ae92f6a --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Covers .husky/commit-msg for every branch commit (guide gate checks only HEAD~1..HEAD). 10 commits, 0 problems."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30624,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 113105,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Stopped at unit tests (same 2 sso.auth-gate failures); integration stage did not run inside this aggregate."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged",
+      "notes": "No staged files; .lintstagedrc.mjs eslint/vitest work covered by lint, unit, integration gates."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml@main",
+      "notes": "Remote reusable workflow; not runnable locally. Local validate:secrets only scans staged changes."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Needs Windows runner. Local CRLF repro per guide possible."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "command": "codemie-ai/ci-workflows reusable-codeql.yml@main",
+      "notes": "Remote reusable workflow; needs GitHub CodeQL infra."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "codemie-ai/ci-workflows reusable-commit-lint.yml@main",
+      "notes": "Checks PR title; no PR exists yet."
+    }
+  ],
+  "failures": {
+    "unit": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://api.anthropic.com\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:63:35\n     61|\n     62|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     63|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     64|   });\n     65|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": \"failed\",\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:123:20\n    121|\n    122|     // 'failed' (not undefined) so describeLogin tells the user to sig…\n    123|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n    124|     expect(getStoredCredentials).not.toHaveBeenCalled();\n    125|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  1 failed | 422 passed (423)\n      Tests  2 failed | 6876 passed (6878)\n   Start at  23:41:39\n   Duration  93.70s (transform 48.11s, setup 0ms, import 272.48s, tests 168.47s, environment 186ms)\n\n",
+    "integration": "- Checking AWS CLI...\n- Checking Active Profile...\n- Checking JWT Authentication...\n- Checking CodeMie Code...\n- Checking Claude Code...\n- Checking Claude Code ACP...\n- Checking Gemini CLI...\n- Checking Gemini CLI ACP...\n- Checking OpenCode CLI...\n- Checking OpenCode ACP...\n- Checking OpenAI Codex CLI...\n- Checking Codex ACP...\n- Checking Pi...\n- Checking Kimi Code...\n- Checking Kimi Code ACP...\n- Checking OpenWiki...\n- Checking GitHub Copilot CLI...\n- Checking Repository & Workflows...\n- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n ❯ |cli| tests/integration/hook-stdout.test.ts (15 tests | 2 failed) 130539ms\n       × a piped command prints no notice and keeps the marker 21339ms\n       × in a terminal the notice shows the installed version's own entry and writes the marker 21734ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > a piped command prints no notice and keeps the marker\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > in a terminal the notice shows the installed version's own entry and writes the marker\nError: codemie list did not exit within 20000ms\nstderr: \n ❯ Timeout._onTimeout tests/integration/hook-stdout.test.ts:139:14\n    137|       const timer = setTimeout(() => {\n    138|         child.kill('SIGKILL');\n    139|         fail(new Error(`codemie ${args.join(' ')} did not exit within …\n       |              ^\n    140|       }, RUN_TIMEOUT_MS);\n    141|       child.on('error', fail);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n\n Test Files  1 failed | 39 passed | 1 skipped (41)\n      Tests  2 failed | 303 passed | 10 skipped (315)\n   Start at  23:43:23\n   Duration  131.15s (transform 13.89s, setup 0ms, import 44.70s, tests 410.34s, environment 13ms)\n\n",
+    "full-ci": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://api.anthropic.com\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:63:35\n     61|\n     62|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     63|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     64|   });\n     65|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": \"failed\",\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:123:20\n    121|\n    122|     // 'failed' (not undefined) so describeLogin tells the user to sig…\n    123|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n    124|     expect(getStoredCredentials).not.toHaveBeenCalled();\n    125|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  1 failed | 422 passed (423)\n      Tests  2 failed | 6876 passed (6878)\n   Start at  23:46:53\n   Duration  75.20s (transform 40.09s, setup 0ms, import 215.06s, tests 138.12s, environment 147ms)\n\n"
+  }
+}

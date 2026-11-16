@@ -3,7 +3,6 @@
  */
 
 import type { SessionAdapter } from './session/BaseSessionAdapter.js';
-import type { ModelClassifyContext, ModelCompat } from './model-classify.js';
 
 /**
  * Post-install hint - simple text lines shown after installation
@@ -200,6 +199,7 @@ export interface VersionCompatibilityResult {
   compatible: boolean;              // true if installed version is compatible
   installedVersion: string | null;  // null if not installed
   supportedVersion: string;         // version from metadata
+  isSupported: boolean;             // true if installed needs no notice (see AgentMetadata.acceptsSupportedMajor)
   isNewer: boolean;                 // true if installed > supported (one-time notice)
   hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
@@ -227,6 +227,13 @@ export interface AgentMetadata {
    * Special values: 'latest', 'stable' (channels)
    */
   supportedVersion?: string;
+
+  /**
+   * Treat every release on `supportedVersion`'s major line as supported (e.g.
+   * '1.5.2' accepts any 1.x.x), so neither the launch notice nor `codemie doctor`
+   * flags it. Default: only an exact match is supported.
+   */
+  acceptsSupportedMajor?: boolean;
 
   /**
    * Oldest version that still works with CodeMie. Versions below this are
@@ -269,17 +276,6 @@ export interface AgentMetadata {
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
   blockedModelPatterns?: RegExp[]; // Optional: Block certain model patterns
   recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
-  /**
-   * Optional model-compatibility classifier. Absent means the agent is unrestricted: every model
-   * is treated as compatible. Consumed only through `agents/core/model-compat.ts`.
-   */
-  classifyModel?: (modelId: string, ctx?: ModelClassifyContext) => ModelCompat;
-  /**
-   * True when the agent has no in-session model menu CodeMie can limit: it always runs on the
-   * profile's active model. Setup then asks only for that model, and `codemie models switch`
-   * offers the live catalog for it instead of a saved list.
-   */
-  activeModelOnly?: boolean;
 
   // === Proxy Configuration ===
   ssoConfig?: {
@@ -735,6 +731,11 @@ export interface ResumeOwnershipInput {
 export interface ResumeOwnershipResult {
   supported: boolean;
   owned?: boolean;
+  /**
+   * Native agent session id the resume id resolved to. When set and different from the
+   * id the user passed (e.g. a CodeMie session id), the CLI passes this id to the agent instead.
+   */
+  nativeResumeId?: string;
   fallbackResumeCommand?: string;
   auditData?: Record<string, unknown>;
 }

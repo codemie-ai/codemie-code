@@ -48,13 +48,14 @@ Discovered sessions that CodeMie did not launch are **excluded by default**; see
 
 ## Terms
 
-- **stranded session** — a session record still `active` whose owner process (the CodeMie wrapper that launched it, recorded as `ownerPid` + its start time) is gone — killed, crashed or closed with its terminal. The next CodeMie start of any agent finalizes it: a synthetic session end (`reason: interrupted`) at its last recorded activity, after a final flush of its transcript; no inactivity threshold applies.
-- **undelivered session** — a `completed` session whose end metric or pending data has not reached CodeMie yet; it keeps its live name `<id>.json` (the file name is the queue) and is renamed `completed_<id>.json` only once delivered. A later CodeMie start against the same CodeMie host delivers it through its own send path (at most 3 attempts). An attempt counts when a request reached the server or the attempt ran out of its time; one the server answered with rejected credentials (401, or an SSO login page instead of JSON) is not counted — the record waits for a re-login, and the analytics auth is marked invalid until one succeeds.
-- **dropped session** — a session that left the delivery queue (renamed `completed_*`) with its end metric unsent or some of its data undelivered: after its last delivery attempt, a finalize that keeps failing, a line past its sync-attempt cap, a `/clear` that moved the generation aside before its delivery finished, or a GitHub Copilot CLI record closed by its attempt limit with its transcript unsent. Its record carries `droppedAt` (epoch ms). A record closed locally by design — another CodeMie host, no CodeMie host, a Claude Desktop record a CLI start closed for its daemon (`desktop-daemon-gone`), a legacy record — is never marked; a Claude Desktop record the daemon renames after its last delivery attempt is (the daemon's counted attempts follow the same rule: a send met by rejected credentials, or one with no stored cookies, is not one).
-- **exit notice** — when the CodeMie wrapper exits, after its own session record is handled, it prints at most two lines to stderr (and writes them to the log); a clean exit prints nothing, and a hook never prints:
-  - its own record is still `<id>.json`: `CodeMie: this session's analytics are not delivered yet; they will be sent at the next codemie start. Nothing is lost.`
-  - records marked `droppedAt` since this wrapper started (its start pass, its exit, its hooks' `/clear`): ``CodeMie: analytics of <N> session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.``
-- **generation** — the part of a Claude Code session before a `/clear`: `/clear` keeps the session id, so each earlier part is kept as `completed_<id>-<gen>.json` (with its `_metrics.jsonl` / `_conversation.jsonl`), `<gen>` being that part's Claude session id; `--session <uuid>` selects the session and its generations.
+- **stranded session** — a session record still `active` whose owner process (the CodeMie wrapper that launched it, recorded as `ownerPid` + its start time) is gone — killed, crashed or closed with its terminal. The next CodeMie start of any agent finalizes it: a synthetic session end (`reason: interrupted`) at its last recorded activity, after a final flush of its transcript (skipped only for a record past the evidence retention); no inactivity threshold applies. A retry budget spent at an earlier start decides nothing before this start sends: the record is closed locally, nothing sent, and marked dropped only when its own attempt ends in a counted failure that spends the budget. A finalize that fails on its own (a file or transcript error, no request) five times in total closes the record locally and reports it dropped as `local errors`, so it does not hold one of the five slots per start for the whole retention.
+- **undelivered session** — a `completed` session whose end metric or pending data has not reached CodeMie yet; it keeps its live name `<id>.json` (the file name is the queue) and is renamed `completed_<id>.json` only once delivered. Later CodeMie starts against the same CodeMie host deliver it through their own send path. It is dropped only by the retry budget: after a `counted` failure, once it has been failing for the retry window (24 h by default; `CODEMIE_DELIVERY_RETRY_WINDOW_MS` overrides it) and has spent at least 3 real attempts. The failing clock starts at the first attempt that did not succeed and is cleared by an attempt that succeeds (the next failure starts a new one); an attempt is real when it is not given back. An attempt counts (is a `counted` failure) only when a server answered with a verdict on the request: it was rejected by the application (a JSON 4xx other than 401, 403, 400, 409 and 422, or a JSON 401/403 whose message is the backend's "Access denied", a permission denial that signing in again cannot fix) or answered 2xx without success. It is given back, and spends nothing, when the server rejected the credentials (a 401, or an SSO login page instead of JSON, whatever else the attempt met) or answered a permission denial (a 403: likewise whatever else the attempt met, but it marks no credentials invalid) — the record waits for a re-login or for the permission, and after a 401 or a login page the analytics auth is marked invalid until a re-login succeeds; when no server served it (a refused connection, an unresolved host, an unreachable network, a request that timed out or was reset after it was sent, a 5xx, a 429, or a 4xx whose body is not JSON, such as a gateway's block page), so a hanging or failing server never drops a record; when the exit deadline cut the send; or when the attempt failed locally and made no request (a file or transcript error). Only the evidence retention (`CODEMIE_EVIDENCE_RECORD_IDLE_DAYS`, 90 days by default) bounds an outage: past it the record is dropped with `retention expired`. A JSON 400 or 422 drops the line at once. The session-end metric is re-sent at each later start until the server accepts it or the record leaves the queue, for up to the evidence retention, and it carries no idempotency key (the metric deltas carry `delta_id`, one per emitted metric): a re-send after a request the server already served (a gateway's 502 or 504 is the known case) can repeat it, and the backend is not known to deduplicate it. This is accepted; the payload is not changed.
+- **dropped session** — a session that left the delivery queue with its end metric unsent or some of its data undelivered. Its record carries `droppedAt` (epoch ms) and `droppedReason`, one of `rejected by the server` (a JSON 400, 409 or 422; a 409 is the backend's "Conversation is finished", which no retry can change), `retry budget exhausted` (the window and 3 real attempts above), `retention expired` (the session is older than the evidence retention) or `local errors` (a stranded record this launch was to deliver whose finalize failed on its own, with no request, five times in total; it is closed locally with nothing sent). A record that leaves the queue while one of its metric lines or conversation payloads was rejected is marked `rejected by the server` whichever path renames it, and when the rest of a record marked that way is later dropped for another reason the mark takes that reason, so the exit notice reports that drop too. A resent metric batch keeps its `delta_id`, but the backend's `POST /v1/metrics` counts every request and does not read it: a resend after a timeout the server already served is counted twice. A record closed locally by design — another CodeMie host, no CodeMie host, a Claude Desktop record a CLI start closed for its daemon (`desktop-daemon-gone`), a legacy record — is never marked, and neither is a record whose data was all delivered. Claude Desktop delivery applies the same verdict, reasons and timing.
+- **exit notice** — when the CodeMie wrapper exits, after its own session record is handled, it prints up to three lines to stderr (and writes them to the log); silence means everything was delivered, and a hook never prints. Dates are local time, `d Mon HH:mm`:
+  - its own record is still `<id>.json`: ``CodeMie: this session's analytics are not delivered yet; they will be retried at later `codemie` starts and are not dropped before <date>.`` The date is the failing clock plus the window, or now plus the window when no clock has started.
+  - earlier sessions whose closed record this run attempted and that are still queued (a record is counted once per session, with its earliest date; other wrappers' live records are not), one line: `CodeMie: analytics of <n> earlier session(s) are still queued for retry; none is dropped before <earliest date>.`
+  - records marked `droppedAt` since this wrapper started, its own and earlier ones, once per session id: ``CodeMie: analytics of these sessions were dropped: <agent> <id8> (started <date>) — <reason>; … and <N> more. Check the connection to CodeMie with `codemie doctor`.`` At most 3 sessions are named; `<id8>` is the first 8 characters of the CodeMie session id.
+- **generation** — the part of a Claude Code session before a `/clear`: `/clear` keeps the session id, so each earlier part is kept as `completed_<id>-<gen>.json` (with its `_metrics.jsonl` / `_conversation.jsonl`), `<gen>` being that part's Claude session id; a part whose delivery is still pending stays in the delivery queue as `<new-uuid>.json` with `originSessionId` set to the original id; `--session <uuid>` selects the session, its generations and the parts re-keyed from it.
 - **run window** — a record's own slice of a shared transcript: from its `startTime` up to (not including) the `startTime` of the next CodeMie record over the same transcript. A transcript record outside the window belongs to another record and produces no metric delta. The `recordId` dedupe and the run window live in the shared metrics writer, so every agent gets them: a delta whose `recordId` is already in the record's metrics file, or whose time falls outside the window, is dropped (a delta with no usable time is kept). A hook process knows no later record, so its window has no upper bound.
 
   For Copilot CLI, a resumed or continued `copilot` run's tools, lines, tokens and conversation turns are counted over the same native log from this run's start up to the next CodeMie record's start (its run window); the Cost view prices the run inside that window, and **Priced sessions** counts the sessions the report keeps.
@@ -397,3 +398,210 @@ codemie analytics otel --file <path> [options]
 ```
 
 All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.
+
+---
+
+## Scheduled delivery (`analytics sync`)
+
+Step-by-step guide for team leads and developers, troubleshooting and known gaps:
+[ANALYTICS-SYNC.md](ANALYTICS-SYNC.md).
+
+`codemie analytics sync install|status|run|uninstall` registers and runs a daily per-user
+OS job that POSTs the same priced JSON report `codemie analytics --export json` builds to
+the team's webhook — one way, nothing comes back. It takes over the developer side of the
+standalone collector, so a developer no longer clones, updates or runs a separate tool.
+It never reads any `ANALYTICS_*` environment variable; the settings file and CLI flags are
+the only source of configuration.
+
+For team leads setting up the Power Automate flow for the first time, see `codemie analytics
+sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
+
+### Commands
+
+```bash
+# Developer: register the daily delivery job on this machine — paste the command your team
+# lead's `sync bootstrap` printed (the webhook base64url-encoded, safe in every shell)
+codemie analytics sync install --webhook-b64 <value> --include-external "never"
+codemie analytics sync install --webhook-b64 <value> --at 02:30 --lookback-days 14 --include-external always
+
+# Or with the raw URL (bash/zsh; on Windows a .cmd shim breaks it at & and %...% — use --webhook-b64)
+codemie analytics sync install --webhook "https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>"
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+### `install` options
+
+```
+codemie analytics sync install [options]
+
+  --webhook <url>             The team's https webhook URL that receives the daily report
+  --webhook-b64 <value>       The same URL encoded as base64url, as printed by `sync bootstrap` (instead of --webhook)
+  --git-repo <url>            URL of a team git repository to push the daily report into
+  --git-branch <name>         Branch to push to (default: the repository's default branch)
+  --git-path <dir>            Repo-relative directory the report is pushed under (default: the repository root)
+  --format <json>             Report export format for every configured target (default and only accepted value: json)
+  --at <HH:MM>                Daily run time, 24-hour local time (default: 03:00)
+  --lookback-days <n>         Session window looked back on each run, 1-30 (default: 7)
+  --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: never)
+```
+
+`--webhook-b64` exists so the command `bootstrap` prints survives every shell: a raw trigger
+URL's `&` and `%XX` runs break in PowerShell through a `.cmd` shim and in cmd.exe. It decodes
+to exactly the `--webhook` value and is validated the same way; giving both is an error.
+
+At least one of `--webhook`/`--webhook-b64`/`--git-repo` is required; both may be given together, in which
+case every run delivers to each configured target independently. `--git-repo` must not
+embed `user:token@`/`user:pass@` credentials — no token is ever requested or stored;
+pushing authenticates with the developer's own git setup (SSH key, credential helper, …).
+`--git-path` must be a posix-relative path that does not escape the repository (no leading
+`/`, no `..`, no Windows path).
+
+Validation runs before anything is written or registered: a missing/non-`https:`/invalid
+`--webhook`, an invalid/credential-bearing `--git-repo`, an empty `--git-branch`, an
+escaping `--git-path`, a malformed `--at`, an out-of-range `--lookback-days`, or an
+unrecognized `--include-external`/`--format` value fails with a message naming the bad
+option — before the scheduler or filesystem are ever touched. `--lookback-days` is written
+to settings only when given, so the default (7 days) keeps following CLI updates for an
+install that never set it.
+
+Install resolves the reporting email (saved CLI config, then `git config --global user.email`; in a
+terminal with neither it prompts and saves the answer; without a terminal it fails with
+instructions and registers nothing), runs the per-platform preflight, and — when
+`--git-repo` is configured — performs a prompt-free test push of a placeholder file into the
+caller's own slug folder in that repository, proving push access *before* anything else is
+touched. A failed test push prints the likely cause (an auth problem, an untrusted SSH host
+key, an unreachable remote, a missing or protected branch, …) plus the redacted git error, removes the
+working copy, and registers nothing: no job is unregistered, no settings are written, no job
+is registered. Only once the test push (if any) succeeds does install remove any existing
+job with the same identity (the collector's or a previous CLI install's), write the settings
+file, and register the new job. If registration fails after the settings were written, the
+settings file is deleted and install exits non-zero — nothing half-installed is left behind.
+
+On success it prints the run time, the lookback (marked "default" when `--lookback-days`
+was omitted), the include-external policy, the webhook host only (the signature is always
+masked), the git repository (redacted), branch and path when configured, the resolved
+email, and a hint to try `sync run` and `sync status`. Running `install` again replaces the
+existing job and settings rather than duplicating them, and never touches the last-sent
+marker(s).
+
+### Git delivery target
+
+Git runs never prompt: every `git` call sets `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`
+and ssh `BatchMode=yes`, so an unattended daily run can never hang on a credential or host-key
+prompt. An unknown SSH host key fails the run instead of prompting — run `ssh -T <host>` once
+on this machine to trust it, then retry. Credentials come from the developer's own git setup
+(SSH key, credential helper, …); no token is ever requested or stored, and a `--git-repo` URL
+embedding `user:token@`/`user:pass@` credentials is rejected at install time.
+
+Each report is pushed to `<git-path>/<lowercased email slug>/codemie-analytics-<slug>-<UTC
+date>.report.json` in the configured repository (repo root when `--git-path` is unset) —
+each developer writes only inside their own slug folder, so concurrent pushes from different
+developers never conflict on content. `codemie analytics sync install`'s test push proves
+access to that same folder with a small placeholder file before anything is registered.
+
+### Per-platform job
+
+| Platform | Job | Catch-up |
+|---|---|---|
+| macOS | `~/Library/LaunchAgents/com.epam.codemie.analytics-sync.plist` — a launchd `LaunchAgent` (`StartCalendarInterval` from `--at`, `RunAtLoad=false`) | launchd re-runs a missed `StartCalendarInterval` fire once the Mac wakes |
+| Linux | `~/.config/systemd/user/codemie-analytics-sync.{service,timer}` — a systemd user timer (`Type=oneshot`, `OnCalendar=*-*-* HH:MM:00`, `Persistent=true`, `RandomizedDelaySec=300`) | `Persistent=true` fires the missed run once the user session is next active; install also runs `loginctl enable-linger $USER` so the timer fires even while the user is logged out |
+| Windows | Task Scheduler task `CodeMie Analytics Sync` (UTF-16LE+BOM XML, `StartWhenAvailable`, `IgnoreNew`, runs as the logged-in user at `InteractiveToken`/`LeastPrivilege`, runs on battery, `ExecutionTimeLimit PT30M`) | `StartWhenAvailable` fires the missed run once the machine is next on |
+
+Installing replaces an existing job with the same identity: macOS `launchctl bootout` then
+`bootstrap gui/<uid>`; Linux `systemctl --user daemon-reload` then `enable --now`; Windows
+`schtasks /Delete /F` then `/Create /XML`. A Linux machine without a reachable
+`systemctl --user` (e.g. a non-interactive SSH session with no user D-Bus), or any other
+unsupported platform, fails install before anything is written. If `loginctl enable-linger`
+fails, the job is still registered and the failure is only a warning in the install summary.
+
+The job always invokes `<node> <realpath of the CLI entry script> analytics sync run
+--scheduled` — the absolute `process.execPath` and the realpath of the running entry
+script, so an npm bin shim resolves to the real script (no `.cmd` shim on Windows).
+`--scheduled` is hidden from `--help`; a manual `codemie analytics sync run` never passes
+it. When the CLI starts with it, `bin/codemie.js` skips the update check/prompt and the
+"what's new" notice and runs pending migrations silently, since the job has no terminal and
+no user to notify.
+
+### `run`
+
+Exports the window since the last successful send (never narrower than the lookback) as
+the priced JSON report and POSTs it to the webhook in the collector's message shape, with
+the attachment name `codemie-analytics-<lowercased email slug>-<UTC date>.report.json`
+(the email slug is lowercased for sync only — the interactive `--export` naming is
+unchanged). Existing downstream Power Automate flows and harvesting keep working
+unchanged. The marker moves to the run's start time only after the webhook returns a 2xx.
+No sessions in the window sends nothing and leaves the marker untouched. The export has the
+same 70 MB ceiling as `--export json`; an export larger than that, a failed/unreachable
+webhook, or missing settings/identity are all logged and failed without moving the marker,
+so the next run covers the same sessions. There is no retry — the rolling window self-heals
+on the next scheduled run. `run` with nothing installed fails with the install command and
+sends nothing.
+
+Each run appends exactly one line to the run log, with the webhook signature always
+redacted:
+
+```
+<ISO> ok sent <name> <bytes>
+<ISO> skip <reason>
+<ISO> fail <setup|export|send> <redacted detail>
+```
+
+`setup` covers missing/invalid settings and identity errors; `export` covers a report-build
+failure or the 70 MB ceiling (the detail carries the size); `send` covers any other webhook
+delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
+
+### `status`
+
+Shows whether the OS job is actually registered and enabled (not just whether settings
+exist), the run time, lookback, include-external policy, the webhook host (signature
+masked), the last run's time and outcome parsed from the log (`sent`/`skipped`/`failed`
+with its reason, or "never"), and the time of the last successful send (the marker, or
+"never"). Nothing installed reports "not installed" with the install command and exits 0.
+Settings present but the job missing or disabled outside the CLI reports "disabled" and
+tells the developer to run install again.
+
+### `uninstall`
+
+Removes the OS job and the settings file holding the webhook. The last-sent marker and the
+run log are kept, so a later re-install does not re-send or duplicate what was already
+delivered. Running `uninstall` again (or on a machine where nothing is installed) reports
+"nothing to remove" and exits 0.
+
+### Taking over the standalone collector
+
+Developers who already ran the standalone collector's install command have the same job
+identities and `~/.codemie` state files; running `codemie analytics sync install` takes
+over cleanly: the collector's job is unregistered before the CLI's job is registered, and
+the existing last-sent marker is kept exactly as-is, so the next run neither re-sends
+already-delivered sessions nor leaves a gap. Exactly one delivery is made at the next
+scheduled time. The install summary says the collector's clone folder,
+`~/.codemie/codemie-onboarding`, can now be deleted — nothing in the CLI touches or
+requires that folder.
+
+### State
+
+All paths resolve via `getCodemiePath()` under `~/.codemie`:
+
+| What | Path |
+|---|---|
+| Settings (webhook, git target, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
+| Last-sent marker (webhook) | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
+| Last-sent marker (git) | `analytics-last-sent-git` (ISO timestamp; tracked independently of the webhook marker) |
+| Git working copy | `analytics-sync-repo` (one shared shallow clone of the configured `--git-repo`, refreshed/re-cloned each run; removed and re-cloned if its remote no longer matches the settings, or by install when a test push fails) |
+| Run log | `logs/analytics-sync.log` (log directory mode `700`, log file mode `600`) |
+| macOS launchd stdout/stderr | `logs/analytics-sync.launchd.log` (kept apart from the run log so each run writes its outcome line once) |
+
+There are no `ANALYTICS_*` environment-variable overrides for any of this. The webhook URL
+and git repository URL live only in the `600` settings file, never in `CredentialStore` —
+the unattended job must read them without an OS keychain prompt (see the exception in
+`.ai-run/guides/security/security-practices.md`). Every printed or logged string that may
+contain a URL is redacted (signature stripped for the webhook, userinfo stripped for git)
+before it is ever shown.

@@ -1,5 +1,3 @@
-import { filterToProfileModels } from '../../core/profile-model-filter.js';
-
 /**
  * Model configuration for OpenCode agent
  * Uses OpenCode's native format for direct injection
@@ -724,9 +722,9 @@ export function getChatCompletionsModelConfigs(
 }
 
 /**
- * Get model configs that require the OpenAI Responses API.
- * These are routed through OpenCode's built-in openai CUSTOM_LOADER
- * which calls POST /v1/responses instead of POST /v1/chat/completions.
+ * Get model configs that require the OpenAI Responses API
+ * (POST /v1/responses instead of POST /v1/chat/completions).
+ * The calling plugin places them in a provider block that speaks that API.
  *
  * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
  *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
@@ -741,29 +739,6 @@ export function getResponsesApiModelConfigs(
     result[id] = opencodeConfig;
   }
   return result;
-}
-
-/**
- * Narrow a model config map to the active profile's own models, keeping the model this
- * session is launching with so the config never lacks its own active model
- * (see `filterToProfileModels`).
- *
- * @param allModels - the full live (or static-fallback) catalogue from fetchDynamicModelConfigs().
- * @param allowedCsv - env.CODEMIE_PROFILE_MODELS value; call site only passes this when the var is set.
- * @param selectedModel - the model this session is actually launching with.
- */
-export function filterToAllowed(
-  allModels: Record<string, OpenCodeModelConfig>,
-  allowedCsv: string,
-  selectedModel: string
-): Record<string, OpenCodeModelConfig> {
-  const entries = filterToProfileModels(Object.entries(allModels), allowedCsv, {
-    getId: ([id]) => id,
-    activeModel: selectedModel,
-    noMatchMessage:
-      '[opencode-model-configs] None of this agent\'s profile models are in the live catalog — the model menu shows the full catalog',
-  });
-  return Object.fromEntries(entries);
 }
 
 /**
@@ -828,7 +803,7 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
  * @returns Model configuration in OpenCode format
  *
  * Note: The returned config is used directly in OPENCODE_CONFIG_CONTENT
- * model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-5-2-2025-12-11")
+ * model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-4.1")
  */
 export function getModelConfig(modelId: string): OpenCodeModelConfig {
   const config = OPENCODE_MODEL_CONFIGS[modelId];

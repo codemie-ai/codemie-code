@@ -9,7 +9,7 @@ import {
   WRAPPER_PID_ENV,
   WRAPPER_STARTED_AT_ENV,
 } from '../../utils/processes.js';
-import { compareVersions } from '../../utils/version-utils.js';
+import { compareVersions, parseSemanticVersion } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn, type ChildProcess } from 'child_process';
 import { constants as osConstants } from 'os';
@@ -327,6 +327,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: false,
         installedVersion: null,
         supportedVersion,
+        isSupported: false,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -339,6 +340,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: true,
         installedVersion,
         supportedVersion: 'latest',
+        isSupported: true,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -349,6 +351,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     try {
       const comparison = compareVersions(installedVersion, supportedVersion);
       const hasUpdate = comparison < 0;
+      const isSupported = comparison === 0 || (
+        this.metadata.acceptsSupportedMajor === true &&
+        parseSemanticVersion(installedVersion).major === parseSemanticVersion(supportedVersion).major
+      );
 
       let isBelowMinimum = false;
       if (minimumSupportedVersion) {
@@ -363,6 +369,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         supportedVersion,
         minimumSupportedVersion,
         compatible: comparison <= 0,
+        isSupported,
         isNewer: comparison > 0,
         hasUpdate,
         isBelowMinimum,
@@ -372,6 +379,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: comparison <= 0,
         installedVersion,
         supportedVersion,
+        isSupported,
         isNewer: comparison > 0,
         hasUpdate,
         isBelowMinimum,
@@ -404,6 +412,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: false,
         installedVersion,
         supportedVersion,
+        isSupported: false,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -413,8 +422,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Emit a one-time notice when the installed version differs from the
-   * recommended `metadata.supportedVersion`, then record the marker so later
+   * Emit a one-time notice when the installed version is not supported
+   * (see {@link checkVersionCompatibility}), then record the marker so later
    * launches stay silent until the recommendation itself moves.
    *
    * Never prompts, never blocks, never throws — a failure to read or write the
@@ -427,8 +436,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
 
       const compat = await this.checkVersionCompatibility();
-      const { installedVersion, supportedVersion } = compat;
-      if (!installedVersion || installedVersion === supportedVersion) {
+      const { installedVersion, supportedVersion, isSupported } = compat;
+      if (!installedVersion || isSupported) {
         return;
       }
 

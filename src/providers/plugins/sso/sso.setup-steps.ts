@@ -16,13 +16,13 @@ import ora from 'ora';
 import type {
   ProviderSetupSteps,
   ProviderCredentials,
-  ModelInfo,
   AuthValidationResult,
   AuthStatus
 } from '../../core/types.js';
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { CodeMieSSO } from './sso.auth.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 import { SSOModelProxy } from './sso.models.js';
 import { fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
@@ -34,25 +34,6 @@ import {
   getPlatformUrl,
   getStoredPlatformCredentials
 } from '../../core/codemie-auth-helpers.js';
-
-// One catalog request per setup run: fetchModels and fetchRouterModels get the same credentials.
-const catalogByCredentials = new WeakMap<ProviderCredentials, Promise<ModelInfo[]>>();
-
-function fetchSsoCatalog(credentials: ProviderCredentials): Promise<ModelInfo[]> {
-  const cached = catalogByCredentials.get(credentials);
-  if (cached) return cached;
-
-  const modelProxy = new SSOModelProxy(credentials.baseUrl);
-  const catalog = modelProxy.fetchModels({
-    codeMieUrl: credentials.additionalConfig?.codeMieUrl,
-    baseUrl: credentials.baseUrl,
-    cookies: credentials.additionalConfig?.cookies
-  } as CodeMieConfigOptions);
-  catalogByCredentials.set(credentials, catalog);
-  // A failed request is not cached, so a retry fetches again.
-  catalog.catch(() => catalogByCredentials.delete(credentials));
-  return catalog;
-}
 
 /**
  * SSO setup steps implementation
@@ -204,17 +185,14 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    * Queries SSO API to discover available models
    */
   async fetchModels(credentials: ProviderCredentials): Promise<string[]> {
-    const models = await fetchSsoCatalog(credentials);
-    return models.map(m => m.id);
-  },
+    const modelProxy = new SSOModelProxy(credentials.baseUrl);
+    const models = await modelProxy.fetchModels({
+      codeMieUrl: credentials.additionalConfig?.codeMieUrl,
+      baseUrl: credentials.baseUrl,
+      cookies: credentials.additionalConfig?.cookies
+    } as CodeMieConfigOptions);
 
-  /**
-   * Catalog entries flagged as routers/aliases (`metadata.isRouter`), so setup can treat an alias
-   * without "router" in its name as unverified rather than incompatible.
-   */
-  async fetchRouterModels(credentials: ProviderCredentials): Promise<string[]> {
-    const models = await fetchSsoCatalog(credentials);
-    return models.filter(m => m.metadata?.isRouter === true).map(m => m.id);
+    return models.map(m => m.id);
   },
 
   /**
@@ -271,7 +249,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       // Test API access
       try {
-        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
+        // Only checks that the session can read the catalog; no project narrowing needed.
+        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies, undefined);
       } catch (error) {
         return {
           valid: false,
@@ -281,7 +260,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       return {
         valid: true,
-        expiresAt: credentials.expiresAt
+        expiresAt: effectiveExpiresAt(credentials)
       };
     } catch (error) {
       return {
@@ -357,7 +336,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       return {
         authenticated: true,
-        expiresAt: credentials.expiresAt,
+        expiresAt: effectiveExpiresAt(credentials),
         apiUrl: credentials.apiUrl
       };
     } catch (error) {

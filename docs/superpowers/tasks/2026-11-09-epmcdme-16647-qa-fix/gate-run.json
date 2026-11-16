@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16647_otlp-first-session-fix",
+  "head": "3156261b3471e55e63b0aa363e09f6a47a819588",
+  "runner": "npm",
+  "started_at": "2026-11-10T06:24:38Z",
+  "completed_at": "2026-11-10T06:54:28Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2790,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 28540,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10211,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 20818,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 236437,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "7 of 9241 tests failed across 5 files (520/525 files passed): system-proxy-dispatcher.test.ts (proxy routing count assertion), launch-identity.test.ts x2 (saved CODEMIE_URL expectation), hook.session-delivery.test.ts (generation-cleanup file-list assertion), stale-session-reconciliation.test.ts x2 (EPERM creating a symlink on Windows -- 'operation not permitted, symlink ... -> ...-link', consistent with a non-elevated Windows session lacking symlink privilege, not a code defect), opencode.run-session.test.ts (parse-throw session isolation assertion). None of the 5 failing files are among the branch's changed files (src/agents/plugins/claude/claude.plugin.ts, src/cli/commands/proxy/connectors/claude-code-otlp-endpoint.ts, and their test files)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 176689,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "4 of 340 tests failed, all in tests/integration/analytics/claude-analytics-disable.test.ts (Claude Code analytics opt-out): 'should stop and resume all analytics under the Project scope allowlist', 'should exclude one allowlisted project ... while the other keeps sending', 'should fail closed on corrupt preferences and never overwrite the file', 'should silence an already installed hook after disable'. All four fail the same assertion shape (expect(...forwarded).toBe(true) receiving false), and the suite's afterAll also hit 'EPERM, Permission denied' removing its temp sandbox directory on this Windows machine. This file is analytics/Claude-Code-hook-adjacent to the branch's changed claude.plugin.ts / claude-code-otlp-endpoint.ts, so it is flagged for direct review rather than dismissed as environmental; could not confirm from this run alone whether it is a Windows-sandbox artifact (file handle held by a spawned proxy/daemon process preventing cleanup and forwarding) or a real regression."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1961,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script printed 'No staged changes to scan' -- validate-secrets.js scans the staged git diff only (by design, to keep gitignored local installs out of pre-commit checks), and nothing was staged in this working tree. Exit 0 is not evidence the branch's diff was scanned. To run it for real locally: 'git add' the changed files (or diff against merge_base) before invoking, with Docker/Podman/Apple-Containers running so the gitleaks image can execute. CI (gitleaks-action@v2 via the secrets-detection reusable workflow) scans the branch diff unconditionally and is the authority this local run could not substitute for."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2092,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checked HEAD~1..HEAD only (the guide's defined range); mirrors but does not substitute for CI's separate pr-title-lint.yml workflow, which lints the PR title itself against the same Conventional Commits config and can only run once a PR exists."
+    },
+    {
+      "id": "secrets-detection-ci",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "Covered conceptually by the guide's 'secrets' gate above (same Gitleaks tooling), but CI's job (.github/workflows/ci.yml:secrets-detection) calls a remote reusable workflow (codemie-ai/ci-workflows/reusable-secrets-detection.yml) that requires GitHub Actions infra unreachable from this local run."
+    },
+    {
+      "id": "codeql",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "CodeQL analysis (.github/workflows/codeql.yml) runs via a remote reusable workflow requiring GitHub Advanced Security infra unreachable locally; no local equivalent exists in package.json scripts."
+    }
+  ],
+  "failures": {
+    "unit": "Error: EPERM: operation not permitted, symlink 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-pNDIsM\\repo' -> 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-pNDIsM\\repo-link'\n \u2771 src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1529:5\n    1527|     mkdirSync(repo);\n    1528|     mkdirSync(other);\n    1529|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1530|     const earlier = record({ agentName, startTime: t0, ownerPid: proce\u2026\n    1531|     save(earlier);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[5/7]\u23af\n\n FAIL  |unit| src/agents/core/session/__tests__/stale-session-reconciliation.test.ts > nextRecordStart > bounds a codemie-code record by the later one in the same directory reached through a symlink\nError: EPERM: operation not permitted, symlink 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-nv50Rt\\repo' -> 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-nv50Rt\\repo-link'\n \u2771 src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1529:5\n    1527|     mkdirSync(repo);\n    1528|     mkdirSync(other);\n    1529|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1530|     const earlier = record({ agentName, startTime: t0, ownerPid: proce\u2026\n    1531|     save(earlier);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[6/7]\u23af\n\n FAIL  |unit| src/agents/plugins/opencode/__tests__/opencode.run-session.test.ts > opencode run session selection > a session whose parse throws fails the run's result without stopping the run's other sessions\nAssertionError: expected [] to deeply equal [ 'ses_ok' ]\n\n- Expected\n+ Received\n\n- [\n-   \"ses_ok\",\n- ]\n+ []\n\n \u2771 src/agents/plugins/opencode/__tests__/opencode.run-session.test.ts:455:32\n    453|     const result = await adapter().processSession(dbPath, a.sessionId,\u2026\n    454|\n    455|     expect(conversationIds(a)).toEqual(['ses_ok']);\n       |                                ^\n    456|     expect(result?.success).toBe(false);\n    457|   });\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[7/7]\u23af\n\n\n Test Files  5 failed | 520 passed (525)\n      Tests  7 failed | 9200 passed | 34 skipped (9241)\n   Start at  09:26:51\n   Duration  233.49s (transform 96.83s, setup 0ms, import 386.73s, tests 710.13s, environment 130ms)",
+    "integration": "       |                               ^\n    327|\n    328|     const unlisted = runPromptHook(outside, 'sess-project-outside');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/5]\u23af\n\n FAIL  |cli| tests/integration/analytics/claude-analytics-disable.test.ts > Claude Code analytics opt-out > should fail closed on corrupt preferences and never overwrite the file\nAssertionError: expected false to be true // Object.is equality\n\n- Expected\n+ Received\n\n- true\n+ false\n\n \u2771 tests/integration/analytics/claude-analytics-disable.test.ts:348:31\n    346|     const tracked = runPromptHook(project, 'sess-corrupt-control');\n    347|     expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined(\u2026\n    348|     expect(tracked.forwarded).toBe(true);\n       |                               ^\n    349|\n    350|     writeFileSync(prefsPath(), '{ \"enabled\": tru', 'utf-8');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/5]\u23af\n\n FAIL  |cli| tests/integration/analytics/claude-analytics-disable.test.ts > Claude Code analytics opt-out > should silence an already installed hook after disable without spooling or starting a proxy\nAssertionError: expected false to be true // Object.is equality\n\n- Expected\n+ Received\n\n- true\n+ false\n\n \u2771 tests/integration/analytics/claude-analytics-disable.test.ts:388:31\n    386|     const tracked = runPromptHook(project, 'sess-hook-001');\n    387|     expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined(\u2026\n    388|     expect(tracked.forwarded).toBe(true);\n       |                               ^\n    389|\n    390|     expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: projec\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[5/5]\u23af\n\n\n Test Files  1 failed | 40 passed | 1 skipped (42)\n      Tests  4 failed | 326 passed | 10 skipped (340)\n   Start at  09:50:31\n   Duration  174.79s (transform 20.77s, setup 0ms, import 44.10s, tests 533.10s, environment 8ms)"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001 fixed in 8faf86b4; Windows pid-only liveness (DF-001) deferred as pre-existing"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix CR-001 (extract LocalProxy interface); Windows pid-only liveness stays deferred"
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001 fixed in 8faf86b4; Windows pid-only liveness (DF-001) deferred as pre-existing"
+    }
+  ],
+  "reviewed_head": "8faf86b4da01d449d82efff160d1f78d7a61613d",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "No spec/story, so acceptance was skipped (no-spec, confidence low); blind, edge-case and verification-gap ran and every candidate was checked against source. One blocking finding: the local-proxy shape {url; targetUrl?} is an inline type literal duplicated in routing.ts and local-proxy.ts against code-quality.md; 1 deferred (DF-001: Windows isDaemonAlive judges by pid alone, pre-existing helper limit, see code-review-deferred.local.md); 12 dismissed as noise or handled (health check already has a timeout, cloud-guard test does exercise the guard, mocks are cleared in beforeEach, loopback set is 3 names not 127/8, design-approved loopback normalization and hook-time daemon lookup, ticket key in commit subject is a non-blocking guide anti-pattern fixable in the squash title).",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/evidence/routing.ts",
+      "line": 25,
+      "title": "Shared local-proxy shape duplicated as inline literal",
+      "problem": "The daemon info shape { url: string; targetUrl?: string } is declared inline in RoutingInput.localProxy (routing.ts:25) and again as the resolveLocalProxy return type (src/agents/plugins/claude-code-otlp/event-fields/local-proxy.ts:9), against code-quality.md Type Annotations: prefer interface, no inline type literals for shared shapes.",
+      "impact": "Producer (hook daemon lookup) and consumer (routing proof) have no single named contract, so the two declarations can drift silently; violates a documented project type-safety convention that no lint gate enforces.",
+      "recommendation": "Export an interface (e.g. LocalProxyInfo { url: string; targetUrl?: string }) from routing.ts, use it for RoutingInput.localProxy, and `import type` it as the return type Promise<LocalProxyInfo | undefined> of resolveLocalProxy in local-proxy.ts.",
+      "status": "fixed",
+      "fix": {
+        "change": "Exported LocalProxy interface from routing.ts; RoutingInput.localProxy and resolveLocalProxy return type now use it",
+        "test": "n/a (type-only refactor; npx tsc --noEmit and existing routing/claude-code-otlp suites green)"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/daemon-manager.ts",
+      "line": 88,
+      "title": "Windows daemon liveness judged by pid alone",
+      "problem": "isDaemonAlive returns true on win32 when the pid is alive, so a stale proxy-daemon.json plus a recycled pid could make resolveLocalProxy report a dead daemon's url/targetUrl as live.",
+      "preexisting": "isDaemonAlive's win32 pid-only check predates this change; the approved fix mandates readState + isDaemonAlive."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "fix(analytics) type/scope valid; both subjects embed EPMCDME-17038, a git-workflow.md anti-pattern (soft; main history has such subjects). Fix via squash/PR title."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "explicit return types, .js imports, JSDoc ok; {url; targetUrl?} inline type literal repeated in routing.ts and local-proxy.ts against code-quality.md; plugin file already >500 lines."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "local-proxy.ts logs a fixed debug string only, reads daemon state read-only without checkStatus, fails closed; no secrets, credentials or user-supplied paths touched."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "No spec/story, so acceptance was skipped (no-spec, confidence low); blind, edge-case and verification-gap ran and every candidate was checked against source. One blocking finding: the local-proxy shape {url; targetUrl?} is an inline type literal duplicated in routing.ts and local-proxy.ts against code-quality.md; 1 deferred (DF-001: Windows isDaemonAlive judges by pid alone, pre-existing helper limit, see code-review-deferred.local.md); 12 dismissed as noise or handled (health check already has a timeout, cloud-guard test does exercise the guard, mocks are cleared in beforeEach, loopback set is 3 names not 127/8, design-approved loopback normalization and hook-time daemon lookup, ticket key in commit subject is a non-blocking guide anti-pattern fixable in the squash title).",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

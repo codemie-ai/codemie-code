@@ -41,12 +41,13 @@ window.CodeMieCharts = (function () {
   }
 
   /** Axis, grid, legend and tooltip styling for the theme that is live now. */
-  function defaults(type, count, onSlide) {
+  function defaults(type, count, onSlide, family) {
     var muted = color('text-muted');
     var grid = color('chart-grid');
     var arc = ARC.indexOf(type) !== -1;
     // A slide is 1600 px wide and shown smaller, so its charts need larger text than a page's.
-    var font = { size: onSlide ? 16 : 12 };
+    // The family is the canvas's own: Geist Mono on a page, as the app's charts, Geist on a slide.
+    var font = { size: onSlide ? 16 : 12, family: family };
     var axis = function () {
       return { grid: { color: grid }, border: { color: grid }, ticks: { color: muted, font: font } };
     };
@@ -130,10 +131,13 @@ window.CodeMieCharts = (function () {
     paint(config.type, datasets, auto);
     var own = config.options || {};
     var onSlide = !!(canvas.closest && canvas.closest('.slide'));
-    var setup = { type: config.type, data: config.data, options: under(own, defaults(config.type, datasets.length, onSlide)) };
+    var family = getComputedStyle(canvas).fontFamily;
+    var setup = { type: config.type, data: config.data, options: under(own, defaults(config.type, datasets.length, onSlide, family)) };
     if (config.plugins) setup.plugins = config.plugins;
     var chart = new window.Chart(canvas, setup);
-    charts.push({ chart: chart, type: config.type, own: own, auto: auto, onSlide: onSlide });
+    charts.push({ chart: chart, type: config.type, own: own, auto: auto, onSlide: onSlide, family: family });
+    // A canvas paints with whatever face has loaded; draw again once the embedded ones have.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { chart.update('none'); });
     return chart;
   }
 
@@ -141,7 +145,7 @@ window.CodeMieCharts = (function () {
   window.addEventListener('codemie:theme', function () {
     charts.forEach(function (entry) {
       paint(entry.type, entry.chart.data.datasets, entry.auto);
-      entry.chart.options = under(entry.own, defaults(entry.type, entry.chart.data.datasets.length, entry.onSlide));
+      entry.chart.options = under(entry.own, defaults(entry.type, entry.chart.data.datasets.length, entry.onSlide, entry.family));
       entry.chart.update('none');
     });
   });

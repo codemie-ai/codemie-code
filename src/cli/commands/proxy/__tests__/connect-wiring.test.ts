@@ -336,7 +336,16 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: true, copilotCliOtlp: false, codexDesktop: false, omp: false },
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: true,
+        copilotCliOtlp: false,
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+        omp: false,
+      },
     });
   });
 
@@ -348,7 +357,16 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'project',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: true, codexDesktop: false, omp: false },
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: false,
+        copilotCliOtlp: true,
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+        omp: false,
+      },
     });
   });
 });
@@ -381,7 +399,16 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: true, omp: false },
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: false,
+        copilotCliOtlp: false,
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        codexDesktop: true,
+        omp: false,
+      },
     });
   });
 
@@ -404,7 +431,58 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: false, omp: true },
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: false,
+        copilotCliOtlp: false,
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+        omp: true,
+      },
+    });
+  });
+
+  it('routes `proxy disconnect --claude-desktop` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: 'user',
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: false,
+        copilotCliOtlp: false,
+        claudeDesktop: true,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+        omp: false,
+      },
+    });
+  });
+
+  it('routes `proxy disconnect --vscode-claude-code --insiders` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--vscode-claude-code', '--insiders'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: 'user',
+      insiders: true,
+      targets: {
+        claudeCodeOtlp: false,
+        copilotChatOtlp: false,
+        copilotCliOtlp: false,
+        claudeDesktop: false,
+        vscodeClaudeCode: true,
+        codexDesktop: false,
+        omp: false,
+      },
     });
   });
 });

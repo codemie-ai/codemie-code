@@ -4,7 +4,7 @@ import { AnalyticsSourceError } from '@/utils/errors.js';
 import { maskSecretsDeep } from '@/utils/security.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
-import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields } from './event-fields/identity-fields.js';
+import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
@@ -60,7 +60,7 @@ const MAX_PROMPT_CHARS = 200;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
 /** Free-text fields cut after masking, each to its own limit. */
-const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
+export const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
   prompt: MAX_PROMPT_CHARS,
   tool_input: MAX_TOOL_FIELD_CHARS,
   tool_response: MAX_TOOL_FIELD_CHARS,
@@ -69,11 +69,30 @@ const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
 };
 
 /** Top-level identifier fields that are never free text; masking must not touch them. */
-const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
+export const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
   'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
   'hook_event_name', 'tool_name', 'tool_use_id', 'agent_id', 'agent_type', 'agent_name',
   'notification_type', 'error_type',
 ]);
+
+export function boundedText(value: unknown, maxChars: number): string {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  let text: string;
+  if (typeof value === 'string') {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value) ?? String(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  const cut = text.slice(0, maxChars);
+  // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
@@ -86,6 +105,13 @@ const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
  */
 export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<string, unknown>> {
   abstract readonly name: string;
+  /** Claude Code and Copilot adapters only: a native session's configured project wins over a shell CODEMIE_PROJECT. */
+  protected readonly configuredProjectWins: boolean = false;
+  /** Copilot adapters only (no CLAUDE_PROJECT_DIR): find config from the nearest `.codemie` up from the hook cwd. */
+  protected readonly walkProjectFromCwd: boolean = false;
+  private get projectPolicy(): ProjectPolicy {
+    return { configuredWins: this.configuredProjectWins, walkFromCwd: this.walkProjectFromCwd };
+  }
   readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
@@ -140,7 +166,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         }
 
         const context = await this.extractHookContext(hookInput);
-        const batch = await this.prepareForward(context, decision);
+        const batch = await this.prepareForward(context, decision, hookInput);
         const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
           ? [batch.events, this.name, batch.options]
           : [batch.events, this.name];
@@ -173,13 +199,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
   private async prepareForward(
     context: OtlpHookContext,
-    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>
+    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>,
+    hookInput: TInput
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     if (context.evidenceInputs) {
-      const stamp = await stampEvidence(context, context.evidenceInputs);
+      const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
-        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
+        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending, hookInput))) {
           logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
           return { events: [], pendingStored: true };
         }
@@ -197,7 +224,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
     const [commonFields, agentFields] = await Promise.all([
       this.resolveCommonFields(context, record),
-      this.resolveAgentFields(),
+      this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
     return {
@@ -222,12 +249,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async holdForOwner(
     context: OtlpHookContext,
     payload: Record<string, unknown>[],
-    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>
+    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>,
+    hookInput: TInput
   ): Promise<boolean> {
     try {
       const now = Date.now();
       const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
-      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields()]);
+      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields(hookInput)]);
       const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
       return await enqueuePendingOwner({
         fp: pending.fp,
@@ -236,7 +264,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         session_id: pending.fields.session_id,
         fields: pending.fields,
         cwd: context.cwd,
-        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields)),
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, await this.scopeProfile(pending.fields), this.projectPolicy),
         events: payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       }, now);
     } catch (error) {
@@ -293,7 +321,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;
   /** Agent-owned fields (platform, version, entrypoint, ...); override everything else. */
-  protected abstract resolveAgentFields(): Promise<Record<string, unknown>>;
+  protected abstract resolveAgentFields(input: TInput): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
@@ -310,7 +338,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: this.boundedText(limited['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: boundedText(limited['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
     };
     event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
@@ -349,29 +377,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
     for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
       if (Object.prototype.hasOwnProperty.call(limited, field)) {
-        limited[field] = this.boundedText(limited[field], maxChars);
+        limited[field] = boundedText(limited[field], maxChars);
       }
     }
     return limited;
-  }
-
-  private boundedText(value: unknown, maxChars: number): string {
-    if (value === undefined || value === null) {
-      return '';
-    }
-    let text: string;
-    if (typeof value === 'string') {
-      text = value;
-    } else {
-      try {
-        text = JSON.stringify(value) ?? String(value);
-      } catch {
-        text = String(value);
-      }
-    }
-    const cut = text.slice(0, maxChars);
-    // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
-    return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
 
   /**
@@ -391,7 +400,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context, record),
+      resolveIdentityFields(context, record, this.projectPolicy),
     ]);
     return { ...repoFields, ...identityFields };
   }
