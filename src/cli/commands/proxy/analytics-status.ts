@@ -12,6 +12,7 @@ import {
   readClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { resolveRepositoryName } from '@/utils/processes.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { unaffectedChannels } from './analytics-hints.js';
@@ -24,7 +25,7 @@ import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope
 
 interface ConnectorSection {
   connectorId: string;
-  /** Section heading: `Claude` or `Copilot`. */
+  /** Section heading: `Claude`, `Copilot CLI` or `Copilot Chat`, so two connected Copilot tools stay apart. */
   title: string;
   /** Headline label ("Hooks", "Connected") and its value. */
   headline: { label: string; value: string };
@@ -166,7 +167,7 @@ export async function collectCopilotAnalyticsStatus(connectorId: string): Promis
 export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): Promise<string> {
   return renderConnectorSection({
     connectorId: status.connector,
-    title: 'Copilot',
+    title: status.connector === COPILOT_CHAT_OTLP_AGENT_NAME ? 'Copilot Chat' : 'Copilot CLI',
     headline: { label: 'Connected', value: status.connected ? 'yes' : 'no' },
     needsConnect: status.scope === 'not-connected',
     scope: status.scope,

@@ -220,8 +220,8 @@ describe('createProxyAnalyticsCommand', () => {
     const connectors: Array<[string[], string]> = [
       [[], 'Claude:'],
       [['--claude-code-otlp'], 'Claude:'],
-      [['--copilot-cli-otlp'], 'Copilot:'],
-      [['--copilot-chat-otlp'], 'Copilot:'],
+      [['--copilot-cli-otlp'], 'Copilot CLI:'],
+      [['--copilot-chat-otlp'], 'Copilot Chat:'],
     ];
 
     const daemonState = {
@@ -306,16 +306,23 @@ describe('createProxyAnalyticsCommand', () => {
       mockActiveConnectors(['claude-code-otlp', 'copilot-cli-otlp']);
       await runCommand(['status']);
       const lines = plainOutput().split('\n');
-      const headings = lines.filter((line) => /^(Claude|Copilot):$/.test(line));
-      expect(headings).toEqual(['Claude:', 'Copilot:']);
-      expect(lines[lines.indexOf('Copilot:') - 1]).toBe('');
+      const headings = lines.filter((line) => /^(Claude|Copilot CLI|Copilot Chat):$/.test(line));
+      expect(headings).toEqual(['Claude:', 'Copilot CLI:']);
+      expect(lines[lines.indexOf('Copilot CLI:') - 1]).toBe('');
+    });
+
+    it('gives the two Copilot tools different headings when both are connected', async () => {
+      mockActiveConnectors(['copilot-cli-otlp', 'copilot-chat-otlp']);
+      await runCommand(['status']);
+      const headings = plainOutput().split('\n').filter((line) => /^Copilot[^:]*:$/.test(line));
+      expect(headings).toEqual(['Copilot CLI:', 'Copilot Chat:']);
     });
 
     it('shows only the connected tool, not Claude, when only Copilot is connected', async () => {
       mockActiveConnectors(['copilot-cli-otlp']);
       await runCommand(['status']);
       const output = plainOutput();
-      expect(output).toContain('Copilot:');
+      expect(output).toContain('Copilot CLI:');
       expect(output).not.toContain('Claude:');
       expect(output).not.toContain('codemie proxy connect --claude-code-otlp');
     });
@@ -324,7 +331,7 @@ describe('createProxyAnalyticsCommand', () => {
       mockActiveConnectors(['claude-code-otlp', 'copilot-cli-otlp']);
       await runCommand(['status', '--copilot-cli-otlp']);
       const output = plainOutput();
-      expect(output).toContain('Copilot:');
+      expect(output).toContain('Copilot CLI:');
       expect(output).not.toContain('Claude:');
     });
 

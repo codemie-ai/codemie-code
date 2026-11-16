@@ -267,9 +267,9 @@ describe('analytics-status', () => {
       return stripVTControlCharacters(await formatCopilotAnalyticsStatus(status)).split('\n');
     }
 
-    it('prints the Copilot section with a Connected row and the connector-specific unaffected sentence', async () => {
+    it('prints the Copilot CLI section with a Connected row and the connector-specific unaffected sentence', async () => {
       expect(await render(base)).toEqual([
-        'Copilot:',
+        'Copilot CLI:',
         '  Connected: yes',
         '  Scope: user',
         '  Collection: enabled',
@@ -281,7 +281,7 @@ describe('analytics-status', () => {
 
     it('uses the Copilot Chat sentence for copilot-chat-otlp', async () => {
       const lines = await render({ ...base, connector: 'copilot-chat-otlp' });
-      expect(lines[0]).toBe('Copilot:');
+      expect(lines[0]).toBe('Copilot Chat:');
       expect(lines.at(-1)).toBe('  These settings do not affect the daily analytics collector.');
     });
 
@@ -289,7 +289,7 @@ describe('analytics-status', () => {
       const lines = await render({ ...base, connected: false, scope: 'not-connected', enabled: false });
 
       expect(lines).toEqual([
-        'Copilot:',
+        'Copilot CLI:',
         '  Connected: no',
         '      Run: codemie proxy connect --copilot-cli-otlp',
         '  Scope: not-connected',
