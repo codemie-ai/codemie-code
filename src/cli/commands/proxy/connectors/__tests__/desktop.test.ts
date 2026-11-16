@@ -292,7 +292,7 @@ describe('fetchClaudeModels', () => {
       .rejects.toThrow('Local proxy model discovery could not reach');
   });
 
-  it('falls back to preferred Claude ids when the proxy upstream returns 5xx', async () => {
+  it('returns null when the proxy upstream returns 5xx', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -301,19 +301,7 @@ describe('fetchClaudeModels', () => {
       json: async () => ({ data: [] }),
     }) as unknown as typeof globalThis.fetch;
 
-    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(ids(models)).toEqual([
-      'claude-opus-5-5',
-      'claude-opus-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6',
-      'claude-sonnet-5-5',
-      'claude-sonnet-5',
-      'claude-sonnet-4-6',
-      'claude-haiku-5-5',
-      'claude-haiku-4-5',
-    ]);
+    expect(await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy')).toBeNull();
   });
 
   it('throws when response is not ok', async () => {
@@ -651,6 +639,31 @@ describe('writeDesktopConfig', () => {
 
     await expect(writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'no-claude'))
       .rejects.toThrow(/Project "no-claude" does not allow any Claude models/);
+  });
+
+  it('connects a project whose Claude models match none of the curated set', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'claude-opus-4-5-20251101' }, { base_name: 'claude-3-haiku-20240307' }],
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'legacy-claude');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
+  });
+
+  it('still writes the config when the upstream model catalog fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: { get: () => 'application/json' },
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'p1');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('reuses appliedId from existing _meta.json when present', async () => {
