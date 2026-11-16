@@ -5,6 +5,10 @@
  * pre-selects the row under the cursor, Enter confirms the pre-selected row, and
  * Continue / Cancel buttons close the screen. Scoped to the list it is given
  * (never the full provider catalog).
+ *
+ * Deliberately NOT the same contract as setup-wizard/list-screen.ts's own single-choice
+ * mode, which confirms the row under the cursor on Enter alone (no Space needed): this
+ * prompt's Space-then-Enter is the explicit design for this command, not an oversight.
  */
 
 import chalk from 'chalk';
