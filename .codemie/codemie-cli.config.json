@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "activeProfile": "default",
+  "activeProfile": "epm-cdme",
   "profiles": {
-    "default": {
+    "epm-cdme": {
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
@@ -54,6 +54,6 @@
   "codemieSkills": [],
   "workspace": {
     "codeMieUrl": "https://codemie.lab.epam.com",
-    "codeMieProject": "oleh_prusak@epam.com"
+    "codeMieProject": "epm-cdme"
   }
 }
