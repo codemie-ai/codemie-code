@@ -60,13 +60,23 @@ export class HealthCheckFormatter {
       this.currentSpinner = null;
     }
 
+    this.printDetail(detail, 0);
+  }
+
+  /** One detail, its hint, then its children indented one level deeper. */
+  private printDetail(detail: HealthCheckDetail, depth: number): void {
+    const indent = '  ' + '    '.repeat(depth);
     const icon = this.getIcon(detail.status);
     const colorFn = this.getColorFunction(detail.status);
 
-    console.log(`  ${icon} ${colorFn(detail.message)}`);
+    console.log(`${indent}${icon} ${colorFn(detail.message)}`);
 
     if (detail.hint) {
-      console.log(`      ${chalk.white(detail.hint)}`);
+      console.log(`${indent}    ${chalk.white(detail.hint)}`);
+    }
+
+    for (const child of detail.children ?? []) {
+      this.printDetail(child, depth + 1);
     }
   }
 
@@ -83,14 +93,7 @@ export class HealthCheckFormatter {
     console.log(chalk.bold(`${result.name}:`));
 
     for (const detail of result.details) {
-      const icon = this.getIcon(detail.status);
-      const colorFn = this.getColorFunction(detail.status);
-
-      console.log(`  ${icon} ${colorFn(detail.message)}`);
-
-      if (detail.hint) {
-        console.log(`      ${chalk.white(detail.hint)}`);
-      }
+      this.printDetail(detail, 0);
     }
 
     console.log();
@@ -109,14 +112,7 @@ export class HealthCheckFormatter {
     console.log(chalk.bold(`${result.name}:`));
 
     for (const detail of result.details) {
-      const icon = this.getIcon(detail.status);
-      const colorFn = this.getColorFunction(detail.status);
-
-      console.log(`  ${icon} ${colorFn(detail.message)}`);
-
-      if (detail.hint) {
-        console.log(`      ${chalk.white(detail.hint)}`);
-      }
+      this.printDetail(detail, 0);
     }
 
     console.log();

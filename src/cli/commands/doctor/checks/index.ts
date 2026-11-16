@@ -11,6 +11,5 @@ export { AwsCliCheck } from './AwsCliCheck.js';
 export { AIConfigCheck } from './AIConfigCheck.js';
 export { JWTAuthCheck } from './JWTAuthCheck.js';
 export { AgentsCheck } from './AgentsCheck.js';
-export { PromptCacheCheck } from './PromptCacheCheck.js';
 export { WorkflowsCheck } from './WorkflowsCheck.js';
 export { FrameworksCheck } from './FrameworksCheck.js';

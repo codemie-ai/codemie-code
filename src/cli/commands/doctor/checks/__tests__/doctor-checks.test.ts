@@ -100,6 +100,11 @@ import { AwsCliCheck } from '../AwsCliCheck.js';
 import { UvCheck } from '../UvCheck.js';
 import { JWTAuthCheck } from '../JWTAuthCheck.js';
 import { AgentsCheck } from '../AgentsCheck.js';
+import { LAUNCH_ENV_HEADER } from '@/agents/core/launch-env.js';
+
+function envBlock(children: unknown[]): unknown {
+  return { status: 'info', message: LAUNCH_ENV_HEADER, children };
+}
 import { AIConfigCheck } from '../AIConfigCheck.js';
 import { WorkflowsCheck } from '../WorkflowsCheck.js';
 import { FrameworksCheck } from '../FrameworksCheck.js';
@@ -321,6 +326,187 @@ describe('AgentsCheck', () => {
     expect(started).toEqual(['Checking Gemini...']);
     expect(displayed).toEqual([{ status: 'ok', message: 'Gemini (2.0.0)' }]);
     expect(result.details).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+describe('AgentsCheck — launch config under each agent', () => {
+  const PROFILE = { name: 'work', provider: 'ai-run-sso', claudeAutocompactPct: 70 };
+  const A = { name: 'A', value: () => ({ value: '1', from: 'codemie-default' as const }), why: 'a' };
+
+  function agent(name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name,
+      displayName: name === 'claude' ? 'Claude Code' : name,
+      getVersion: async () => '1.0.0',
+      getLaunchEnvDefaults: () => [A],
+      readLaunchSettingsLayers: async () => [],
+      ...extra,
+    };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('CODEMIE_WRAPPER_PID', '');
+    vi.stubEnv('A', '');
+    h.loadMock.mockResolvedValue(PROFILE);
+    h.getProviderMock.mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('nests launch-env rows under an agent that declares them', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const result = await new AgentsCheck().run();
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.children?.[0]).toEqual(envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }]));
+  });
+
+  it("appends the agent's describeLaunchConfig lines after the env rows", async () => {
+    const extra = { status: 'info' as const, message: 'Prompt cache TTL 1h' };
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { describeLaunchConfig: async () => [extra] })]);
+    const result = await new AgentsCheck().run();
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }]), extra]);
+  });
+
+  it('an agent without declarations has no children', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      agent('claude'),
+      { name: 'gemini', displayName: 'Gemini', getVersion: async () => '2.0.0' },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details.find((d) => d.message === 'Gemini (2.0.0)')).toEqual({ status: 'ok', message: 'Gemini (2.0.0)' });
+  });
+
+  it('names the profile and directory once, before the agents', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude'), agent('claude-acp')]);
+    const result = await new AgentsCheck().run();
+    expect(result.details[0]).toEqual({ status: 'info', message: `Profile "work", evaluated in ${process.cwd()}` });
+    expect(result.details.filter((d) => d.message.startsWith('Profile "'))).toHaveLength(1);
+  });
+
+  it('prints no profile line when no agent has launch config', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([{ name: 'gemini', displayName: 'Gemini', getVersion: async () => '2.0.0' }]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toEqual([{ status: 'ok', message: 'Gemini (2.0.0)' }]);
+    expect(h.loadMock).not.toHaveBeenCalled();
+  });
+
+  it("on a provider that replaces the agent's beforeRun, shows one not-applied child for that agent only", async () => {
+    h.loadMock.mockResolvedValue({ ...PROFILE, provider: 'bedrock' });
+    h.getProviderMock.mockReturnValue({ agentHooks: { claude: { beforeRun: async (e: unknown) => e } } });
+    const extra = { status: 'info' as const, message: 'TTL line' };
+    h.getInstalledAgentsMock.mockResolvedValue([
+      agent('claude', { describeLaunchConfig: async () => [extra] }),
+      agent('claude-acp', { displayName: 'Claude Code ACP' }),
+    ]);
+    const result = await new AgentsCheck().run();
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    const acp = result.details.find((d) => d.message === 'Claude Code ACP (1.0.0)');
+    expect(claude?.children).toEqual([{ status: 'info', message: 'Launch defaults not applied on bedrock' }, extra]);
+    expect(acp?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }])]);
+  });
+
+  it('inside a CodeMie session, adds one info line about inherited variables', async () => {
+    vi.stubEnv('CODEMIE_WRAPPER_PID', '4242');
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toContainEqual({
+      status: 'info',
+      message:
+        'Running inside a CodeMie agent session: launch variables are inherited; run doctor from a plain terminal for a clean reading',
+    });
+  });
+
+  it('a failing describeLaunchConfig becomes one info child and leaves the version status unchanged', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      agent('claude', {
+        describeLaunchConfig: async () => {
+          throw new Error('settings exploded');
+        },
+      }),
+    ]);
+    const result = await new AgentsCheck().run();
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.status).toBe('ok');
+    expect(claude?.children).toEqual([{ status: 'info', message: 'launch config unavailable: settings exploded' }]);
+    expect(result.success).toBe(true);
+  });
+
+  it('a failing ConfigLoader.load() becomes one warning and agents still list (Review Focus 5)', async () => {
+    h.loadMock.mockRejectedValue(new Error('profile file is corrupt'));
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const result = await new AgentsCheck().run();
+    expect(result.success).toBe(true);
+    expect(result.details.filter((d) => d.status === 'warn')).toHaveLength(1);
+    expect(result.details.find((d) => d.status === 'warn')?.message).toContain('profile file is corrupt');
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude).toEqual({ status: 'ok', message: 'Claude Code (1.0.0)' });
+  });
+
+  it('evaluates profile-driven values from the loaded profile, as the launcher would, not an inherited one', async () => {
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', '{"claudeAutocompactPct":50}');
+    const PCT = {
+      name: 'PCT',
+      value: (env: NodeJS.ProcessEnv) => ({
+        value: String((JSON.parse(env.CODEMIE_PROFILE_CONFIG ?? '{}') as { claudeAutocompactPct?: number }).claudeAutocompactPct),
+        from: 'profile' as const,
+      }),
+      why: 'p',
+    };
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { getLaunchEnvDefaults: () => [PCT] })]);
+    const result = await new AgentsCheck().run();
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'PCT = 70  profile "work"' }])]);
+  });
+
+  it('strips terminal controls from a profile-load error before printing it', async () => {
+    h.loadMock.mockRejectedValue(new Error('Unexpected token \x1b]0;owned\x07 in \x1b[31mJSON'));
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const result = await new AgentsCheck().run();
+    const warn = result.details.find((d) => d.status === 'warn');
+    expect(warn?.message).not.toMatch(/[^\x20-\x7e]/);
+    expect(warn?.message).not.toContain('owned');
+  });
+
+  it('names the provider that declares a value, and hands it to describeLaunchConfig', async () => {
+    h.getProviderMock.mockReturnValue({ agentHooks: { claude: { env: { A: '0' } } } });
+    const describeLaunchConfig = vi.fn(async () => []);
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { describeLaunchConfig })]);
+
+    const result = await new AgentsCheck().run();
+
+    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 0  provider ai-run-sso, replaces default 1' }])]);
+    expect(describeLaunchConfig).toHaveBeenCalledWith(expect.objectContaining({ shellEnv: expect.objectContaining({ A: '0' }) }));
+  });
+
+  it('evaluates the profile named by --profile, and names it', async () => {
+    h.loadMock.mockResolvedValue({ ...PROFILE, name: 'anthropic', provider: 'anthropic-subscription' });
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const result = await new AgentsCheck({ profile: 'anthropic' }).run();
+    expect(h.loadMock).toHaveBeenCalledWith(process.cwd(), { name: 'anthropic' });
+    expect(result.details[0].message).toBe(`Profile "anthropic", evaluated in ${process.cwd()}`);
+  });
+
+  it('without --profile, evaluates the active profile', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    await new AgentsCheck().run();
+    expect(h.loadMock).toHaveBeenCalledWith(process.cwd(), undefined);
+  });
+
+  it('runWithItemDisplay passes children through onDisplayItem', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
+    const displayed: Array<{ message: string; children?: unknown[] }> = [];
+    await new AgentsCheck().runWithItemDisplay(
+      () => {},
+      (d) => displayed.push(d)
+    );
+    const claude = displayed.find((d) => d.message === 'Claude Code (1.0.0)');
+    expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }])]);
+    expect(displayed[0].message).toMatch(/^Profile "work"/);
   });
 });
 

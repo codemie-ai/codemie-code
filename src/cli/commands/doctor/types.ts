@@ -16,6 +16,8 @@ export interface HealthCheckDetail {
   status: HealthStatus;
   message: string;
   hint?: string;
+  /** Lines shown indented under this one (e.g. an agent's launch config under its version line). */
+  children?: HealthCheckDetail[];
 }
 
 /**
