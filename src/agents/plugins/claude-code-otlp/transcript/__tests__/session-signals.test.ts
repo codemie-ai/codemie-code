@@ -198,6 +198,27 @@ describe('countTurns', () => {
       ])
     ).toBe(4);
   });
+
+  it('excludes known local-only commands (no model call) from turns, EPMCDME-15582 regression', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const wrapped = (name: string) =>
+      `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>`;
+    expect(
+      countTurns([
+        user('typed prompt'),
+        user(wrapped('context')),
+        user(wrapped('usage')),
+        user(wrapped('cost')),
+        user(wrapped('exit')),
+        user(wrapped('quit')),
+        user(wrapped('clear')),
+        user(wrapped('resume')),
+        user(wrapped('model')),
+        user(wrapped('compact')), // calls the model, must still count
+        user(wrapped('init')), // calls the model, must still count
+      ])
+    ).toBe(3); // typed prompt + /compact + /init
+  });
 });
 
 describe('collectCompactions', () => {

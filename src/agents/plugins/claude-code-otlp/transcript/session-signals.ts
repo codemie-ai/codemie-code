@@ -1,4 +1,5 @@
 import { countContentLines } from '@/utils/file-operations.js';
+import { wrappedCommandName } from '../../claude/session/claude-named-invocations.js';
 
 /**
  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
@@ -123,6 +124,22 @@ const SELF_WRITTEN_PREFIXES = [
 /** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
 const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
 
+/**
+ * Commands Claude Code runs locally with no model call behind them — the client-side analogue of
+ * the backend analytics rollup's `SENTINEL_EXACT` list, excluded from Turns. There is no shared
+ * source of truth between the two repos: a newly added local-only command must be added to both.
+ */
+export const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  'context',
+  'usage',
+  'cost',
+  'exit',
+  'quit',
+  'clear',
+  'resume',
+  'model',
+]);
+
 function startsWithAny(text: string, prefixes: readonly string[]): boolean {
   const start = text.trimStart();
   return prefixes.some((prefix) => start.startsWith(prefix));
@@ -171,6 +188,7 @@ export function countTurns(lines: readonly SignalLine[]): number {
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    if (LOCAL_ONLY_COMMANDS.has(wrappedCommandName(text))) continue;
     turns += 1;
   }
   return turns;

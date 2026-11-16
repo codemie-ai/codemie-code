@@ -66,6 +66,18 @@ function bump(map: Record<string, number>, key: string): void {
 }
 
 /**
+ * The single command name (leading slash stripped) in a genuine CLI wrapper within `text`, or
+ * `''` when `text` carries no `<command-name>` tag with its required `<command-message>` sibling.
+ * Same genuine-wrapper rule as `scanCommands`; only the first match is returned.
+ */
+export function wrappedCommandName(text: string): string {
+  if (!text.includes('<command-message>')) return '';
+  COMMAND_TAG.lastIndex = 0;
+  const match = COMMAND_TAG.exec(text);
+  return match ? match[1].replace(/^\//, '').trim() : '';
+}
+
+/**
  * Extract skill / agent / command name counts from a flat list of Claude messages.
  * Safe against missing or malformed fields — anything that isn't a recognized shape is skipped.
  */

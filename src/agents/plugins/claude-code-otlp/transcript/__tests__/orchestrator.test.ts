@@ -830,6 +830,17 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     expect(summary.turns).toBe(2);
   });
 
+  it('excludes local-only commands like /context and /usage from turns, but still counts model-calling commands', async () => {
+    const summary = await runFinalSummary('session-local-only-commands', [
+      userLine('hello'),
+      userLine(commandText('context')),
+      userLine(commandText('usage')),
+      userLine(commandText('compact')),
+    ]);
+
+    expect(summary.turns).toBe(2); // 'hello' + '/compact'; /context and /usage are local-only
+  });
+
   it('leaves lines_* null when the transcript has no applied edit result', async () => {
     const summary = await runFinalSummary('session-no-edits', [
       userLine('hello'),
