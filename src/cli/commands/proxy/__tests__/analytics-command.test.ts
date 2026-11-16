@@ -358,7 +358,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect(collectDeliveryHealth).toHaveBeenCalledWith(daemonState, { credentials: 'ok' });
       const lines = plainOutput().split('\n');
       expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (credentials expired)',
+        'Delivery: unhealthy (CodeMie sign-in has expired)',
         '    Run: codemie profile login',
         'Unsent data: 2.00 KB (all sessions on this machine)',
         '',
@@ -377,7 +377,7 @@ describe('createProxyAnalyticsCommand', () => {
 
       const lines = plainOutput().split('\n');
       expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (sending to analytics failed on this machine)',
+        'Delivery: unhealthy (last send to CodeMie failed, retrying)',
         'Unsent data: 3.10 KB (all sessions on this machine)',
         'Next retry: 2026-11-13T14:32:10.000Z',
         'Error: backend unreachable',
