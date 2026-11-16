@@ -23,17 +23,16 @@ export interface DesktopModel {
 }
 
 /**
- * Curated list of Claude models we expose by default.
+ * Curated Claude models that head Desktop's list; the first one served is Desktop's default.
  *
  * Each entry is matched against the catalog either as an exact ID or as
  * `<entry>-<YYYYMMDD>` (the dated variant). The actual resolved ID is what
  * Desktop is offered, so the gateway receives a model name it has registered.
  *
  * Opus, Sonnet, and Haiku entries are listed in descending preference
- * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
- * {@link selectDesktopClaudeModels} collapses each family to the single
- * highest-priority ID the gateway actually serves, so Desktop never shows more
- * than one Opus, Sonnet, or Haiku (matching the latest cloud Desktop lineup).
+ * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
+ * {@link selectDesktopClaudeModels} puts the highest-priority ID the gateway serves
+ * in each family first. It does not limit the list: every other Claude model follows.
  */
 export const PREFERRED_CLAUDE_MODELS = [
   'claude-opus-5-5',
@@ -114,15 +113,15 @@ export function selectPreferredClaudeModels(
 }
 
 /**
- * Build the exact model set Claude Desktop should be offered.
+ * Build the ordered model list Claude Desktop is offered; its first entry is Desktop's default.
  *
- * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus, sonnet, and haiku families to a single entry each:
- * the first (highest-priority) ID that resolved. With preferred order
- * `opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, and
- * `haiku: 5.5 → 4-5` in {@link PREFERRED_CLAUDE_MODELS}, this exposes the
- * highest-priority model in each family when the gateway serves it and
- * otherwise falls back to the next-best available ID. Order is preserved.
+ * Three groups, in this order:
+ * 1. The curated pick: {@link selectPreferredClaudeModels} collapsed to the first
+ *    (highest-priority) resolved ID per Opus, Sonnet and Haiku family, in
+ *    {@link PREFERRED_CLAUDE_MODELS} order.
+ * 2. Every router, in catalog order.
+ * 3. Every other plain model, in catalog order. Only the exact picked IDs are left out,
+ *    so dated, undated and version-first variants of a picked model still appear.
  */
 export function selectDesktopClaudeModels(
   available: readonly DesktopModel[],
@@ -139,7 +138,7 @@ export function selectDesktopClaudeModels(
   let opusKept = false;
   let sonnetKept = false;
   let haikuKept = false;
-  const models = resolved.filter((id) => {
+  const picked = resolved.filter((id) => {
     if (/^claude-opus-/i.test(id)) {
       if (opusKept) return false;
       opusKept = true;
@@ -157,7 +156,9 @@ export function selectDesktopClaudeModels(
     }
     return true;
   });
-  return [...models.map((id) => byId.get(id) ?? { id, isRouter: false }), ...routers];
+  const pickedIds = new Set(picked);
+  const remaining = available.filter((model) => !model.isRouter && !pickedIds.has(model.id));
+  return [...picked.map((id) => byId.get(id) ?? { id, isRouter: false }), ...routers, ...remaining];
 }
 
 /**

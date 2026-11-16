@@ -3,9 +3,10 @@
  * Priority: 8 (after GatewayKeyPlugin, so only a caller holding the gateway key is answered)
  *
  * Answers Claude Desktop's `GET /v1/models` (Anthropic Models API shape) from the CodeMie
- * catalog of the daemon's project, curated by {@link selectDesktopClaudeModels}. Desktop asks
- * on every start when its config carries no `inferenceModels`, so a change on the project's
- * Models tab reaches its picker on the next Desktop start, without `codemie proxy connect`.
+ * catalog of the daemon's project: every project Claude model, ordered by
+ * {@link selectDesktopClaudeModels}. Desktop asks on every start when its config carries no
+ * `inferenceModels`, so a change on the project's Models tab reaches its picker on the next
+ * Desktop start, without `codemie proxy connect`.
  *
  * The request never goes upstream: the backend has no Anthropic-shaped model list, and the
  * catalog is read with the daemon's own credentials.

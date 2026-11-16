@@ -65,7 +65,7 @@ describe('toDesktopModels', () => {
 });
 
 describe('selectDesktopClaudeModels', () => {
-  it('keeps one model per family plus every router, with their names', () => {
+  it('puts the curated pick first, then routers, then every other model', () => {
     const selected = selectDesktopClaudeModels(toDesktopModels([
       { base_name: 'claude-opus-5', label: 'Bedrock Claude Opus 5' },
       { base_name: 'claude-opus-5-5', label: 'Bedrock Claude Opus 5.5' },
@@ -76,6 +76,7 @@ describe('selectDesktopClaudeModels', () => {
       { id: 'claude-opus-5-5', label: 'Bedrock Claude Opus 5.5', isRouter: false },
       { id: 'claude-sonnet-5', label: undefined, isRouter: false },
       { id: 'sy-signal-claude-v1', label: 'SY Signal Claude v1', isRouter: true },
+      { id: 'claude-opus-5', label: 'Bedrock Claude Opus 5', isRouter: false },
     ]);
   });
 });
