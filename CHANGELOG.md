@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
+
 ## [0.16.8] - 2026-11-12
 
 ### Added
