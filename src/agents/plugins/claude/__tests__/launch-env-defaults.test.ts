@@ -7,9 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import * as launchEnvDefaults from '../launch-env-defaults.js';
-import { CLAUDE_LAUNCH_ENV_DEFAULTS, CLAUDE_PROMPT_CACHE_WATCHED } from '../launch-env-defaults.js';
-import { claudeCacheDefaults } from '../prompt-cache.js';
-import { ClaudePluginMetadata } from '../claude.plugin.js';
+import { CLAUDE_LAUNCH_ENV_DEFAULTS, CLAUDE_PROMPT_CACHE_SETTINGS_KEYS, CLAUDE_PROMPT_CACHE_WATCHED } from '../launch-env-defaults.js';
+import { ClaudePlugin, ClaudePluginMetadata } from '../claude.plugin.js';
 
 vi.mock('fs/promises');
 vi.mock('fs');
@@ -60,16 +59,12 @@ describe('CLAUDE_LAUNCH_ENV_DEFAULTS', () => {
     expect(autocompact.value({ CODEMIE_PROFILE_CONFIG: '{not json' })).toEqual({ value: '85', from: 'codemie-default' });
   });
 
-  it.each(PROVIDERS)('claudeCacheDefaults equals the first two declarations on provider %s', (provider) => {
-    const env: NodeJS.ProcessEnv = provider ? { CODEMIE_PROVIDER: provider } : {};
-    expect(claudeCacheDefaults(env)).toEqual({
-      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: declared('CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS').value(env)?.value,
-      ENABLE_PROMPT_CACHING_1H: declared('ENABLE_PROMPT_CACHING_1H').value(env)?.value,
-    });
-  });
-
-  it('the Claude metadata carries the defaults, then the watched prompt-cache variables', () => {
-    expect(ClaudePluginMetadata.launchEnvDefaults).toEqual([...CLAUDE_LAUNCH_ENV_DEFAULTS, ...CLAUDE_PROMPT_CACHE_WATCHED]);
+  it('the Claude metadata carries the defaults, then the watched prompt-cache variables and settings keys', () => {
+    expect(ClaudePluginMetadata.launchEnvDefaults).toEqual([
+      ...CLAUDE_LAUNCH_ENV_DEFAULTS,
+      ...CLAUDE_PROMPT_CACHE_WATCHED,
+      ...CLAUDE_PROMPT_CACHE_SETTINGS_KEYS,
+    ]);
   });
 });
 
@@ -86,9 +81,48 @@ describe('CLAUDE_PROMPT_CACHE_WATCHED', () => {
     ]);
   });
 
+  it('watches the two prompt-cache settings keys as settings keys', () => {
+    const keys = CLAUDE_PROMPT_CACHE_SETTINGS_KEYS.map((d) => [d.name, d.settingsKey]);
+    expect(keys).toEqual([
+      ['promptCacheTtl', true],
+      ['subagentPromptCacheTtl', true],
+    ]);
+    expect(ClaudePluginMetadata.launchEnvDefaults).toEqual(
+      expect.arrayContaining([...CLAUDE_PROMPT_CACHE_SETTINGS_KEYS])
+    );
+  });
+
   it.each(PROVIDERS)('CodeMie sets none of them (provider %s)', (provider) => {
     const env: NodeJS.ProcessEnv = provider ? { CODEMIE_PROVIDER: provider } : {};
     for (const watched of CLAUDE_PROMPT_CACHE_WATCHED) expect(watched.value(env), watched.name).toBeUndefined();
+  });
+});
+
+describe('ClaudePlugin.readLaunchSettingsLayers', () => {
+  it('passes env blocks and top-level keys through, and treats a non-object env as unreadable', async () => {
+    const files: Record<string, string> = {
+      '/u/settings.json': JSON.stringify({ env: { ENABLE_TOOL_SEARCH: '0' }, promptCacheTtl: '5m' }),
+      '/p/.claude/settings.json': JSON.stringify({ env: ['not', 'an', 'object'] }),
+      '/p/.claude/settings.local.json': JSON.stringify({ model: 'x' }),
+    };
+    vi.mocked(readFile).mockImplementation((async (path: string) => {
+      if (path in files) return files[path];
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    }) as never);
+
+    const layers = await new ClaudePlugin().readLaunchSettingsLayers('/p', { CLAUDE_CONFIG_DIR: '/u' });
+
+    expect(layers.slice(0, 3)).toEqual([
+      {
+        path: '/u/settings.json',
+        state: 'ok',
+        env: { ENABLE_TOOL_SEARCH: '0' },
+        settings: { env: { ENABLE_TOOL_SEARCH: '0' }, promptCacheTtl: '5m' },
+      },
+      { path: '/p/.claude/settings.json', state: 'unreadable' },
+      { path: '/p/.claude/settings.local.json', state: 'ok', settings: { model: 'x' } },
+    ]);
+    expect(layers.slice(3).every((layer) => layer.state === 'absent')).toBe(true);
   });
 });
 

@@ -290,3 +290,12 @@ On bedrock, the env rows read `not applied on bedrock`, and the TTL line is
   - After: 4 uncached, 94,146 total.
   - Plain `claude`: 93,594 total.
   - `ai-run-sso` is unchanged: 114,390 total, 4 uncached.
+- **Prompt-cache resolver removed** (follow-up review, 2026-11-16).
+  - Deleted: `prompt-cache.ts`, `launch-config-report.ts`, the `[claude] prompt cache` launch debug
+    line, and the `describeLaunchConfig` agent hook.
+  - Why: the environment rows already show every cache variable, its value and its source. The
+    resolver's remaining job, choosing a winning TTL when variables conflict, rested on a
+    precedence order nobody had verified against Claude Code.
+  - Now: doctor lists every cache variable and the `promptCacheTtl` / `subagentPromptCacheTtl`
+    settings keys (via `settingsKey` declarations) that are set, and leaves the precedence to
+    Claude Code.

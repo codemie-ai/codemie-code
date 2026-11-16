@@ -163,6 +163,22 @@ describe('describeLaunchEnv', () => {
     expect(report).toEqual({ applied: false, rows: [{ name: 'A', effective: '0', source: 'provider' }], unreadable: [] });
   });
 
+  it('a settings-key declaration reads the top-level key of a settings file, never the shell', () => {
+    const KEY: LaunchEnvDefault[] = [{ name: 'promptCacheTtl', settingsKey: true, value: () => undefined, why: 'k' }];
+    const report = describeLaunchEnv(KEY, {
+      shellEnv: { promptCacheTtl: 'from-shell' },
+      defaultsApply: true,
+      settingsLayers: [
+        { path: LOW, state: 'ok', settings: { promptCacheTtl: '1h' } },
+        { path: HIGH, state: 'ok', settings: { promptCacheTtl: '5m' }, env: { promptCacheTtl: 'from-env-block' } },
+      ],
+    });
+    expect(report.rows).toEqual([{ name: 'promptCacheTtl', effective: '5m', source: 'settings', path: HIGH }]);
+
+    const unset = describeLaunchEnv(KEY, { shellEnv: { promptCacheTtl: '5m' }, defaultsApply: true, settingsLayers: [] });
+    expect(unset.rows).toEqual([]);
+  });
+
   it('a settings entry that blanks a variable wins, as an empty effective value', () => {
     const report = describeLaunchEnv(DEFAULTS, {
       shellEnv: { A: '1' },

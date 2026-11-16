@@ -7,16 +7,15 @@
  * (that is the only version state that actually blocks the agent).
  *
  * Under each agent that declares launch defaults it also shows the launch
- * configuration that agent ends up running with: every variable its launcher
- * sets, the effective value and where it came from (agent settings file, shell,
- * profile or CodeMie default), plus any lines the agent adds itself. Reads only:
- * nothing is launched, written or sent.
+ * configuration that agent ends up running with: every variable (or settings
+ * key) it declares, the effective value and where it came from (agent settings
+ * file, shell, provider, profile or CodeMie default). Reads only: nothing is
+ * launched, written or sent.
  */
 
 import { AgentRegistry } from '../../../../agents/registry.js';
-import type { AgentAdapter, LaunchConfigContext } from '../../../../agents/core/types.js';
+import type { AgentAdapter } from '../../../../agents/core/types.js';
 import {
-  applyProviderAgentEnv,
   defaultsApplyOnProvider,
   describeLaunchEnv,
   formatLaunchEnvReport,
@@ -27,6 +26,7 @@ import { getErrorMessage } from '../../../../utils/errors.js';
 import { logger } from '../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../utils/security.js';
 import { safeTerminalValue } from '../../../../utils/terminal-text.js';
+import { WRAPPER_PID_ENV } from '../../../../utils/processes.js';
 import { ItemWiseHealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 const INSIDE_SESSION_NOTE =
@@ -47,7 +47,7 @@ interface LaunchSetup {
 }
 
 function hasLaunchConfig(agent: AgentAdapter): boolean {
-  return (agent.getLaunchEnvDefaults?.().length ?? 0) > 0 || typeof agent.describeLaunchConfig === 'function';
+  return (agent.getLaunchEnvDefaults?.().length ?? 0) > 0;
 }
 
 export interface AgentsCheckOptions {
@@ -129,7 +129,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       const preamble: HealthCheckDetail[] = [
         { status: 'info', message: `Profile "${safeTerminalValue(profileName)}", evaluated in ${safeTerminalValue(cwd)}` },
       ];
-      if (shellEnv.CODEMIE_WRAPPER_PID) preamble.push({ status: 'info', message: INSIDE_SESSION_NOTE });
+      if (shellEnv[WRAPPER_PID_ENV]) preamble.push({ status: 'info', message: INSIDE_SESSION_NOTE });
 
       // The launcher always sets CODEMIE_PROVIDER and CODEMIE_PROFILE_CONFIG from the loaded profile
       // (AgentCLI), overwriting any inherited value, so doctor does the same.
@@ -154,31 +154,15 @@ export class AgentsCheck implements ItemWiseHealthCheck {
 
   private async launchChildren(agent: AgentAdapter, base: LaunchContextBase): Promise<HealthCheckDetail[]> {
     const defaults = agent.getLaunchEnvDefaults?.() ?? [];
-    const providerEnv = providerAgentEnv(base.provider, agent.name);
-    // The env the agent's own hook sees at launch: the provider's declared values are already in
-    // (executeBeforeRun applies them first, only where unset), so its resolvers see them too.
-    const agentEnv: NodeJS.ProcessEnv = { ...base.shellEnv };
-    applyProviderAgentEnv(agentEnv, agent.name);
-    const ctx: LaunchConfigContext = {
-      ...base,
-      shellEnv: agentEnv,
-      defaultsApply: defaultsApplyOnProvider(agent.name, base.provider),
-    };
-
     try {
-      const children: HealthCheckDetail[] = [];
-      if (defaults.length > 0) {
-        const settingsLayers = (await agent.readLaunchSettingsLayers?.(ctx.cwd, base.shellEnv)) ?? [];
-        const report = describeLaunchEnv(defaults, {
-          shellEnv: base.shellEnv,
-          defaultsApply: ctx.defaultsApply,
-          settingsLayers,
-          providerEnv,
-        });
-        children.push(...formatLaunchEnvReport(report, { provider: ctx.provider, profileName: ctx.profileName }));
-      }
-      if (agent.describeLaunchConfig) children.push(...(await agent.describeLaunchConfig(ctx)));
-      return children;
+      const settingsLayers = (await agent.readLaunchSettingsLayers?.(base.cwd, base.shellEnv)) ?? [];
+      const report = describeLaunchEnv(defaults, {
+        shellEnv: base.shellEnv,
+        defaultsApply: defaultsApplyOnProvider(agent.name, base.provider),
+        settingsLayers,
+        providerEnv: providerAgentEnv(base.provider, agent.name),
+      });
+      return formatLaunchEnvReport(report, { provider: base.provider, profileName: base.profileName });
     } catch (error) {
       logger.debug('[doctor] launch config', ...sanitizeLogArgs({ agent: agent.name, error: getErrorMessage(error) }));
       return [{ status: 'info', message: `launch config unavailable: ${safeTerminalValue(getErrorMessage(error))}` }];

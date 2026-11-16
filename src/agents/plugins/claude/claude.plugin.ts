@@ -28,12 +28,10 @@ import {
 } from '../../../utils/installation-detector.js';
 import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
-import { describePromptCacheSource, resolvePromptCacheSetup } from './prompt-cache.js';
 import { CLAUDE_LAUNCH_ENV_DEFAULTS, CLAUDE_LAUNCH_ENV_ROWS } from './launch-env-defaults.js';
 import { applyLaunchEnvDefaults } from '../../core/launch-env.js';
-import { describeClaudeLaunchConfig, toLaunchSettingsLayers } from './launch-config-report.js';
 import { readClaudeSettingsLayers } from '../claude-code-otlp/event-fields/claude-settings-env.js';
-import type { LaunchConfigContext, LaunchConfigLine, LaunchSettingsLayer } from '../../core/types.js';
+import type { LaunchSettingsLayer } from '../../core/types.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -209,38 +207,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
     // this.metadata.name, and hook.call(context, ...) in lifecycle-helpers.ts binds
     // `this` to the launching adapter instance (claude or claude-acp).
     async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
-      // The environment as the user's shell left it, before any CodeMie default: what the
-      // prompt-cache debug line below resolves from. CODEMIE_PROVIDER is populated before this hook runs.
-      const shellEnv = { ...env };
-
-      // Record which prompt-cache TTL this session will ask for and what decided it (a shell
-      // variable, a Claude settings file, or the default above). Debug log only, read-only, and
-      // never allowed to fail a launch; `codemie doctor` reports the same resolution.
-      try {
-        const { ttl, decidedBy, source, confirmed, variables } = await resolvePromptCacheSetup({
-          env: shellEnv,
-          codemieDefaults: true,
-          cwd: process.cwd(),
-        });
-        logger.debug(
-          '[claude] prompt cache',
-          ...sanitizeLogArgs({
-            ttl,
-            decidedBy,
-            source: describePromptCacheSource(source),
-            confirmed,
-            variables,
-          })
-        );
-      } catch (error) {
-        logger.debug('[claude] prompt cache', ...sanitizeLogArgs({ error: getErrorMessage(error) }));
-      }
-
-      // Set every launch default CodeMie owns (prompt-cache TTL, betas, auto mode server,
-      // telemetry, auto-updaters, tool search, auto-compaction), each only when unset or empty.
-      // The list, with the reason for each value, is CLAUDE_LAUNCH_ENV_DEFAULTS; `codemie doctor`
-      // describes the same list. Applied after the debug line above, which resolves from
-      // `shellEnv` and so is unaffected by the order.
+      // Set every launch default Claude owns (prompt-cache TTL, betas, telemetry, auto-updaters,
+      // tool search, auto-compaction), each only when unset or empty. The list, with the reason
+      // for each value, is CLAUDE_LAUNCH_ENV_DEFAULTS; `codemie doctor` describes the same list.
+      // Provider-declared values (agentHooks.claude.env) are already in env by now.
       applyLaunchEnvDefaults(env, CLAUDE_LAUNCH_ENV_DEFAULTS);
 
       // Keep an already-installed statusline in step with this CLI version: the deployed script is
@@ -605,14 +575,21 @@ export class ClaudePlugin extends BaseAgentAdapter {
     return this.extensionInstaller;
   }
 
-  /** Claude settings files whose `env` block overrides launch variables, lowest to highest precedence. Reads only. */
+  /**
+   * Claude settings files, lowest to highest precedence: their `env` block (which overrides launch
+   * variables) and top-level keys. A file whose `env` is not an object cannot be trusted, so it
+   * reads as unreadable. Reads only.
+   */
   async readLaunchSettingsLayers(cwd: string, env: NodeJS.ProcessEnv): Promise<LaunchSettingsLayer[]> {
-    return toLaunchSettingsLayers(await readClaudeSettingsLayers(cwd, env));
-  }
-
-  /** The resolved prompt-cache TTL lines `codemie doctor` shows under this agent (claude or claude-acp). */
-  async describeLaunchConfig(ctx: LaunchConfigContext): Promise<LaunchConfigLine[]> {
-    return describeClaudeLaunchConfig(ctx, this.metadata.name);
+    const layers = await readClaudeSettingsLayers(cwd, env);
+    return layers.map((layer): LaunchSettingsLayer => {
+      if (layer.state !== 'ok' || !layer.settings) return { path: layer.path, state: layer.state };
+      const block = layer.settings.env;
+      if (block === undefined) return { path: layer.path, state: 'ok', settings: layer.settings };
+      return typeof block === 'object' && block !== null && !Array.isArray(block)
+        ? { path: layer.path, state: 'ok', env: block as Record<string, unknown>, settings: layer.settings }
+        : { path: layer.path, state: 'unreadable' };
+    });
   }
 
   /**

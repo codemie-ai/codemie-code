@@ -363,14 +363,6 @@ describe('AgentsCheck — launch config under each agent', () => {
     expect(claude?.children?.[0]).toEqual(envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }]));
   });
 
-  it("appends the agent's describeLaunchConfig lines after the env rows", async () => {
-    const extra = { status: 'info' as const, message: 'Prompt cache TTL 1h' };
-    h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { describeLaunchConfig: async () => [extra] })]);
-    const result = await new AgentsCheck().run();
-    const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
-    expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }]), extra]);
-  });
-
   it('an agent without declarations has no children', async () => {
     h.getInstalledAgentsMock.mockResolvedValue([
       agent('claude'),
@@ -397,15 +389,14 @@ describe('AgentsCheck — launch config under each agent', () => {
   it("on a provider that replaces the agent's beforeRun, shows one not-applied child for that agent only", async () => {
     h.loadMock.mockResolvedValue({ ...PROFILE, provider: 'bedrock' });
     h.getProviderMock.mockReturnValue({ agentHooks: { claude: { beforeRun: async (e: unknown) => e } } });
-    const extra = { status: 'info' as const, message: 'TTL line' };
     h.getInstalledAgentsMock.mockResolvedValue([
-      agent('claude', { describeLaunchConfig: async () => [extra] }),
+      agent('claude'),
       agent('claude-acp', { displayName: 'Claude Code ACP' }),
     ]);
     const result = await new AgentsCheck().run();
     const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
     const acp = result.details.find((d) => d.message === 'Claude Code ACP (1.0.0)');
-    expect(claude?.children).toEqual([{ status: 'info', message: 'Launch defaults not applied on bedrock' }, extra]);
+    expect(claude?.children).toEqual([{ status: 'info', message: 'Launch defaults not applied on bedrock' }]);
     expect(acp?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 1  CodeMie default' }])]);
   });
 
@@ -420,10 +411,10 @@ describe('AgentsCheck — launch config under each agent', () => {
     });
   });
 
-  it('a failing describeLaunchConfig becomes one info child and leaves the version status unchanged', async () => {
+  it('a failing settings read becomes one info child and leaves the version status unchanged', async () => {
     h.getInstalledAgentsMock.mockResolvedValue([
       agent('claude', {
-        describeLaunchConfig: async () => {
+        readLaunchSettingsLayers: async () => {
           throw new Error('settings exploded');
         },
       }),
@@ -471,16 +462,14 @@ describe('AgentsCheck — launch config under each agent', () => {
     expect(warn?.message).not.toContain('owned');
   });
 
-  it('names the provider that declares a value, and hands it to describeLaunchConfig', async () => {
+  it('names the provider that declares a value', async () => {
     h.getProviderMock.mockReturnValue({ agentHooks: { claude: { env: { A: '0' } } } });
-    const describeLaunchConfig = vi.fn(async () => []);
-    h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { describeLaunchConfig })]);
+    h.getInstalledAgentsMock.mockResolvedValue([agent('claude')]);
 
     const result = await new AgentsCheck().run();
 
     const claude = result.details.find((d) => d.message === 'Claude Code (1.0.0)');
     expect(claude?.children).toEqual([envBlock([{ status: 'ok', message: 'A = 0  provider ai-run-sso, replaces default 1' }])]);
-    expect(describeLaunchConfig).toHaveBeenCalledWith(expect.objectContaining({ shellEnv: expect.objectContaining({ A: '0' }) }));
   });
 
   it('evaluates the profile named by --profile, and names it', async () => {

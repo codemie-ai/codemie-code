@@ -83,11 +83,12 @@ export function defaultsApplyOnProvider(agentName: string, provider: string | un
   return !ProviderRegistry.getProvider(provider)?.agentHooks?.[agentName]?.beforeRun;
 }
 
-function fromSettings(name: string, layers: LaunchSettingsLayer[]): { value: string; path: string } | undefined {
+/** The highest-precedence settings file that sets it: its `env` block, or a top-level key for `settingsKey`. */
+function fromSettings(declared: LaunchEnvDefault, layers: LaunchSettingsLayer[]): { value: string; path: string } | undefined {
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i];
-    if (layer.state !== 'ok' || !layer.env) continue;
-    const value = layer.env[name];
+    if (layer.state !== 'ok') continue;
+    const value = (declared.settingsKey ? layer.settings : layer.env)?.[declared.name];
     if (value !== undefined && value !== null) return { value: String(value), path: layer.path };
   }
   return undefined;
@@ -118,11 +119,12 @@ export function describeLaunchEnv(defaults: readonly LaunchEnvDefault[], input: 
     const differsFrom = (expected: string | undefined, row: LaunchEnvRow): LaunchEnvRow =>
       expected !== undefined && expected !== row.effective ? { ...row, codemieValue: expected } : row;
 
-    const settings = fromSettings(declared.name, input.settingsLayers);
+    const settings = fromSettings(declared, input.settingsLayers);
     if (settings) {
       rows.push(differsFrom(codemie, { name: declared.name, effective: settings.value, source: 'settings', path: settings.path }));
       continue;
     }
+    if (declared.settingsKey) continue;
     const shell = input.shellEnv[declared.name];
     if (shell) {
       rows.push(differsFrom(codemie, { name: declared.name, effective: shell, source: 'shell' }));

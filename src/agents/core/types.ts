@@ -908,11 +908,8 @@ export interface AgentAdapter {
   /** The environment variables this agent's launcher sets when they are unset (see AgentMetadata.launchEnvDefaults). */
   getLaunchEnvDefaults?(): readonly LaunchEnvDefault[];
 
-  /** The agent's settings files that can override launch variables, lowest to highest precedence. Reads only. */
+  /** The agent's settings files (env blocks and top-level keys), lowest to highest precedence. Reads only. */
   readLaunchSettingsLayers?(cwd: string, env: NodeJS.ProcessEnv): Promise<LaunchSettingsLayer[]>;
-
-  /** Extra launch-config lines `codemie doctor` shows under this agent (e.g. the resolved prompt-cache TTL). Reads only. */
-  describeLaunchConfig?(ctx: LaunchConfigContext): Promise<LaunchConfigLine[]>;
 }
 
 // ============================================================================
@@ -932,14 +929,22 @@ export interface LaunchEnvDefault {
   value(env: NodeJS.ProcessEnv): LaunchEnvValue | undefined;
   /** One line: why the launcher sets it, and how to opt out. */
   why: string;
+  /**
+   * `name` is a top-level key of the agent's settings files, not an environment variable: only
+   * the settings files set it (never the shell), and CodeMie never does (`value` returns undefined).
+   */
+  settingsKey?: boolean;
 }
 
-/** One agent settings file: where it is, whether it could be read, and its `env` block when it has one. */
+/** One agent settings file: where it is, whether it could be read, and what it holds. */
 export interface LaunchSettingsLayer {
   path: string;
   /** `unreadable` also covers a file whose `env` block is not an object. */
   state: 'ok' | 'absent' | 'unreadable';
+  /** The file's `env` block, when it has one. */
   env?: Record<string, unknown>;
+  /** The file's top-level keys, for `settingsKey` declarations. */
+  settings?: Record<string, unknown>;
 }
 
 export type LaunchConfigStatus = 'ok' | 'warn' | 'error' | 'info';
@@ -953,13 +958,3 @@ export interface LaunchConfigLine {
   children?: LaunchConfigLine[];
 }
 
-/** What an agent needs to describe its launch configuration for `codemie doctor`. */
-export interface LaunchConfigContext {
-  /** The environment before any launch default. */
-  shellEnv: NodeJS.ProcessEnv;
-  provider?: string;
-  profileName: string;
-  cwd: string;
-  /** Whether this provider runs the agent's default `beforeRun` (and so its launch defaults). */
-  defaultsApply: boolean;
-}

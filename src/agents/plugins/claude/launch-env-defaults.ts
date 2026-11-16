@@ -2,8 +2,7 @@
  * The environment variables a `codemie-claude` launch sets when they are unset or empty.
  *
  * This list is the single source: the Claude default `beforeRun` applies it
- * (`applyLaunchEnvDefaults`), the prompt-cache resolver derives its CodeMie defaults from it
- * (`claudeCacheDefaults`), and `codemie doctor` describes it under Installed Agents. Order is the
+ * (`applyLaunchEnvDefaults`) and `codemie doctor` describes it under Installed Agents. Order is the
  * order the launcher applies them in. Any non-empty value already in the environment is kept, so
  * setting a variable in the shell is always the opt-out.
  *
@@ -13,7 +12,7 @@
  * first (applyProviderAgentEnv), so these defaults only fill what is still unset. Examples: sso and
  * litellm turn tool search on; sso turns the auto-mode server review off.
  *
- * Imports nothing from claude.plugin.ts or prompt-cache.ts: both import this module.
+ * Imports nothing from claude.plugin.ts, which imports this module.
  */
 
 import type { LaunchEnvDefault, LaunchEnvValue } from '../../core/types.js';
@@ -138,7 +137,7 @@ function watched(name: string, why: string): LaunchEnvDefault {
  * Variables CodeMie never sets that can shorten, override or switch off the prompt cache that
  * ENABLE_PROMPT_CACHING_1H asks for. Declared so `codemie doctor` lists any of them that has a
  * value (shell or a Claude settings `env` block) next to the defaults above; the precedence between
- * them is the prompt-cache resolver's (PROMPT_CACHE_PRECEDENCE in prompt-cache.ts).
+ * them is Claude Code's own; doctor lists every one that is set rather than guess a winner.
  */
 export const CLAUDE_PROMPT_CACHE_WATCHED: readonly LaunchEnvDefault[] = [
   watched('FORCE_PROMPT_CACHING_5M', 'Forces the 5-minute prompt-cache TTL; wins over ENABLE_PROMPT_CACHING_1H.'),
@@ -150,5 +149,22 @@ export const CLAUDE_PROMPT_CACHE_WATCHED: readonly LaunchEnvDefault[] = [
   watched('DISABLE_PROMPT_CACHING_OPUS', 'Turns prompt caching off for Opus models.'),
 ];
 
-/** Every row `codemie doctor` may show under Claude: the defaults CodeMie sets, then the watched cache variables. */
-export const CLAUDE_LAUNCH_ENV_ROWS: readonly LaunchEnvDefault[] = [...CLAUDE_LAUNCH_ENV_DEFAULTS, ...CLAUDE_PROMPT_CACHE_WATCHED];
+/**
+ * Claude settings keys (not variables) that set the prompt-cache TTL. CodeMie never sets them;
+ * `codemie doctor` shows them whenever a Claude settings file does.
+ */
+export const CLAUDE_PROMPT_CACHE_SETTINGS_KEYS: readonly LaunchEnvDefault[] = [
+  { ...watched('promptCacheTtl', 'Settings key: prompt-cache TTL (1h or 5m).'), settingsKey: true },
+  { ...watched('subagentPromptCacheTtl', 'Settings key: prompt-cache TTL for subagents (1h or 5m).'), settingsKey: true },
+];
+
+/**
+ * Every row `codemie doctor` may show under Claude: the defaults CodeMie sets, then the watched
+ * cache variables and settings keys. When several cache rows are set at once, Claude Code decides
+ * which wins; doctor shows them all rather than guess its precedence.
+ */
+export const CLAUDE_LAUNCH_ENV_ROWS: readonly LaunchEnvDefault[] = [
+  ...CLAUDE_LAUNCH_ENV_DEFAULTS,
+  ...CLAUDE_PROMPT_CACHE_WATCHED,
+  ...CLAUDE_PROMPT_CACHE_SETTINGS_KEYS,
+];
