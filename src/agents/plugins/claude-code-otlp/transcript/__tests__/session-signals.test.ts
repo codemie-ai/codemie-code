@@ -229,6 +229,34 @@ describe('countTurns', () => {
       ])
     ).toBe(2);
   });
+
+  it('excludes additional known local-only commands (no model call) from turns', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const wrapped = (name: string) =>
+      `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>`;
+    expect(
+      countTurns([
+        user('typed prompt'),
+        user(wrapped('mcp')),
+        user(wrapped('agents')),
+        user(wrapped('hooks')),
+        user(wrapped('skills')),
+        user(wrapped('tasks')),
+        user(wrapped('release-notes')),
+        user(wrapped('export')),
+        user(wrapped('effort')),
+        user(wrapped('status')),
+        user(wrapped('config')),
+      ])
+    ).toBe(1); // only the typed prompt
+  });
+
+  it('counts a genuine typed turn that merely quotes a local-only command wrapper mid-text, not at the start', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const quoted =
+      'what does this transcript line mean: <command-name>/clear</command-name>\n<command-message>clear</command-message>';
+    expect(countTurns([user(quoted)])).toBe(1);
+  });
 });
 
 describe('collectCompactions', () => {

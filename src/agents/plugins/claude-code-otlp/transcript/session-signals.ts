@@ -125,9 +125,15 @@ const SELF_WRITTEN_PREFIXES = [
 const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
 
 /**
- * Commands Claude Code runs locally with no model call behind them — the client-side analogue of
- * the backend analytics rollup's `SENTINEL_EXACT` list, excluded from Turns. There is no shared
- * source of truth between the two repos: a newly added local-only command must be added to both.
+ * Commands Claude Code runs locally with no model call behind them, excluded from Turns.
+ *
+ * NOT the same list as the backend analytics rollup's `SENTINEL_EXACT` — that list serves a
+ * different purpose (picking a session's first prompt) and, unlike this one, includes `/compact`,
+ * which does call the model and must keep counting as a Turn here. There is no shared source of
+ * truth between the two repos and the two lists must stay independent: do not "sync" this set
+ * against `SENTINEL_EXACT`. A newly discovered local-only command belongs only here, verified
+ * against a real transcript (does the command's line get an `assistant` reply with an
+ * `api_request`?) before being added.
  */
 export const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'context',
@@ -138,6 +144,16 @@ export const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'clear',
   'resume',
   'model',
+  'mcp',
+  'agents',
+  'hooks',
+  'skills',
+  'tasks',
+  'release-notes',
+  'export',
+  'effort',
+  'status',
+  'config',
 ]);
 
 function startsWithAny(text: string, prefixes: readonly string[]): boolean {
