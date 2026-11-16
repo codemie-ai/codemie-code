@@ -81,6 +81,16 @@ const RENEWED_MESSAGE =
   'CodeMie SSO session was just renewed; this request used the previous credentials. Please re-send your prompt.';
 
 /**
+ * The text of the 401 for an expired SSO session. Shared with the proxy daemon's awaiting-login
+ * listener, so a client reads the same message whichever of the two answered.
+ */
+export function sessionExpiredMessage(outcome: DetachedLoginOutcome | undefined): string {
+  const login = describeLogin(outcome ?? 'failed');
+  // After a sign-in that just finished the text already says so; "session expired" would contradict it.
+  return outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`;
+}
+
+/**
  * Anthropic-shaped 401. The body must later become per-client (Codex expects an OpenAI-shaped
  * error), as the known gap above says.
  */
@@ -241,9 +251,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       );
     }
 
-    const login = describeLogin(outcome ?? 'failed');
-    // After a sign-in that just finished the text already says so; "session expired" would contradict it.
-    return syntheticUnauthorized(response, tools, outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`);
+    return syntheticUnauthorized(response, tools, sessionExpiredMessage(outcome));
   }
 
   /**

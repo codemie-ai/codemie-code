@@ -1,14 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 
-const { getAnalyticsAuthStatus, clearAnalyticsAuthStatus, getLastSignInAt, summarizeSpoolDelivery } = vi.hoisted(
-  () => ({
-    getAnalyticsAuthStatus: vi.fn(),
-    clearAnalyticsAuthStatus: vi.fn(),
-    getLastSignInAt: vi.fn(),
-    summarizeSpoolDelivery: vi.fn(),
-  })
-);
+const {
+  getAnalyticsAuthStatus,
+  clearAnalyticsAuthStatus,
+  getLastSignInAt,
+  summarizeSpoolDelivery,
+  getStoredAnalyticsCredentials,
+  withVerifiedOwner,
+  forwarderIdentity,
+  getPolicyState,
+} = vi.hoisted(() => ({
+  getAnalyticsAuthStatus: vi.fn(),
+  clearAnalyticsAuthStatus: vi.fn(),
+  getLastSignInAt: vi.fn(),
+  summarizeSpoolDelivery: vi.fn(),
+  getStoredAnalyticsCredentials: vi.fn(),
+  withVerifiedOwner: vi.fn(),
+  forwarderIdentity: vi.fn(),
+  getPolicyState: vi.fn(),
+}));
 
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus,
@@ -24,6 +36,20 @@ vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
 vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js', () => ({
   summarizeSpoolDelivery,
 }));
+vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getStoredAnalyticsCredentials,
+}));
+vi.mock('@/providers/core/credential-owner.js', () => ({
+  withVerifiedOwner,
+}));
+vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js', () => ({
+  forwarderIdentity,
+}));
+vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getPolicyState,
+}));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -35,6 +61,7 @@ import {
   type DeliveryReason,
 } from '../delivery-health.js';
 import type { DaemonState } from '../daemon-manager.js';
+import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
 
 const URL = 'https://codemie.example.com';
 
@@ -52,6 +79,7 @@ const state = {
 } as DaemonState;
 
 const ok = { credentials: 'ok' } as const;
+const FAILURE = { nextAt: Date.parse('2026-11-13T14:32:10.000Z'), detail: 'http_503' };
 const marker = { detectedAt: 2000, reason: 'redirect', baseUrl: URL };
 
 describe('collectDeliveryHealth', () => {
@@ -59,7 +87,11 @@ describe('collectDeliveryHealth', () => {
     vi.clearAllMocks();
     getAnalyticsAuthStatus.mockResolvedValue(null);
     getLastSignInAt.mockResolvedValue(null);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: false });
+    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: { apiUrl: URL, email: 'user@example.com' }, url: URL });
+    withVerifiedOwner.mockImplementation(async (creds: unknown) => creds);
+    forwarderIdentity.mockReturnValue({ api_identity: 'id', owner_hash: 'hash' });
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
   });
 
   it('is healthy when the reply is ok and nothing else applies', async () => {
@@ -129,7 +161,7 @@ describe('collectDeliveryHealth', () => {
   });
 
   it('reports identity_mismatch when a session is held', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'identity_mismatch',
@@ -137,62 +169,268 @@ describe('collectDeliveryHealth', () => {
     });
   });
 
-  it('reports send_failed for a live delivery failure', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailed: true });
+  it('reports send_failed with the failure when the spool has a live delivery failure', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailure: FAILURE });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'send_failed',
       pendingBytes: 5,
+      sendFailure: FAILURE,
     });
+  });
+
+  it('carries the failure only when send_failed is the reason', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, sendFailure: FAILURE });
+    expect(await collectDeliveryHealth(state, { credentials: 'stale' })).not.toHaveProperty('sendFailure');
   });
 
   it('applies the precedence stale > marker > mismatch > send failed', async () => {
     getAnalyticsAuthStatus.mockResolvedValue(marker);
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: true, sendFailed: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: true, sendFailure: FAILURE });
     expect((await collectDeliveryHealth(state, { credentials: 'stale' })).reason).toBe('credentials_expired');
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('auth_rejected');
     getAnalyticsAuthStatus.mockResolvedValue(null);
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('identity_mismatch');
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailed: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailure: FAILURE });
     expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
   });
 
   it('carries pending bytes on a healthy result', async () => {
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, mismatchHeld: false, sendFailed: false });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, mismatchHeld: false });
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 42 });
   });
 
   it('carries the latest drop on a healthy result', async () => {
     const latestDrop = { reason: 'no_project', stream: 'hooks', at: 5000, local: false };
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, sendFailed: false, latestDrop });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, latestDrop });
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0, latestDrop });
   });
 
   it('carries the latest drop on an unhealthy result', async () => {
     const latestDrop = { reason: 'disk_full', at: 6000, local: true };
-    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailed: true, latestDrop });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, sendFailure: FAILURE, latestDrop });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',
       reason: 'send_failed',
       pendingBytes: 7,
+      sendFailure: FAILURE,
       latestDrop,
     });
   });
 
-  it('yields unknown when a dependency throws', async () => {
+  it('yields unknown, with no unsent amount, when a dependency throws', async () => {
     summarizeSpoolDelivery.mockRejectedValue(new Error('boom'));
-    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown' });
   });
 
-  it('yields unknown when the marker read throws', async () => {
+  it('yields unknown, with no unsent amount, when the marker read throws', async () => {
     getAnalyticsAuthStatus.mockRejectedValue(new Error('boom'));
-    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', pendingBytes: 0 });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown' });
+  });
+
+  it('is unknown, not healthy, with no unsent amount, when the spool could not be read completely', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, incomplete: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', incomplete: true });
+  });
+
+  it('keeps the latest drop on an unknown result for an unreadable spool', async () => {
+    const latestDrop = { reason: 'no_project', stream: 'hooks', at: 5000, local: true };
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, incomplete: true, latestDrop });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', incomplete: true, latestDrop });
+  });
+
+  it('leaves the unsent amount out of an unhealthy result when the spool could not be read completely', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 5, mismatchHeld: false, incomplete: true });
+    expect(await collectDeliveryHealth(state, { credentials: 'stale' })).toEqual({
+      status: 'unhealthy',
+      reason: 'credentials_expired',
+    });
+  });
+
+  it('reports classification_unreachable when the spool is stalled and capability is unknown', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, classificationStalled: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unreachable',
+      pendingBytes: 7,
+    });
+  });
+
+  it('reports classification_unsupported when the spool is stalled and capability is legacy', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'legacy', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 9, mismatchHeld: false, classificationStalled: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unsupported',
+      pendingBytes: 9,
+    });
+  });
+
+  it('reports classification_unsupported when capability is evidence but the policy does not advertise the publication contract', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 11, mismatchHeld: false, classificationStalled: true });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'classification_unsupported',
+      pendingBytes: 11,
+    });
+  });
+
+  it('stays healthy when capability is evidence and the policy already advertises the publication contract, even if stalled', async () => {
+    getPolicyState.mockResolvedValue({
+      policy: null,
+      capability: 'evidence',
+      usable: false,
+      refreshDue: true,
+      publicationContracts: ['1'],
+    });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: true });
+    const health = await collectDeliveryHealth(state, ok);
+    expect(health).toMatchObject({ status: 'healthy' });
+  });
+
+  describe('organization-encoding stall', () => {
+    const stalledOnEncoding = { pendingBytes: 13, mismatchHeld: false, classificationStalled: true, organizationEncodingStalled: true };
+
+    it('reports classification_unsupported when the backend advertises the contract but not the organization encoding', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: {},
+        capability: 'evidence',
+        usable: true,
+        refreshDue: false,
+        publicationContracts: ['1'],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toEqual({
+        status: 'unhealthy',
+        reason: 'classification_unsupported',
+        pendingBytes: 13,
+      });
+    });
+
+    it('reports classification_unsupported when the cached policy has expired and its last answer lacked the organization encoding', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: null,
+        capability: 'evidence',
+        usable: false,
+        refreshDue: true,
+        publicationContracts: ['1'],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'unhealthy', reason: 'classification_unsupported' });
+    });
+
+    it('stays quiet when the cached policy has expired but its last answer advertised the organization encoding (an outage, not a missing encoding)', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: null,
+        capability: 'evidence',
+        usable: false,
+        refreshDue: true,
+        publicationContracts: ['1'],
+        organizationEncodings: [ORG_ENCODING_V1],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
+    });
+
+    it('stays healthy when the policy already advertises the organization encoding (the hold is stale and clears on the next tick)', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: {},
+        capability: 'evidence',
+        usable: true,
+        refreshDue: false,
+        publicationContracts: ['1'],
+        organizationEncodings: [ORG_ENCODING_V1],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
+    });
+
+    it('stays quiet when the identity cannot be resolved, so no policy is read (AC3)', async () => {
+      forwarderIdentity.mockReturnValue(null);
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      const health = await collectDeliveryHealth(state, ok);
+      expect(health.reason).toBeUndefined();
+      expect(getPolicyState).not.toHaveBeenCalled();
+    });
+
+    it('keeps send_failed ahead of the organization-encoding stall in precedence', async () => {
+      getPolicyState.mockResolvedValue({ policy: {}, capability: 'evidence', usable: true, refreshDue: false });
+      summarizeSpoolDelivery.mockResolvedValue({ ...stalledOnEncoding, sendFailure: { nextAt: 2000 } });
+      expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
+    });
+  });
+
+  it('resolves identity from the owner-verified credential, not the raw stored one', async () => {
+    const stored = { apiUrl: URL, cookies: {} };
+    const verified = { apiUrl: URL, cookies: {}, email: 'owner@example.com' };
+    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: stored, url: URL });
+    withVerifiedOwner.mockResolvedValue(verified);
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 3, mismatchHeld: false, classificationStalled: true });
+
+    const health = await collectDeliveryHealth(state, ok);
+
+    expect(withVerifiedOwner).toHaveBeenCalledWith(stored);
+    expect(forwarderIdentity).toHaveBeenCalledWith(verified);
+    expect(health).toMatchObject({ status: 'unhealthy', reason: 'classification_unreachable' });
+  });
+
+  it('never reports classification_unreachable when the identity cannot be resolved (AC3)', async () => {
+    forwarderIdentity.mockReturnValue(null);
+    // A stalled session alone is not enough: the policy state must fall back to null when identity fails.
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 7, mismatchHeld: false, classificationStalled: true });
+    const health = await collectDeliveryHealth(state, ok);
+    expect(health.reason).not.toBe('classification_unreachable');
+    expect(health.reason).not.toBe('classification_unsupported');
+    expect(getPolicyState).not.toHaveBeenCalled();
+  });
+
+  it('keeps send_failed ahead of classification_unreachable in precedence', async () => {
+    getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 1, mismatchHeld: false, sendFailure: { nextAt: 2000 }, classificationStalled: true });
+    expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
+  });
+
+  it('starts the spool scan without waiting for capability resolution to finish', async () => {
+    let resolveCreds!: (v: unknown) => void;
+    getStoredAnalyticsCredentials.mockImplementation(
+      () => new Promise((resolve) => { resolveCreds = resolve; })
+    );
+    const pending = collectDeliveryHealth(state, ok);
+    await Promise.resolve(); // flush the microtask queue so Promise.all's synchronous starts run
+    expect(summarizeSpoolDelivery).toHaveBeenCalledTimes(1);
+    resolveCreds(null);
+    await pending;
+  });
+
+  it('still resolves normally when there is no stored analytics credential', async () => {
+    getStoredAnalyticsCredentials.mockResolvedValue(null);
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
+  });
+
+  it('falls back to an unresolved policy state, instead of going unknown, when the credential lookup throws', async () => {
+    getStoredAnalyticsCredentials.mockRejectedValue(new Error('boom'));
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, classificationStalled: false });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({
+      status: 'unhealthy',
+      reason: 'identity_mismatch',
+      pendingBytes: 10,
+    });
   });
 });
 
 describe('DELIVERY_REASONS', () => {
-  it('labels every reason and gives a remedy to all but send_failed', () => {
-    const codes: DeliveryReason[] = ['credentials_expired', 'auth_rejected', 'identity_mismatch', 'send_failed'];
+  it('labels every reason and gives a remedy to all but send_failed, classification_unreachable and classification_unsupported', () => {
+    const codes: DeliveryReason[] = [
+      'credentials_expired',
+      'auth_rejected',
+      'identity_mismatch',
+      'send_failed',
+      'classification_unreachable',
+      'classification_unsupported',
+    ];
     expect(Object.keys(DELIVERY_REASONS).sort()).toEqual([...codes].sort());
     for (const code of codes) {
       expect(DELIVERY_REASONS[code].label.length).toBeGreaterThan(0);
@@ -201,57 +439,176 @@ describe('DELIVERY_REASONS', () => {
     expect(DELIVERY_REASONS.auth_rejected.run).toBe('codemie profile login');
     expect(DELIVERY_REASONS.identity_mismatch.run).toBe('codemie proxy restart');
     expect(DELIVERY_REASONS.send_failed.run).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unreachable.run).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unsupported.run).toBeUndefined();
   });
 });
 
 describe('formatDeliveryLines', () => {
   const strip = (lines: string[]): string[] => lines.map((l) => stripAnsi(l));
+  const NEXT_RETRY = '2026-11-13T14:32:10.000Z';
 
-  it('prints a healthy headline only', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0 }))).toEqual(['Delivery: healthy']);
+  it('prints healthy with no unsent data as plain rows flush left, with no heading', () => {
+    const lines = formatDeliveryLines({ status: 'healthy', pendingBytes: 0 });
+
+    expect(strip(lines)).toEqual(['Delivery: healthy', 'Unsent data: none']);
   });
 
-  it('prints pending bytes when there are any', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
-      'Delivery: healthy',
-      '  Pending: 2.00 KB (all sessions on this machine)',
+  it('prints unsent data as unknown, never none, when the amount could not be read', () => {
+    expect(strip(formatDeliveryLines({ status: 'unknown' }))).toEqual([
+      'Delivery: unknown (restart the proxy to enable all checks)',
+      'Unsent data: unknown',
     ]);
   });
 
-  it('prints the label, pending and remedy for an unhealthy reason', () => {
+  it('prints unsent data across all sessions as its own row', () => {
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
+      'Delivery: healthy',
+      'Unsent data: 2.00 KB (all sessions on this machine)',
+    ]);
+  });
+
+  it('prints the label with the remedy as a hint when the user can act', () => {
     const lines = strip(
       formatDeliveryLines({ status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 512 })
     );
     expect(lines).toEqual([
       `Delivery: unhealthy (${DELIVERY_REASONS.credentials_expired.label})`,
-      '  Pending: 512 B (all sessions on this machine)',
-      '  Run: codemie profile login',
+      '    Run: codemie profile login',
+      'Unsent data: 512 B (all sessions on this machine)',
     ]);
   });
 
-  it('prints no Run line for send_failed', () => {
-    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 0 }));
-    expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`]);
+  it('prints the next retry and the error code of a failing delivery, with no Run line', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 49_357,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'http_503' },
+      })
+    );
+    expect(lines).toEqual([
+      `Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`,
+      'Unsent data: 48.20 KB (all sessions on this machine)',
+      `Next retry: ${NEXT_RETRY}`,
+      'Error: http_503',
+    ]);
+  });
+
+  it('reads a failure without an HTTP response as the backend being unreachable', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 0,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'request_error' },
+      })
+    );
+    expect(lines.slice(-2)).toEqual([`Next retry: ${NEXT_RETRY}`, 'Error: backend unreachable']);
+  });
+
+  it('omits the error row when the failure records no detail', () => {
+    const lines = strip(
+      formatDeliveryLines({
+        status: 'unhealthy',
+        reason: 'send_failed',
+        pendingBytes: 0,
+        sendFailure: { nextAt: Date.parse(NEXT_RETRY) },
+      })
+    );
+    expect(lines.at(-1)).toBe(`Next retry: ${NEXT_RETRY}`);
+    expect(lines.join('\n')).not.toContain('Error:');
+  });
+
+  it('prints no Run line for classification_unsupported', () => {
+    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'classification_unsupported', pendingBytes: 0 }));
+    expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.classification_unsupported.label})`, 'Unsent data: none']);
   });
 
   it('prints no Run line for unknown', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
       'Delivery: unknown (restart the proxy to enable all checks)',
+      'Unsent data: none',
     ]);
   });
 
-  it('says the spool-derived reasons cover the whole machine', () => {
-    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('on this machine');
-    expect(DELIVERY_REASONS.send_failed.label).toContain('on this machine');
+  it('says the local analytics data could not be read, not to restart the proxy, when the spool is incomplete', () => {
+    expect(strip(formatDeliveryLines({ status: 'unknown', incomplete: true }))).toEqual([
+      'Delivery: unknown (local analytics data could not be read)',
+      'Unsent data: unknown',
+    ]);
   });
 
-  it('reports a stopped proxy for null', () => {
+  it('says the identity_mismatch label covers the whole machine', () => {
+    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('all sessions on this computer');
+  });
+
+  it('writes every reason for a non-technical reader, calling the service CodeMie', () => {
+    expect(Object.fromEntries(Object.entries(DELIVERY_REASONS).map(([code, { label }]) => [code, label]))).toEqual({
+      credentials_expired: 'CodeMie sign-in has expired',
+      auth_rejected: 'CodeMie asked you to sign in again',
+      identity_mismatch: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
+      send_failed: 'last send to CodeMie failed, retrying',
+      classification_unreachable: 'waiting for CodeMie to respond',
+      classification_unsupported: "CodeMie isn't set up to accept this data yet — contact your CodeMie administrator",
+    });
+  });
+
+  it('reports a stopped proxy for null, with no other rows', () => {
     expect(strip(formatDeliveryLines(null))).toEqual(['Delivery: proxy not running']);
+  });
+
+  it('prints the latest drop with the remedy of a session without a project', () => {
+    const latestDrop = { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-13T09:15:00.000Z'), local: true } as const;
+
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop }))).toEqual([
+      'Delivery: healthy',
+      'Unsent data: none',
+      'Last dropped: no_project (hooks, 2026-11-13T09:15:00.000Z)',
+      '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
+    ]);
   });
 
   it('prints a drop time outside the date range as the stored number', () => {
     const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: 9e15, local: false } as const;
     expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop })))
-      .toContain('  Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
+      .toContain('Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
+  });
+
+  it('colors only the Delivery status text: green when healthy, yellow otherwise', () => {
+    const delivery = (health: Parameters<typeof formatDeliveryLines>[0]): string => formatDeliveryLines(health)[0];
+    const row = (status: string): string => chalk.white(`Delivery: ${status}`);
+
+    expect(delivery({ status: 'healthy', pendingBytes: 0 })).toBe(row(chalk.green('healthy')));
+    expect(delivery({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 0 })).toBe(
+      row(chalk.yellow(`unhealthy (${DELIVERY_REASONS.auth_rejected.label})`))
+    );
+    expect(delivery({ status: 'unknown', pendingBytes: 0 })).toBe(
+      row(chalk.yellow('unknown (restart the proxy to enable all checks)'))
+    );
+    expect(delivery(null)).toBe(row(chalk.yellow('proxy not running')));
+  });
+
+  it('leaves every other row plain white', () => {
+    const lines = formatDeliveryLines({
+      status: 'unhealthy',
+      reason: 'send_failed',
+      pendingBytes: 0,
+      sendFailure: { nextAt: Date.parse(NEXT_RETRY), detail: 'http_503' },
+    });
+
+    expect(lines.slice(1)).toEqual([
+      chalk.white('Unsent data: none'),
+      chalk.white(`Next retry: ${NEXT_RETRY}`),
+      chalk.white('Error: http_503'),
+    ]);
+  });
+
+  it('uses no icons', () => {
+    const text = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 1 })).join('\n');
+    for (const glyph of ['✓', '○', '⚠', '✗']) {
+      expect(text).not.toContain(glyph);
+    }
   });
 });

@@ -28,11 +28,12 @@ export function resolveCopilotAgentKey(clientName?: string): string {
 }
 
 // The Copilot desktop (Tauri) app prefixes the user's message with internal context blocks
-// (<copilot_tauri_workspace>, <current_datetime>, ...); they must not surface as the session prompt/title.
+// (<copilot_tauri_workspace>, <copilot_artifacts>, <current_datetime>, ...); they must not surface as the session
+// prompt/title. Every `copilot_*` tag is treated as a wrapper so new desktop-app blocks need no code change.
 // Only complete leading blocks are removed, so a user's own mention of these tags is kept.
-const DESKTOP_WRAPPER_TAGS = ['copilot_tauri_workspace', 'copilot_working_context', 'current_datetime'];
+const DESKTOP_WRAPPER_TAGS = 'copilot_[a-z0-9_]+|current_datetime|branch_rename_request';
 const DESKTOP_PREAMBLE_RE = new RegExp(
-  `^\\s*(?:<(${DESKTOP_WRAPPER_TAGS.join('|')})\\b[^>]*>[\\s\\S]*?<\\/\\1>\\s*)+`,
+  `^\\s*(?:<(${DESKTOP_WRAPPER_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>\\s*)+`,
   'i'
 );
 

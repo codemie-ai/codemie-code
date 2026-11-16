@@ -660,7 +660,7 @@ codemie proxy analytics disable
 # Exclude the current project, even when Global scope is enabled
 codemie proxy analytics exclude
 
-# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+# Show delivery health, unsent data, the effective scope and the tracked/excluded projects
 codemie proxy analytics status
 ```
 
