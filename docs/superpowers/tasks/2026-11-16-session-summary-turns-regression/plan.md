@@ -1,10 +1,12 @@
-# Session-summary turns regression (EPMCDME-15582) + skill/command dedup (EPMCDME-17201) Implementation Plan
+# Session-summary turns regression (EPMCDME-15582) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop the CLI's own `agent.session.summary` event from counting local-only slash commands (`/context`, `/usage`/`/cost`, `/exit`, `/model`, `/clear`, `/quit`, `/resume`) as Turns, and stop a skill-backed slash command from being double-counted as both a Skill and a Slash Command.
+> **Status update (2026-11-16, post-PR-824-review):** Task 1 (EPMCDME-15582) shipped. Task 2 (EPMCDME-17201) was implemented as originally planned, then **reverted** after three rounds of PR review each found a new transcript shape its lookahead missed, and real-session data (0/294) showed the scenario it guarded against essentially never occurs. The ticket's actual reported symptom is backend-owned (`agent.skill.dispatch`/OTLP `command_name`), unaffected by this file either way. Task 2's steps below are kept only as a historical record of what was tried and why it didn't stick — do not re-implement from them without first re-reading PR #824's review threads.
 
-**Architecture:** Both fixes live in the pure, I/O-free transcript-signal-extraction layer that already exists for this purpose. Fix 1 adds a static denylist of known non-model-calling command names and a shared helper to read a wrapped command's name, then excludes a denylisted command from `countTurns()` in `session-signals.ts`. Fix 2 restructures `extractOrderedNamedInvocations()` in `claude-named-invocations.ts` with a one-message lookahead so a command whose very next message is the matching `Skill` tool_use call is counted only once, as a skill. The two fixes touch different files and are independently testable/committable.
+**Goal:** Stop the CLI's own `agent.session.summary` event from counting local-only slash commands (`/context`, `/usage`/`/cost`, `/exit`, `/model`, `/clear`, `/quit`, `/resume`, plus `/mcp`, `/agents`, `/hooks`, `/skills`, `/tasks`, `/release-notes`, `/export`, `/effort`, `/status`, `/config` added during review) as Turns. (Originally also aimed to stop a skill-backed slash command from being double-counted as both a Skill and a Slash Command — see status note above: that part was reverted.)
+
+**Architecture:** The shipped fix lives in the pure, I/O-free transcript-signal-extraction layer that already exists for this purpose: a static denylist of known non-model-calling command names plus a shared, start-anchored helper to read a wrapped command's name, excluding a denylisted command from `countTurns()` in `session-signals.ts`. (The reverted Task 2 would have restructured `extractOrderedNamedInvocations()` in `claude-named-invocations.ts` with a one-message lookahead so a command whose very next message is the matching `Skill` tool_use call was counted only once, as a skill — see the status note above for why this was dropped. `extractOrderedNamedInvocations()` counts commands and skills independently, as it did before this plan.)
 
 **Tech Stack:** TypeScript (ES modules), Vitest.
 
@@ -14,16 +16,16 @@
 
 - Client-side only; no backend, config, env var, feature-flag, or schema changes.
 - Preserve the pure/no-I/O convention of `session-signals.ts`, `session-summary.ts`, and `claude-named-invocations.ts` (documented top-of-file in each).
-- `LOCAL_ONLY_COMMANDS` starts with exactly: `context`, `usage`, `cost`, `exit`, `quit`, `clear`, `resume`, `model` (no leading slash, matching how the rest of this subsystem stores command names).
+- `LOCAL_ONLY_COMMANDS` started with exactly: `context`, `usage`, `cost`, `exit`, `quit`, `clear`, `resume`, `model` (no leading slash, matching how the rest of this subsystem stores command names); review added `mcp`, `agents`, `hooks`, `skills`, `tasks`, `release-notes`, `export`, `effort`, `status`, `config`. It is explicitly NOT synced against the backend's `SENTINEL_EXACT` list (different purpose, and that list includes `/compact`, which must keep counting here) — see the in-code comment above the constant for the up-to-date rule.
 - Do not reuse `isLocalCommandTurn()` (`orchestrator.ts:354-364`) for the turns fix — it matches any command wrapper line and would wrongly exclude `/compact` and skill-backed commands.
 - Do not touch the `forkedSlashPromptIds` branch of `extractOrderedNamedInvocations()` (desktop-app forked-skill path) — out of scope for this change.
 
 ## Review Focus
 
-- A command name extracted from a line with a `<command-name>` tag but no `<command-message>` sibling must NOT be treated as a genuine wrapper (prose/doc mention) in either fix — matches the existing convention.
-- A plain typed prompt (no command wrapper at all) must never match the denylist or the skill-dedup lookahead (both keyed off an actual wrapped command name, which is `''` for plain text).
-- A slash command NOT in `LOCAL_ONLY_COMMANDS` (e.g. `/compact`, `/init`, `/commit`) must still count as a turn exactly as today — the fix only removes counting for the 8 denylisted names, nothing else.
-- A command immediately followed by a `Skill` tool_use call for a *different* skill name must still count as both a command AND that (unrelated) skill — the dedup only fires on an exact name match.
+- A command name extracted from a line with a `<command-name>` tag but no `<command-message>` sibling must NOT be treated as a genuine wrapper (prose/doc mention) — matches the existing convention.
+- A plain typed prompt (no command wrapper at all) must never match the denylist (keyed off an actual wrapped command name, which is `''` for plain text).
+- A slash command NOT in `LOCAL_ONLY_COMMANDS` (e.g. `/compact`, `/init`, `/commit`) must still count as a turn exactly as today — the fix only removes counting for the denylisted names, nothing else.
+- A typed prompt that merely quotes a wrapper mid-text (not at the start) must still count as a turn — `wrappedCommandName` is anchored at the start of the text for exactly this reason (a review finding fixed after the plan was first written; see PR #824).
 - `countTurns()` must still correctly skip `isMeta`/`isSidechain`/`isCompactSummary`/tool_result-only lines and the existing `SELF_WRITTEN_PREFIXES`/`AUTO_PROMPT_PREFIXES` exclusions — the new check is additive, not a replacement of the existing ones.
 
 ---
@@ -115,79 +117,25 @@ Test-first: yes — the two tests above (expected turns=3 and turns=2) fail agai
 
 ---
 
-## Task 2: Count a skill-backed slash command once, not as both Skill and Slash Command (EPMCDME-17201)
+## Task 2 (REVERTED): skill/command dedup attempt (EPMCDME-17201)
 
-**Files:**
-- Modify: `src/agents/plugins/claude/session/claude-named-invocations.ts`
-- Test: `src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts`
+**Outcome: implemented, then reverted. Do not re-implement from this plan without re-reading PR #824's review threads first.**
 
-**Interfaces:**
-- Consumes: nothing from Task 1 (different function; `wrappedCommandName` is not reused here because this fix needs *all* command names on a line plus lookahead, not just the first).
-- Produces: no new exports — `extractOrderedNamedInvocations`'s and `extractNamedInvocations`'s signatures and return shapes (`OrderedNamedInvocations`, `NamedInvocationCounts`) are unchanged; only the counts they produce change for the skill-backed-command case.
+The original plan called for a one-message lookahead in `extractOrderedNamedInvocations()` (`claude-named-invocations.ts`) so a slash command whose very next message was the matching `Skill` tool_use call would be counted once, as the skill, not also as a command. It was implemented largely as specified (the lookahead needed extra hardening across three PR-review rounds — skipping `isMeta`/`isSidechain` bookkeeping lines, prep tool_use/tool_result round-trips, and no-role system lines like `compact_boundary` — each round surfacing a new transcript shape the previous version missed).
 
-- [ ] **Step 1: Write the failing tests**
+It was reverted (commit `b9dbeda8`, PR #824) rather than hardened further, because:
+- A fourth reviewer finding showed the dedup provided no real-world benefit: across 294 real slash-command invocations, none was followed by a matching `Skill` call of the same name — the shape this code existed to handle essentially never occurs.
+- Neither Session Detail nor Tools & Models in the backend reads `commands`/`commandInvocations` from this summary — EPMCDME-17201's actual reported symptom comes from the backend (`agent.skill.dispatch` row, OTLP `command_name`), so this client-side change could not fix the ticket regardless of correctness.
+- The dedup also made this summary diverge from `src/cli/commands/analytics/cost/dispatch-extractor.ts`, which independently (and intentionally) counts the same transcript shape without dedup.
 
-In `claude-named-invocations.test.ts`, inside `describe('extractOrderedNamedInvocations', ...)`, add:
-
-```ts
-it('counts a skill-backed slash command once, as a skill, not also as a command (EPMCDME-17201)', () => {
-  const out = extractOrderedNamedInvocations([
-    userStringContent(commandWrapper('codemie-humanizer')),
-    toolUse('Skill', { skill: 'codemie-humanizer' }),
-  ]);
-  expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-  expect(out.commandInvocations).toEqual({});
-  expect(out.commandsInOrder).toEqual([]);
-});
-
-it('still counts a command as a command when no Skill call follows it', () => {
-  const out = extractOrderedNamedInvocations([
-    userStringContent(commandWrapper('plan')),
-    userText('a plain follow-up prompt, no skill'),
-  ]);
-  expect(out.commandInvocations).toEqual({ plan: 1 });
-  expect(out.skillInvocations).toEqual({});
-});
-
-it('still counts a command as a command when the next message is a Skill call for a different name', () => {
-  const out = extractOrderedNamedInvocations([
-    userStringContent(commandWrapper('plan')),
-    toolUse('Skill', { skill: 'unrelated-skill' }),
-  ]);
-  expect(out.commandInvocations).toEqual({ plan: 1 });
-  expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
-});
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `npx vitest run --project unit src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts`
-Expected: FAIL on the first new test — `commandInvocations` currently also contains `{ 'codemie-humanizer': 1 }` (double count). The other two new tests pass already (they document unchanged behavior) but run them too as a baseline.
-
-- [ ] **Step 3: Implement the one-message lookahead in `extractOrderedNamedInvocations`**
-
-Change the function from a `for (const raw of messages)` loop to an index-based loop so each iteration can see `messages[i + 1]`. Replace the current `scanCommands(text)` (which both matches *and* bumps `commandInvocations`/`commandsInOrder` as a side effect) with a pure `matchCommandNames(text): string[]` that only returns the matched, slash-stripped names (same genuine-wrapper rule: requires the `<command-message>` sibling), and a small helper `nextMessageSkillName(raw: unknown): string` that returns the trimmed `input.skill` of the first `Skill` `tool_use` block in `raw` when its `message.role === 'assistant'`, else `''`. For each name returned by `matchCommandNames` at message `i` (both the plain-string-content branch and the array text-block branch — NOT the `forkedSlashPromptIds` branch, which keeps calling `bump`/`commandsInOrder.push` directly as today), look up `nextMessageSkillName(messages[i + 1])`: if it equals the command name exactly, skip bumping `commandInvocations`/`commandsInOrder` for that occurrence (the `Skill` tool_use block itself still bumps `skillInvocations` via the existing per-content-block loop when message `i + 1` is visited — no change needed there); otherwise bump `commandInvocations`/`commandsInOrder` exactly as before.
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `npx vitest run --project unit src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts src/agents/plugins/claude/session/processors/__tests__/claude.metrics-processor-names.test.ts`
-Expected: PASS, including all pre-existing tests in both files (no existing test encodes the dual-count scenario, so none should need their expectations changed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/agents/plugins/claude/session/claude-named-invocations.ts src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
-git commit -m "fix(agents): count a skill-backed slash command once, not as both skill and command (EPMCDME-17201)"
-```
-
-Test-first: yes — the "counts a skill-backed slash command once" test fails against current code (asserts `commandInvocations` is empty where today it is `{ 'codemie-humanizer': 1 }`) before Step 3 and passes after.
+`extractOrderedNamedInvocations()` now counts commands and skills independently, same as before this plan started. EPMCDME-17201 is back in "Ready for dev" with a comment pointing at the backend-owned root cause.
 
 ---
 
 ## Self-Review Notes
 
-1. **Spec coverage:** EPMCDME-15582's four acceptance criteria (exclude non-conversational local commands, `/exit` and `/model` don't increment Turns, one real prompt = 1 turn) are covered by Task 1; the 15 Nov regression's specific repro (`/context`, `/usage` excluded, `/compact`/skill commands/`/init` still count) is covered by both new tests in Task 1. EPMCDME-17201's dual-listing bug is covered by Task 2.
-2. **Step scan:** each step names exact file(s), exact signatures, and exact test code where the test's assertions are the contract; implementation steps leave only the function body to the implementer, which the tests pin.
-3. **Type consistency:** `wrappedCommandName`, `LOCAL_ONLY_COMMANDS`, `matchCommandNames`, and `nextMessageSkillName` are each named and used consistently within their own task; Task 1 and Task 2 do not share any new identifier.
-4. **Review Focus:** all five lines above have a corresponding test in the task that owns the code (prose-wrapper rule, plain-prompt no-op, non-denylisted commands unaffected, mismatched-skill-name no-op, existing turns exclusions preserved via the unmodified pre-existing test assertions).
-5. **Proportion:** two small, independent, narrowly-scoped tasks; no task introduces a function whose full body is dictated here beyond the one restructuring algorithm in Task 2 Step 3, which is the one genuinely non-obvious design decision in this plan.
+1. **Spec coverage:** EPMCDME-15582's four acceptance criteria (exclude non-conversational local commands, `/exit` and `/model` don't increment Turns, one real prompt = 1 turn) are covered by Task 1; the 15 Nov regression's specific repro (`/context`, `/usage` excluded, `/compact`/skill commands/`/init` still count) is covered by both new tests in Task 1. EPMCDME-17201's dual-listing bug was addressed by Task 2 and then reverted (see Task 2) — the ticket's backend-owned root cause remains unfixed by this plan.
+2. **Step scan:** Task 1's steps name exact file(s), exact signatures, and exact test code where the test's assertions are the contract; implementation steps leave only the function body to the implementer, which the tests pin.
+3. **Type consistency:** `wrappedCommandName` and `LOCAL_ONLY_COMMANDS` (Task 1) are named and used consistently; `matchCommandNames` and the lookahead helpers from the original Task 2 design no longer exist in the shipped code (reverted).
+4. **Review Focus:** the current Review Focus list (revised post-revert) has a corresponding test for each line — prose-wrapper rule, plain-prompt no-op, non-denylisted commands unaffected, mid-text wrapper quote no-op, existing turns exclusions preserved via the unmodified pre-existing test assertions.
+5. **Proportion:** one shipped, narrowly-scoped task (Task 1) plus one reverted attempt kept as a condensed historical record (Task 2) rather than full step detail, since that detail no longer describes the shipped code.
