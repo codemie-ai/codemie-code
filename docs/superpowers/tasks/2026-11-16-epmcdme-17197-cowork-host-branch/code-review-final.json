@@ -33,9 +33,9 @@
   "risk_flags": [],
   "open": 0,
   "closed": {
-    "fixed": 0,
+    "fixed": 1,
     "moot": 0,
-    "decided": 1,
+    "decided": 0,
     "wont_fix": 1
   },
   "findings": [
@@ -72,11 +72,28 @@
       "problem": "The assertion added to the existing sandbox test (git_branch must be '') sits outside the nested describe that deletes GIT_* from process.env and stubs GIT_CONFIG_GLOBAL/NOSYSTEM. detectGitBranch runs git via execAsync with the inherited environment, so an exported GIT_DIR/GIT_WORK_TREE points it at the outer repository and it reports that branch.",
       "impact": "The test can fail spuriously when run inside a git hook (lint-staged in .husky/pre-commit runs tests for changed files) or with the temp dir inside a repository, the hazard the new describe's own comment names; reachability depends on whether the hook exports GIT_DIR and was not confirmed.",
       "recommendation": "Run the git_branch '' assertion under the same GIT_* scrub the nested 'the branch of the session's folder' describe uses (delete GIT_* from process.env and stub GIT_CONFIG_GLOBAL/GIT_CONFIG_NOSYSTEM for that test), or move the assertion into that describe, so an exported GIT_DIR/GIT_WORK_TREE cannot point detectGitBranch at the outer repository.",
-      "status": "decided",
+      "status": "resolved",
       "check_notes": "HEAD source: file-level beforeAll (lines 164-176) deletes GIT_* and sets empty GIT_CONFIG_GLOBAL + NOSYSTEM before every test, sandbox assertion included; restored in afterAll",
-      "decision": {
-        "outcome": "fixed in code (commit 968dc2c4, test(analytics): keep the Cowork producer tests free of outer git state)",
-        "rationale": "src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts now removes every GIT_* variable of the outer process and points GIT_CONFIG_GLOBAL at an empty file with GIT_CONFIG_NOSYSTEM=1 once for the whole file (file-level beforeAll / afterAll, restored after), so every test - the producer's git calls and the tests' own repositories - is independent of an exported GIT_DIR / GIT_WORK_TREE and of the developer's git config; the nested describe's own copy was removed. Proof: with GIT_DIR / GIT_WORK_TREE exported to the repository itself and the session's fallback working directory created, the sandbox test fails on 2ccd7a1f (cwd codemie-ai/codemie-code instead of Cowork) and passes on 968dc2c4; the whole file passes 50 / 50 under the exported variables."
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts"
+          }
+        ],
+        "commands": [
+          {
+            "command": "GIT_DIR=<repo>/.git GIT_WORK_TREE=<repo> npx vitest run --project unit src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts (at 968dc2c4)",
+            "exit_code": 0
+          },
+          {
+            "command": "same test 'writes the session on the run after the one that first saw it' with the session's fallback working directory created, at 2ccd7a1f",
+            "exit_code": 1
+          },
+          {
+            "command": "same, at 968dc2c4",
+            "exit_code": 0
+          }
+        ]
       }
     }
   ],
