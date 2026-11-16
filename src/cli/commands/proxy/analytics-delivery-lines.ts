@@ -3,7 +3,13 @@ import type { DaemonState } from './daemon-manager.js';
 import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
 import { getEffectiveClientType } from './client-type.js';
 import { readDesktopGateway } from './connectors/desktop.js';
-import { collectDeliveryHealth, DELIVERY_REASONS, formatDropLines, type DeliveryHealth } from './delivery-health.js';
+import {
+  collectDeliveryHealth,
+  DELIVERY_REASONS,
+  formatDropLines,
+  unknownHint,
+  type DeliveryHealth,
+} from './delivery-health.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 
 /**
@@ -40,7 +46,7 @@ function analyticsHeadline(delivery: DeliveryHealth): string[] {
       ...(entry?.run ? [`  Run: ${entry.run}`] : []),
     ];
   }
-  return [`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`];
+  return [`Analytics: ${chalk.dim(`unknown (${unknownHint(delivery)})`)}`];
 }
 
 export interface DesktopCollection {

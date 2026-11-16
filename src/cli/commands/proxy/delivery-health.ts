@@ -14,6 +14,8 @@ export interface DeliveryHealth {
   reason?: DeliveryReason;
   /** Unsent bytes across all sessions; absent when the spool could not be read, which is not the same as none. */
   pendingBytes?: number;
+  /** The spool could not be read completely and no failure was found in what was read, so delivery cannot be judged. */
+  incomplete?: true;
   /** When the next send is due and why the last one failed; set only when `reason` is `send_failed`. */
   sendFailure?: SendFailure;
   /** The newest drop the spool records; informational, it never changes `status`. */
@@ -67,6 +69,9 @@ export async function collectDeliveryHealth(
       const failure = reason === 'send_failed' && spool.sendFailure ? { sendFailure: spool.sendFailure } : {};
       return { status: 'unhealthy', reason, ...pending, ...failure, ...drop };
     }
+    if (spool.incomplete) {
+      return { status: 'unknown', incomplete: true, ...drop };
+    }
     return { status: reply?.credentials === 'ok' ? 'healthy' : 'unknown', ...pending, ...drop };
   } catch (error) {
     logger.debug('[delivery-health] Could not collect delivery health:', error);
@@ -117,7 +122,12 @@ function deliveryRow(health: DeliveryHealth): ReportRow {
       ...(entry?.run ? { hint: `Run: ${entry.run}` } : {}),
     };
   }
-  return { message: `Delivery: ${chalk.yellow('unknown (restart the proxy to enable all checks)')}` };
+  return { message: `Delivery: ${chalk.yellow(`unknown (${unknownHint(health)})`)}` };
+}
+
+/** Why delivery cannot be judged: an unreadable spool is not fixed by a restart, a missing health reply is. */
+export function unknownHint(health: DeliveryHealth): string {
+  return health.incomplete ? 'the spool could not be read' : 'restart the proxy to enable all checks';
 }
 
 /** An amount that could not be read is `unknown`, never `none`. */

@@ -198,9 +198,15 @@ describe('collectDeliveryHealth', () => {
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown' });
   });
 
-  it('leaves the unsent amount out when the spool could not be read completely', async () => {
+  it('is unknown, not healthy, with no unsent amount, when the spool could not be read completely', async () => {
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, incomplete: true });
-    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy' });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', incomplete: true });
+  });
+
+  it('keeps the latest drop on an unknown result for an unreadable spool', async () => {
+    const latestDrop = { reason: 'no_project', stream: 'hooks', at: 5000, local: true };
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, incomplete: true, latestDrop });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'unknown', incomplete: true, latestDrop });
   });
 
   it('leaves the unsent amount out of an unhealthy result when the spool could not be read completely', async () => {
@@ -307,6 +313,13 @@ describe('formatDeliveryLines', () => {
     expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
       'Delivery: unknown (restart the proxy to enable all checks)',
       'Unsent data: none',
+    ]);
+  });
+
+  it('says the spool could not be read, not to restart the proxy, when the spool is incomplete', () => {
+    expect(strip(formatDeliveryLines({ status: 'unknown', incomplete: true }))).toEqual([
+      'Delivery: unknown (the spool could not be read)',
+      'Unsent data: unknown',
     ]);
   });
 

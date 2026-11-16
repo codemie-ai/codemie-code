@@ -1248,6 +1248,15 @@ describe('proxy status', () => {
       expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
     });
 
+    it('prints a dim unknown line naming the unreadable spool, not a restart, when the spool is incomplete', async () => {
+      await arrange({ connectorActive: true, delivery: { status: 'unknown', incomplete: true }, reply: { credentials: 'ok' } });
+
+      const lines = await runStatus(['status']);
+
+      expect(lines).toContain(`Analytics: ${chalk.dim('unknown (the spool could not be read)')}`);
+      expect(lines.some((line) => line.includes('restart the proxy'))).toBe(false);
+    });
+
     it('hides the line when nothing is connected, even if the spool holds unsent data', async () => {
       await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
 
