@@ -5,6 +5,7 @@
  */
 
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+import type { RequestOutcome } from '../../bounded-request.js';
 
 /**
  * Conversation sync status constants
@@ -14,13 +15,15 @@ export const CONVERSATION_SYNC_STATUS = {
   SUCCESS: 'success',
   FAILED: 'failed',
   /** Terminal: every entry is also carried by a newer queued record, so it is never sent */
-  SUPERSEDED: 'superseded'
+  SUPERSEDED: 'superseded',
+  /** Terminal: the server read the payload and refused it for good (JSON 400 / 422), so it is never resent */
+  REJECTED: 'rejected'
 } as const;
 
 /**
  * Conversation sync status type
  */
-export type ConversationSyncStatus = 'pending' | 'success' | 'failed' | 'superseded';
+export type ConversationSyncStatus = 'pending' | 'success' | 'failed' | 'superseded' | 'rejected';
 
 /**
  * Conversation payload record stored in JSONL
@@ -57,7 +60,7 @@ export interface ConversationPayloadRecord {
   /** Sync result status */
   status: ConversationSyncStatus;
 
-  /** Number of sync attempts made for this payload */
+  /** Number of sync attempts made for this payload (diagnostic only; no decision reads it) */
   syncAttempts?: number;
 
   /** Error message if failed */
@@ -104,6 +107,8 @@ export interface ConversationSyncResponse {
   new_messages?: number;
   total_messages?: number;
   created?: boolean;
+  /** What the request came to (see RequestOutcome); `rejected` makes the line terminal */
+  outcome?: RequestOutcome;
 }
 
 /**
