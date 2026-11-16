@@ -126,6 +126,34 @@ describe('extractOrderedNamedInvocations', () => {
     expect(out.commandInvocations).toEqual({ plan: 2, commit: 1 });
   });
 
+  it('counts a skill-backed slash command once, as a skill, not also as a command (EPMCDME-17201)', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('codemie-humanizer')),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandInvocations).toEqual({});
+    expect(out.commandsInOrder).toEqual([]);
+  });
+
+  it('still counts a command as a command when no Skill call follows it', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      userText('a plain follow-up prompt, no skill'),
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({});
+  });
+
+  it('still counts a command as a command when the next message is a Skill call for a different name', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      toolUse('Skill', { skill: 'unrelated-skill' }),
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
+  });
+
   it('returns an empty list when there are no genuine commands', () => {
     const out = extractOrderedNamedInvocations([
       userText('docs mention <command-name>/plan</command-name> only'),

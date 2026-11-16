@@ -100,25 +100,50 @@ export function extractOrderedNamedInvocations(
   const commandInvocations: Record<string, number> = {};
   const commandsInOrder: string[] = [];
 
-  // Count slash commands from a text payload, but only when it carries the CLI's
-  // `<command-message>` sibling — that distinguishes a real invocation from prose that
-  // merely quotes `<command-name>` (e.g. docs, specs, this very file).
-  const scanCommands = (text: string): void => {
+  // The command names in a text payload, but only when it carries the CLI's `<command-message>`
+  // sibling — that distinguishes a real invocation from prose that merely quotes `<command-name>`
+  // (e.g. docs, specs, this very file). Pure: callers decide what to do with the names.
+  const matchCommandNames = (text: string): string[] => {
     if (!text.includes('<command-message>')) {
-      return;
+      return [];
     }
+    const names: string[] = [];
     COMMAND_TAG.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = COMMAND_TAG.exec(text)) !== null) {
       const cmd = match[1].replace(/^\//, '').trim();
-      if (cmd) {
-        bump(commandInvocations, cmd);
-        commandsInOrder.push(cmd);
-      }
+      if (cmd) names.push(cmd);
     }
+    return names;
   };
 
-  for (const raw of messages) {
+  // The skill a slash command dispatched to, when the very next message is the assistant's
+  // matching `Skill` tool_use call — the seam EPMCDME-17201 covers: such a command is counted
+  // once, as the skill, not also as a command.
+  const nextMessageSkillName = (raw: unknown): string => {
+    const msg = raw as RawMessage;
+    if (msg?.message?.role !== 'assistant') return '';
+    const content = msg.message.content;
+    if (!Array.isArray(content)) return '';
+    for (const item of content as RawBlock[]) {
+      if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
+        const skill = item.input.skill.trim();
+        if (skill) return skill;
+      }
+    }
+    return '';
+  };
+
+  const recordCommand = (cmd: string, next: unknown): void => {
+    const skillAhead = nextMessageSkillName(next);
+    if (skillAhead && skillAhead.replace(/^\//, '') === cmd) return;
+    bump(commandInvocations, cmd);
+    commandsInOrder.push(cmd);
+  };
+
+  for (let i = 0; i < messages.length; i++) {
+    const raw = messages[i];
+    const next = messages[i + 1];
     const msg = raw as RawMessage;
     const content = msg?.message?.content;
     const isUser = msg?.message?.role === 'user';
@@ -135,7 +160,7 @@ export function extractOrderedNamedInvocations(
 
     // Real slash commands arrive as plain string content (the CLI shape).
     if (typeof content === 'string') {
-      if (isUser) scanCommands(content);
+      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, next);
       continue;
     }
     if (!Array.isArray(content)) {
@@ -155,7 +180,7 @@ export function extractOrderedNamedInvocations(
           if (subtype) bump(agentInvocations, subtype);
         }
       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
-        scanCommands(item.text);
+        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, next);
       }
     }
   }
