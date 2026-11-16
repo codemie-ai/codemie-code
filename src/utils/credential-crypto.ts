@@ -36,20 +36,21 @@ export function encryptWithKey(text: string, key: Buffer): string {
   return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
 }
 
-/** Decrypts either the current AES-256-GCM format (`iv:authTag:encrypted`) or the legacy AES-256-CBC format (`iv:encrypted`). */
+/**
+ * Decrypts the AES-256-GCM format (`iv:authTag:encrypted`). GCM is authenticated, so tampered
+ * ciphertext throws. The legacy unauthenticated AES-256-CBC format (`iv:encrypted`) is no longer
+ * accepted: it is rejected, callers treat that as "no stored credential" and the user logs in again.
+ */
 export function decryptWithKey(text: string, key: Buffer): string {
   const parts = text.split(':');
-  if (parts.length === 3) {
-    const iv = Buffer.from(parts[0], 'hex');
-    const authTag = Buffer.from(parts[1], 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    return decipher.update(parts[2], 'hex', 'utf8') + decipher.final('utf8');
+  if (parts.length !== 3) {
+    throw new Error('Unsupported credential format: expected AES-256-GCM (iv:authTag:encrypted)');
   }
-  // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
   const iv = Buffer.from(parts[0], 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  return decipher.update(parts[1], 'hex', 'utf8') + decipher.final('utf8');
+  const authTag = Buffer.from(parts[1], 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  return decipher.update(parts[2], 'hex', 'utf8') + decipher.final('utf8');
 }
 
 /**

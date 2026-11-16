@@ -437,7 +437,7 @@ async function getKeytar(): Promise<typeof import('keytar') | null> {
  * Stores SSO credentials using:
  * - System keychain (macOS Keychain, Windows Credential Vault) when available
  * - Encrypted file storage as fallback
- * - Machine-specific AES-256-CBC encryption
+ * - Machine-specific AES-256-GCM encryption
  */
 export class CredentialStore {
   private static instance: CredentialStore;
