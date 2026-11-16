@@ -23,21 +23,6 @@ function userStringContent(text: string) {
   return { message: { role: 'user', content: text } };
 }
 
-/** A bookkeeping line Claude Code writes between a command and the model's real reply. */
-function metaLine() {
-  return { isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } };
-}
-
-/** The tool_result passback for a prior tool_use call — not a new user-authored turn. */
-function toolResult(toolUseId = 't1') {
-  return { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId }] } };
-}
-
-/** A system line (e.g. a compact_boundary) that carries no `message` field at all. */
-function systemLine() {
-  return { type: 'system', subtype: 'compact_boundary' };
-}
-
 describe('extractNamedInvocations', () => {
   it('extracts skill names from Skill tool_use blocks', () => {
     const out = extractNamedInvocations([
@@ -141,14 +126,23 @@ describe('extractOrderedNamedInvocations', () => {
     expect(out.commandInvocations).toEqual({ plan: 2, commit: 1 });
   });
 
-  it('counts a skill-backed slash command once, as a skill, not also as a command (EPMCDME-17201)', () => {
+  it('counts a skill-backed slash command independently as both a command and a skill', () => {
+    // A slash command that dispatches to a same-named skill is two distinct, independently
+    // counted invocations here: the summary's own `commands`/`skills` counts are deliberately
+    // not deduplicated against each other. A prior attempt at a lookahead dedup for this shape
+    // (EPMCDME-17201) was reverted after review: three rounds each found a new transcript shape
+    // it missed, real-session data showed the adjacency it assumed essentially never occurs, and
+    // the ticket's actual reported symptom is backend-owned (`agent.skill.dispatch`/OTLP
+    // `command_name`), unaffected by this file either way. This also keeps this extractor
+    // consistent with `src/cli/commands/analytics/cost/dispatch-extractor.ts`'s independent
+    // dispatch-timeline extraction of the same transcript shape.
     const out = extractOrderedNamedInvocations([
       userStringContent(commandWrapper('codemie-humanizer')),
       toolUse('Skill', { skill: 'codemie-humanizer' }),
     ]);
     expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-    expect(out.commandInvocations).toEqual({});
-    expect(out.commandsInOrder).toEqual([]);
+    expect(out.commandInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandsInOrder).toEqual(['codemie-humanizer']);
   });
 
   it('still counts a command as a command when no Skill call follows it', () => {
@@ -160,69 +154,13 @@ describe('extractOrderedNamedInvocations', () => {
     expect(out.skillInvocations).toEqual({});
   });
 
-  it('still counts a command as a command when the next message is a Skill call for a different name', () => {
+  it('counts a command and an unrelated-name Skill call that happens to follow it, independently', () => {
     const out = extractOrderedNamedInvocations([
       userStringContent(commandWrapper('plan')),
       toolUse('Skill', { skill: 'unrelated-skill' }),
     ]);
     expect(out.commandInvocations).toEqual({ plan: 1 });
     expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
-  });
-
-  it('counts a skill-backed command once even when a meta/bookkeeping line sits between it and the Skill call (CR-001)', () => {
-    const out = extractOrderedNamedInvocations([
-      userStringContent(commandWrapper('codemie-humanizer')),
-      metaLine(),
-      toolUse('Skill', { skill: 'codemie-humanizer' }),
-    ]);
-    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-    expect(out.commandInvocations).toEqual({});
-    expect(out.commandsInOrder).toEqual([]);
-  });
-
-  it('counts a skill-backed command once even when the model calls another tool first, before the Skill call (CR-001)', () => {
-    const out = extractOrderedNamedInvocations([
-      userStringContent(commandWrapper('codemie-humanizer')),
-      toolUse('Read', { file_path: '/a.md' }),
-      toolResult(),
-      toolUse('Skill', { skill: 'codemie-humanizer' }),
-    ]);
-    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-    expect(out.commandInvocations).toEqual({});
-    expect(out.commandsInOrder).toEqual([]);
-  });
-
-  it('still counts a command as a command when a prep tool call is followed by a plain reply, no Skill call', () => {
-    const out = extractOrderedNamedInvocations([
-      userStringContent(commandWrapper('plan')),
-      toolUse('Read', { file_path: '/a.md' }),
-      toolResult(),
-      { message: { role: 'assistant', content: [{ type: 'text', text: 'Done, no skill needed.' }] } },
-    ]);
-    expect(out.commandInvocations).toEqual({ plan: 1 });
-    expect(out.skillInvocations).toEqual({});
-  });
-
-  it('does not attribute a Skill call to an earlier command once a genuine new user prompt intervenes', () => {
-    const out = extractOrderedNamedInvocations([
-      userStringContent(commandWrapper('plan')),
-      { message: { role: 'assistant', content: [{ type: 'text', text: 'Here is the plan.' }] } },
-      userText('thanks, now run the humanizer skill'),
-      toolUse('Skill', { skill: 'codemie-humanizer' }),
-    ]);
-    expect(out.commandInvocations).toEqual({ plan: 1 });
-    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-  });
-
-  it('counts a skill-backed command once even when a system line with no message field (e.g. compact_boundary) sits between it and the Skill call (CR-001)', () => {
-    const out = extractOrderedNamedInvocations([
-      userStringContent(commandWrapper('codemie-humanizer')),
-      systemLine(),
-      toolUse('Skill', { skill: 'codemie-humanizer' }),
-    ]);
-    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
-    expect(out.commandInvocations).toEqual({});
-    expect(out.commandsInOrder).toEqual([]);
   });
 
   it('returns an empty list when there are no genuine commands', () => {

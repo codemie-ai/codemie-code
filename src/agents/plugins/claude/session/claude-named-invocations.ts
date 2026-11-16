@@ -37,7 +37,6 @@ interface RawBlock {
 interface RawMessage {
   promptId?: unknown;
   isMeta?: unknown;
-  isSidechain?: unknown;
   message?: { role?: string; content?: unknown };
 }
 
@@ -67,12 +66,15 @@ function bump(map: Record<string, number>, key: string): void {
 }
 
 /**
- * The single command name (leading slash stripped) in a genuine CLI wrapper within `text`, or
- * `''` when `text` carries no `<command-name>` tag with its required `<command-message>` sibling.
- * Same genuine-wrapper rule as `scanCommands`; only the first match is returned.
+ * The command name (leading slash stripped) in a genuine CLI wrapper anchored at the very start of
+ * `text`, or `''` when the text does not open with `<command-name>` or carries no `<command-message>`
+ * sibling. Anchored — unlike `matchCommandNames` — because this feeds a Turns exclusion: a typed
+ * prompt that merely quotes a wrapper mid-text (e.g. asking about one) is real user text and must
+ * still count as a turn, not be mistaken for the genuine wrapper line Claude Code writes as the
+ * entire message.
  */
 export function wrappedCommandName(text: string): string {
-  if (!text.includes('<command-message>')) return '';
+  if (!/^\s*<command-name>/.test(text) || !text.includes('<command-message>')) return '';
   COMMAND_TAG.lastIndex = 0;
   const match = COMMAND_TAG.exec(text);
   return match ? match[1].replace(/^\//, '').trim() : '';
@@ -118,57 +120,7 @@ export function extractOrderedNamedInvocations(
     return names;
   };
 
-  // A user-role message that is purely the mechanical tool_result passback for a prior tool_use
-  // — not a new user-authored turn, so it must not end the `nextSkillName` scan below.
-  const isToolResultOnlyMessage = (msg: RawMessage): boolean => {
-    if (msg?.message?.role !== 'user') return false;
-    const content = msg.message.content;
-    if (!Array.isArray(content) || content.length === 0) return false;
-    return (content as RawBlock[]).every((item) => item?.type === 'tool_result');
-  };
-
-  // The skill a slash command dispatched to, when the model resolves the same turn (skipping any
-  // isMeta/isSidechain bookkeeping lines, and any prep tool_use/tool_result round-trips the skill's
-  // own instructions triggered first) by calling the matching `Skill` tool — the seam EPMCDME-17201
-  // covers: such a command is counted once, as the skill, not also as a command. The scan stops the
-  // moment a genuine new user-authored message appears (not a tool_result passback): anything after
-  // that boundary belongs to a different turn and must never be attributed back to this command.
-  const nextSkillName = (fromIndex: number): string => {
-    for (let j = fromIndex; j < messages.length; j++) {
-      const msg = messages[j] as RawMessage;
-      if (msg?.isMeta || msg?.isSidechain) continue;
-      const role = msg?.message?.role;
-      // A line with no message field at all (e.g. a `compact_boundary` system line) is bookkeeping,
-      // not a turn boundary — skip it exactly like isMeta/isSidechain rather than bailing.
-      if (role == null) continue;
-      if (role === 'user') {
-        if (isToolResultOnlyMessage(msg)) continue;
-        return '';
-      }
-      if (role !== 'assistant') return '';
-      const content = msg.message?.content;
-      if (!Array.isArray(content)) return '';
-      for (const item of content as RawBlock[]) {
-        if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
-          const skill = item.input.skill.trim();
-          if (skill) return skill;
-        }
-      }
-      // No Skill call in this assistant message — it may have called a different tool first
-      // (e.g. Read/Bash); keep scanning for the Skill call the round-trip leads to.
-    }
-    return '';
-  };
-
-  const recordCommand = (cmd: string, fromIndex: number): void => {
-    const skillAhead = nextSkillName(fromIndex);
-    if (skillAhead && skillAhead.replace(/^\//, '') === cmd) return;
-    bump(commandInvocations, cmd);
-    commandsInOrder.push(cmd);
-  };
-
-  for (let i = 0; i < messages.length; i++) {
-    const raw = messages[i];
+  for (const raw of messages) {
     const msg = raw as RawMessage;
     const content = msg?.message?.content;
     const isUser = msg?.message?.role === 'user';
@@ -185,7 +137,12 @@ export function extractOrderedNamedInvocations(
 
     // Real slash commands arrive as plain string content (the CLI shape).
     if (typeof content === 'string') {
-      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, i + 1);
+      if (isUser) {
+        for (const cmd of matchCommandNames(content)) {
+          bump(commandInvocations, cmd);
+          commandsInOrder.push(cmd);
+        }
+      }
       continue;
     }
     if (!Array.isArray(content)) {
@@ -205,7 +162,10 @@ export function extractOrderedNamedInvocations(
           if (subtype) bump(agentInvocations, subtype);
         }
       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
-        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, i + 1);
+        for (const cmd of matchCommandNames(item.text)) {
+          bump(commandInvocations, cmd);
+          commandsInOrder.push(cmd);
+        }
       }
     }
   }
