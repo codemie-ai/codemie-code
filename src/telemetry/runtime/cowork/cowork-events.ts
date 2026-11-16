@@ -4,7 +4,7 @@
  * state in, wire events out; the state is updated in place so the next batch continues where this one ended.
  */
 
-import { boundedText, TEXT_FIELD_LIMITS, UNMASKED_FIELD_KEYS } from '@/agents/core/OtlpAgentAdapter.js';
+import { boundedText, TEXT_FIELD_LIMITS, UNMASKED_FIELD_KEYS } from '@/agents/core/otlp-field-limits.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';

@@ -1,4 +1,4 @@
-import { maskAndBoundFields } from '@/agents/core/OtlpAgentAdapter.js';
+import { maskAndBoundFields } from '@/agents/core/otlp-field-limits.js';
 import type {
   CopilotEvent,
   CopilotToolCompleteData,
