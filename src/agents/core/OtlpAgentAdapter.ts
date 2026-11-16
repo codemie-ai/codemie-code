@@ -94,6 +94,17 @@ export function boundedText(value: unknown, maxChars: number): string {
   return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
+/** Masks secrets in every field, then cuts the free-text fields to their limits (mask first, so a secret straddling a cut is never half-shown). */
+export function maskAndBoundFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const limited = maskSecretsDeep(fields, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
+  for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
+    if (Object.prototype.hasOwnProperty.call(limited, field)) {
+      limited[field] = boundedText(limited[field], maxChars);
+    }
+  }
+  return limited;
+}
+
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
  * analytics spool. Owns the fixed flow (parse, allowlist gate, daemon start, evaluate,
@@ -375,13 +386,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         delete unmasked['effort'];
       }
     }
-    const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
-    for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
-      if (Object.prototype.hasOwnProperty.call(limited, field)) {
-        limited[field] = boundedText(limited[field], maxChars);
-      }
-    }
-    return limited;
+    return maskAndBoundFields(unmasked);
   }
 
   /**

@@ -2,6 +2,7 @@ import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot
 import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import { extractSlashCommand } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE, type PendingMessage } from './copilot-cli-otlp.request-usage.js';
+import { buildUnhookedToolEvents } from './copilot-cli-otlp.unhooked-tools.js';
 
 export type { PendingMessage };
 
@@ -110,13 +111,12 @@ export function summarizeSlice(
       toolCalls,
       toolErrors,
       apiCalls: mainRequests.size,
-      // Mirrors `session.usage_record`'s own `initiator` check above: a sub-agent-dispatched
-      // prompt is not a main-session turn. Degrades safely if Copilot never sets it on
-      // `user.message` — then every message still counts, as before.
+      // A sub-agent's injected prompt is a `user.message` with `source: "agent-<session id>"`
+      // (`initiator` exists only on `session.usage_record`); it is not a user turn.
       turns: events.filter((e) => {
         if (e.type !== 'user.message') return false;
-        const data = (e.data ?? {}) as { initiator?: string };
-        return data.initiator !== 'sub-agent';
+        const data = (e.data ?? {}) as { source?: unknown };
+        return !(typeof data.source === 'string' && data.source.startsWith('agent-'));
       }).length,
       models,
     },
@@ -246,6 +246,7 @@ export function buildDeferredUsageEvents(
   const endedAt = lastShutdown?.timestamp ?? '';
   // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
   const outgoing: Record<string, unknown>[] = [...slice.rows];
+  if (!truncated) outgoing.push(...buildUnhookedToolEvents(sessionId, events));
   if (!truncated && !withoutSummary) {
     outgoing.push(buildSessionSummaryEvent({
       sessionId,
