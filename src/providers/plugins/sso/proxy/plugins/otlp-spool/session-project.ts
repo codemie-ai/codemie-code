@@ -8,6 +8,7 @@ export const HOLD_REASONS = [
   'stamp_invalid',
   'evidence_capacity',
   'personal_not_forwardable',
+  'work_consent_required',
   'verdict_unavailable',
   'classification_unresolved',
   'session_mismatch',

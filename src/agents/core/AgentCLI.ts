@@ -511,6 +511,16 @@ export class AgentCLI {
             appendAuditEvent('resume_external_confirmed', auditData);
             logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
           }
+
+          // The user may have passed an id the agent does not know (e.g. a CodeMie session id
+          // shown by analytics). Hand the agent the native id the resolver mapped it to.
+          // Only the `--resume` option is rewritten; a native positional resume stays as typed.
+          const resolvedNativeId = ownership?.nativeResumeId?.replace(/\p{Cc}/gu, '');
+          if (options.resume && resolvedNativeId && resolvedNativeId !== resumeId) {
+            logger.info(`[AgentCLI] Resuming session ${resumeId} as native ${this.adapter.name} session ${resolvedNativeId}`);
+            options.resume = resolvedNativeId;
+            providerEnv[RESUME_SESSION_ENV_KEY] = resolvedNativeId;
+          }
         }
       }
 
