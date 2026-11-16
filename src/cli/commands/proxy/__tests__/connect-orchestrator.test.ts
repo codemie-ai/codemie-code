@@ -3797,7 +3797,7 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    vi.mocked(ConfigLoader.getActiveProfileName).mockRejectedValue(new Error('config unreadable'));
+    vi.mocked(ConfigLoader.getActiveProfileName).mockRejectedValueOnce(new Error('config unreadable'));
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p').catch((e: unknown) => e);
 

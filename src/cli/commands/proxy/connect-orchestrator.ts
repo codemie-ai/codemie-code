@@ -8,7 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
-import { resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
+import { resolveLoginUrl, resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -294,7 +294,7 @@ export async function assertSsoCredentials(
     if (!creds) {
       // Bare `profile login` targets the active profile; any other profile needs its own host.
       const activeProfileName = await resolveActiveProfileName();
-      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveProfileCodeMieUrl(baseUrl, codeMieUrl)}`;
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveLoginUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
