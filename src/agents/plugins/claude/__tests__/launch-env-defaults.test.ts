@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import * as launchEnvDefaults from '../launch-env-defaults.js';
 import { CLAUDE_LAUNCH_ENV_DEFAULTS, CLAUDE_PROMPT_CACHE_SETTINGS_KEYS, CLAUDE_PROMPT_CACHE_WATCHED } from '../launch-env-defaults.js';
 import { ClaudePlugin, ClaudePluginMetadata } from '../claude.plugin.js';
@@ -100,10 +101,14 @@ describe('CLAUDE_PROMPT_CACHE_WATCHED', () => {
 
 describe('ClaudePlugin.readLaunchSettingsLayers', () => {
   it('passes env blocks and top-level keys through, and treats a non-object env as unreadable', async () => {
+    // Built with join so the keys match the paths the plugin builds on every platform.
+    const userSettings = join('/u', 'settings.json');
+    const projectSettings = join('/p', '.claude', 'settings.json');
+    const localSettings = join('/p', '.claude', 'settings.local.json');
     const files: Record<string, string> = {
-      '/u/settings.json': JSON.stringify({ env: { ENABLE_TOOL_SEARCH: '0' }, promptCacheTtl: '5m' }),
-      '/p/.claude/settings.json': JSON.stringify({ env: ['not', 'an', 'object'] }),
-      '/p/.claude/settings.local.json': JSON.stringify({ model: 'x' }),
+      [userSettings]: JSON.stringify({ env: { ENABLE_TOOL_SEARCH: '0' }, promptCacheTtl: '5m' }),
+      [projectSettings]: JSON.stringify({ env: ['not', 'an', 'object'] }),
+      [localSettings]: JSON.stringify({ model: 'x' }),
     };
     vi.mocked(readFile).mockImplementation((async (path: string) => {
       if (path in files) return files[path];
@@ -114,13 +119,13 @@ describe('ClaudePlugin.readLaunchSettingsLayers', () => {
 
     expect(layers.slice(0, 3)).toEqual([
       {
-        path: '/u/settings.json',
+        path: userSettings,
         state: 'ok',
         env: { ENABLE_TOOL_SEARCH: '0' },
         settings: { env: { ENABLE_TOOL_SEARCH: '0' }, promptCacheTtl: '5m' },
       },
-      { path: '/p/.claude/settings.json', state: 'unreadable' },
-      { path: '/p/.claude/settings.local.json', state: 'ok', settings: { model: 'x' } },
+      { path: projectSettings, state: 'unreadable' },
+      { path: localSettings, state: 'ok', settings: { model: 'x' } },
     ]);
     expect(layers.slice(3).every((layer) => layer.state === 'absent')).toBe(true);
   });
