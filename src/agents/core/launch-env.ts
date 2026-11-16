@@ -73,16 +73,6 @@ export function applyLaunchEnvDefaults(env: NodeJS.ProcessEnv, defaults: readonl
   }
 }
 
-/**
- * Whether a launch of `agentName` on `provider` runs the agent's default `beforeRun`, which is what
- * applies its launch defaults. Same rule as `resolveHook` in lifecycle-helpers.ts: a provider that
- * declares its own `beforeRun` for that agent replaces the default.
- */
-export function defaultsApplyOnProvider(agentName: string, provider: string | undefined): boolean {
-  if (!provider) return true;
-  return !ProviderRegistry.getProvider(provider)?.agentHooks?.[agentName]?.beforeRun;
-}
-
 /** The highest-precedence settings file that sets it: its `env` block, or a top-level key for `settingsKey`. */
 function fromSettings(declared: LaunchEnvDefault, layers: LaunchSettingsLayer[]): { value: string; path: string } | undefined {
   for (let i = layers.length - 1; i >= 0; i--) {

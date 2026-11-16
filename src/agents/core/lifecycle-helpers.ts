@@ -49,6 +49,29 @@ import '../../providers/index.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { applyProviderAgentEnv } from './launch-env.js';
 
+/** The hook functions a provider can register (`env` is data, applied by applyProviderAgentEnv). */
+type ProviderHookName = Exclude<keyof ProviderLifecycleHooks, 'env'>;
+
+/** The hook the provider registers under this agent's own name, if any. */
+function providerAgentHook<K extends ProviderHookName>(
+  hookName: K,
+  provider: string | undefined,
+  agentName: string
+): ProviderLifecycleHooks[K] | undefined {
+  if (!provider) return undefined;
+  return ProviderRegistry.getProvider(provider)?.agentHooks?.[agentName]?.[hookName];
+}
+
+/**
+ * Whether the agent's own default `hookName` runs for a launch on `provider`. It runs unless the
+ * provider registers that hook under the agent's name, which replaces it (resolveHook below); a
+ * wildcard ('*') hook is chained before it instead. `codemie doctor` uses this to know whether an
+ * agent's launch defaults apply (e.g. bedrock's `claude` beforeRun replaces Claude's).
+ */
+export function agentDefaultHookRuns(hookName: ProviderHookName, provider: string | undefined, agentName: string): boolean {
+  return !providerAgentHook(hookName, provider, agentName);
+}
+
 /**
  * Resolve the appropriate hook based on provider with automatic chaining
  *
@@ -68,9 +91,6 @@ import { applyProviderAgentEnv } from './launch-env.js';
  * @param agentName - Current agent name
  * @returns Resolved/composed hook function or undefined
  */
-/** The hook functions a provider can register (`env` is data, applied by applyProviderAgentEnv). */
-type ProviderHookName = Exclude<keyof ProviderLifecycleHooks, 'env'>;
-
 async function resolveHook<K extends ProviderHookName>(
   lifecycle: AgentLifecycle | undefined,
   hookName: K,
@@ -82,7 +102,7 @@ async function resolveHook<K extends ProviderHookName>(
     const providerPlugin = ProviderRegistry.getProvider(provider);
 
     const wildcardHook = providerPlugin?.agentHooks?.['*']?.[hookName];
-    const specificHook = providerPlugin?.agentHooks?.[agentName]?.[hookName];
+    const specificHook = providerAgentHook(hookName, provider, agentName);
 
     // Chain hooks: wildcard first, then agent-specific
     if (wildcardHook && specificHook) {

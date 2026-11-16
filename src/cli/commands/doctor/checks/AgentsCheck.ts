@@ -16,11 +16,11 @@
 import { AgentRegistry } from '../../../../agents/registry.js';
 import type { AgentAdapter } from '../../../../agents/core/types.js';
 import {
-  defaultsApplyOnProvider,
   describeLaunchEnv,
   formatLaunchEnvReport,
   providerAgentEnv,
 } from '../../../../agents/core/launch-env.js';
+import { agentDefaultHookRuns } from '../../../../agents/core/lifecycle-helpers.js';
 import { ConfigLoader } from '../../../../utils/config.js';
 import { getErrorMessage } from '../../../../utils/errors.js';
 import { logger } from '../../../../utils/logger.js';
@@ -158,7 +158,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       const settingsLayers = (await agent.readLaunchSettingsLayers?.(base.cwd, base.shellEnv)) ?? [];
       const report = describeLaunchEnv(defaults, {
         shellEnv: base.shellEnv,
-        defaultsApply: defaultsApplyOnProvider(agent.name, base.provider),
+        defaultsApply: agentDefaultHookRuns('beforeRun', base.provider, agent.name),
         settingsLayers,
         providerEnv: providerAgentEnv(base.provider, agent.name),
       });

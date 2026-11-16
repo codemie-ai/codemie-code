@@ -11,17 +11,12 @@ import {
   applyLaunchEnvDefaults,
   applyProviderAgentEnv,
   providerAgentEnv,
-  defaultsApplyOnProvider,
   describeLaunchEnv,
   formatLaunchEnvReport,
   LAUNCH_ENV_HEADER,
 } from '../launch-env.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 
-ProviderRegistry.registerProvider({
-  name: 'fake-replaces-claude',
-  agentHooks: { claude: { beforeRun: async (env: NodeJS.ProcessEnv) => env } },
-} as never);
 ProviderRegistry.registerProvider({
   name: 'fake-env-provider',
   agentHooks: { claude: { env: { A: '0', P: 'provider-p' } } },
@@ -33,10 +28,6 @@ describe('providerAgentEnv', () => {
     expect(providerAgentEnv('fake-env-provider', 'gemini')).toEqual({});
     expect(providerAgentEnv('no-such-provider', 'claude')).toEqual({});
     expect(providerAgentEnv(undefined, 'claude')).toEqual({});
-  });
-
-  it('declaring env alone does not replace the agent default beforeRun', () => {
-    expect(defaultsApplyOnProvider('claude', 'fake-env-provider')).toBe(true);
   });
 });
 
@@ -90,15 +81,6 @@ describe('applyLaunchEnvDefaults', () => {
     expect(env.B).toBe('70');
     expect('C' in env).toBe(false);
     expect(order).toEqual(['A', 'C']);
-  });
-});
-
-describe('defaultsApplyOnProvider', () => {
-  it('is false only when the provider has a beforeRun for that agent name', () => {
-    expect(defaultsApplyOnProvider('claude', 'fake-replaces-claude')).toBe(false);
-    expect(defaultsApplyOnProvider('claude-acp', 'fake-replaces-claude')).toBe(true);
-    expect(defaultsApplyOnProvider('claude', undefined)).toBe(true);
-    expect(defaultsApplyOnProvider('claude', 'no-such-provider')).toBe(true);
   });
 });
 

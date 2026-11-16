@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { executeBeforeRun } from '../lifecycle-helpers.js';
+import { agentDefaultHookRuns, executeBeforeRun } from '../lifecycle-helpers.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import type { AgentLifecycle } from '../types.js';
 
@@ -14,6 +14,37 @@ ProviderRegistry.registerProvider({
   name: 'fake-declares-env',
   agentHooks: { 'fake-agent': { env: { X_FLAG: 'provider', X_OTHER: 'provider' } } },
 } as never);
+
+ProviderRegistry.registerProvider({
+  name: 'fake-replaces-agent',
+  agentHooks: { 'fake-agent': { beforeRun: async (env: NodeJS.ProcessEnv) => env } },
+} as never);
+ProviderRegistry.registerProvider({
+  name: 'fake-wildcard-only',
+  agentHooks: { '*': { beforeRun: async (env: NodeJS.ProcessEnv) => env } },
+} as never);
+
+describe('agentDefaultHookRuns — the rule resolveHook applies', () => {
+  it('is false only when the provider registers that hook under the agent name', () => {
+    expect(agentDefaultHookRuns('beforeRun', 'fake-replaces-agent', 'fake-agent')).toBe(false);
+    expect(agentDefaultHookRuns('beforeRun', 'fake-replaces-agent', 'other-agent')).toBe(true);
+    expect(agentDefaultHookRuns('beforeRun', 'fake-wildcard-only', 'fake-agent')).toBe(true);
+    expect(agentDefaultHookRuns('beforeRun', 'fake-declares-env', 'fake-agent')).toBe(true);
+    expect(agentDefaultHookRuns('beforeRun', undefined, 'fake-agent')).toBe(true);
+    expect(agentDefaultHookRuns('beforeRun', 'no-such-provider', 'fake-agent')).toBe(true);
+  });
+
+  it('matches what executeBeforeRun actually runs', async () => {
+    const agentDefault = vi.fn(async (env: NodeJS.ProcessEnv) => env);
+    const lifecycle: AgentLifecycle = { beforeRun: agentDefault };
+
+    await executeBeforeRun({}, lifecycle, 'fake-agent', { CODEMIE_PROVIDER: 'fake-replaces-agent' }, {});
+    expect(agentDefault).not.toHaveBeenCalled();
+
+    await executeBeforeRun({}, lifecycle, 'fake-agent', { CODEMIE_PROVIDER: 'fake-wildcard-only' }, {});
+    expect(agentDefault).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('executeBeforeRun — provider agent env', () => {
   it('applies the declared values before the agent default hook, which still runs', async () => {
