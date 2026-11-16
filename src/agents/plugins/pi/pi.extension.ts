@@ -21,7 +21,12 @@ import { getPiAgentDir } from './pi.paths.js';
 const EXTENSION_DIR_NAME = 'codemie-metrics';
 
 /** Set to `1` to skip installation entirely and remove any previously installed copy. */
-const DISABLE_ENV = 'CODEMIE_PI_EXTENSION_DISABLED';
+export const DISABLE_ENV = 'CODEMIE_PI_EXTENSION_DISABLED';
+
+/** Where the run-ledger asset ships, for agents (oh-my-pi) that install it outside Pi's agent dir. */
+export function getLedgerExtensionSourceDir(): string {
+  return join(getDirname(import.meta.url), 'extension');
+}
 
 /** Absolute ledger path, handed to the extension so it holds no layout assumptions. */
 export const LEDGER_PATH_ENV = 'CODEMIE_PI_LEDGER';
@@ -77,11 +82,29 @@ export async function ensurePiCodeMieExtension(
   env: NodeJS.ProcessEnv = process.env,
   // Defaulted rather than resolved inline so the self-test failure path — the one
   // that stands between a corrupted asset and `pi` exiting 1 — is reachable in tests.
-  sourceDir: string = join(getDirname(import.meta.url), 'extension')
+  sourceDir: string = getLedgerExtensionSourceDir()
 ): Promise<PiExtensionStatus> {
-  const targetDir = join(getPiAgentDir(cwd), 'extensions', EXTENSION_DIR_NAME);
+  return installCodeMieExtension(
+    join(getPiAgentDir(cwd), 'extensions', EXTENSION_DIR_NAME),
+    sourceDir,
+    env[DISABLE_ENV] === '1'
+  );
+}
 
-  if (env[DISABLE_ENV] === '1') {
+/**
+ * Materialize an extension asset directory (`index.js` + `package.json`) at `targetDir` and
+ * prove it loads, removing it again when it does not. `disabled` removes any earlier copy
+ * instead. Used for Pi's agent dir and for the CodeMie-owned directories oh-my-pi loads
+ * extensions from (`-e <path>`), so omp's own `~/.omp` stays untouched.
+ *
+ * Never throws: every failure degrades to `{installed: false}`.
+ */
+export async function installCodeMieExtension(
+  targetDir: string,
+  sourceDir: string,
+  disabled = false
+): Promise<PiExtensionStatus> {
+  if (disabled) {
     await removeExtension(targetDir);
     return { installed: false, reason: 'disabled' };
   }
@@ -89,7 +112,7 @@ export async function ensurePiCodeMieExtension(
   try {
     const files = await readSourceFiles(sourceDir);
     if (!files) {
-      logger.debug(`[pi-extension] Source assets not found at ${sourceDir}; run ledger disabled`);
+      logger.debug(`[pi-extension] Source assets not found at ${sourceDir}; extension disabled`);
       return { installed: false, reason: 'source-missing' };
     }
 
@@ -106,17 +129,17 @@ export async function ensurePiCodeMieExtension(
     if (!(await exportsFactory(entryPath, files['index.js']))) {
       await removeExtension(targetDir);
       logger.warn(
-        '[pi-extension] Run-ledger extension failed its load self-test and was removed. '
-        + 'Pi will start normally; this run will report no tool metrics.'
+        `[pi-extension] Extension ${targetDir} failed its load self-test and was removed. `
+        + 'The agent will start normally without it.'
       );
       return { installed: false, reason: 'selftest-failed' };
     }
 
-    logger.debug(`[pi-extension] Run ledger installed at ${targetDir}`);
+    logger.debug(`[pi-extension] Extension installed at ${targetDir}`);
     return { installed: true, path: targetDir };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`[pi-extension] Could not install the run-ledger extension: ${message}`);
+    logger.warn(`[pi-extension] Could not install the extension at ${targetDir}: ${message}`);
     await removeExtension(targetDir);
     return { installed: false, reason: 'write-failed' };
   }

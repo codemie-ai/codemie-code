@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- `codemie-omp` (`codemie install omp`) is a managed Oh My Pi launcher: it routes omp through the active CodeMie profile without touching `~/.omp` and reports its sessions to CodeMie, so omp shows up in web Analytics → CLI Insights as its own `codemie-omp` client with its own `omp` conversation folder
+
+### Changed
+
+- `codemie proxy connect --omp` now runs the proxy daemon as the `codemie-omp` client instead of the generic `codemie-daemon` when `--omp` is the only target and Claude Desktop is not connected, changing the `X-CodeMie-Client` attribution of omp traffic; a daemon already running as `codemie-daemon` is restarted under the new identity by the next connect. With Claude Desktop connected the daemon keeps the `claude-desktop` identity and omp traffic is attributed to it, as before
+
 ## [0.16.8] - 2026-11-12
 
 ### Added

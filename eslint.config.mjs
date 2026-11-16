@@ -72,12 +72,12 @@ export default [
       'no-useless-escape': 'warn',
     },
   },
-  // Pi loads this asset in its own process, where a syntax error makes Pi exit(1) and
+  // Pi (and oh-my-pi) load these assets in their own process, where a syntax error makes Pi exit(1) and
   // take the user's session with it. It is plain ESM JavaScript (tsc must not compile
   // it), so it needs an explicit block — the blanket '**/*.js' ignore below would
   // otherwise leave the one file that most needs checking entirely unlinted.
   {
-    files: ['src/agents/plugins/pi/extension/**/*.js'],
+    files: ['src/agents/plugins/pi/extension/**/*.js', 'src/agents/plugins/omp/extension/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -96,6 +96,7 @@ export default [
       'node_modules/**',
       '**/*.js',
       '!src/agents/plugins/pi/extension/**/*.js',
+      '!src/agents/plugins/omp/extension/**/*.js',
     ],
   },
 ];

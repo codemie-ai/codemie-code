@@ -26,6 +26,7 @@ describe('AgentRegistry', () => {
           'codex',
           'codex-acp',
           'pi',
+          'omp',
           'kimi',
           'kimi-acp',
           'openwiki',

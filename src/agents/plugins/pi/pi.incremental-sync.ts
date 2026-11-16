@@ -316,7 +316,8 @@ async function uploadPending(options: StartPiIncrementalSyncOptions): Promise<vo
       options.ssoUrl,
       options.env,
       options.syncApiUrl,
-      options.cliVersion
+      options.cliVersion,
+      options.metadata.ssoConfig?.clientType
     );
     if (!uploadContext) return;
 
@@ -338,7 +339,8 @@ async function buildUploadContext(
   ssoUrl: string,
   env: NodeJS.ProcessEnv | undefined,
   syncApiUrl: string,
-  version = '0.0.0'
+  version = '0.0.0',
+  clientType = 'codemie-pi'
 ): Promise<ProcessingContext | null> {
   const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
   if (!cookies) {
@@ -349,7 +351,7 @@ async function buildUploadContext(
     apiBaseUrl: syncApiUrl,
     cookies,
     credentialsSuperseded,
-    clientType: 'codemie-pi',
+    clientType,
     version,
     dryRun: false,
     sessionId,

@@ -1633,6 +1633,23 @@ describe('nextRecordStart', () => {
     expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
   });
 
+  it('bounds an omp record by the later one whose run ledger shares a transcript, recomputed per call', async () => {
+    const t0 = Date.now() - 3 * HOUR;
+    const shared = join(home, 'omp-shared.jsonl');
+    writeFileSync(shared, '{}\n');
+    const earlier = record({ agentName: 'omp', startTime: t0, ownerPid: process.pid });
+    const later = record({ agentName: 'omp', startTime: t0 + HOUR, ownerPid: process.pid });
+    save(earlier);
+    save(later);
+    writeFileSync(join(sessionsDir, `${earlier.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: shared })}\n`);
+
+    expect(await nextRecordStart(earlier)).toBeUndefined();
+
+    // Only the later run's ledger grows: an omp key list cached on first lookup would miss it.
+    writeFileSync(join(sessionsDir, `${later.sessionId}_pi-run.jsonl`), `${JSON.stringify({ t: 'session', file: shared })}\n`);
+    expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
+  });
+
   it('sees a transcript a later pi record\'s run ledger gained after the first lookup', async () => {
     const t0 = Date.now() - 3 * HOUR;
     const shared = join(home, 'pi-late.jsonl');

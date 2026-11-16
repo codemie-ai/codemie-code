@@ -67,10 +67,11 @@ async function sameTranscriptKeys(record: Session): Promise<string[]> {
       return record.workingDirectory ? [`opencode:${safeRealpath(record.workingDirectory)}`] : [];
     case 'codemie-code':
       return record.workingDirectory ? [`codemie-code:${safeRealpath(record.workingDirectory)}`] : [];
-    case 'pi': {
+    case 'pi':
+    case 'omp': {
       const { readPiRunLedger } = await import('../../plugins/pi/pi.extension.js');
       const ledger = await readPiRunLedger(record.sessionId);
-      return ledger.transcripts.map((path) => `pi:${path}`);
+      return ledger.transcripts.map((path) => `${record.agentName}:${path}`);
     }
     default:
       return [];
@@ -138,7 +139,7 @@ async function earliestLaterStart(
 /** Whether `other` shares one of `keys`, the same-transcript keys of the record being bounded. */
 async function sharesTranscript(keys: string[], other: Session, entry: MemoEntry): Promise<boolean> {
   // A pi record's keys come from its run ledger, which grows without a write to the record file
-  const otherKeys = other.agentName === 'pi' ? await sameTranscriptKeys(other) : (entry.keys ??= await sameTranscriptKeys(other));
+  const otherKeys = (other.agentName === 'pi' || other.agentName === 'omp') ? await sameTranscriptKeys(other) : (entry.keys ??= await sameTranscriptKeys(other));
   return otherKeys.some((key) => keys.includes(key));
 }
 

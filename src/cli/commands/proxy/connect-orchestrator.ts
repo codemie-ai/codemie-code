@@ -109,6 +109,7 @@ export type EffectiveClientType =
   | 'vscode-byok'
   | 'codex-desktop'
   | 'codemie-daemon'
+  | 'codemie-omp'
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
   | typeof COPILOT_CHAT_OTLP_AGENT_NAME
   | typeof COPILOT_CLI_OTLP_AGENT_NAME;
@@ -127,6 +128,7 @@ export interface DaemonIdentity {
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
     | { clientType: 'codemie-daemon' }
+    | { clientType: 'codemie-omp' }
     | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CHAT_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CLI_OTLP_AGENT_NAME };
@@ -135,7 +137,7 @@ export interface DaemonIdentity {
 /**
  * Derive the single daemon identity for a target set, first match wins:
  * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `copilot-chat-otlp` >
- * `copilot-cli-otlp` > `codex-desktop` > `codemie-daemon` (`omp`) > `vscode-byok`.
+ * `copilot-cli-otlp` > `codex-desktop` > `codemie-omp` (`omp`) > `vscode-byok`.
  * One daemon carries one client type, so lower-priority targets share the winner's identity.
  * `connectTargets` rejects `omp` combined with VS Code BYOK because they need different identities.
  *
@@ -160,10 +162,14 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
   }
-  // omp alone uses the generic identity `codemie proxy start` already spawns: it needs no
-  // client-specific request normalization, and a new client value would change attribution.
+  // omp gets its own `codemie-omp` identity (the same `codemie_client` the managed `codemie omp`
+  // agent reports), so its sessions show up as their own bucket in web analytics instead of
+  // folding into the generic `codemie-daemon` CLI client. Like `codemie-daemon`, it triggers no
+  // client-specific request normalization; the Responses-API reasoning sanitizer lists it.
+  // A daemon already recorded as `codemie-daemon` no longer matches, so the ordinary
+  // daemon-mismatch path restarts it under the new identity.
   if (targets.omp) {
-    return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
+    return { clientType: 'codemie-omp', spawnOptions: { clientType: 'codemie-omp' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }

@@ -1,0 +1,8 @@
+{
+  "name": "codemie-omp-providers",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Registers the CodeMie model providers of a codemie-omp run with oh-my-pi."
+}

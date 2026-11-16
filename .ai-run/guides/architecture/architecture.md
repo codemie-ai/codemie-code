@@ -154,6 +154,8 @@ Shared utilities for logging, error handling, security, and processes. Does **no
 
 **Flow**: `CLI → Registry → Plugin → Core → Utils` — never skip layers, never reverse direction.
 
+**Documented exception — the Pi family.** `omp` (`src/agents/plugins/omp/`) imports from `pi` (`src/agents/plugins/pi/`) on purpose: Oh My Pi is a fork of Pi, so the launcher, session adapter, processors, incremental sync, run-ledger extension and model builder are parameterized and reused, not copied. The seam is exported from `pi.plugin.ts` / `pi.extension.ts` / `pi.models.ts`: `PiFamilyIdentity` (`{ agentName, clientType }`), `startPiFamilySession` / `endPiFamilySession`, `correlateRunToSession(..., agentName)`, `buildPiModelsConfig`, `installCodeMieExtension`, and `PiSessionAdapter(metadata)` (conversation folder and author come from `metadata.name`). A fork-specific value (registry name, `codemie_client`, folder) is passed in through that seam; never hardcode `'pi'` in shared Pi code. Any other plugin pair still follows the isolation rule above.
+
 ---
 
 ## Error Flow

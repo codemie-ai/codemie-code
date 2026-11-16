@@ -39,7 +39,7 @@ Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plug
 | `X-CodeMie-Request-ID` | Per-request correlation ID |
 | `X-CodeMie-Session-ID` (+ `x-litellm-session-id`) | Session attribution |
 | `X-CodeMie-CLI` / `X-CodeMie-CLI-Model` / `X-CodeMie-CLI-Timeout` | Client attribution |
-| `X-CodeMie-Client` | Agent client type |
+| `X-CodeMie-Client` | Agent client type (e.g. `codemie-omp` — one value for both the managed `codemie omp` agent and the `proxy connect --omp` daemon, which no longer reports `codemie-daemon` — unless Claude Desktop is connected, when the shared daemon keeps `claude-desktop`) |
 | `X-CodeMie-Integration` | Integration/tenant identity |
 | `X-CodeMie-Repository` / `X-CodeMie-Branch` / `X-CodeMie-Project` | Repository/branch/project attribution |
 
@@ -255,8 +255,12 @@ await fs.writeFile(secretFile, data, { mode: 0o600 });         // Owner read/wri
 | `~/.codemie/.credentials.enc` | `0o600` (-rw-------) |
 | `~/.codemie/config.json` | `0o644` (-rw-r--r--) |
 | `~/.codemie/logs/` | `0o700` (drwx------) |
+| `~/.codemie/omp/providers/` | `0o700` (drwx------) |
+| `~/.codemie/omp/providers/<sessionId>.json` | `0o600` (-rw-------) |
 
 Reference: `src/utils/security.ts:250`
+
+**Exception — Oh My Pi per-run providers file.** `codemie omp` hands omp its provider/model list as `~/.codemie/omp/providers/<sessionId>.json` (path in `CODEMIE_OMP_PROVIDERS`). It carries the run's base URL and key, so it is a plaintext credential-bearing file by design (omp's extension loader cannot call `CredentialStore`): created `0o600` inside a `0o700` dir, explicitly `chmod`ed `0o600` (`mode` only applies on creation), and removed in `onSessionEnd` and in `OmpPlugin.run()`'s `finally` because `--dry-run` and aborted launches skip `onSessionEnd`. The consuming extension (`omp/extension/index.js`) parses it defensively, registers only whitelisted fields and logs nothing. Do not widen the permissions, log the file, or write the key anywhere under `~/.omp`.
 
 ---
 

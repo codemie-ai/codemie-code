@@ -150,16 +150,25 @@ import { PiConversationsProcessor } from './session/processors/pi.conversations-
 import { isPiSessionHeader, type PiEntry, type PiSessionHeader } from './pi.types.js';
 
 export class PiSessionAdapter implements SessionAdapter {
-  readonly agentName = 'pi';
+  readonly agentName: string;
   private processors: SessionProcessor[] = [];
 
   constructor(private readonly metadata: AgentMetadata) {
+    this.agentName = metadata.name;
     this.initializeProcessors();
   }
 
   private initializeProcessors(): void {
     this.registerProcessor(new PiMetricsProcessor(this.metadata));
-    this.registerProcessor(new PiConversationsProcessor());
+    // Pi files its conversations under `pi` / `Pi`; a fork reusing this adapter (omp) under its own.
+    this.registerProcessor(
+      this.metadata.name === 'pi'
+        ? new PiConversationsProcessor()
+        : new PiConversationsProcessor({
+            folder: this.metadata.name,
+            authorName: this.metadata.displayName || this.metadata.name,
+          })
+    );
     logger.debug(`[pi-adapter] Initialized ${this.processors.length} processors`);
   }
 

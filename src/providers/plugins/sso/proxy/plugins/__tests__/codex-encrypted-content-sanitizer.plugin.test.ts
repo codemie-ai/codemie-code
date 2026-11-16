@@ -8,7 +8,7 @@
  *
  * Covers agent scoping, default pass-through, latch detection, and the strip
  * behavior once latched, for codemie-codex, codemie-code, codemie-opencode,
- * codemie-pi, and vscode-byok agents.
+ * codemie-pi, codemie-omp, and vscode-byok agents.
  *
  * @group unit
  */
@@ -85,6 +85,7 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
       'codemie-code',
       'codemie-opencode',
       'codemie-pi',
+      'codemie-omp',
       'vscode-byok',
       'codemie-daemon',
     ])('creates interceptor for %s', async clientType => {

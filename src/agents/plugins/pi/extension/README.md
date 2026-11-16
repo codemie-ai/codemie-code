@@ -1,8 +1,15 @@
-# CodeMie run ledger — Pi extension
+# CodeMie run ledger — Pi / oh-my-pi extension
 
 `index.js` is copied verbatim into `<piAgentDir>/extensions/codemie-metrics/` before every
 `codemie pi` run and loaded by Pi's own extension discovery. It records which transcript files the
 run produced so `onSessionEnd` can read a fact instead of inferring one.
+
+The same asset serves the managed oh-my-pi agent (`codemie omp`): there it is materialized under
+`~/.codemie/omp/extensions/codemie-metrics/` and passed with `-e <path>/index.js`, so omp's own
+`~/.omp` is never written. oh-my-pi re-binds every extension factory to each **subagent** session
+its task tool starts (`ctx.agent.kind === 'sub'`); the `session_start` / `session_shutdown` handlers
+skip those, so a subagent transcript is never recorded as a session of its own. Pi has no
+`ctx.agent`, so the check is a no-op there.
 
 ## Why this exists
 

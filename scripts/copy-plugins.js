@@ -41,6 +41,12 @@ const copyConfigs = [
     dest: join(rootDir, 'dist/agents/plugins/pi/extension')
   },
   {
+    // Loaded by oh-my-pi itself (`-e`), so it must ship byte-identical — tsc does not compile .js under src/.
+    name: 'Oh My Pi providers extension',
+    src: join(rootDir, 'src/agents/plugins/omp/extension'),
+    dest: join(rootDir, 'dist/agents/plugins/omp/extension')
+  },
+  {
     name: 'Top-level assets',
     src: join(rootDir, 'assets'),
     dest: join(rootDir, 'dist/assets')

@@ -11,6 +11,7 @@ import { OpenCodeAcpPlugin } from './plugins/opencode/opencode-acp.plugin.js';
 import { CodexPlugin } from './plugins/codex/index.js';
 import { CodexAcpPlugin } from './plugins/codex/codex-acp.plugin.js';
 import { PiPlugin } from './plugins/pi/index.js';
+import { OmpPlugin } from './plugins/omp/index.js';
 import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
@@ -50,6 +51,7 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new CodexPlugin());
     AgentRegistry.registerPlugin(new CodexAcpPlugin());
     AgentRegistry.registerPlugin(new PiPlugin());
+    AgentRegistry.registerPlugin(new OmpPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
     AgentRegistry.registerPlugin(new OpenWikiPlugin());
