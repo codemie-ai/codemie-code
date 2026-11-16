@@ -85,33 +85,33 @@ describe('buildAnalyticsConfirmationMessage — Global (default)', () => {
   });
 });
 
-describe('buildAnalyticsConfirmationMessage — Project (explicit opt-in)', () => {
-  it.each(ALLOWLISTS)('adds the analytics project name for %s', (_label, allowlist) => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist, { projectName: 'owner/repo' })));
+describe('buildAnalyticsConfirmationMessage — Project scope (explicit opt-in)', () => {
+  it.each(ALLOWLISTS)('adds the analytics repository name for %s', (_label, allowlist) => {
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName: 'owner/repo' })));
 
     expect(lines).toEqual([
       'Using profile: work',
       'CodeMie URL: https://codemie.example.com',
-      'Project: owner/repo',
+      'Repository: owner/repo',
       '',
     ]);
   });
 
   it('warns that an unreadable allowlist is replaced, after the project line', () => {
     const lines = plainLines(
-      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { projectName: 'owner/repo' })),
+      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName: 'owner/repo' })),
     );
 
-    expect(lines.slice(2)).toEqual(['Project: owner/repo', '', INVALID_NOTE, '']);
+    expect(lines.slice(2)).toEqual(['Repository: owner/repo', '', INVALID_NOTE, '']);
   });
 });
 
 describe('buildAnalyticsConfirmationMessage — removed content', () => {
   const allowlists: MessageAllowlist[] = [...ALLOWLISTS.map(([, allowlist]) => allowlist), { kind: 'invalid' }];
 
-  it.each([undefined, 'owner/repo'])('has no enablement message, settings status or project lists (project: %s)', (projectName) => {
+  it.each([undefined, 'owner/repo'])('has no enablement message, settings status or project lists (project: %s)', (repositoryName) => {
     for (const allowlist of allowlists) {
-      const message = stripAnsi(buildAnalyticsConfirmationMessage(options(allowlist, { projectName })));
+      const message = stripAnsi(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName })));
 
       expect(message).not.toContain('will be enabled');
       expect(message).not.toContain('Already enabled');
@@ -129,8 +129,8 @@ describe('buildAnalyticsConfirmationMessage — removed content', () => {
 
 describe('buildAnalyticsConfirmationMessage — layout', () => {
   it('starts every line at column 0', () => {
-    for (const projectName of [undefined, 'owner/repo']) {
-      const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { projectName })));
+    for (const repositoryName of [undefined, 'owner/repo']) {
+      const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName })));
 
       for (const line of lines.filter((l) => l.length > 0)) {
         expect(line).toMatch(/^\S/);
@@ -155,7 +155,7 @@ describe('buildAnalyticsConfirmationMessage — layout', () => {
   it('falls back to 80 columns when the terminal width is unknown', () => {
     setColumns(undefined);
 
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { projectName: 'owner/repo' })));
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName: 'owner/repo' })));
 
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(80);

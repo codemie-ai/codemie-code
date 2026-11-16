@@ -314,7 +314,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
     expect(resolveRepositoryName).toHaveBeenCalledWith('/mock/project');
     expect(promptAnalyticsConfirmation).toHaveBeenCalledWith(
-      expect.objectContaining({ projectName: 'owner/repo' })
+      expect.objectContaining({ repositoryName: 'owner/repo' })
     );
     const promptArgs = vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0];
     expect(promptArgs).not.toHaveProperty('name');
@@ -335,7 +335,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     await connectTargets({ targets: { claudeCodeOtlp: true } });
 
     expect(promptAnalyticsConfirmation).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0].projectName).toBeUndefined();
+    expect(vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0].repositoryName).toBeUndefined();
     expect(resolveRepositoryName).not.toHaveBeenCalled();
     expect(checkStatus).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -381,7 +381,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ scope: 'user' }));
     const printed = console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
     expect(printed).toContain('CodeMie URL: https://x.example.com');
-    expect(printed.some((message) => message.startsWith('Project:'))).toBe(false);
+    expect(printed.some((message) => message.startsWith('Repository:'))).toBe(false);
   });
 
   it('--scope project --silent skips the prompt and writes the Project scope', async () => {
@@ -401,7 +401,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project' }));
     const printed = console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
     expect(printed).toContain('CodeMie URL: https://x.example.com');
-    expect(printed).toContain('Project: owner/repo');
+    expect(printed).toContain('Repository: owner/repo');
   });
 
   for (const scope of [undefined, 'project'] as const) {

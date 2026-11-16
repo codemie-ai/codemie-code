@@ -14,7 +14,7 @@ export interface AnalyticsConfirmationOptions {
   /** Current state of the Claude Code project allowlist; only used to warn when it cannot be read. */
   allowlist: AllowlistState;
   /** Analytics project name of the current project; set only for project scope, where it is shown. */
-  projectName?: string;
+  repositoryName?: string;
 }
 
 const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot be read and will be replaced.';
@@ -70,11 +70,11 @@ export function buildAnalyticsConfirmationMessage(options: AnalyticsConfirmation
   return lines.join('\n');
 }
 
-/** The `CodeMie URL:` line (only when configured) and the `Project:` line (project scope only), shown below `Using profile:`. */
-export function buildAnalyticsDetailLines(options: Pick<AnalyticsConfirmationOptions, 'codeMieUrl' | 'projectName'>): string[] {
+/** The `CodeMie URL:` line (only when configured) and the `Repository:` line (project scope only), shown below `Using profile:`. */
+export function buildAnalyticsDetailLines(options: Pick<AnalyticsConfirmationOptions, 'codeMieUrl' | 'repositoryName'>): string[] {
   return [
     ...(options.codeMieUrl ? [chalk.cyan(`CodeMie URL: ${options.codeMieUrl}`)] : []),
-    ...(options.projectName ? [chalk.cyan(`Project: ${options.projectName}`)] : []),
+    ...(options.repositoryName ? [chalk.cyan(`Repository: ${options.repositoryName}`)] : []),
   ];
 }
 

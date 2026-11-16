@@ -68,11 +68,11 @@ export async function confirmClaudeCodeOtlp(
     );
   }
 
-  const projectName = scope === 'project' ? await resolveRepositoryName(resolveProjectRoot()) : undefined;
+  const repositoryName = scope === 'project' ? await resolveRepositoryName(resolveProjectRoot()) : undefined;
 
   if (silent) {
     // The caller already printed `Using profile:`; the prompt that carries these lines is skipped.
-    for (const line of buildAnalyticsDetailLines({ codeMieUrl: display.codeMieUrl, projectName })) {
+    for (const line of buildAnalyticsDetailLines({ codeMieUrl: display.codeMieUrl, repositoryName })) {
       console.log(line);
     }
     return true;
@@ -82,7 +82,7 @@ export async function confirmClaudeCodeOtlp(
     profile: display.profile,
     codeMieUrl: display.codeMieUrl,
     allowlist,
-    projectName,
+    repositoryName,
   });
 
   return confirmation === 'enable';
