@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- Analytics prices Claude Fable 5.2 and Gemini 4 Hydrogen sessions instead of leaving their cost empty
 - Repository names no longer include the drive letter (`C:\Repositories` is `Repositories`)
 - Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
 
