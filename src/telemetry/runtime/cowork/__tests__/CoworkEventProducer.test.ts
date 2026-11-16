@@ -68,6 +68,9 @@ const FIRST_PROCESSING_TYPES = [
 
 let home: string;
 let codemieHome: string;
+let gitConfigDir: string;
+let emptyGitConfig: string;
+const savedGitEnv: Record<string, string | undefined> = {};
 
 function sessionDir(short = '1a2b3c4d'): string {
   return join(getClaudeDesktopLocalSessionsRoot(), ACCOUNT_DIR, short);
@@ -155,6 +158,29 @@ async function settle(producer: CoworkEventProducer, now: number): Promise<void>
 function warnings(): unknown[][] {
   return vi.mocked(logger.warn).mock.calls;
 }
+
+// A git hook exports GIT_DIR / GIT_WORK_TREE, which would point every git call here at the outer repository; the
+// developer's git config differs per machine.
+beforeAll(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('GIT_')) {
+      savedGitEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  }
+  gitConfigDir = mkdtempSync(join(tmpdir(), 'cowork-gitconfig-'));
+  emptyGitConfig = join(gitConfigDir, 'empty-gitconfig');
+  writeFileSync(emptyGitConfig, '');
+  process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+});
+
+afterAll(() => {
+  delete process.env.GIT_CONFIG_GLOBAL;
+  delete process.env.GIT_CONFIG_NOSYSTEM;
+  for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
+  if (gitConfigDir) rmSync(gitConfigDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 beforeEach(() => {
   // The native resolver also expands a Windows 8.3 short name, which the JS one leaves in the path.
@@ -747,25 +773,11 @@ describe('CoworkEventProducer.run', () => {
   });
 
   describe('the branch of the session\'s folder', () => {
-    const savedGitEnv: Record<string, string | undefined> = {};
     const folders: string[] = [];
-    let emptyGitConfig = '';
-
-    // A git hook exports GIT_DIR / GIT_WORK_TREE, which would point these temp repositories, and the producer's own
-    // git calls, at the outer repository; the developer's git config is ignored too.
-    function scrubbedEnv(): NodeJS.ProcessEnv {
-      const env: NodeJS.ProcessEnv = { ...process.env };
-      for (const key of Object.keys(env)) {
-        if (key.startsWith('GIT_')) delete env[key];
-      }
-      env.GIT_CONFIG_GLOBAL = emptyGitConfig;
-      env.GIT_CONFIG_NOSYSTEM = '1';
-      return env;
-    }
 
     function git(cwd: string, ...args: string[]): void {
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
-        cwd, stdio: 'pipe', env: scrubbedEnv(), timeout: 10_000,
+        cwd, stdio: 'pipe', timeout: 10_000,
       });
     }
 
@@ -787,26 +799,7 @@ describe('CoworkEventProducer.run', () => {
       return folder;
     }
 
-    beforeAll(() => {
-      const root = mkdtempSync(join(tmpdir(), 'cowork-gitconfig-'));
-      folders.push(root);
-      emptyGitConfig = join(root, 'empty-gitconfig');
-      writeFileSync(emptyGitConfig, '');
-      for (const key of Object.keys(process.env)) {
-        if (key.startsWith('GIT_')) {
-          savedGitEnv[key] = process.env[key];
-          delete process.env[key];
-        }
-      }
-    });
-
-    beforeEach(() => {
-      vi.stubEnv('GIT_CONFIG_GLOBAL', emptyGitConfig);
-      vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
-    });
-
     afterAll(() => {
-      for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
       for (const folder of folders) rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
 
