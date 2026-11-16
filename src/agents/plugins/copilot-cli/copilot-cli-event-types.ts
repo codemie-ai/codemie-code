@@ -47,7 +47,7 @@ export interface CopilotEvent {
   id?: string;
   parentId?: string | null;
   timestamp?: string;
-  /** Set when a sub-agent produced the event. */
+  /** The sub-agent's id on every event a sub-agent produced (tool, user.message, hook.start); absent on main-agent events. */
   agentId?: string;
 }
 
