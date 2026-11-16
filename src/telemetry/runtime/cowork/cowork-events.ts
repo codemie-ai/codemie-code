@@ -5,6 +5,7 @@
  */
 
 import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
+import { maskSecretsDeep } from '@/utils/security.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
