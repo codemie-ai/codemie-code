@@ -1,4 +1,5 @@
 import { logger } from '@/utils/logger.js';
+import { acquirePidLock } from '@/utils/pid-lock.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
@@ -8,7 +9,7 @@ import { holdsCheckpoint, owedStop, tryStop } from './stop-intent.js';
 import { advertisesContract } from './policy-cache.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
-import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
+import { OTEL_STREAMS, OTEL_JSON_STREAMS, statusFile } from './spool-paths.js';
 import { hasPendingData, hooksGroupPresent, readSpoolState, type SpoolState } from './spool-state.js';
 import {
   applyProjectPolicyLocked,
@@ -35,8 +36,6 @@ import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
 import { classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { publicationMode } from './publication-mode.js';
-
-const currentlyForwarding = new Set<string>();
 
 type TickEvidenceDecision = SessionEvidenceDecision | { action: 'suppress' };
 
@@ -141,6 +140,9 @@ async function applySessionEvidenceLocked(
           ? '[otlp-tick] analytics publication held: the backend does not advertise the publication contract'
           : '[otlp-tick] analytics publication held: the backend capability could not be confirmed');
       }
+      if (decision.reason === 'work_consent_required' && key) {
+        await writeNotice(key, 'work_consent_required', sessionId).catch(() => undefined);
+      }
     }
     status.holds = { ...status.holds, session: { reason: decision.reason, since } };
   } else if (decision.action === 'lose' && decision.reason === 'publication_contract_unavailable' && key &&
@@ -206,6 +208,22 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
  * any HTTP requests.
  */
 export async function processSessionTick(
+  sessionId: string,
+  credentials: SSOCredentials | JWTCredentials
+): Promise<void> {
+  // The daemon and wrapper share the spool. Hold the lock across checkpoint recovery and
+  // forwarding so a live send cannot be mistaken for an interrupted one by another tick.
+  const lock = await acquirePidLock(`${statusFile(sessionId)}.forward.lock`, { mode: 'try' });
+  if (!lock) return;
+
+  try {
+    await processLockedTick(sessionId, credentials);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function processLockedTick(
   sessionId: string,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<void> {
@@ -297,16 +315,8 @@ export async function processSessionTick(
     // 'noop': nothing written yet
   });
 
-  if (!shouldForward || currentlyForwarding.has(sessionId)) {
-    return;
-  }
-
-  currentlyForwarding.add(sessionId);
-
-  try {
+  if (shouldForward) {
     if (classification) await forwardSession(sessionId, hooksOnly, credentials, classification, endpoint);
     else await forwardSession(sessionId, hooksOnly, credentials, undefined, endpoint);
-  } finally {
-    currentlyForwarding.delete(sessionId);
   }
 }

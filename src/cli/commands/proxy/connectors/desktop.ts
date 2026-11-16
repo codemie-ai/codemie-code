@@ -12,8 +12,6 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import {
-  PREFERRED_CLAUDE_MODELS,
-  selectDesktopClaudeModels,
   toDesktopModels,
   type DesktopCatalogEntry,
   type DesktopModel,
@@ -47,7 +45,6 @@ interface ModelsListResponse {
 }
 
 export {
-  PREFERRED_CLAUDE_MODELS,
   selectDesktopClaudeModels,
   selectPreferredClaudeModels,
   type DesktopModel,
@@ -65,12 +62,15 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
  *
  * When `project` is set it is sent as `project_id`, so the backend narrows the list
  * to the models that project allows (the project's Models tab).
+ *
+ * Returns `null` when the upstream catalog failed (5xx), distinct from a catalog that
+ * holds no Claude models (`[]`).
  */
 export async function fetchClaudeModels(
   proxyUrl: string,
   gatewayKey: string,
   project: string | undefined
-): Promise<DesktopModel[]> {
+): Promise<DesktopModel[] | null> {
   const endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   try {
     logger.info(
@@ -80,7 +80,6 @@ export async function fetchClaudeModels(
         project,
         inferenceGatewayBaseUrl: proxyUrl,
         inferenceGatewayApiKey: gatewayKey,
-        preferredModels: [...PREFERRED_CLAUDE_MODELS],
       })
     );
     const response = await fetch(endpoint, {
@@ -95,18 +94,14 @@ export async function fetchClaudeModels(
           status: response.status,
           statusText: response.statusText,
           inferenceGatewayBaseUrl: proxyUrl,
-          fallbackToPreferredModels: isUpstreamFailure,
         })
       );
       if (isUpstreamFailure) {
         logger.warn(
-          '[proxy] Falling back to the curated Claude Desktop model list because the upstream model catalog failed',
-          ...sanitizeLogArgs({
-            endpoint,
-            preferredModels: [...PREFERRED_CLAUDE_MODELS],
-          })
+          '[proxy] Upstream model catalog failed; skipping the connect-time Claude model check, Desktop discovers models at launch',
+          ...sanitizeLogArgs({ endpoint })
         );
-        return PREFERRED_CLAUDE_MODELS.map((id) => ({ id, isRouter: false }));
+        return null;
       }
       throw new ConfigurationError(
         response.status === 401
@@ -735,19 +730,14 @@ export async function writeDesktopConfig(
   // fails here with a clear message. The list itself is not written: with no
   // `inferenceModels` in its config Desktop asks the proxy's `GET /v1/models` on every
   // start (DesktopModelsPlugin), so later changes on the project's Models tab reach it.
+  // `null` means the upstream catalog failed, so the check is skipped rather than failed.
   const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
-  if (discoveredModels.length === 0) {
+  if (discoveredModels !== null && discoveredModels.length === 0) {
     throw new ConfigurationError(
       project
         ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
           'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
         : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
-    );
-  }
-  const resolvedModels = selectDesktopClaudeModels(discoveredModels);
-  if (resolvedModels.length === 0) {
-    throw new ConfigurationError(
-      'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
     );
   }
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
@@ -811,10 +801,8 @@ export async function writeDesktopConfig(
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
-      discoveredModelCount: discoveredModels.length,
-      discoveredModels: discoveredModels.map((model) => model.id),
-      resolvedModelCount: resolvedModels.length,
-      resolvedModels: resolvedModels.map((model) => model.id),
+      discoveredModelCount: discoveredModels?.length ?? null,
+      discoveredModels: discoveredModels?.map((model) => model.id) ?? null,
       managedMcpServerCount: managedMcpServers.length,
       seededDefaultCount: seedDefaults.length,
       displacedDefaultCount: displacedDefaults.length,
@@ -849,7 +837,6 @@ export async function writeDesktopConfig(
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
       inferenceGatewayApiKey: gatewayKey,
-      resolvedModels: resolvedModels.map((model) => model.id),
       managedMcpServerCount: managedMcpServers.length,
       finalConfigKeys: Object.keys(merged),
     })

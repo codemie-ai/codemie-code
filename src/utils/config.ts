@@ -1105,6 +1105,44 @@ export class ConfigLoader {
   }
 
   /**
+   * Set fields on an existing profile in place, in the config that defines it: the local
+   * config when it has a profile by that name (the one {@link getProfile} reads first), else
+   * the global one. A field set to `undefined` is removed. Unlike {@link saveProfile}, this
+   * touches only the given fields, so identity and workspace keys stay as they are.
+   */
+  static async updateProfile(
+    profileName: string,
+    fields: Partial<ProviderProfile>,
+    workingDir: string = process.cwd()
+  ): Promise<void> {
+    const apply = (profile: ProviderProfile): void => {
+      const record = profile as Record<string, unknown>;
+      for (const [key, value] of Object.entries(fields)) {
+        if (value === undefined) delete record[key];
+        else record[key] = value;
+      }
+    };
+
+    if (await this.hasLocalConfig(workingDir)) {
+      const localConfig = await this.loadLocalMultiProviderConfig(workingDir);
+      const localProfile = localConfig.profiles[profileName];
+      if (localProfile) {
+        apply(localProfile);
+        await this.saveLocalMultiProviderConfig(workingDir, localConfig);
+        return;
+      }
+    }
+
+    const config = await this.loadMultiProviderConfig();
+    const profile = config.profiles[profileName];
+    if (!profile) {
+      throw new ConfigurationError(`Profile "${profileName}" not found`);
+    }
+    apply(profile);
+    await this.saveMultiProviderConfig(config);
+  }
+
+  /**
    * Rename a profile
    */
   static async renameProfile(oldName: string, newName: string): Promise<void> {
