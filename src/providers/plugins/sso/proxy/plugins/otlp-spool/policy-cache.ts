@@ -49,6 +49,8 @@ export interface PolicyState {
   backoffUntil?: number;
   /** The advertised contracts of the cached policy, even when it has expired; never used for classification. */
   publicationContracts?: string[];
+  /** The advertised organization encodings of the cached policy, even when it has expired; never used for classification. */
+  organizationEncodings?: string[];
   /** Caller should call refreshPolicy now (no usable policy, backoff over, legacy re-probe due). */
   refreshDue: boolean;
 }
@@ -127,6 +129,7 @@ export async function getPolicyState(id: NamespaceId, opts: PolicyOpts = {}): Pr
   const inBackoff = c.backoffUntil !== undefined && now < c.backoffUntil;
   const legacyWait = c.capability === 'legacy' && c.probedAt !== undefined && now - c.probedAt < LEGACY_REPROBE_MS;
   const publicationContracts = c.capability === 'evidence' ? c.policy?.publication_contracts : undefined;
+  const organizationEncodings = c.capability === 'evidence' ? c.policy?.organization_encodings : undefined;
   const contractMissing = !!opts.needContract && !publicationContracts?.includes(PUBLICATION_CONTRACT);
   return {
     policy: usable ? c.policy! : null,
@@ -135,6 +138,7 @@ export async function getPolicyState(id: NamespaceId, opts: PolicyOpts = {}): Pr
     fetchedAt: usable ? c.fetchedAt : undefined,
     backoffUntil: inBackoff ? c.backoffUntil : undefined,
     ...(publicationContracts ? { publicationContracts } : {}),
+    ...(organizationEncodings ? { organizationEncodings } : {}),
     refreshDue: (!usable || contractMissing) && !inBackoff && !legacyWait,
   };
 }

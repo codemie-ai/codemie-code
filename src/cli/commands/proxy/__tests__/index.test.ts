@@ -1205,9 +1205,13 @@ describe('proxy status', () => {
     });
 
     it.each([
-      ['credentials_expired', 'credentials expired', 'codemie profile login'],
-      ['auth_rejected', 'analytics auth rejected', 'codemie profile login'],
-      ['identity_mismatch', 'analytics identity mismatch on this machine', 'codemie proxy restart'],
+      ['credentials_expired', 'CodeMie sign-in has expired', 'codemie profile login'],
+      ['auth_rejected', 'CodeMie asked you to sign in again', 'codemie profile login'],
+      [
+        'identity_mismatch',
+        "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
+        'codemie proxy restart',
+      ],
     ])('prints a yellow unhealthy line and a Run tip for %s', async (reason, label, run) => {
       await arrange({
         connectorActive: true,
@@ -1231,7 +1235,7 @@ describe('proxy status', () => {
 
       const lines = await runStatus(['status']);
 
-      const index = lines.indexOf(`Analytics: ${chalk.yellow('unhealthy (sending to analytics failed on this machine)')}`);
+      const index = lines.indexOf(`Analytics: ${chalk.yellow('unhealthy (last send to CodeMie failed, retrying)')}`);
       expect(index).toBeGreaterThan(-1);
       expect(lines.some((line) => line.includes('Run:'))).toBe(false);
     });
@@ -1248,12 +1252,12 @@ describe('proxy status', () => {
       expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
     });
 
-    it('prints a dim unknown line naming the unreadable spool, not a restart, when the spool is incomplete', async () => {
+    it('prints a dim unknown line naming the unreadable local data, not a restart, when the spool is incomplete', async () => {
       await arrange({ connectorActive: true, delivery: { status: 'unknown', incomplete: true }, reply: { credentials: 'ok' } });
 
       const lines = await runStatus(['status']);
 
-      expect(lines).toContain(`Analytics: ${chalk.dim('unknown (the spool could not be read)')}`);
+      expect(lines).toContain(`Analytics: ${chalk.dim('unknown (local analytics data could not be read)')}`);
       expect(lines.some((line) => line.includes('restart the proxy'))).toBe(false);
     });
 
