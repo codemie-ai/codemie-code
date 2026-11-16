@@ -67,6 +67,8 @@ export interface CoworkEnvelope {
   title?: string;
   entrypoint: string;
   clientVersion: string;
+  /** The branch Git reports for the session's folder on the host; absent when the folder has none. */
+  branch?: string;
 }
 
 interface ContentBlock {
@@ -81,7 +83,6 @@ interface ContentBlock {
 
 interface CoworkLine extends SignalLine {
   uuid?: string;
-  gitBranch?: string;
   entrypoint?: string;
   promptId?: string;
 }
@@ -121,10 +122,6 @@ function parseLine(raw: string): CoworkLine | null {
 function contentBlocks(line: CoworkLine): ContentBlock[] {
   const content = line.message?.content;
   return Array.isArray(content) ? content.filter((block): block is ContentBlock => typeof block === 'object' && block !== null) : [];
-}
-
-function lineBranch(line: CoworkLine): { git_branch?: string } {
-  return typeof line.gitBranch === 'string' && line.gitBranch ? { git_branch: line.gitBranch } : {};
 }
 
 function lineTime(line: CoworkLine): string {
@@ -229,9 +226,8 @@ function inWindow(time: string, windowStartMs: number): boolean {
 /**
  * The producer's own events of one batch, in order: `agent.session.start` (once per session), then the main
  * transcript's prompts and tool events, then per subagent its `agent.subagent.start` and tool events, then the
- * `agent.subagent.stop`s now due, then `agent.session.end` when the session ends and its start was built. The
- * session start, the prompts and the tool events carry their line's `gitBranch` as `git_branch`. Each `event_id` is
- * `<type>:<session_id>:<key>`, so a batch read again gives the same ids.
+ * `agent.subagent.stop`s now due, then `agent.session.end` when the session ends and its start was built. Each
+ * `event_id` is `<type>:<session_id>:<key>`, so a batch read again gives the same ids.
  */
 export function buildCoworkEvents(input: CoworkTranscriptInput, state: CoworkEventState): WireEvent[] {
   const { sessionId, windowStartMs } = input;
@@ -242,10 +238,9 @@ export function buildCoworkEvents(input: CoworkTranscriptInput, state: CoworkEve
     const timestamp = lineTime(line);
     advanceLastLineAt(state, timestamp);
     if (!inWindow(timestamp, windowStartMs)) continue;
-    const branch = lineBranch(line);
     if (!state.sessionStarted) {
       state.sessionStarted = true;
-      events.push({ type: 'agent.session.start', timestamp, ...branch, event_id: eventId('agent.session.start', sessionId, 'start') });
+      events.push({ type: 'agent.session.start', timestamp, event_id: eventId('agent.session.start', sessionId, 'start') });
     }
     if (isGenuineUserTurn(line) && typeof line.uuid === 'string') {
       const text = userLineText(line);
@@ -255,12 +250,11 @@ export function buildCoworkEvents(input: CoworkTranscriptInput, state: CoworkEve
           timestamp,
           prompt_body: stripPastedContentTags(text),
           ...(typeof line.promptId === 'string' && line.promptId && { prompt_id: line.promptId }),
-          ...branch,
           event_id: eventId('agent.prompt.submit', sessionId, line.uuid),
         });
       }
     }
-    events.push(...toolEvents(line, sessionId, state, branch));
+    events.push(...toolEvents(line, sessionId, state, {}));
   }
 
   for (const subagent of input.subagents) {
@@ -275,7 +269,6 @@ export function buildCoworkEvents(input: CoworkTranscriptInput, state: CoworkEve
       lineEvents.push(...toolEvents(line, sessionId, state, {
         agent_id: subagent.agentId,
         ...(subagent.agentType && { agent_type: subagent.agentType }),
-        ...lineBranch(line),
       }));
     }
     if (subagent.agentType && !known.started && known.firstAt && (!subagent.pending || input.end)) {
@@ -322,8 +315,11 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
  * The wire form of one event, the producer's or the transcript orchestrator's: the envelope under the event's own
  * fields, every string masked with the hook path's rules, every field of `TEXT_FIELD_LIMITS` cut to its limit and
  * `prompt_body` cut to the prompt limit. An
- * event without an `event_id` (the orchestrator's) gets the one the Claude Code hook path gives it; `timestamp`
- * falls back to `fallbackTimestamp` when the event has none.
+ * event without an `event_id` (the orchestrator's) gets the one the Claude Code hook path gives it, hashed over the
+ * event's own fields as they arrived; `timestamp` falls back to `fallbackTimestamp` when the event has none. The
+ * branch fields are the envelope's, written over the event's own: every transcript line's branch is `HEAD` inside
+ * Cowork's VM. `git_branch` is the envelope's branch or `''`, `branch_counts` is dropped, and a summary's
+ * `branch_dominant` is the envelope's branch, dropped without one.
  */
 export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fallbackTimestamp: string): WireEvent {
   const { event_id: ownId, ...own } = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined));
@@ -348,6 +344,12 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
   }
   const payload = Object.fromEntries(Object.keys(own).map((key) => [key, masked[key]]));
-  masked['event_id'] = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']));
+  const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']));
+  const branch = envelope.branch ? String(maskSecretsDeep(envelope.branch)) : '';
+  delete masked['branch_counts'];
+  delete masked['branch_dominant'];
+  masked['git_branch'] = branch;
+  if (branch && own['type'] === 'agent.session.summary') masked['branch_dominant'] = branch;
+  masked['event_id'] = id;
   return masked;
 }

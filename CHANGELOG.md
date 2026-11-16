@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Fixed
 
 - Repository names no longer include the drive letter (`C:\Repositories` is `Repositories`)
+- Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
 
 ## [0.16.8] - 2026-11-12
 

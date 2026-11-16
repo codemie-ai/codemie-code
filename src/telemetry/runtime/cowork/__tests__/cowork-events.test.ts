@@ -19,7 +19,7 @@ function fixtureLines(name: 'main.jsonl' | 'subagent.jsonl'): string[] {
 
 const MAIN = fixtureLines('main.jsonl');
 const SUBAGENT = fixtureLines('subagent.jsonl');
-/** The fixture's subagent lines carry no `gitBranch`; here each one does. */
+/** The fixture's subagent lines carry no `gitBranch`; here each one does, and no built event takes it. */
 const SUBAGENT_ON_BRANCH = SUBAGENT.map((line) => JSON.stringify({ ...(JSON.parse(line) as object), gitBranch: 'synthetic-branch' }));
 
 const ENVELOPE: CoworkEnvelope = {
@@ -68,13 +68,14 @@ describe('buildCoworkEvents', () => {
     expect(byId.get(`agent.tool.start:${CLI}:toolu_synthetic_write`)).toMatchObject({ file_path: '/sessions/synthetic-cowork/notes.md' });
     expect(byId.get(`agent.tool.end:${CLI}:toolu_synthetic_agent`)).toMatchObject({ tool_name: 'Agent', tool_response: `{"agentId":"${AGENT}"}` });
     expect(byId.get(`agent.tool.start:${CLI}:toolu_synthetic_read`)).toMatchObject({
-      tool_name: 'Read', agent_id: AGENT, agent_type: 'general-purpose', git_branch: 'synthetic-branch',
+      tool_name: 'Read', agent_id: AGENT, agent_type: 'general-purpose',
     });
     expect(byId.get(`agent.subagent.start:${CLI}:${AGENT}`)).toMatchObject({
       agent_id: AGENT, agent_type: 'general-purpose', tool_use_id: 'toolu_synthetic_agent', timestamp: '2026-11-10T10:00:08.000Z',
     });
     expect(byId.get(`agent.subagent.stop:${CLI}:${AGENT}`)).toMatchObject({ timestamp: '2026-11-10T10:00:14.000Z' });
-    expect(byId.get(`agent.session.start:${CLI}:start`)).toMatchObject({ timestamp: '2026-11-10T10:00:00.000Z', git_branch: 'HEAD' });
+    expect(byId.get(`agent.session.start:${CLI}:start`)).toMatchObject({ timestamp: '2026-11-10T10:00:00.000Z' });
+    expect(events.filter((event) => Object.prototype.hasOwnProperty.call(event, 'git_branch'))).toEqual([]);
   });
 
   it('submits a command, a task notification and an agent message, and no line Claude Code writes itself', () => {
@@ -177,5 +178,54 @@ describe('stampCoworkEvent', () => {
     expect(stamped['timestamp']).toBe('2026-11-10T10:00:30.000Z');
     expect(stamped['event_id']).toBe(`agent.session.summary:${CLI}:summary:final:2026-11-10T10:00:00.000Z`);
     expect(stamped).not.toHaveProperty('session_title');
+  });
+
+  const SUMMARY_ON_HEAD = {
+    type: 'agent.session.summary', timestamp: '2026-11-10T10:00:30.000Z', is_final: false, started_at: '2026-11-10T10:00:00.000Z',
+    git_branch: 'HEAD', branch_counts: { HEAD: 3 }, branch_dominant: 'HEAD',
+  };
+  const USAGE_ON_HEAD = {
+    type: 'agent.usage.request', timestamp: '2026-11-10T10:00:05.000Z', message_id: 'msg_synthetic_A', model: 'claude-opus-5',
+    input_tokens: 4, output_tokens: 3, git_branch: 'HEAD',
+  };
+
+  it('gives a summary the envelope\'s branch as git_branch and branch_dominant and no branch_counts', () => {
+    const stamped = stampCoworkEvent(SUMMARY_ON_HEAD, { ...ENVELOPE, branch: 'qa-17128-cw2' }, '');
+
+    expect(stamped).toMatchObject({ git_branch: 'qa-17128-cw2', branch_dominant: 'qa-17128-cw2' });
+    expect(stamped).not.toHaveProperty('branch_counts');
+  });
+
+  it('gives a summary an empty git_branch and no branch_dominant or branch_counts when the envelope has no branch', () => {
+    const stamped = stampCoworkEvent(SUMMARY_ON_HEAD, ENVELOPE, '');
+
+    expect(stamped['git_branch']).toBe('');
+    expect(stamped).not.toHaveProperty('branch_dominant');
+    expect(stamped).not.toHaveProperty('branch_counts');
+  });
+
+  it('gives a usage request on HEAD an empty git_branch when the envelope has no branch', () => {
+    expect(stampCoworkEvent(USAGE_ON_HEAD, ENVELOPE, '')['git_branch']).toBe('');
+  });
+
+  it('edge: gives a usage request on HEAD the id base gave it, whatever the envelope\'s branch', () => {
+    const ids = [{ ...ENVELOPE, branch: 'a' }, { ...ENVELOPE, branch: 'b' }, ENVELOPE]
+      .map((envelope) => stampCoworkEvent(USAGE_ON_HEAD, envelope, '')['event_id']);
+
+    expect(ids).toEqual(Array(3).fill(`agent.usage.request:${CLI}:f2341944837cccd9ba3372c5b10f5838f8565b1763329f362d40001bdb3283d6`));
+  });
+
+  it('edge: gives a usage request without a git_branch one id, whatever the envelope\'s branch', () => {
+    const { git_branch: _omitted, ...usage } = USAGE_ON_HEAD;
+    const ids = [{ ...ENVELOPE, branch: 'a' }, { ...ENVELOPE, branch: 'b' }, ENVELOPE]
+      .map((envelope) => stampCoworkEvent(usage, envelope, '')['event_id']);
+
+    expect(new Set(ids).size).toBe(1);
+  });
+
+  it('keeps: an event\'s own event_id', () => {
+    const stamped = stampCoworkEvent({ type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', event_id: 'x:1' }, { ...ENVELOPE, branch: 'a' }, '');
+
+    expect(stamped['event_id']).toBe('x:1');
   });
 });
