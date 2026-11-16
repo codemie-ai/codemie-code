@@ -1041,10 +1041,10 @@ describe('runGuided — delivery target selection', () => {
     expect(headings(deps)).toEqual(['Step 5 of 5 · Developers']);
   });
 
-  it('starting over on a saved git-only state re-asks the target, offering git, and keeps git-only when confirmed', async () => {
+  it('starting over on a saved git-only state re-asks the target, offering git, and offers the saved git details back as defaults', async () => {
     await saveBootstrapState(GIT_ONLY_STATE, statePath);
     const prompt = createScriptedPrompt({
-      input: [VALID_GIT_REPO, '', ''],
+      input: [VALID_GIT_REPO, 'main', ''],
       select: ['restart', 'git', 'never', 'default']
     });
     const deps = createDeps(prompt);
@@ -1053,8 +1053,9 @@ describe('runGuided — delivery target selection', () => {
 
     expect(prompt.select).toHaveBeenNthCalledWith(2, expect.stringContaining('deliver'), expect.any(Array), 'git');
     expect(headings(deps).slice(0, 2)).toEqual(['Step 1 of 5 · Delivery target', 'Step 2 of 5 · Git repository']);
-    // The stale git answers were discarded, so the saved branch is not offered back.
-    expect(prompt.input).toHaveBeenNthCalledWith(2, expect.stringContaining('Branch'), undefined);
+    // Only the stale test result was discarded; the entered repo URL and branch are offered back.
+    expect(prompt.input).toHaveBeenNthCalledWith(1, expect.stringContaining('Git repository URL'), VALID_GIT_REPO);
+    expect(prompt.input).toHaveBeenNthCalledWith(2, expect.stringContaining('Branch'), 'main');
   });
 
   it('starting over on a saved git-only state can add the webhook target, asking its steps from the first', async () => {
@@ -1071,18 +1072,19 @@ describe('runGuided — delivery target selection', () => {
     expect(saved.targets).toEqual({ webhook: true, git: true });
   });
 
-  it('a saved git-only state with an untested repository resumes at the git step, discarding the stale git answers', async () => {
+  it('a saved git-only state with an untested repository resumes at the git step, offering the saved details back', async () => {
     const { gitTest: _gitTest, ...untested } = GIT_ONLY_STATE;
     await saveBootstrapState(untested, statePath);
-    // Reuse — resumes at git-repo, then the prompter runs dry at the repo URL prompt.
+    // Reuse — resumes at git-repo, offering the saved repo URL/branch; the prompter runs dry there.
     const prompt = createScriptedPrompt({ select: ['reuse'] });
     const deps = createDeps(prompt);
 
     await expect(runGuided(deps)).rejects.toThrow(/ran out/);
 
+    expect(prompt.input).toHaveBeenNthCalledWith(1, expect.stringContaining('Git repository URL'), VALID_GIT_REPO);
     const saved = JSON.parse(await readFile(statePath, 'utf-8')) as BootstrapState;
-    expect(saved.gitRepoUrl).toBeUndefined();
-    expect(saved.gitBranch).toBeUndefined();
+    expect(saved.gitRepoUrl).toBe(VALID_GIT_REPO);
+    expect(saved.gitBranch).toBe('main');
     expect(saved.gitTest).toBeUndefined();
     expect(saved.includeExternal).toBe('never');
     expect(headings(deps)).toEqual(['Step 2 of 5 · Git repository']);
@@ -1298,17 +1300,23 @@ describe('runGuided — saved setup: Reuse / Change targets / Start over', () =>
     expect(saved.teamId).toBe(COMPLETE_STATE.teamId);
   });
 
-  it('Change targets, adding the webhook to a saved git-only setup, runs only the webhook steps', async () => {
+  it('Change targets, adding the webhook to a saved git-only setup, asks whether the flow is already imported, then runs only the webhook steps', async () => {
     await saveBootstrapState(GIT_ONLY, statePath);
     const prompt = createScriptedPrompt({
       input: [VALID_CHANNEL_LINK, VALID_FOLDER_URL, 'UTC', VALID_TRIGGER_URL],
-      confirm: [true, true, true, true],
+      // already imported? no, then: channel confirm, keep saved folder, open browser, press enter
+      confirm: [false, true, true, true, true],
       select: ['change', 'both']
     });
     const deps = createDeps(prompt);
 
     expect(await runGuided(deps)).toBe(0);
 
+    expect(prompt.confirm).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('already imported the flow'),
+      false
+    );
     expect(headings(deps)).toEqual([
       'Step 1 of 10 · Delivery target',
       'Step 2 of 10 · Teams channel',
@@ -1319,6 +1327,34 @@ describe('runGuided — saved setup: Reuse / Change targets / Start over', () =>
       'Step 10 of 10 · Developers'
     ]);
     expect(testGitCheckMock).not.toHaveBeenCalled();
+    expect(deps.out).toHaveBeenCalledWith(
+      buildInstallCommand({
+        webhook: VALID_TRIGGER_URL,
+        gitRepo: VALID_GIT_REPO,
+        gitBranch: 'main',
+        includeExternal: 'never'
+      })
+    );
+  });
+
+  it('Change targets, adding the webhook to a saved git-only setup, jumps to Trigger URL when the flow is already imported', async () => {
+    await saveBootstrapState(GIT_ONLY, statePath);
+    const prompt = createScriptedPrompt({
+      input: [VALID_TRIGGER_URL],
+      confirm: [true, true, true],
+      select: ['change', 'both']
+    });
+    const deps = createDeps(prompt);
+
+    expect(await runGuided(deps)).toBe(0);
+
+    expect(headings(deps)).toEqual([
+      'Step 1 of 10 · Delivery target',
+      'Step 6 of 10 · Trigger URL',
+      'Step 10 of 10 · Developers'
+    ]);
+    const saved = await loadSaved();
+    expect(saved.skippedSetup).toBe(true);
     expect(deps.out).toHaveBeenCalledWith(
       buildInstallCommand({
         webhook: VALID_TRIGGER_URL,

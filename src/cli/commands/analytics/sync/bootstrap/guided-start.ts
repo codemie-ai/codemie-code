@@ -70,18 +70,24 @@ function isAtOrAfter(steps: readonly StepDescriptor[], from: number, id: string)
  * (`stepsFor(state.targets)`):
  * - Re-running the Trigger URL step or earlier drops the saved webhook and its test result:
  *   a flow re-imported at the Import the flow step has a new trigger URL, and quitting before
- *   the Trigger URL step must not leave the old one looking reusable.
- * - Re-running the Git repository step or earlier drops the saved git details and their test
- *   result, so a stale `gitTest: 'passed'` never sits next to new, untested details.
+ *   the Trigger URL step must not leave the old one looking reusable. The Trigger URL step
+ *   never offers a raw previous answer back as a default (`step5TriggerUrl` always re-asks),
+ *   so dropping `webhookUrl` here costs nothing it would otherwise have used.
+ * - Re-running the Git repository step or earlier drops only `gitTest`, keeping
+ *   `gitRepoUrl`/`gitBranch`/`gitPath` as the Git repository step's next defaults — a stale
+ *   `gitTest: 'passed'` still never sits next to a possibly different, untested value, since
+ *   the test result alone is dropped. `askGitDetails` re-validates a carried-over value via
+ *   `safeDefault` before offering it, so a credential-bearing or otherwise invalid saved URL
+ *   is never shown back.
  * - Re-running the Import the flow step or earlier also drops `skippedSetup`.
  */
 async function discardStaleAnswers(state: BootstrapState, startId: string, statePath: string): Promise<BootstrapState> {
   const steps = stepsFor(state.targets);
   const from = steps.findIndex((step) => step.id === startId);
   const dropWebhook = isAtOrAfter(steps, from, 'trigger-url');
-  const dropGit = isAtOrAfter(steps, from, 'git-repo');
+  const dropGitTest = isAtOrAfter(steps, from, 'git-repo');
   const dropSkippedSetup = isAtOrAfter(steps, from, 'flow');
-  if (!dropWebhook && !dropGit && !dropSkippedSetup) {
+  if (!dropWebhook && !dropGitTest && !dropSkippedSetup) {
     return state;
   }
 
@@ -90,10 +96,7 @@ async function discardStaleAnswers(state: BootstrapState, startId: string, state
     delete kept.webhookUrl;
     delete kept.webhookTest;
   }
-  if (dropGit) {
-    delete kept.gitRepoUrl;
-    delete kept.gitBranch;
-    delete kept.gitPath;
+  if (dropGitTest) {
     delete kept.gitTest;
   }
   if (dropSkippedSetup) {
@@ -201,7 +204,9 @@ function firstStepOf(steps: readonly StepDescriptor[], kind: TargetKind): string
  * value that no longer validates — a credential-bearing git URL above all — never reaches
  * the print; that resumes at the earlier of its `resumeAt` and the added target's first step.
  * Otherwise a newly added target runs only its own steps (`onlyTarget`), and a pure removal
- * goes straight to the Developers step.
+ * goes straight to the Developers step. Adding the webhook asks the same "already imported
+ * the flow?" question {@link resolveFreshStart} asks on a fresh run, so a lead who already
+ * has the flow is not sent through the Teams/SharePoint/time-zone/import steps a second time.
  */
 async function resolveChangeTargets(deps: BootstrapDeps, loaded: BootstrapState): Promise<StartPoint> {
   const targets = await stepTarget(deps, choiceOf(loaded.targets));
@@ -225,6 +230,17 @@ async function resolveChangeTargets(deps: BootstrapDeps, loaded: BootstrapState)
   }
 
   if (added !== undefined && addedStart !== undefined) {
+    if (added === 'webhook') {
+      const alreadyImported = await deps.prompt.confirm(
+        'Have you already imported the flow and copied its trigger URL?',
+        false
+      );
+      if (alreadyImported) {
+        const skipped: BootstrapState = { ...changed, skippedSetup: true };
+        await saveBootstrapState(skipped, deps.statePath);
+        return { startId: 'trigger-url', state: skipped, onlyTarget: added };
+      }
+    }
     return { startId: addedStart, state: changed, onlyTarget: added };
   }
   return { startId: 'developers', state: changed };
