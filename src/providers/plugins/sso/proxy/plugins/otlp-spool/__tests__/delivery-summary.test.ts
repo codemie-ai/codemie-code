@@ -49,6 +49,12 @@ describe('summarizeSpoolDelivery', () => {
     expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false });
   });
 
+  it('marks the summary incomplete when the spool root exists but cannot be listed', async () => {
+    await rm(spoolRoot(), { recursive: true, force: true });
+    await writeFile(spoolRoot(), 'not a directory');
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, incomplete: true });
+  });
+
   it('sums unsent bytes across streams and sessions', async () => {
     await session('a', { hooks: 100, logs: 50 }, (s) => { s.cursors.hooks = 40; });
     await session('b', { metricsJson: 30 });

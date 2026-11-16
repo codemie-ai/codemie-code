@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { liveDelivery } from './delivery-state.js';
-import { listSessionIds, SPOOL_STREAMS, type SpoolStream } from './spool-paths.js';
+import { listSessionIdsStrict, SPOOL_STREAMS, type SpoolStream } from './spool-paths.js';
 import { createStatus, readStatus, type SessionStatus } from './session-status.js';
 import { readSpoolState } from './spool-state.js';
 
@@ -88,7 +88,7 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
 export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
   const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false };
   try {
-    const ids = await listSessionIds();
+    const ids = await listSessionIdsStrict();
     for (let i = 0; i < ids.length; i += SESSION_CONCURRENCY) {
       const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map(summarizeSession));
       for (const s of batch) {
