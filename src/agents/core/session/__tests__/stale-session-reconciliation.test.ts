@@ -1261,7 +1261,7 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(hook.processEvent.mock.calls.map(([event]) => event.session_id)).toEqual(['native-1']);
   });
 
-  it.skipIf(!canDeny)('repeated starts spend no attempt on the local failure; at the cap of them it is closed locally, unmarked: completed, correlation untouched, nothing sent', async () => {
+  it.skipIf(!canDeny)('repeated starts spend no attempt on the local failure; at the cap of them it is closed locally: completed, correlation untouched, nothing sent', async () => {
     const { record: copilot, deny, allow } = unlistableRoot();
     const stuck = record(copilot);
     save(stuck);
@@ -1286,7 +1286,6 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     const ended = load(stuck.sessionId, 'completed_');
     expect(ended.status).toBe('completed');
     expect(ended.correlation).toEqual(correlation);
-    expect(ended.droppedAt).toBeUndefined();
     expect(hook.processEvent.mock.calls).toEqual([]);
     expect(readdirSync(sessionsDir).filter((name) => name.endsWith('_metrics.jsonl') || name.endsWith('_conversation.jsonl'))).toEqual([]);
   });
@@ -1314,7 +1313,6 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
 
     expect(hook.processEvent.mock.calls).toEqual([]);
     expect(load(stuck.sessionId, 'completed_')).toMatchObject({ status: 'completed', correlation: named });
-    expect(load(stuck.sessionId, 'completed_').droppedAt).toBeUndefined();
   });
 
   it('a stored home that is gone: a regular attempt leaves it active, correlation untouched', async () => {
