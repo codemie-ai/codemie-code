@@ -28,6 +28,31 @@ const INFERENCE_KEYS = [
   'inferenceGatewayAuthScheme',
 ] as const;
 
+/**
+ * Keys that choose how Claude Desktop signs in to the inference provider instead of
+ * sending the static gateway key: an interactive "gateway SSO" device-code grant
+ * (`inferenceCredentialKind: "interactive"`, or the older `inferenceGatewayAuthScheme: "sso"`
+ * which Desktop rewrites to it), an external OIDC identity provider, or a credential helper.
+ *
+ * Any one of them left in the applied config — e.g. after "Sign in with your organization"
+ * on the login screen — keeps Desktop probing the proxy's `/.well-known/oauth-authorization-server`
+ * and stuck on the welcome screen, even though `connect` rewrote the gateway URL and key.
+ * `connect` and `disconnect` own the gateway's sign-in, so they drop all of them.
+ */
+const GATEWAY_SIGN_IN_KEYS = [
+  'inferenceCredentialKind',
+  'inferenceGatewayOidc',
+  'inferenceGatewayOidcAuthFlow',
+  'inferenceIdpOidc',
+  'inferenceIdpAuthFlow',
+  'inferenceCredentialHelper',
+  'inferenceCredentialHelperArgs',
+  'inferenceCredentialHelperWindows',
+  'inferenceCredentialHelperTtlSec',
+  'inferenceCredentialHelperTimeoutSec',
+  'inferenceCredentialHelperSilentRefreshEnabled',
+] as const;
+
 export interface ManagedMcpServerEntry {
   name: string;
   url: string;
@@ -609,6 +634,8 @@ export interface DesktopGatewayConfig {
   inferenceGatewayBaseUrl: string;
   inferenceGatewayApiKey: string;
   inferenceGatewayAuthScheme: 'bearer';
+  /** Pins Desktop to the static gateway key, so it never starts an interactive gateway SSO sign-in. */
+  inferenceCredentialKind: 'static';
 }
 
 interface ConfigMetaEntry {
@@ -627,6 +654,7 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
     inferenceGatewayBaseUrl: proxyUrl,
     inferenceGatewayApiKey: gatewayKey,
     inferenceGatewayAuthScheme: 'bearer',
+    inferenceCredentialKind: 'static',
   };
 }
 
@@ -815,7 +843,7 @@ export async function writeDesktopConfig(
     })
   );
 
-  for (const key of INFERENCE_KEYS) {
+  for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {
     delete existing[key];
   }
   delete existing.inferenceModels;
@@ -964,7 +992,7 @@ export async function removeDesktopConfig(
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
 
-  for (const key of INFERENCE_KEYS) {
+  for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {
     delete existing[key];
   }
   delete existing.inferenceModels;

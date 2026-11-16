@@ -260,7 +260,7 @@ Note: priorities 14-17 do request-_body_ normalization/sanitization, not header 
 
 `onUpstreamResponse(context, upstreamResponse, tools)` runs immediately after the upstream call and before header/streaming hooks. `tools` gives a plugin `readBody()` (buffer the full response), `retry()` (re-issue the same request, e.g. after stripping now-rejected state), and `fromBuffer()` (turn a buffered `Buffer` back into a stream-shaped `IncomingMessage`). Only the Copilot encrypted-content sanitizer uses this hook (see §6.8) — the Codex one instead watches `onResponseChunk` and flips a permanent `onRequest`-time flag; see §6.8 for why these two plugins differ.
 
-**`handleRequest` is not limited to non-upstream traffic.** In addition to MCP Auth's full off-upstream relay (§6.1), the Gateway Key Plugin (§6.3) also implements `handleRequest` — it runs _before_ `onRequest`, validating the local daemon bearer key and returning `true` with a 401 body on failure, or `false` to let the same upstream-bound request continue into the normal `onRequest` pipeline. So `handleRequest` is used both for "this traffic never reaches `targetApiUrl`" (MCP Auth) and "reject this upstream-bound request early, before auth injection" (Gateway Key) — check each plugin's own hook rather than assuming from the hook name alone.
+**`handleRequest` is not limited to non-upstream traffic.** In addition to MCP Auth's full off-upstream relay (§6.1) and the Endpoint Blocker's local answers (§6.2), the Gateway Key Plugin (§6.3) also implements `handleRequest` — it runs _before_ `onRequest`, validating the local daemon bearer key and returning `true` with a 401 body on failure, or `false` to let the same upstream-bound request continue into the normal `onRequest` pipeline. So `handleRequest` is used both for "this traffic never reaches `targetApiUrl`" (MCP Auth) and "reject this upstream-bound request early, before auth injection" (Gateway Key) — check each plugin's own hook rather than assuming from the hook name alone.
 
 ### 4.2 Plugin Lifecycle
 
@@ -358,11 +358,11 @@ Detailed Flow:
    ├─ Build ProxyContext (requestId, sessionId, agentName, headers, body)
    ├─ Run handleRequest() hooks in priority order — a plugin here can either
    │   fully handle the request (MCPAuthPlugin relaying to an MCP server,
-   │   short-circuiting the rest of this flow entirely) or reject it early
+   │   short-circuiting the rest of this flow entirely), answer it locally
+   │   (EndpointBlockerPlugin, before the gateway key check) or reject it early
    │   (GatewayKeyPlugin returning a 401 before auth injection runs); any
    │   plugin returning false here falls through to onRequest() below
    ├─ Run onRequest() hooks (priority order), e.g.:
-   │   ├─ EndpointBlockerPlugin: reject/short-circuit unwanted endpoints
    │   ├─ SSOAuthPlugin / JWTAuthPlugin: inject cookies / bearer token
    │   ├─ Claude/Kimi/Codex request normalizers: fix up model-specific body fields
    │   ├─ RequestSanitizerPlugin: strip unsupported reasoning params
@@ -543,7 +543,9 @@ The MCP Auth Plugin works in conjunction with the stdio-to-HTTP bridge:
 **Priority**: 5
 **File**: `endpoint-blocker.plugin.ts`
 
-**Purpose**: Blocks unwanted upstream endpoints early, before any auth or normalization work runs, by short-circuiting via `context.metadata.blocked` (see §5.1 step 2).
+**Purpose**: Answers a fixed set of endpoints locally, never forwarding them upstream: telemetry batches (`200 {"success":true}`), the `managed-settings` endpoints Claude Desktop reads at start (`200 {}`), and OAuth / OIDC discovery on the gateway root, `/.well-known/*` outside `/mcp_relay/` (`404`, because the proxy is not an authorization server; a 401 there made Claude Desktop's "Sign in with your organization" fail with `gateway SSO discovery failed: 401`).
+
+It implements `handleRequest`, not `onRequest`: clients send these requests without the gateway key, and every `handleRequest` hook — Gateway Key (7) included — runs before any `onRequest` hook, so an `onRequest` blocker would only ever see their 401. Running at priority 5 puts it ahead of Gateway Key.
 
 ### 6.3 Gateway Key Plugin
 
