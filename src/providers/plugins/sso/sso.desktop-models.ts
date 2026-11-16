@@ -6,10 +6,13 @@
  * on start to fill its picker.
  */
 
+import { createHash } from 'node:crypto';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { isClaudeFamilyModel, isRouterModel, type ModelFamilyFields } from '../../../utils/model-family.js';
 import { resolveTenantModelId } from './sso.model-name-resolver.js';
+import { catalogModelIdentifiers, resolveClaudeExtraModels } from './sso.claude-extra-models.js';
+import type { LlmModel } from './sso.http-client.js';
 
 /** The catalog entry fields the Desktop list reads; `id` covers OpenAI-style `{ data: [{ id }] }` replies. */
 export type DesktopCatalogEntry = ModelFamilyFields & { id?: string; enabled?: boolean };
@@ -158,6 +161,58 @@ export function selectDesktopClaudeModels(
     return true;
   });
   return [...models.map((id) => byId.get(id) ?? { id, isRouter: false }), ...routers];
+}
+
+/**
+ * Prefix of the ID an extra (non-Claude) model is offered to Desktop under. Desktop accepts
+ * only IDs that read as Claude and rejects any that name another model family (`grok`,
+ * `gpt`, ...), in discovery and in `inferenceModels` alike. So an extra model is listed under
+ * `claude-x-<hash>`, an opaque ID that never spells a family name, with its real name as the
+ * display name; {@link resolveDesktopExtraModelId} maps it back before the request goes upstream.
+ */
+const DESKTOP_EXTRA_MODEL_PREFIX = 'claude-x-';
+/** Hex only (0-9, a-f), so the hash can never contain a model family name. */
+const DESKTOP_EXTRA_MODEL_HASH_LENGTH = 10;
+
+/** The ID Desktop is offered for an extra model's real (stored) ID. Deterministic, so no state is kept. */
+export function desktopExtraModelAlias(realId: string): string {
+  const hash = createHash('sha256').update(realId).digest('hex').slice(0, DESKTOP_EXTRA_MODEL_HASH_LENGTH);
+  return `${DESKTOP_EXTRA_MODEL_PREFIX}${hash}`;
+}
+
+/**
+ * The real model ID behind an ID Desktop sends: the extra model whose alias it is, or
+ * `undefined` when it is not an alias of one of `extraIds`.
+ */
+export function resolveDesktopExtraModelId(id: string, extraIds: readonly string[]): string | undefined {
+  if (!id.startsWith(DESKTOP_EXTRA_MODEL_PREFIX)) return undefined;
+  return extraIds.find((extraId) => desktopExtraModelAlias(extraId) === id);
+}
+
+/**
+ * Appends the non-Claude models the profile opted into (`claudeExtraModels`, see
+ * {@link resolveClaudeExtraModels}) after the curated Claude lineup, under their opaque
+ * alias ({@link desktopExtraModelAlias}) and their real name as the label. Ids the catalog no
+ * longer serves are skipped, and a model already in the lineup is not listed twice.
+ */
+export function withDesktopExtraModels(
+  models: readonly DesktopModel[],
+  catalog: readonly LlmModel[],
+  extraIds: readonly string[]
+): DesktopModel[] {
+  const listed = new Set(models.map((model) => model.id));
+  const extras: DesktopModel[] = [];
+  for (const extraId of extraIds) {
+    const [model] = resolveClaudeExtraModels(catalog, [extraId]);
+    if (!model || catalogModelIdentifiers(model).some((id) => listed.has(id))) continue;
+    catalogModelIdentifiers(model).forEach((id) => listed.add(id));
+    extras.push({
+      id: desktopExtraModelAlias(extraId),
+      label: model.label || extraId,
+      isRouter: isRouterModel(model),
+    });
+  }
+  return [...models, ...extras];
 }
 
 /**
