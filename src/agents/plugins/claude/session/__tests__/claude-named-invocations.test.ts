@@ -28,6 +28,11 @@ function metaLine() {
   return { isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } };
 }
 
+/** The tool_result passback for a prior tool_use call — not a new user-authored turn. */
+function toolResult(toolUseId = 't1') {
+  return { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId }] } };
+}
+
 describe('extractNamedInvocations', () => {
   it('extracts skill names from Skill tool_use blocks', () => {
     const out = extractNamedInvocations([
@@ -168,6 +173,40 @@ describe('extractOrderedNamedInvocations', () => {
     expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
     expect(out.commandInvocations).toEqual({});
     expect(out.commandsInOrder).toEqual([]);
+  });
+
+  it('counts a skill-backed command once even when the model calls another tool first, before the Skill call (CR-001)', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('codemie-humanizer')),
+      toolUse('Read', { file_path: '/a.md' }),
+      toolResult(),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandInvocations).toEqual({});
+    expect(out.commandsInOrder).toEqual([]);
+  });
+
+  it('still counts a command as a command when a prep tool call is followed by a plain reply, no Skill call', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      toolUse('Read', { file_path: '/a.md' }),
+      toolResult(),
+      { message: { role: 'assistant', content: [{ type: 'text', text: 'Done, no skill needed.' }] } },
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({});
+  });
+
+  it('does not attribute a Skill call to an earlier command once a genuine new user prompt intervenes', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      { message: { role: 'assistant', content: [{ type: 'text', text: 'Here is the plan.' }] } },
+      userText('thanks, now run the humanizer skill'),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
   });
 
   it('returns an empty list when there are no genuine commands', () => {

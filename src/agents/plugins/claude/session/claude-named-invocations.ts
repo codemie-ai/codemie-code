@@ -118,16 +118,32 @@ export function extractOrderedNamedInvocations(
     return names;
   };
 
-  // The skill a slash command dispatched to, when the next substantive message (skipping any
-  // isMeta/isSidechain bookkeeping lines Claude Code writes in between) is the assistant's
-  // matching `Skill` tool_use call — the seam EPMCDME-17201 covers: such a command is counted
-  // once, as the skill, not also as a command.
+  // A user-role message that is purely the mechanical tool_result passback for a prior tool_use
+  // — not a new user-authored turn, so it must not end the `nextSkillName` scan below.
+  const isToolResultOnlyMessage = (msg: RawMessage): boolean => {
+    if (msg?.message?.role !== 'user') return false;
+    const content = msg.message.content;
+    if (!Array.isArray(content) || content.length === 0) return false;
+    return (content as RawBlock[]).every((item) => item?.type === 'tool_result');
+  };
+
+  // The skill a slash command dispatched to, when the model resolves the same turn (skipping any
+  // isMeta/isSidechain bookkeeping lines, and any prep tool_use/tool_result round-trips the skill's
+  // own instructions triggered first) by calling the matching `Skill` tool — the seam EPMCDME-17201
+  // covers: such a command is counted once, as the skill, not also as a command. The scan stops the
+  // moment a genuine new user-authored message appears (not a tool_result passback): anything after
+  // that boundary belongs to a different turn and must never be attributed back to this command.
   const nextSkillName = (fromIndex: number): string => {
     for (let j = fromIndex; j < messages.length; j++) {
       const msg = messages[j] as RawMessage;
       if (msg?.isMeta || msg?.isSidechain) continue;
-      if (msg?.message?.role !== 'assistant') return '';
-      const content = msg.message.content;
+      const role = msg?.message?.role;
+      if (role === 'user') {
+        if (isToolResultOnlyMessage(msg)) continue;
+        return '';
+      }
+      if (role !== 'assistant') return '';
+      const content = msg.message?.content;
       if (!Array.isArray(content)) return '';
       for (const item of content as RawBlock[]) {
         if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
@@ -135,7 +151,8 @@ export function extractOrderedNamedInvocations(
           if (skill) return skill;
         }
       }
-      return '';
+      // No Skill call in this assistant message — it may have called a different tool first
+      // (e.g. Read/Bash); keep scanning for the Skill call the round-trip leads to.
     }
     return '';
   };
