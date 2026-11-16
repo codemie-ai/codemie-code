@@ -704,16 +704,19 @@ export class ClaudePlugin extends BaseAgentAdapter {
   async resolveResumeOwnership(
     input: ResumeOwnershipInput,
   ): Promise<ResumeOwnershipResult> {
-    const { scanSessionsForClaudeId } = await import('../../core/session/session-ownership.js');
-    const owned = scanSessionsForClaudeId(input.resumeId);
+    const { resolveClaudeResumeSession } = await import('../../core/session/session-ownership.js');
+    const match = resolveClaudeResumeSession(input.resumeId);
+    const nativeId = match.nativeId ?? input.resumeId;
 
     return {
       supported: true,
-      owned,
-      fallbackResumeCommand: `claude --resume ${input.resumeId}`,
+      owned: match.owned,
+      nativeResumeId: match.nativeId,
+      fallbackResumeCommand: `claude --resume ${nativeId}`,
       auditData: {
         nativeAgent: 'claude',
-        nativeResumeId: input.resumeId,
+        nativeResumeId: nativeId,
+        ...(match.codemieSessionId && { codemieSessionId: match.codemieSessionId }),
       },
     };
   }

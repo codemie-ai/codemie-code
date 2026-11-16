@@ -731,6 +731,11 @@ export interface ResumeOwnershipInput {
 export interface ResumeOwnershipResult {
   supported: boolean;
   owned?: boolean;
+  /**
+   * Native agent session id the resume id resolved to. When set and different from the
+   * id the user passed (e.g. a CodeMie session id), the CLI passes this id to the agent instead.
+   */
+  nativeResumeId?: string;
   fallbackResumeCommand?: string;
   auditData?: Record<string, unknown>;
 }

@@ -577,18 +577,18 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     });
 
     it.each([
-      { organization: 'Personal' },
-      { consent_ref: 'abcdef0123456789', routed_via_codemie: true },
-      { routing_proof: 'unproven' as const, routed_via_codemie: true },
-      {},
-    ])('a new unsafe or unclassified session stays held on an old backend: %j', async (overrides) => {
+      [{ organization: 'Personal' }, 'work_consent_required'], // Personal without consent: nothing leaves, whatever the backend
+      [{ consent_ref: 'abcdef0123456789', routed_via_codemie: true }, 'publication_contract_unavailable'],
+      [{ routing_proof: 'unproven' as const, routed_via_codemie: true }, 'publication_contract_unavailable'],
+      [{}, 'work_consent_required'], // Unknown + confirmed subscription, no consent
+    ])('a new unsafe or unclassified session stays held on an old backend: %j', async (overrides, reason) => {
       const { forwardSession } = await import('../forwarder.js');
       vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ organizations: ['Acme'], version: 'v1' }), { status: 200 }));
       await stampNewContract({ negotiate_publication: true, ...overrides });
       await seedPending();
       await tick();
       expect(forwardSession).not.toHaveBeenCalled();
-      expect((await current()).holds?.session?.reason).toBe('publication_contract_unavailable');
+      expect((await current()).holds?.session?.reason).toBe(reason);
     });
 
     it('a stop marker holds publication_stopped and nothing is forwarded', async () => {
@@ -687,13 +687,12 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       await writeStatus(SESSION, createStatus());
     }
 
-    it('AC3: no consumer, no usable policy: indeterminate is forwarded as unknown', async () => {
+    it('AC3: no usable policy: an organization that may still turn out Personal is held unresolved, never forwarded as unknown', async () => {
       const { forwardSession } = await import('../forwarder.js');
       await seedStamped();
       await tick();
-      expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown', status: 'indeterminate' }), expect.anything()
-      );
+      expect((await current()).holds?.session?.reason).toBe('classification_unresolved');
+      expect(forwardSession).not.toHaveBeenCalled();
     });
 
     it('AC3: an explicit withhold keeps the session unsent and unmoved; past retention it records classification_unresolved', async () => {
@@ -701,7 +700,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       const { writeStatus } = await import('../session-status.js');
       const { forwardSession } = await import('../forwarder.js');
       setClassificationConsumer(() => 'withhold');
-      await cachePolicy(OTHER);
+      await cachePolicy({ organizations: ['Acme'], version: 'v1' }); // corporate: the consumer, not the consent rule, withholds
       await seedStamped();
 
       await tick();
@@ -752,34 +751,33 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
       await writeStatus(SESSION, createStatus());
 
-      await cachePolicy({ organizations: ['Other'], version: 'v1' });
+      await cachePolicy({ organizations: ['Яндекс'], version: 'v1' });
       await tick();
       expect((await current()).holds?.session?.reason).toBe('organization_encoding_unsupported');
       expect(forwardSession).not.toHaveBeenCalled();
       expect((await current()).lastLoss).toBeUndefined();
 
-      await cachePolicy({ organizations: ['Other'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] });
+      await cachePolicy({ organizations: ['Яндекс'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] });
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal' }), expect.anything()
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate' }), expect.anything()
       );
       expect((await current()).holds).toBeUndefined();
     });
 
-    it('AC16: a first determinate Personal is recorded and survives policy expiry as a full evidence request', async () => {
+    it('AC16: a first determinate Personal is recorded, and neither it nor its policy expiry ever lets it out without work consent', async () => {
       const { readVerdict } = await import('../verdict-store.js');
       const { forwardSession } = await import('../forwarder.js');
       await cachePolicy(OTHER);
       await seedStamped();
       await tick();
       expect(await readVerdict((await identity()).key)).toMatchObject({ class: 'personal', policy_version: 'v1' });
+      expect((await current()).holds?.session?.reason).toBe('work_consent_required');
 
       await cachePolicy(OTHER, Date.now() - 25 * 3_600_000); // evidence-capable, policy expired
-      vi.mocked(forwardSession).mockClear();
       await tick();
-      expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal', policy_version: 'v1' }), expect.anything()
-      );
+      expect((await current()).holds?.session?.reason).toBe('work_consent_required'); // sticky verdict, same decision
+      expect(forwardSession).not.toHaveBeenCalled();
     });
 
     it('AC16: a sticky Personal under unknown capability is held personal_not_forwardable, never stripped', async () => {
@@ -805,8 +803,8 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       const { forwardSession } = await import('../forwarder.js');
       await cachePolicy(OTHER);
       await seedStamped();
-      await tick(); // Personal sent as full evidence; verdict persisted
-      expect(forwardSession).toHaveBeenCalledTimes(1);
+      await tick(); // Personal without consent: held, nothing sent; the verdict is persisted
+      expect(forwardSession).not.toHaveBeenCalled();
 
       const { key, api_identity, owner_hash } = await identity();
       const file = join(evidenceDir(), verdictFileName(key));

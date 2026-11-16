@@ -100,7 +100,7 @@ codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 
 `codemie proxy connect --claude-desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
 
-**Model list.** The connector writes no model list into the Desktop config. Desktop asks the daemon's `GET /v1/models` on every start, and the daemon answers from the CodeMie catalog of the profile's project: every Claude model the project allows plus every router that routes only to Claude models, each under its CodeMie name. The newest preferred Opus, Sonnet and Haiku come first (the first is Desktop's default), then the routers, then the rest in catalog order. After the project's Models tab changes, quit and reopen Claude Desktop; `connect` does not need to run again. The daemon must be running when Desktop starts, otherwise the picker stays empty until Desktop retries.
+**Model list.** The connector writes no model list into the Desktop config. Desktop asks the daemon's `GET /v1/models` on every start, and the daemon answers from the CodeMie catalog of the profile's project: every Claude model the project allows plus every router that routes only to Claude models, each under its CodeMie name. The newest preferred Opus, Sonnet and Haiku come first (the first is Desktop's default), then the routers, then the rest in catalog order. Non-Claude models the profile opted into with `codemie-claude models select` come last. After the project's Models tab changes, quit and reopen Claude Desktop; `connect` does not need to run again. The daemon must be running when Desktop starts, otherwise the picker stays empty until Desktop retries.
 
 ### VS Code BYOK custom endpoint
 
@@ -457,6 +457,30 @@ codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions
 
 **Note**: Configuration options (`--profile`, `--model`, etc.) are handled by CodeMie CLI wrapper. All other options are passed directly to the underlying agent binary.
 
+### Non-Claude Models in Claude Code and Claude Desktop
+
+The Claude Code `/model` picker and Claude Desktop's model list offer only Claude-family models by default. To offer other models from your project's catalog as well, pick them per profile:
+
+```bash
+codemie-claude models select [--profile <name>]   # checkbox list of the project's non-Claude models
+codemie-claude models list   [--profile <name>]   # show what is selected
+codemie-claude models add    <model...> [--profile <name>]   # add by catalog ID or name, e.g. gemini-3.1-pro
+codemie-claude models remove <model...> [--profile <name>]   # remove by the ID shown in `models list`
+```
+
+`add` and `remove` are the scriptable counterparts of `select`: `add` accepts only non-Claude models the project catalog serves, and `remove` works from the profile alone, so it also clears a model the catalog no longer offers.
+
+The choice is saved as `claudeExtraModels` in the profile, and the list offered is the profile's project catalog (its Models tab). Claude Code picks it up on its next start; restart Claude Desktop to refresh its model list. Non-Claude models may not support every Claude-specific feature (thinking, prompt caching, some tools).
+
+**Claude Code** lists an extra model under its real ID, marked *Not a Claude model* in `/model`. Anthropic does not support Claude Code with non-Claude models; CodeMie's proxy forwards the request to the model as-is.
+
+**Claude Desktop** rejects any model whose ID does not read as Claude, in model discovery and in a fixed `inferenceModels` list alike. So the proxy's `GET /v1/models` lists an extra model under an opaque ID, `claude-x-<10 hex characters>` (a hash of the real ID), with its real name as the display name, and maps that ID back to the real model on every request. In practice:
+
+- The picker shows the real name (for example *Grok 4.6*); transcripts and logs record the `claude-x-…` ID Desktop sent and the real model the response came from.
+- Desktop and the Claude Code session it runs treat the model as an unknown Claude model: default context window, no model-specific Effort control. Claude Code logs `unrecognized_model` for it, which is harmless.
+- The ID is stable for a given model, so a conversation keeps working across restarts. After `models remove` it is no longer listed, and a request that still names it is passed through unchanged and fails upstream with an unknown-model error.
+- This works around a check in Claude Desktop rather than a documented integration, so a Desktop update may stop it. Claude models are not affected.
+
 ## Headless Mode (`--task`)
 
 The `--task` flag runs a single prompt non-interactively: the agent executes the task, prints the result, and exits. No user interaction is required. This is the primary way to use CodeMie agents in CI/CD pipelines and automated scripts.
@@ -553,9 +577,11 @@ Omit `--task` to resume in interactive mode instead.
 
 **Finding a session id:**
 
+For `codemie-claude` you can pass either the CodeMie session id (the one `codemie analytics`, `codemie log list-sessions` and `codemie log session <id>` print) or Claude's own session id. CodeMie looks up a CodeMie id in its local session records and resumes the matching Claude session, tracked under CodeMie as usual.
+
 | Agent | Where to find it |
 |-------|------------------|
-| `codemie-claude` | the session filename in `~/.claude/projects/<project>/<id>.jsonl` |
+| `codemie-claude` | the CodeMie id from `codemie log list-sessions`, or Claude's session filename in `~/.claude/projects/<project>/<id>.jsonl` |
 | `codemie-codex` | the `<id>` in the rollout filename under `~/.codex/codemie/home/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` |
 | `codemie-opencode` | the `id` field from `opencode session list --format json` (e.g. `ses_…`) |
 

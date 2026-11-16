@@ -4,7 +4,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  desktopExtraModelAlias,
   desktopModelDisplayName,
+  resolveDesktopExtraModelId,
+  withDesktopExtraModels,
   selectDesktopClaudeModels,
   toDesktopModels,
   type DesktopCatalogEntry,
@@ -95,5 +98,59 @@ describe('desktopModelDisplayName', () => {
 
   it('leaves a nameless model to Desktop\'s own display name', () => {
     expect(desktopModelDisplayName({ id: 'claude-sonnet-5', label: '  ', isRouter: false })).toBeUndefined();
+  });
+});
+
+describe('Desktop extra models (claude-x- alias)', () => {
+  const grok = { base_name: 'grok-4.6', deployment_name: 'grok-4.6', label: 'Grok 4.6', enabled: true };
+  const gemini = { base_name: 'gemini-3.1-pro', deployment_name: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro', enabled: true };
+  const lineup = [{ id: 'claude-router-standard', label: 'Claude Router Standard v1', isRouter: true }];
+
+  describe('desktopExtraModelAlias', () => {
+    it('is claude-x- followed by 10 hex characters, so it never names another model family', () => {
+      expect(desktopExtraModelAlias('grok-4.6')).toMatch(/^claude-x-[0-9a-f]{10}$/);
+    });
+
+    it('is stable for the same model and differs between models', () => {
+      expect(desktopExtraModelAlias('grok-4.6')).toBe(desktopExtraModelAlias('grok-4.6'));
+      expect(desktopExtraModelAlias('grok-4.6')).not.toBe(desktopExtraModelAlias('gemini-3.1-pro'));
+    });
+  });
+
+  describe('resolveDesktopExtraModelId', () => {
+    it('maps an alias back to the extra model it was made from', () => {
+      const alias = desktopExtraModelAlias('gemini-3.1-pro');
+      expect(resolveDesktopExtraModelId(alias, ['grok-4.6', 'gemini-3.1-pro'])).toBe('gemini-3.1-pro');
+    });
+
+    it('returns undefined for an alias of a model the profile no longer lists', () => {
+      expect(resolveDesktopExtraModelId(desktopExtraModelAlias('grok-4.6'), ['gemini-3.1-pro'])).toBeUndefined();
+    });
+
+    it('returns undefined for an ID that is not an alias', () => {
+      expect(resolveDesktopExtraModelId('claude-sonnet-5', ['claude-sonnet-5'])).toBeUndefined();
+    });
+  });
+
+  describe('withDesktopExtraModels', () => {
+    it('appends extra models after the lineup under their alias, with the real name', () => {
+      expect(withDesktopExtraModels(lineup, [grok, gemini], ['grok-4.6'])).toEqual([
+        ...lineup,
+        { id: desktopExtraModelAlias('grok-4.6'), label: 'Grok 4.6', isRouter: false },
+      ]);
+    });
+
+    it('keeps the stored order and skips IDs the catalog no longer serves', () => {
+      const ids = withDesktopExtraModels([], [grok, gemini], ['gemini-3.1-pro', 'gone-model', 'grok-4.6']).map((m) => m.id);
+      expect(ids).toEqual([desktopExtraModelAlias('gemini-3.1-pro'), desktopExtraModelAlias('grok-4.6')]);
+    });
+
+    it('does not list a model twice when it is stored under two of its names', () => {
+      expect(withDesktopExtraModels([], [grok], ['grok-4.6', 'Grok 4.6'])).toHaveLength(1);
+    });
+
+    it('leaves the lineup as is when nothing is selected', () => {
+      expect(withDesktopExtraModels(lineup, [grok], [])).toEqual(lineup);
+    });
   });
 });
