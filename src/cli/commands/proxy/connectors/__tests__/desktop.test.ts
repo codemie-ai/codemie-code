@@ -89,6 +89,7 @@ describe('buildGatewayConfig', () => {
       inferenceGatewayBaseUrl: 'http://localhost:4001',
       inferenceGatewayApiKey: 'codemie-proxy',
       inferenceGatewayAuthScheme: 'bearer',
+      inferenceCredentialKind: 'static',
     });
   });
 });
@@ -785,6 +786,52 @@ describe('writeDesktopConfig', () => {
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
   });
 
+  it('drops a sign-in mode left by "Sign in with your organization" and pins the static gateway key', async () => {
+    const existingId = 'sso-left-over';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'http://localhost:4001',
+      inferenceGatewayApiKey: 'codemie-proxy',
+      inferenceGatewayAuthScheme: 'sso',
+      inferenceCredentialKind: 'interactive',
+      inferenceGatewayOidc: { issuer: 'https://idp.example.com' },
+      inferenceGatewayOidcAuthFlow: 'device-code',
+      inferenceIdpOidc: { issuer: 'https://idp.example.com' },
+      inferenceIdpAuthFlow: 'device-code',
+      inferenceCredentialHelper: '/usr/local/bin/helper',
+      inferenceCredentialHelperArgs: ['--x'],
+      inferenceCredentialHelperWindows: 'C:\\helper.exe',
+      inferenceCredentialHelperTtlSec: 300,
+      inferenceCredentialHelperTimeoutSec: 10,
+      inferenceCredentialHelperSilentRefreshEnabled: true,
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+
+    expect(written).toBe(join(libDir, `${existingId}.json`));
+    expect(config.inferenceGatewayAuthScheme).toBe('bearer');
+    expect(config.inferenceCredentialKind).toBe('static');
+    for (const key of [
+      'inferenceGatewayOidc',
+      'inferenceGatewayOidcAuthFlow',
+      'inferenceIdpOidc',
+      'inferenceIdpAuthFlow',
+      'inferenceCredentialHelper',
+      'inferenceCredentialHelperArgs',
+      'inferenceCredentialHelperWindows',
+      'inferenceCredentialHelperTtlSec',
+      'inferenceCredentialHelperTimeoutSec',
+      'inferenceCredentialHelperSilentRefreshEnabled',
+    ]) {
+      expect(config).not.toHaveProperty(key);
+    }
+    expect(config.unrelatedUserKey).toBe('kept');
+  });
+
   it('writes org MCP servers and persists managed-state for revocation', async () => {
     const org = [
       { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
@@ -1318,6 +1365,36 @@ describe('removeDesktopConfig', () => {
     expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
     expect(existsSync(join(libDir, 'a.json'))).toBe(false);
     expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+  });
+
+  it('drops the sign-in keys with the gateway, so a config holding nothing else is deleted', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceCredentialKind: 'interactive',
+      inferenceGatewayOidc: { issuer: 'https://idp.example.com' },
+      inferenceIdpAuthFlow: 'device-code',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+  });
+
+  it('keeps unrelated keys but drops the sign-in keys when other settings remain', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceCredentialKind: 'static',
+      inferenceGatewayOidcAuthFlow: 'device-code',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
+    expect(JSON.parse(await readFile(join(libDir, 'a.json'), 'utf-8'))).toEqual({ unrelatedUserKey: 'kept' });
   });
 
   it('touches no file when appliedId leads outside the library', async () => {
