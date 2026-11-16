@@ -6,6 +6,11 @@
  * the daemon swaps the real proxy back in once credentials reappear. `/health`
  * answers 200 like the real proxy, so the watcher sees a live socket and its deep
  * check (an authenticated call) reports `unauthorized`.
+ *
+ * With `gatewayKey` set it answers like the full proxy's gateway-key plugin: a request
+ * without `Authorization: Bearer <gatewayKey>` gets 401 "Invalid API key". Only a request
+ * that carries the key triggers `onSignInRequest`, so a local process or web page that
+ * does not know the key cannot make the CLI open a browser sign-in.
  */
 import { createServer, type Server } from 'node:http';
 
@@ -24,8 +29,16 @@ export interface AwaitingLoginOptions {
   pinnedPort?: boolean;
   /** Shown to the client verbatim (e.g. "... Please run: codemie profile login --url ..."). */
   message: string;
+  /** Gateway key clients must present as `Authorization: Bearer <key>`; unset leaves requests unchecked. */
+  gatewayKey?: string;
+  /**
+   * Called for an authenticated API request (the key matched). Starts the browser sign-in and
+   * returns the text for the 401, in place of `message`. Must not throw; if it does, `message` is used.
+   */
+  onSignInRequest?: () => Promise<string>;
 }
 
+const ANALYTICS_PATH_PREFIX = '/v1/analytics/';
 const PINNED_RETRIES = 5;
 const PINNED_RETRY_DELAY_MS = 200;
 
@@ -61,6 +74,7 @@ async function bind(server: Server, opts: AwaitingLoginOptions): Promise<void> {
 
 export async function startAwaitingLoginListener(opts: AwaitingLoginOptions): Promise<AwaitingLoginListener> {
   const server = createServer((req, res) => {
+    req.resume(); // discard any request body
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.statusCode = 200;
@@ -74,10 +88,20 @@ export async function startAwaitingLoginListener(opts: AwaitingLoginOptions): Pr
       return;
     }
     res.statusCode = 401;
-    res.end(JSON.stringify({
-      type: 'error',
-      error: { type: 'authentication_error', message: opts.message },
-    }));
+    const sendError = (message: string): void => {
+      res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message } }));
+    };
+    if (opts.gatewayKey && req.headers.authorization !== `Bearer ${opts.gatewayKey}`) {
+      sendError('Invalid API key');
+      return;
+    }
+    // Background analytics ingestion (hooks, OTLP) is not a user prompt: the full proxy takes it
+    // locally without ever reaching the upstream, so it must not open a browser sign-in here either.
+    if (!opts.onSignInRequest || req.url?.split('?')[0].startsWith(ANALYTICS_PATH_PREFIX)) {
+      sendError(opts.message);
+      return;
+    }
+    opts.onSignInRequest().then(sendError, () => sendError(opts.message));
   });
 
   await bind(server, opts);
