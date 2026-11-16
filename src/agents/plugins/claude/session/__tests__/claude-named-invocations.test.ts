@@ -33,6 +33,11 @@ function toolResult(toolUseId = 't1') {
   return { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId }] } };
 }
 
+/** A system line (e.g. a compact_boundary) that carries no `message` field at all. */
+function systemLine() {
+  return { type: 'system', subtype: 'compact_boundary' };
+}
+
 describe('extractNamedInvocations', () => {
   it('extracts skill names from Skill tool_use blocks', () => {
     const out = extractNamedInvocations([
@@ -207,6 +212,17 @@ describe('extractOrderedNamedInvocations', () => {
     ]);
     expect(out.commandInvocations).toEqual({ plan: 1 });
     expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+  });
+
+  it('counts a skill-backed command once even when a system line with no message field (e.g. compact_boundary) sits between it and the Skill call (CR-001)', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('codemie-humanizer')),
+      systemLine(),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandInvocations).toEqual({});
+    expect(out.commandsInOrder).toEqual([]);
   });
 
   it('returns an empty list when there are no genuine commands', () => {

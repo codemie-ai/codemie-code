@@ -138,6 +138,9 @@ export function extractOrderedNamedInvocations(
       const msg = messages[j] as RawMessage;
       if (msg?.isMeta || msg?.isSidechain) continue;
       const role = msg?.message?.role;
+      // A line with no message field at all (e.g. a `compact_boundary` system line) is bookkeeping,
+      // not a turn boundary — skip it exactly like isMeta/isSidechain rather than bailing.
+      if (role == null) continue;
       if (role === 'user') {
         if (isToolResultOnlyMessage(msg)) continue;
         return '';
