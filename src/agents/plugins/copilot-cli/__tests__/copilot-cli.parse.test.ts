@@ -300,6 +300,11 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
         },
         {
           type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.500Z',
+          data: { text: '<copilot_artifacts>\nartifacts_dir: /Users/dev/.copilot/artifacts/x\n</copilot_artifacts>\n<branch_rename_request>\nrename\n</branch_rename_request>\nAdd a test' },
+        },
+        {
+          type: 'user.message',
           timestamp: '2026-08-11T11:29:22.000Z',
           data: { text: '<copilot_tauri_workspace>only preamble</copilot_tauri_workspace>' },
         },
@@ -311,8 +316,12 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
       (m) => m.type === 'user'
     );
 
-    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'Fix the bug' }]);
+    expect(parsed.metrics!.userPrompts).toEqual([
+      { count: 1, text: 'Fix the bug' },
+      { count: 1, text: 'Add a test' },
+    ]);
     expect(users[0].message?.content).toBe('Fix the bug');
+    expect(users[1].message?.content).toBe('Add a test');
   });
 
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {

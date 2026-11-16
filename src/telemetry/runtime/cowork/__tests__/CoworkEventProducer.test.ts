@@ -4,11 +4,12 @@
  * `<spool>/<cliSessionId>.hooks.ndjson`. The spool write's `appendFile` is the one stubbed boundary; the forwarder's
  * send additionally stubs `fetch` and the daemon state it reads its destination from.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -67,6 +68,9 @@ const FIRST_PROCESSING_TYPES = [
 
 let home: string;
 let codemieHome: string;
+let gitConfigDir: string;
+let emptyGitConfig: string;
+const savedGitEnv: Record<string, string | undefined> = {};
 
 function sessionDir(short = '1a2b3c4d'): string {
   return join(getClaudeDesktopLocalSessionsRoot(), ACCOUNT_DIR, short);
@@ -155,6 +159,29 @@ function warnings(): unknown[][] {
   return vi.mocked(logger.warn).mock.calls;
 }
 
+// A git hook exports GIT_DIR / GIT_WORK_TREE, which would point every git call here at the outer repository; the
+// developer's git config differs per machine.
+beforeAll(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('GIT_')) {
+      savedGitEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  }
+  gitConfigDir = mkdtempSync(join(tmpdir(), 'cowork-gitconfig-'));
+  emptyGitConfig = join(gitConfigDir, 'empty-gitconfig');
+  writeFileSync(emptyGitConfig, '');
+  process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+});
+
+afterAll(() => {
+  delete process.env.GIT_CONFIG_GLOBAL;
+  delete process.env.GIT_CONFIG_NOSYSTEM;
+  for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
+  if (gitConfigDir) rmSync(gitConfigDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
 beforeEach(() => {
   // The native resolver also expands a Windows 8.3 short name, which the JS one leaves in the path.
   home = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-home-')));
@@ -230,6 +257,7 @@ describe('CoworkEventProducer.run', () => {
     expect(usage.filter((event) => event['agent_id'] === AGENT)).toHaveLength(2);
     expect(lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event)
       .toMatchObject({ session_title: 'Synthetic notes task', timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    expect(lines.filter((spoolLine) => spoolLine.event['git_branch'] !== '' || spoolLine.event['cwd'] !== 'Cowork')).toEqual([]);
     expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBe('synthetic-project');
   });
 
@@ -742,6 +770,95 @@ describe('CoworkEventProducer.run', () => {
     expect(events().filter((event) => event['type'] === 'agent.session.end')).toHaveLength(1);
     expect(warnings()).toEqual([]);
     expect(readFileSync(spoolPath(), 'utf-8')).toBe(written);
+  });
+
+  describe('the branch of the session\'s folder', () => {
+    const folders: string[] = [];
+
+    function git(cwd: string, ...args: string[]): void {
+      execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
+        cwd, stdio: 'pipe', timeout: 10_000,
+      });
+    }
+
+    /** A folder `<temp>/synthetic-parent/synthetic-folder`, selected as the fixture session's folder. */
+    function selectFolder(): string {
+      const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-folder-')));
+      folders.push(root);
+      const folder = join(root, 'synthetic-parent', 'synthetic-folder');
+      mkdirSync(folder, { recursive: true });
+      writeMetadata(LOCAL, { userSelectedFolders: [folder] });
+      return folder;
+    }
+
+    function selectRepository(): string {
+      const folder = selectFolder();
+      git(folder, 'init', '-q', '-b', 'main');
+      git(folder, 'commit', '-q', '--allow-empty', '-m', 'synthetic');
+      git(folder, 'checkout', '-q', '-b', 'qa-17128-cw2');
+      return folder;
+    }
+
+    afterAll(() => {
+      for (const folder of folders) rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it('stamps every event with the folder\'s branch and every summary with it as branch_dominant', async () => {
+      selectRepository();
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+      expect(written.filter((event) => event['git_branch'] !== 'qa-17128-cw2')).toEqual([]);
+      expect(spooled().filter((spoolLine) => spoolLine.raw.includes('\\"git_branch\\":\\"HEAD\\"'))).toEqual([]);
+      const summaries = written.filter((event) => event['type'] === 'agent.session.summary');
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        expect(summary['branch_dominant']).toBe('qa-17128-cw2');
+        expect(summary).not.toHaveProperty('branch_counts');
+      }
+    });
+
+    it('edge: stamps an empty branch and no branch_dominant while the folder\'s HEAD is detached', async () => {
+      git(selectRepository(), 'checkout', '-q', '--detach');
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.filter((event) => event['git_branch'] !== '')).toEqual([]);
+      expect(written.filter((event) => event['type'] === 'agent.session.summary' && Object.prototype.hasOwnProperty.call(event, 'branch_dominant'))).toEqual([]);
+    });
+
+    it('edge: stamps an empty branch and the folder\'s two last segments for a folder outside Git', async () => {
+      selectFolder();
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.filter((event) => event['git_branch'] !== '' || event['cwd'] !== 'synthetic-parent/synthetic-folder')).toEqual([]);
+    });
+
+    it('edge: stamps the new lines with the branch the folder is on when they are read, and appends no line twice', async () => {
+      const folder = selectRepository();
+      const producer = newProducer();
+      await settle(producer, LAST_LINE_MS + 20_000);
+      const before = spooled().length;
+
+      git(folder, 'checkout', '-q', '-b', 'other');
+      appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000e1', '2026-11-10T10:00:40.000Z', 'One more synthetic question'));
+      appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000e2', '2026-11-10T10:00:45.000Z', 'msg_synthetic_E', [{ type: 'text', text: 'Answered.' }]));
+      await settle(producer, LAST_LINE_MS + 60_000);
+
+      const written = events();
+      const grown = written.slice(before);
+      expect(written.slice(0, before).filter((event) => event['git_branch'] !== 'qa-17128-cw2')).toEqual([]);
+      expect(grown.map((event) => event['event_id'])).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000e1`);
+      expect(grown.filter((event) => event['git_branch'] !== 'other')).toEqual([]);
+      expect(new Set(written.map((event) => event['event_id'])).size).toBe(written.length);
+    });
   });
 });
 

@@ -283,7 +283,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await startAndStopOnFakeClock();
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -293,17 +293,17 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
-    it('an end metric answered 503, then timed out on its retry, spends the attempt', async () => {
+    it('an end metric answered 503, then timed out on its retry, gives the attempt back', async () => {
       const sessionId = undelivered();
       endMetricMeets('503', 'timeout');
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
     });
 
     it('an end metric answered 429 with a JSON body gives the attempt back', async () => {
@@ -312,7 +312,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
     });
 
     it('an end metric answered 200 with success false spends the attempt', async () => {
@@ -321,16 +321,16 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
     });
 
-    it('a record at 2 attempts stays at 2 through three starts under a 503: never renamed, never dropped', async () => {
-      const sessionId = undelivered({ deliveryAttempts: 2 });
+    it('a record at 2 real attempts and a failing clock of 25 h stays at 2 through three starts under a 503: never renamed, never dropped', async () => {
+      const sessionId = undelivered({ deliveryRealAttempts: 2, deliveryFailingSince: T0 - 25 * HOUR_MS });
       endMetricMeets('503');
 
       for (let start = 0; start < 3; start++) await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
@@ -341,7 +341,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       for (let start = 0; start < 4; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
       expect(existsSync(join(codemieHome, 'analytics-auth-status.json'))).toBe(false);
@@ -356,12 +356,12 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await onDaemonClock(() => runtime.triggerPoll());
       await runtime.stop();
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
 
       for (let start = 0; start < 4; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
 
@@ -379,26 +379,26 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it('a try that timed out spends the attempt though its retries were refused', async () => {
+    it('a try that timed out gives the attempt back, as do its refused retries', async () => {
       const sessionId = undelivered();
       endMetricMeets('timeout', 'refused');
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('after two counted failures, starts under a refused connection stay at 2 and never rename it', async () => {
       const sessionId = undelivered();
-      endMetricMeets('timeout');
+      endMetricMeets('not-success');
       for (let start = 0; start < 2; start++) await startAndStopOnFakeClock();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
 
       endMetricMeets('refused');
       for (let start = 0; start < 2; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
       // Each fake-clock step waits one real timer tick, about 15 ms on Windows: these four starts take some 30 s there
@@ -458,13 +458,13 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
     }));
     const oldest = [ids[2], ids[4]];
     const before = oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'));
-    // Fails each send, so the taken records stay live with their attempt spent
+    // Fails each send, so the taken records stay live (a failure no server verdict explains gives its attempt back)
     mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
     await startRuntime();
 
     expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
-    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryAttempts).toBe(1);
+    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryRealAttempts).toBe(0);
     expect(oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'))).toEqual(before);
   });
 

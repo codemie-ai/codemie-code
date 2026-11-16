@@ -532,20 +532,17 @@ export function buildRequestedConfig(
   };
 }
 
-/** One per-target write outcome, collected for the summary (spec §3.4). */
+/** One per-target write outcome, collected to report failures and set the exit code (spec §3.4). */
 export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
 }
 
-function printSummary(results: TargetResult[]): void {
-  console.log(chalk.bold('\nTargets configured:'));
+function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (r.ok) {
-      console.log(chalk.green(`  ✓ ${r.label}`));
-    } else {
-      console.log(chalk.red(`  ✗ ${r.label}  — ${r.error ?? 'failed'}`));
+    if (!r.ok) {
+      console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
 }
@@ -694,7 +691,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
 /**
  * Configure every requested target over a single daemon lifecycle. Bare invocation
  * (no target flag) prints the target list and returns without side effects. Each
- * target's writer runs independently; a per-target summary is printed and the
+ * target's writer runs independently; failed targets are listed and the
  * process exit code is set to 1 when any requested target fails (spec §3.4).
  */
 interface CodexDesktopRunOptions {
@@ -909,7 +906,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
     profile = config.name ?? 'default';
     projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-    // Resolved once so the confirmation header and the post-start table show the same URL.
+    // Resolved here because the confirmation header needs the profile and the effective URL.
     otlpDisplay = targets.claudeCodeOtlp
       ? {
           profile,
@@ -1006,11 +1003,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
-  if (activeTargets.claudeCodeOtlp && otlpDisplay) {
+  if (activeTargets.claudeCodeOtlp) {
     results.push(await runClaudeCodeOtlp({
       force: Boolean(opts.force),
       scope: opts.scope ?? 'user',
-      ...otlpDisplay,
     }));
   }
   if (targets.copilotChatOtlp) {
@@ -1032,9 +1028,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await writeConnectionRecord(state, profile, clientType);
   }
 
-  // Spec §3.4: print the per-target summary after all requested targets run,
-  // unconditionally — a single-target success gets the summary block too.
-  printSummary(results);
+  // Spec §3.4: after all requested targets run, list the ones that failed; successes
+  // already printed their own line.
+  printFailures(results);
   if (anyFailed) {
     process.exitCode = 1;
   }
