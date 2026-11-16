@@ -245,8 +245,6 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 
 ACP agents are launched by your IDE, not directly — see [ACP Agent usage](#acp-agent-usage-in-ides-and-editors) below.
 
-OpenCode v1 users: remove the old installation with its package manager before installing v2. For an npm installation, run `npm uninstall -g opencode-ai`, then `codemie install opencode`.
-
 ### Documentation & Knowledge Tools
 
 CodeMie also manages documentation tooling for your agents — install globally and initialize per project with `codemie docs`. These fall into two capability groups:
