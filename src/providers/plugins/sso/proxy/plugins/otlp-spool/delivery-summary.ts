@@ -16,6 +16,12 @@ const SESSION_CONCURRENCY = 16;
 const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable', 'organization_encoding_unsupported']);
 
 /**
+ * The stall reason that outlives the publication contract: it persists until the backend advertises the
+ * organization encoding, so a backend that already advertises the contract does not clear it.
+ */
+const ORGANIZATION_ENCODING_STALL_REASON = 'organization_encoding_unsupported';
+
+/**
  * What the spool says about analytics delivery, aggregated over every session. Derived from
  * existing files only, and deliberately capability-free: the daemon's capability resolve (a
  * credential read, possibly an owner-verification network probe) and this spool scan touch
@@ -41,6 +47,12 @@ export interface SpoolDeliverySummary {
   sendFailure?: SendFailure;
   /** A session with pending data is held on a reason that means its classification never completed (see spec AC1-AC3). */
   classificationStalled: boolean;
+  /**
+   * A session with pending data is held on `organization_encoding_unsupported` (implies `classificationStalled`). Unlike
+   * a contract stall it does not clear once the backend advertises the publication contract, so the caller reads it
+   * against the policy's advertised organization encodings instead.
+   */
+  organizationEncodingStalled: boolean;
   /**
    * The newest drop any session status records: a backend discard (`lastDiscard`, `local: false`) or a
    * local loss (`lastLoss`, `local: true`); `at` in epoch milliseconds. Absent when none records one.
@@ -92,12 +104,13 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     return sum + Math.max(0, size - cursor);
   }, 0);
   if (!status) {
-    return { pendingBytes, mismatchHeld: false, classificationStalled: false };
+    return { pendingBytes, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false };
   }
 
   const holdReason = status.holds?.session?.reason ?? '';
   const mismatchHeld = pendingBytes > 0 && holdReason === 'analytics_endpoint_mismatch';
   const classificationStalled = pendingBytes > 0 && CLASSIFICATION_STALL_REASONS.has(holdReason);
+  const organizationEncodingStalled = pendingBytes > 0 && holdReason === ORGANIZATION_ENCODING_STALL_REASON;
   const live = await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
   const latestDrop = sessionDrop(status);
   const sendFailure = live.reduce<SendFailure | undefined>(
@@ -108,6 +121,7 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     pendingBytes,
     mismatchHeld,
     classificationStalled,
+    organizationEncodingStalled,
     ...(sendFailure ? { sendFailure } : {}),
     ...(latestDrop ? { latestDrop } : {}),
   };
@@ -121,7 +135,12 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
  * caller's own capability resolve.
  */
 export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
-  const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false, classificationStalled: false };
+  const summary: SpoolDeliverySummary = {
+    pendingBytes: 0,
+    mismatchHeld: false,
+    classificationStalled: false,
+    organizationEncodingStalled: false,
+  };
   try {
     const ids = await listSessionIdsStrict();
     for (let i = 0; i < ids.length; i += SESSION_CONCURRENCY) {
@@ -132,6 +151,7 @@ export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
         const sendFailure = earlier(summary.sendFailure, s.sendFailure);
         if (sendFailure) summary.sendFailure = sendFailure;
         summary.classificationStalled ||= s.classificationStalled;
+        summary.organizationEncodingStalled ||= s.organizationEncodingStalled;
         const latestDrop = newer(summary.latestDrop, s.latestDrop);
         if (latestDrop) summary.latestDrop = latestDrop;
       }

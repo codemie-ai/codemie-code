@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
+import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { summarizeSpoolDelivery, type LatestDrop, type SendFailure } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js';
 import { forwarderIdentity } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
@@ -113,13 +114,17 @@ export async function collectDeliveryHealth(
       : marker ? 'auth_rejected'
       : spool.mismatchHeld ? 'identity_mismatch'
       : spool.sendFailure ? 'send_failed'
-      // Capability is a single resolved value, so at most one of these three ever applies. `evidence`
-      // means the backend answered with a usable policy but one that still does not advertise the
-      // negotiated publication contract — a stalled session under it is just as stuck as under
+      // Capability is a single resolved value, so at most one of the capability branches ever applies.
+      // `evidence` means the backend answered with a usable policy but one that still does not advertise
+      // the negotiated publication contract — a stalled session under it is just as stuck as under
       // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
+      // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
+      // organization-encoding stall does not, so it is judged by the encodings the policy advertises.
       : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
       : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
       : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
+      : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.policy?.organization_encodings?.includes(ORG_ENCODING_V1)
+        ? 'classification_unsupported'
       : undefined;
 
     const drop = spool.latestDrop ? { latestDrop: spool.latestDrop } : {};

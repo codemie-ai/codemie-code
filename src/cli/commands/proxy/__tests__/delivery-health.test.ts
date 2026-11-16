@@ -61,6 +61,7 @@ import {
   type DeliveryReason,
 } from '../delivery-health.js';
 import type { DaemonState } from '../daemon-manager.js';
+import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
 
 const URL = 'https://codemie.example.com';
 
@@ -287,6 +288,64 @@ describe('collectDeliveryHealth', () => {
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: true });
     const health = await collectDeliveryHealth(state, ok);
     expect(health).toMatchObject({ status: 'healthy' });
+  });
+
+  describe('organization-encoding stall', () => {
+    const stalledOnEncoding = { pendingBytes: 13, mismatchHeld: false, classificationStalled: true, organizationEncodingStalled: true };
+
+    it('reports classification_unsupported when the backend advertises the contract but not the organization encoding', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: { organization_encodings: [] },
+        capability: 'evidence',
+        usable: true,
+        refreshDue: false,
+        publicationContracts: ['1'],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toEqual({
+        status: 'unhealthy',
+        reason: 'classification_unsupported',
+        pendingBytes: 13,
+      });
+    });
+
+    it('reports classification_unsupported when the cached policy has expired and advertises the contract only', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: null,
+        capability: 'evidence',
+        usable: false,
+        refreshDue: true,
+        publicationContracts: ['1'],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'unhealthy', reason: 'classification_unsupported' });
+    });
+
+    it('stays healthy when the policy already advertises the organization encoding (the hold is stale and clears on the next tick)', async () => {
+      getPolicyState.mockResolvedValue({
+        policy: { organization_encodings: [ORG_ENCODING_V1] },
+        capability: 'evidence',
+        usable: true,
+        refreshDue: false,
+        publicationContracts: ['1'],
+      });
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      expect(await collectDeliveryHealth(state, ok)).toMatchObject({ status: 'healthy' });
+    });
+
+    it('stays quiet when the identity cannot be resolved, so no policy is read (AC3)', async () => {
+      forwarderIdentity.mockReturnValue(null);
+      summarizeSpoolDelivery.mockResolvedValue(stalledOnEncoding);
+      const health = await collectDeliveryHealth(state, ok);
+      expect(health.reason).toBeUndefined();
+      expect(getPolicyState).not.toHaveBeenCalled();
+    });
+
+    it('keeps send_failed ahead of the organization-encoding stall in precedence', async () => {
+      getPolicyState.mockResolvedValue({ policy: { organization_encodings: [] }, capability: 'evidence', usable: true, refreshDue: false });
+      summarizeSpoolDelivery.mockResolvedValue({ ...stalledOnEncoding, sendFailure: { nextAt: 2000 } });
+      expect((await collectDeliveryHealth(state, ok)).reason).toBe('send_failed');
+    });
   });
 
   it('resolves identity from the owner-verified credential, not the raw stored one', async () => {
