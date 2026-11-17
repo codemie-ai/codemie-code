@@ -311,6 +311,30 @@ describe('countTurns', () => {
       ])
     ).toBe(1);
   });
+
+  it('CR-003: does not rescue a non-/compact marked-local command via an unrelated later compact_boundary', () => {
+    expect(
+      countTurns([
+        caveat(),
+        wrappedCommand('usage'), // not /compact — must stay excluded even though a boundary follows
+        stdout(),
+        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+      ])
+    ).toBe(0);
+  });
+
+  it('CR-004: still counts /compact when an auto-prompt line sits between its wrapper and the compact_boundary line', () => {
+    const autoPrompt = (): SignalLine =>
+      ({ type: 'user', message: { content: '<task-notification><task-id>t1</task-id></task-notification>' } });
+    expect(
+      countTurns([
+        caveat(),
+        wrappedCommand('compact'),
+        autoPrompt(),
+        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+      ])
+    ).toBe(1);
+  });
 });
 
 describe('collectCompactions', () => {

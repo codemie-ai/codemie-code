@@ -180,17 +180,33 @@ function isMarkedLocalCommand(lines: readonly SignalLine[], i: number): boolean 
 }
 
 /**
- * Whether a `compact_boundary` system line appears between `i` and the next genuine, non-self-written
- * user turn — the one exception where a locally-marked command (`/compact`) still calls the model.
- * Self-written lines (e.g. the `<local-command-stdout>` line `/compact` itself writes before the
- * boundary appears) must not stop the scan early — that would quietly reintroduce the exact
- * over-counting bug this file exists to fix (CR-001, PR #824 review).
+ * Whether `text` is the `/compact` command wrapper. Matched directly by name, not through a
+ * growing list: `/compact` is a single, fixed exception to "marked local means excluded," not a
+ * maintained denylist — the two are not the same kind of thing. Works regardless of tag order
+ * (`<command-name>`/`<command-message>` either first) since only the name tag's own content is
+ * read.
+ */
+function isCompactCommand(text: string): boolean {
+  return /<command-name>\/compact<\/command-name>/.test(text);
+}
+
+/**
+ * Whether a `compact_boundary` system line appears between `i` and the next genuine, non-self-written,
+ * non-auto-prompt user turn — the one exception where a locally-marked command (`/compact`) still
+ * calls the model. Self-written lines (e.g. the `<local-command-stdout>` line `/compact` itself
+ * writes before the boundary appears) and auto-injected prompts (`<task-notification>`,
+ * `<agent-message`) must not stop the scan early — either would quietly reintroduce the exact
+ * over-counting (or undercounting, for auto-prompts) bug this file exists to fix (PR #824 review).
+ * Callers must also check {@link isCompactCommand} on the marked-local line itself — an unrelated
+ * later boundary must not rescue a different local command (also PR #824 review).
  */
 function isFollowedByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
   for (let j = i + 1; j < lines.length; j++) {
     const line = lines[j];
     if (line.type === 'system' && line.subtype === 'compact_boundary') return true;
-    if (isGenuineUserTurn(line) && !isSelfWrittenUserText(userLineText(line))) return false;
+    if (!isGenuineUserTurn(line)) continue;
+    const text = userLineText(line);
+    if (!isSelfWrittenUserText(text) && !startsWithAny(text, AUTO_PROMPT_PREFIXES)) return false;
   }
   return false;
 }
@@ -209,7 +225,9 @@ export function countTurns(lines: readonly SignalLine[]): number {
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
-    if (isMarkedLocalCommand(lines, i) && !isFollowedByCompactBoundary(lines, i)) continue;
+    const isLocal = isMarkedLocalCommand(lines, i);
+    const rescuedAsCompact = isLocal && isCompactCommand(text) && isFollowedByCompactBoundary(lines, i);
+    if (isLocal && !rescuedAsCompact) continue;
     turns += 1;
   }
   return turns;
