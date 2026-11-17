@@ -90,16 +90,18 @@ function createSyncCommand(): Command {
   return sync;
 }
 
-/** `codemie analytics sync bootstrap` — the team lead's one-time setup: connect a Teams
- * channel and SharePoint folder to a Power Automate flow, then print the `sync install`
- * command for the team's developers. Installs nothing on the lead's own machine. With
- * `--webhook`, runs non-interactively (no prompts, no TTY required); without it and with a
+/** `codemie analytics sync bootstrap` — the team lead's one-time setup: choose where the
+ * team's reports go (a Teams webhook, a git repository, or both), connect a Teams channel and
+ * SharePoint folder to a Power Automate flow for the webhook, test-push to the repository for
+ * git, then print the `sync install` command for the team's developers. Installs nothing on
+ * the lead's own machine. With
+ * `--webhook` and/or `--git-repo`, runs non-interactively (no prompts, no TTY required); without it and with a
  * TTY, runs the guided wizard. Dynamic-imports the runner so loading `codemie analytics`
  * never pulls in the guided wizard's prompter or the webhook client. */
 function createSyncBootstrapCommand(): Command {
   return new Command('bootstrap')
     .description(
-      'Lead: connect a Teams channel and SharePoint folder, then print the install command for your team (installs nothing on this machine)'
+      'Lead: choose where your team delivers reports (Teams webhook, git repository, or both), set it up, then print the install command for your team (installs nothing on this machine)'
     )
     .option(
       '--webhook <url>',
@@ -109,6 +111,9 @@ function createSyncBootstrapCommand(): Command {
       '--webhook-b64 <value>',
       'The same trigger URL encoded as base64url, for shells that mangle a raw URL (use instead of --webhook)'
     )
+    .option('--git-repo <url>', 'URL of a team git repository to push the daily report into (the other possible delivery target; runs non-interactively, test-pushing before printing the install command)')
+    .option('--git-branch <name>', 'Branch to push to (default: the repository\'s default branch)')
+    .option('--git-path <dir>', 'Repo-relative directory the report is pushed under (default: the repository root)')
     .option('--lookback-days <n>', 'Fixed session window for the printed install command, 1-30 (default: follows the CLI default)')
     .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
     .action(async (options: BootstrapOptions) => {

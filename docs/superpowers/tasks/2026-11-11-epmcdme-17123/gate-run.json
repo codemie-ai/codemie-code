@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "branch": "feat/analytics-sync-bootstrap-targets",
+  "head": "de97eee9ca81c28b376bd6466d89673e768c267c",
+  "runner": "npm",
+  "started_at": "2026-11-11T20:15:52Z",
+  "completed_at": "2026-11-11T20:30:19Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4276,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45572,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11819,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17559,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 223767,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "1 test failed: hook.session-delivery.test.ts 'spends one 10 s budget on the lock wait and the sends together' expected 10525 < 10500 (timing, 25ms over). Isolated rerun of that file: 166/166 pass. Run with CODEMIE_* vars unset."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 272259,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "3 hook timeouts (analytics-secret-egress 10s, doctor 120s, list 60s) + 3 hook-stdout what's-new tests ('codemie list did not exit within 20000ms'). Isolated rerun of those 4 files: only hook-stdout 3 tests still fail; `codemie list` takes ~21s alone on this machine, above the test's 20s limit. Environmental slowness; run with CODEMIE_* vars unset."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1185,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output line: 'No staged changes to scan'. Gate scans staged changes only; stage files (and have Docker up) to run it locally. CI re-runs it."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 671,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "reusable-secrets-detection.yml@main",
+      "exit_code": null,
+      "notes": "CI-only reusable workflow codemie-ai/ci-workflows reusable-secrets-detection.yml@main; cannot run locally."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit; npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Runs on windows-latest; same commands as unit/integration gates."
+    },
+    {
+      "id": "hook-lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 688,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Output line: 'lint-staged could not find any staged files.' Stage files to run it locally."
+    }
+  ],
+  "failures": {
+    "unit": "\n RUN  v4.1.5 /home/oleksiiyurchenko/codemie-code\n\n\u001b[33m\u26a0\ufe0f  CodeMie profile \"work\" has no project of its own; this session uses project \"config-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39merror: unknown command 'config'\nerror: unknown option '--from'\nerror: unknown option '--to'\nerror: unknown option '--last'\n \u276f |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts (166 tests | 1 failed) 69808ms\n     \u00d7 spends one 10 s budget on the lock wait and the sends together 946ms\n- Fetching user integrations...\n- Fetching user integrations...\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[33m\u26a0\ufe0f  CodeMie profile \"g\" has no project of its own; this session uses project \"profile-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 1 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > the own-record step at exit > spends one 10 s budget on the lock wait and the sends together\nAssertionError: expected 10525 to be less than 10500\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:2803:39\n    2801|       expect(Math.max(...abortedAt) - exitStart).toBe(10 * SECOND);\n    2802|       // Past the deadline only local file work is left (each loop ste\u2026\n    2803|       expect(finishedAt! - exitStart).toBeLessThan(10 * SECOND + 500);\n       |                                       ^\n    2804|       expect(readRecord(session.sessionId)).toMatchObject({ status: 'c\u2026\n    2805|       expect(readRecord(session.sessionId).endMetricSentAt).toBeUndefi\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af\n\n\n Test Files  1 failed | 569 passed (570)\n      Tests  1 failed | 10149 passed | 7 skipped (10157)\n   Start at  21:17:17\n   Duration  222.50s (transform 77.64s, setup 0ms, import 687.11s, tests 417.11s, environment 332ms)\n\n",
+    "integration": " FAIL  |cli| tests/integration/cli-commands/doctor.test.ts > Doctor Command\nError: Hook timed out in 120000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n \u276f tests/integration/cli-commands/doctor.test.ts:22:3\n     20|   let doctorResult: CommandResult;\n     21|\n     22|   beforeAll(() => {\n       |   ^\n     23|     // Execute once, validate many times\n     24|     doctorResult = cli.runSilent('doctor');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/6]\u23af\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n \u276f tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/6]\u23af\n\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 3 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > a piped command prints no notice and keeps the marker\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > in a terminal the notice shows the installed version's own entry and writes the marker\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > in a terminal, no entry for the installed version prints no notes and still writes the marker\nError: codemie list did not exit within 20000ms\nstderr: \n \u276f Timeout._onTimeout tests/integration/hook-stdout.test.ts:140:14\n    138|       const timer = setTimeout(() => {\n    139|         child.kill('SIGKILL');\n    140|         fail(new Error(`codemie ${args.join(' ')} did not exit within \u2026\n       |              ^\n    141|       }, RUN_TIMEOUT_MS);\n    142|       child.on('error', fail);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/6]\u23af\n\n\n Test Files  4 failed | 42 passed | 1 skipped (47)\n      Tests  3 failed | 327 passed | 27 skipped (357)\n   Start at  21:21:13\n   Duration  270.39s (transform 30.54s, setup 0ms, import 106.33s, tests 1166.66s, environment 54ms)\n\n"
+  }
+}

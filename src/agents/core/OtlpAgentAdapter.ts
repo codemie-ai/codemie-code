@@ -166,7 +166,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         }
 
         const context = await this.extractHookContext(hookInput);
-        const batch = await this.prepareForward(context, decision);
+        const batch = await this.prepareForward(context, decision, hookInput);
         const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
           ? [batch.events, this.name, batch.options]
           : [batch.events, this.name];
@@ -199,13 +199,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
   private async prepareForward(
     context: OtlpHookContext,
-    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>
+    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>,
+    hookInput: TInput
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
-        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
+        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending, hookInput))) {
           logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
           return { events: [], pendingStored: true };
         }
@@ -223,7 +224,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
     const [commonFields, agentFields] = await Promise.all([
       this.resolveCommonFields(context, record),
-      this.resolveAgentFields(),
+      this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
     return {
@@ -248,12 +249,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async holdForOwner(
     context: OtlpHookContext,
     payload: Record<string, unknown>[],
-    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>
+    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>,
+    hookInput: TInput
   ): Promise<boolean> {
     try {
       const now = Date.now();
       const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
-      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields()]);
+      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields(hookInput)]);
       const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
       return await enqueuePendingOwner({
         fp: pending.fp,
@@ -319,7 +321,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;
   /** Agent-owned fields (platform, version, entrypoint, ...); override everything else. */
-  protected abstract resolveAgentFields(): Promise<Record<string, unknown>>;
+  protected abstract resolveAgentFields(input: TInput): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;

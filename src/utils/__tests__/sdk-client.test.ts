@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGetStoredCredentials = vi.fn();
 const mockConfigLoad = vi.fn();
 const mockCodeMieClient = vi.fn();
+const mockRetrieveSSOCredentials = vi.fn();
+const mockClearSSOCredentials = vi.fn();
+let useRealSso = false;
 
 vi.mock('ora', () => ({ default: () => ({ start: () => ({ text: '', succeed: vi.fn(), fail: vi.fn() }) }) }));
 vi.mock('codemie-sdk', () => ({
@@ -14,13 +17,29 @@ vi.mock('codemie-sdk', () => ({
 }));
 vi.mock('../config.js', () => ({ ConfigLoader: { load: () => mockConfigLoad() } }));
 vi.mock('../logger.js', () => ({ logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
-vi.mock('../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
+vi.mock('../security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: (...args: unknown[]) => mockRetrieveSSOCredentials(...args),
+      clearSSOCredentials: (...args: unknown[]) => mockClearSSOCredentials(...args),
+    }),
   },
 }));
+vi.mock('../../providers/plugins/sso/sso.auth.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../providers/plugins/sso/sso.auth.js')>();
+  return {
+    CodeMieSSO: class {
+      getStoredCredentials = (...args: unknown[]) =>
+        useRealSso
+          ? new actual.CodeMieSSO().getStoredCredentials(...(args as [string?, boolean?]))
+          : mockGetStoredCredentials(...args);
+    },
+  };
+});
 
 import { getCodemieClient } from '../sdk-client.js';
+import { getAuthenticatedClient } from '../auth.js';
 
 const P = 'https://profile.example.com';
 const W = 'https://workspace.example.com';
@@ -31,6 +50,9 @@ describe('getCodemieClient credential lookup', () => {
     mockGetStoredCredentials.mockReset();
     mockConfigLoad.mockReset();
     mockCodeMieClient.mockReset();
+    mockRetrieveSSOCredentials.mockReset();
+    mockClearSSOCredentials.mockReset();
+    useRealSso = false;
   });
 
   it('finds credentials via the profile baseUrl for a baseUrl-only SSO profile', async () => {
@@ -58,5 +80,42 @@ describe('getCodemieClient credential lookup', () => {
     mockGetStoredCredentials.mockResolvedValue(null);
 
     await expect(getCodemieClient(true)).rejects.toThrow('SSO authentication required');
+  });
+
+  it('creates the client for a stale cookie-only credential without clearing it', async () => {
+    useRealSso = true;
+    const stale = {
+      cookies: { _oauth2_proxy: 'cookie-value' },
+      apiUrl: `${P}/code-assistant-api`,
+      expiresAt: Date.now() - 60_000,
+    };
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+    mockRetrieveSSOCredentials.mockResolvedValue(stale);
+
+    await getCodemieClient(true);
+
+    expect(mockClearSSOCredentials).not.toHaveBeenCalled();
+    expect(mockCodeMieClient).toHaveBeenCalledWith(
+      expect.objectContaining({ codemie_api_domain: stale.apiUrl, cookies: stale.cookies })
+    );
+  });
+
+  it('loads a stale cookie-only credential on the assistants-chat path without clearing it', async () => {
+    useRealSso = true;
+    const stale = {
+      cookies: { _oauth2_proxy: 'cookie-value' },
+      apiUrl: `${P}/code-assistant-api`,
+      expiresAt: Date.now() - (24 * 60 * 60 * 1000 + 60_000),
+    };
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+    mockRetrieveSSOCredentials.mockResolvedValue(stale);
+
+    // assistants chat obtains its client through getAuthenticatedClient (non-JWT branch).
+    await getAuthenticatedClient({ provider: 'ai-run-sso', baseUrl: P } as never, { nonInteractive: true });
+
+    expect(mockClearSSOCredentials).not.toHaveBeenCalled();
+    expect(mockCodeMieClient).toHaveBeenCalledWith(
+      expect.objectContaining({ codemie_api_domain: stale.apiUrl, cookies: stale.cookies })
+    );
   });
 });

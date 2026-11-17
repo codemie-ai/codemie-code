@@ -1,0 +1,188 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": false,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "request-changes",
+    "source": "hitl",
+    "rationale": "User requested changes for CR-001/002/003 (full-profile review, confidence high, 3 blocking findings); fix-up + check round followed, check round approved."
+  },
+  "gates": [
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved check round: all 3 blocking findings (CR-001/002/003) resolved, 0 unresolved. 1 deferred (DF-001, pre-existing policy-cache ambiguity) left as out-of-scope."
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User requested changes for CR-001/002/003 (full-profile review, confidence high, 3 blocking findings); fix-up + check round followed, check round approved."
+    }
+  ],
+  "reviewed_head": "b4c48d5992a9219ac7a214977410365fdc5edead",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 3 prior blocking findings verified resolved against current source and tests: CR-001's null-credentials guard is now exercised directly, CR-002's missing AC7 evidence/organization_encoding_unsupported non-flag test was added, and CR-003's legacy-capability false positive was fixed (gate narrowed to capability === 'unknown') with a matching regression test. 1 pre-existing item (DF-001, policy-cache ambiguity) stays deferred and is not re-checked by this round.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 3,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/delivery-health.ts",
+      "line": 50,
+      "title": "Untested null-credentials guard in resolveCapability",
+      "problem": "No test ever makes getStoredAnalyticsCredentials resolve null, so the `if (!stored) return 'evidence';` early return is never exercised.",
+      "impact": "If this guard regresses, forwarderIdentity(stored.credentials) throws on the null stored value, the Promise.all in collectDeliveryHealth rejects, and the call falls into the outer catch — losing credentials_expired/auth_rejected/identity_mismatch/send_failed reporting too, not just classification_unreachable, for any profile with no stored analytics credentials.",
+      "recommendation": "Add a delivery-health.test.ts case with getStoredAnalyticsCredentials.mockResolvedValue(null) asserting collectDeliveryHealth still resolves normally instead of collapsing to status:'unknown'.",
+      "status": "resolved",
+      "check_notes": "delivery-health.test.ts:239-243 adds 'still resolves normally when there is no stored analytics credential', mocking getStoredAnalyticsCredentials to null and asserting resolveCapability's guard is exercised (summarizeSpoolDelivery called with 'evidence').",
+      "fix": {
+        "change": "Added a test asserting collectDeliveryHealth resolves normally (not 'unknown') when getStoredAnalyticsCredentials resolves null.",
+        "test": "src/cli/commands/proxy/__tests__/delivery-health.test.ts > 'still resolves normally when there is no stored analytics credential'"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/delivery-summary.test.ts",
+      "line": 133,
+      "title": "AC7 test matrix missing evidence/organization_encoding case",
+      "problem": "There is a capability:'evidence' non-flag test for publication_contract_unavailable, but none for organization_encoding_unsupported — that reason is only tested at capability:'unknown' (the flagging case).",
+      "impact": "The AC2 no-false-positive guarantee for organization_encoding_unsupported is unverified by any test, leaving a gap in the spec's required coverage (AC7).",
+      "recommendation": "Add a 'does not flag classification_unreachable when capability is evidence' test for the organization_encoding_unsupported hold reason, mirroring the existing publication_contract_unavailable case.",
+      "status": "resolved",
+      "check_notes": "delivery-summary.test.ts:135-140 adds the missing evidence/organization_encoding_unsupported non-flag case, mirroring the existing publication_contract_unavailable test; AC7 matrix is now complete.",
+      "fix": {
+        "change": "Added the missing evidence/organization_encoding_unsupported non-flag test to the AC7 matrix.",
+        "test": "src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/delivery-summary.test.ts > 'does not flag classification_unreachable for organization_encoding_unsupported when capability is evidence'"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.ts",
+      "line": 42,
+      "title": "classification_unreachable gate misfires on legacy capability",
+      "problem": "summarizeSession gates classification_unreachable on `capability !== 'evidence'`, which also matches capability 'legacy'.",
+      "impact": "policy-cache.ts defines Capability as 'evidence' | 'legacy' | 'unknown', and tick-processor.ts treats any capability !== 'unknown' (so including 'legacy') as authoritative/backend-consulted. A session held publication_contract_unavailable or organization_encoding_unsupported against a reachable legacy backend (one that answered 404, predating the policy endpoint) would be falsely reported classification_unreachable — exactly the false positive AC2 rules out. No test exercises capability 'legacy'.",
+      "recommendation": "Narrow the gate to `capability === 'unknown'` (the only value meaning the backend has never answered), and add a test covering capability:'legacy' staying unflagged.",
+      "status": "resolved",
+      "check_notes": "delivery-summary.ts:42 narrows the gate to capability === 'unknown' (was !== 'evidence'); delivery-summary.test.ts:142-147 adds 'does not flag classification_unreachable when capability is legacy (backend was reachable)', confirming the false positive is closed.",
+      "fix": {
+        "change": "Narrowed the classificationUnreachable gate in delivery-summary.ts from `capability !== 'evidence'` to `capability === 'unknown'`, so a reachable 'legacy' backend no longer misfires.",
+        "test": "src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/delivery-summary.test.ts > 'does not flag classification_unreachable when capability is legacy (backend was reachable)'"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/policy-cache.ts",
+      "line": 125,
+      "title": "Corrupt/unreadable policy-cache file reads as never-probed",
+      "problem": "load() returns null on any parse failure, schema mismatch or identity mismatch, and getPolicyState then reports capability:'unknown', indistinguishable from a namespace that was truly never probed.",
+      "preexisting": "Behavior of policy-cache.ts's load()/getPolicyState predates this change; AC4 explicitly excludes modifying policy-cache.ts, and the cache self-heals via refreshPolicy on the namespace's next active session tick."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: classification_unreachable fires when held on publication_contract_unavailable/organization_encoding_unsupported with non-evidence capability -> unhealthy, distinct label/remedy",
+      "status": "pass",
+      "notes": "delivery-summary.ts CLASSIFICATION_UNREACHABLE_REASONS + capability gate; delivery-health.ts distinct label; covered by tests."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: capability 'evidence' sessions are never flagged classification_unreachable (no false positive)",
+      "status": "partial",
+      "notes": "Gate is capability !== 'evidence', which also catches 'legacy' (backend was consulted, reachable per tick-processor.ts) as a false positive; see CR-003."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: an unresolvable NamespaceId identity never triggers classification_unreachable",
+      "status": "pass",
+      "notes": "resolveCapability falls back to 'evidence' when credentials/identity cannot be resolved; covered by test."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: no change to evaluateSessionEvidence, tick-processor, policy-cache's refreshPolicy, or status.holds/delivery writes",
+      "status": "pass",
+      "notes": "Diff touches only delivery-health.ts/.test.ts and delivery-summary.ts/.test.ts; getPolicyState call is read-only."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: classification_unreachable only applies after credentials_expired/auth_rejected/identity_mismatch/send_failed are ruled out",
+      "status": "pass",
+      "notes": "Ternary chain in delivery-health.ts places it last; precedence covered by test."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: DELIVERY_REASONS gets an exhaustive, compile-time-enforced entry for classification_unreachable",
+      "status": "pass",
+      "notes": "Record<DeliveryReason,...> entry added; label/run asserted by test."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: tests cover the stalled, non-flag and no-identity cases for both qualifying hold reasons",
+      "status": "partial",
+      "notes": "AC1 (both reasons) and AC3 covered; missing an 'evidence'-capability non-flag test for organization_encoding_unsupported; see CR-002."
+    },
+    {
+      "kind": "spec",
+      "item": "Decision: publication_stopped is excluded entirely from classification_unreachable",
+      "status": "pass",
+      "notes": "CLASSIFICATION_UNREACHABLE_REASONS omits publication_stopped; covered by a direct test."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no minimum dwell/debounce window before reporting classification_unreachable",
+      "status": "pass",
+      "notes": "Flagged on first qualifying hold; no added delay logic in summarizeSession."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "No commit subjects in range (uncommitted working-tree edits); nothing to check against Conventional Commits format."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Changed files and their tests checked against code-quality.md: explicit return types, @/ alias imports, JSDoc, logger.debug+sanitizeLogArgs used."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "No security guide at the expected path; reviewed credential-handling code manually, no raw credential/secret logging or unsafe path construction found."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "2 critical findings (CR-002 missing AC7 test coverage; CR-003 a false-positive classification_unreachable on reachable 'legacy'-capability backends, breaking AC2's no-false-positive guarantee) and 1 major verification gap (CR-001, untested null-credentials guard) block approval. 1 pre-existing policy-cache ambiguity is deferred (out of scope per AC4, self-heals on the namespace's next active tick). 6 lens-reported concerns (5 blind, 1 edge-case) were dismissed as noise/false positives after reading the real call sites and type definitions.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

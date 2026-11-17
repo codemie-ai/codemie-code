@@ -1,6 +1,6 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import { isClaudeFamilyModel, isClaudeFamilyName } from '../../../utils/model-family.js';
+import { fetchCodeMieCatalogForEnv } from '../../../providers/plugins/sso/sso.catalog.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -31,14 +31,6 @@ const GPT_FAMILY_PATTERNS: RegExp[] = [
   /\bgpt\b/i,
 ];
 
-const CLAUDE_FAMILY_PATTERNS: RegExp[] = [
-  /claude/i,
-  /anthropic/i,
-  /sonnet/i,
-  /opus/i,
-  /haiku/i,
-];
-
 function getModelId(model: LlmModel): string | undefined {
   return model.deployment_name || model.base_name || model.label;
 }
@@ -58,7 +50,7 @@ export function isCopilotCompatibleModelName(modelName: string | undefined): mod
     return false;
   }
   return GPT_FAMILY_PATTERNS.some((pattern) => pattern.test(modelName))
-    || CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(modelName));
+    || isClaudeFamilyName(modelName);
 }
 
 function isCopilotCompatibleModel(model: LlmModel): boolean {
@@ -111,7 +103,7 @@ function rankModel(model: LlmModel): RankedCopilotModel {
   const preferredGptCodexBonus = /gpt[-_.]?5[-_.]?[23].*codex/i.test(searchText) ? 1 : 0;
   const preferredClaudeBonus = /claude[-_.]?(?:sonnet[-_.]?)?(?:4(?:[-_.]5|[-_.]6)?|5)(?:[-_.]|$)/i.test(searchText) ? 1 : 0;
   const gptFamilyBonus = GPT_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText)) ? 1 : 0;
-  const claudeFamilyBonus = CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText)) ? 1 : 0;
+  const claudeFamilyBonus = isClaudeFamilyModel(model) ? 1 : 0;
   const defaultBonus = model.default ? 1 : 0;
   const toolBonus = model.features?.tools === false ? 0 : 1;
   const streamingBonus = model.features?.streaming === false ? 0 : 1;
@@ -146,28 +138,7 @@ function compareRankedModels(a: RankedCopilotModel, b: RankedCopilotModel): numb
 }
 
 async function fetchCodeMieModelsForCopilot(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
-  const jwtToken = env.CODEMIE_JWT_TOKEN;
-  const baseUrl = env.CODEMIE_BASE_URL;
-
-  if (jwtToken && baseUrl) {
-    logger.debug('[copilot-cli-models] Fetching CodeMie model list via JWT auth');
-    return fetchCodeMieLlmModels(baseUrl, jwtToken);
-  }
-
-  const platformUrl = getPlatformUrlFromEnv(env);
-  if (platformUrl) {
-    const found = await getStoredPlatformCredentialsFromEnv(env);
-    if (!found) {
-      throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
-      );
-    }
-
-    logger.debug('[copilot-cli-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
-  }
-
-  return [];
+  return (await fetchCodeMieCatalogForEnv(env, { logPrefix: '[copilot-cli-models]' })) ?? [];
 }
 
 export async function resolveCopilotModel(env: NodeJS.ProcessEnv): Promise<CopilotModelResolution> {

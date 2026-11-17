@@ -1,0 +1,9 @@
+{
+  "sessionId": "aaaaaaaa-0000-4000-8000-000000000001",
+  "cwd": "<cwd>",
+  "codemieEventName": "agentStop",
+  "timestamp": 1760000000000,
+  "transcriptPath": "<transcript>",
+  "stopReason": "end_turn",
+  "stop_hook_active": false
+}
