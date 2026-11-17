@@ -17,6 +17,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { BEDROCK } from '@/agents/plugins/claude/cloud-provider-conflict/provider.js';
 import {
   toDesktopModels,
   type DesktopCatalogEntry,
@@ -850,6 +851,10 @@ export async function writeDesktopConfig(
 
   for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {
     delete existing[key];
+  }
+  // Bedrock parameters never coexist with the gateway provider this write ends on.
+  for (const key of Object.keys(existing)) {
+    if (key.startsWith(BEDROCK.desktopKeyPrefix)) delete existing[key];
   }
   delete existing.inferenceModels;
   delete existing.modelDiscoveryEnabled;

@@ -823,6 +823,26 @@ describe('writeDesktopConfig', () => {
     await expect(readDesktopGatewayConfig(baseDir)).resolves.toBeNull();
   });
 
+  it('removes every inferenceBedrock* key in the same rewrite and ends on the gateway provider', async () => {
+    const existingId = 'bedrock-left-over';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      inferenceProvider: 'bedrock',
+      inferenceBedrockRegion: 'us-east-1',
+      inferenceBedrockProfile: 'work',
+      inferenceBedrockBearerToken: 'secret-token',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+
+    expect(config.inferenceProvider).toBe('gateway');
+    expect(Object.keys(config).filter((key) => key.startsWith('inferenceBedrock'))).toEqual([]);
+    expect(config.unrelatedUserKey).toBe('kept');
+  });
+
   it('drops a sign-in mode left by "Sign in with your organization" and pins the static gateway key', async () => {
     const existingId = 'sso-left-over';
     await mkdir(libDir, { recursive: true });
@@ -1432,6 +1452,23 @@ describe('removeDesktopConfig', () => {
 
     expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
     expect(JSON.parse(await readFile(join(libDir, 'a.json'), 'utf-8'))).toEqual({ unrelatedUserKey: 'kept' });
+  });
+
+  it('leaves inferenceBedrock* keys alone on disconnect (only connect strips them)', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceBedrockRegion: 'us-east-1',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
+    expect(JSON.parse(await readFile(join(libDir, 'a.json'), 'utf-8'))).toEqual({
+      inferenceBedrockRegion: 'us-east-1',
+      unrelatedUserKey: 'kept',
+    });
   });
 
   it('touches no file when appliedId leads outside the library', async () => {
