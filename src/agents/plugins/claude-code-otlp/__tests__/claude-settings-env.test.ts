@@ -6,6 +6,9 @@ import {
   managedSettingsPaths,
   readClaudeSettingsEnv,
   readManagedDropIns,
+  readManagedPlist,
+  readManagedRegistry,
+  type CommandRunner,
   readSettingsLayer,
   settingsLayerPaths,
 } from '../event-fields/claude-settings-env.js';
@@ -150,5 +153,134 @@ describe('claude settings env layers (CR-006)', () => {
     put('proj/.claude/settings.json', JSON.stringify({ env: { KEEP: 'y' } }));
     const r = await readClaudeSettingsEnv(root, env(), 'linux');
     expect(r).toEqual({ env: { KEEP: 'y' }, complete: true });
+  });
+  describe('readManagedPlist', () => {
+    const FILE = '/Library/Managed Preferences/com.anthropic.claudecode.plist';
+
+    it('treats a missing plist as absent without running plutil', async () => {
+      let ran = 0;
+      const run: CommandRunner = async () => {
+        ran++;
+        return { code: 0, stdout: '{}', stderr: '' };
+      };
+      const r = await readManagedPlist(run, () => false);
+      expect(r.state).toBe('absent');
+      expect(r.path).toBe(FILE);
+      expect(ran).toBe(0);
+    });
+
+    it('converts an existing plist through plutil and returns its top-level keys as settings', async () => {
+      const calls: Array<[string, string[]]> = [];
+      const run: CommandRunner = async (cmd, args) => {
+        calls.push([cmd, args]);
+        return { code: 0, stdout: '{"env":{"A":"b"}}', stderr: '' };
+      };
+      const r = await readManagedPlist(run, async () => true);
+      expect(r.state).toBe('ok');
+      expect(r.parsed).toEqual({ env: { A: 'b' } });
+      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', FILE]]]);
+    });
+
+    it('reports an existing plist that plutil cannot convert, whose output is not an object, or whose runner throws as unreadable', async () => {
+      const exists = () => true;
+      expect((await readManagedPlist(async () => ({ code: 1, stdout: '', stderr: 'bad' }), exists)).state).toBe('unreadable');
+      expect((await readManagedPlist(async () => ({ code: 0, stdout: 'not json', stderr: '' }), exists)).state).toBe('unreadable');
+      expect((await readManagedPlist(async () => ({ code: 0, stdout: '[1]', stderr: '' }), exists)).state).toBe('unreadable');
+      expect((await readManagedPlist(async () => { throw new Error('spawn plutil ENOENT'); }, exists)).state).toBe('unreadable');
+    });
+
+    it('reports a plutil run that exceeds the timeout as unreadable', async () => {
+      const hang: CommandRunner = () => new Promise(() => undefined);
+      const r = await readManagedPlist(hang, () => true, { timeoutMs: 20 });
+      expect(r.state).toBe('unreadable');
+    });
+  });
+
+  describe('readManagedRegistry', () => {
+    const KEY = String.raw`SOFTWARE\Policies\ClaudeCode`;
+    const valueOut = (hive: string, json: string): string =>
+      `\r\n${hive}\\${KEY}\r\n    Settings    REG_SZ    ${json}\r\n`;
+
+    /** Scripted reg: key = per-hive key query, value = per-hive value query. */
+    function scripted(plan: Record<string, { code: number; stdout: string } | Error>): { run: CommandRunner; calls: string[][] } {
+      const calls: string[][] = [];
+      const run: CommandRunner = async (cmd, args) => {
+        calls.push([cmd, ...args]);
+        const entry = plan[args.join(' ')];
+        if (entry === undefined) return { code: 1, stdout: '', stderr: 'unscripted' };
+        if (entry instanceof Error) throw entry;
+        return { ...entry, stderr: '' };
+      };
+      return { run, calls };
+    }
+    const q = (hive: string, value = false): string => `query ${hive}\\${KEY}${value ? ' /v Settings' : ''}`;
+
+    it('queries the key then the value for HKLM then HKCU and parses the REG_SZ JSON data', async () => {
+      const { run, calls } = scripted({
+        [q('HKLM')]: { code: 0, stdout: 'HKLM key' },
+        [q('HKLM', true)]: { code: 0, stdout: valueOut('HKEY_LOCAL_MACHINE', '{"env":{"A":"1"}}') },
+        [q('HKCU')]: { code: 0, stdout: 'HKCU key' },
+        [q('HKCU', true)]: { code: 0, stdout: valueOut('HKEY_CURRENT_USER', '{"model":"x"}') },
+      });
+      const r = await readManagedRegistry(run);
+      expect(r.map((x) => [x.path, x.state])).toEqual([
+        [String.raw`HKLM\SOFTWARE\Policies\ClaudeCode\Settings`, 'ok'],
+        [String.raw`HKCU\SOFTWARE\Policies\ClaudeCode\Settings`, 'ok'],
+      ]);
+      expect(r[0].parsed).toEqual({ env: { A: '1' } });
+      expect(r[1].parsed).toEqual({ model: 'x' });
+      // Hives are queried in parallel; within one hive the key query precedes the value query.
+      const lines = calls.map((c) => c.join(' '));
+      for (const hive of ['HKLM', 'HKCU']) {
+        expect(lines.filter((l) => l.includes(` ${hive}\\`))).toEqual([`reg ${q(hive)}`, `reg ${q(hive, true)}`]);
+      }
+    });
+
+    it('treats a non-zero exit with empty stdout as absent whatever the message says (key or value)', async () => {
+      const localized = async (): Promise<{ code: number; stdout: string; stderr: string }> =>
+        ({ code: 1, stdout: '', stderr: 'FEHLER: Das System kann den angegebenen Registrierungsschluessel nicht finden.' });
+      const noKey = await readManagedRegistry(localized);
+      expect(noKey.map((x) => x.state)).toEqual(['absent', 'absent']);
+
+      const { run } = scripted({
+        [q('HKLM')]: { code: 0, stdout: 'key' },
+        [q('HKLM', true)]: { code: 1, stdout: '' },
+        [q('HKCU')]: { code: 1, stdout: '' },
+      });
+      expect((await readManagedRegistry(run)).map((x) => x.state)).toEqual(['absent', 'absent']);
+    });
+
+    it('reports a runner that cannot start, or times out, as unreadable for that hive only', async () => {
+      const { run } = scripted({
+        [q('HKLM')]: new Error('spawn reg ENOENT'),
+        [q('HKCU')]: { code: 1, stdout: '' },
+      });
+      expect((await readManagedRegistry(run)).map((x) => x.state)).toEqual(['unreadable', 'absent']);
+
+      const hang: CommandRunner = () => new Promise(() => undefined);
+      expect((await readManagedRegistry(hang, { timeoutMs: 20 })).map((x) => x.state)).toEqual(['unreadable', 'unreadable']);
+    });
+
+    it('reports unparseable output (no Settings line, wrong type, bad JSON, non-object) as unreadable', async () => {
+      const cases = [
+        'garbage',
+        '    Settings    REG_DWORD    0x1',
+        '    Settings    REG_SZ    {not json',
+        '    Settings    REG_SZ    [1,2]',
+      ];
+      for (const out of cases) {
+        const { run } = scripted({
+          [q('HKLM')]: { code: 0, stdout: 'k' },
+          [q('HKLM', true)]: { code: 0, stdout: out },
+          [q('HKCU')]: { code: 1, stdout: '' },
+        });
+        expect((await readManagedRegistry(run))[0].state).toBe('unreadable');
+      }
+    });
+
+    it('reports a non-zero exit with output on the key query as unreadable', async () => {
+      const { run } = scripted({ [q('HKLM')]: { code: 5, stdout: 'partial' }, [q('HKCU')]: { code: 1, stdout: '' } });
+      expect((await readManagedRegistry(run))[0].state).toBe('unreadable');
+    });
   });
 });
