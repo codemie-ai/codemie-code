@@ -5,6 +5,8 @@ import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
 import type { AgentInstallationOptions } from '@/agents/core/types.js';
+import type { ConsentToken } from '@/agents/plugins/claude/cloud-provider-conflict/gate.js';
+import { ConfigLoader } from '@/utils/config.js';
 import {
   STATUSLINE_NAME,
   STATUSLINE_DISPLAY_NAME,
@@ -14,6 +16,18 @@ import {
 } from '@/agents/plugins/claude/statusline-installer.js';
 import ora from 'ora';
 import chalk from 'chalk';
+
+/** The active profile, or undefined when there is none or it cannot be read (the gate skips an install without one). */
+async function loadActiveProfile(): Promise<{ provider?: string } | undefined> {
+  try {
+    const name = await ConfigLoader.getActiveProfileName();
+    if (!name) return undefined;
+    return (await ConfigLoader.getProfile(name)) ?? undefined;
+  } catch (error: unknown) {
+    logger.debug(`Could not load the active profile for the Bedrock settings check: ${getErrorMessage(error)}`);
+    return undefined;
+  }
+}
 
 export function createInstallCommand(): Command {
   const command = new Command('install');
@@ -102,6 +116,36 @@ export function createInstallCommand(): Command {
         const agent = AgentRegistry.getAgent(canonicalName);
 
         if (agent) {
+          // Claude only: Bedrock selected by Claude settings would bypass the gateway. Detect (and ask)
+          // before any other prompt; the agreed switch is applied only once the run really installs.
+          let consent: ConsentToken | null = null;
+          if (agent.name === 'claude') {
+            const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
+            const { canPromptForProject } = await import('@/utils/interactive.js');
+            const outcome = await detectAndAsk({
+              flow: 'install',
+              canPrompt: canPromptForProject({}),
+              profile: await loadActiveProfile(),
+            });
+            if (outcome.kind === 'stop') {
+              // stderr, like the other failure output of this command
+              console.error(outcome.guidance);
+              process.exit(1);
+            }
+            consent = outcome.token;
+          }
+
+          const applyBedrockConsent = async (): Promise<void> => {
+            if (!consent) return;
+            const token = consent;
+            consent = null;
+            const { applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
+            const result = await applyConsented(token);
+            if (result.backupDir !== null) {
+              console.log(chalk.yellow('Nothing routes to the CodeMie gateway until the next codemie-claude run.'));
+            }
+          };
+
           // Determine which version to install
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
@@ -135,6 +179,7 @@ export function createInstallCommand(): Command {
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
+                  await applyBedrockConsent();
                   await agent.additionalInstallation(options);
                 }
 
@@ -164,6 +209,7 @@ export function createInstallCommand(): Command {
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
+                await applyBedrockConsent();
                 await agent.additionalInstallation(options);
               }
 
@@ -178,6 +224,8 @@ export function createInstallCommand(): Command {
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`
             : '';
+
+          await applyBedrockConsent();
 
           const spinner = ora(`Installing ${agent.displayName}${versionMessage}...`).start();
 
