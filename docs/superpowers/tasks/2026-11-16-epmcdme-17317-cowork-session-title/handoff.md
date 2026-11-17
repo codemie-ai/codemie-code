@@ -30,11 +30,12 @@ additional, ticket-required piece on top: Cowork no longer sends the noise at al
 *two* distinct entrypoints, not one — `local-agent` for the local-VM mode this PR's fix is scoped to,
 and `remote_cowork` for a separate cloud-hosted mode (a remote workspace linked back to the local
 machine). `remote_cowork` has **zero footprint anywhere in this repo** — it doesn't come from
-`cowork-events.ts` or any other file here, so whatever produces it is either Desktop-native with no
-local CLI involvement, or a code path this investigation hasn't found yet. **This PR's fix only
-touches the `local-agent` path (`cowork-events.ts`'s own event producer).** If `remote_cowork`
-sessions also forward a `session_title` from somewhere, it isn't from the code this PR changed — that
-would need its own investigation.
+`cowork-events.ts` or any other file here. **The PR's change is not scoped to an entrypoint:** the
+title stamp is gone for every event the Cowork producer builds, and the producer reads the entrypoint
+from each transcript line (`cowork-events.ts:213`), so any session this producer handles, whatever its
+entrypoint, no longer sends Desktop's title. What is **not verified** is whether `remote_cowork`
+sessions are discovered by this producer at all. If they are not, the CLI sends nothing for them and
+only the backend rule covers them. No other path in this repo emits `session_title` for Cowork.
 
 ## What was changed
 
