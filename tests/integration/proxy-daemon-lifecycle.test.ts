@@ -238,7 +238,10 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Proxy daemon lifecycle (real spawn)',
     if (upstream) await new Promise<void>((resolve) => upstream.close(() => resolve()));
     if (originalJwt) process.env.CODEMIE_JWT_TOKEN = originalJwt;
     else delete process.env.CODEMIE_JWT_TOKEN;
-    if (testHome) rmSync(testHome, { recursive: true, force: true });
+    // Windows does not remove a directory that holds an open log file: this process's logger wrote under
+    // testHome, and a daemon killed above releases its own log a moment later.
+    await (await import('../../src/utils/logger.js')).logger.close();
+    if (testHome) rmSync(testHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('spawns a live detached process and persists its state', async () => {
