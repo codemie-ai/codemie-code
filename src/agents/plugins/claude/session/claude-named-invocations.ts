@@ -42,6 +42,7 @@ interface RawMessage {
 
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
 const SLASH_LINE = /^\/([A-Za-z0-9][\w:.-]*)(?:\s[\s\S]*)?$/;
+const GENUINE_WRAPPER_START = /^\s*<command-name>[^<]+<\/command-name>\s*<command-message>/;
 
 /**
  * The name in a typed `/name [args]` user prompt (a lone string or text block), or `''`. A wrapper
@@ -66,18 +67,26 @@ function bump(map: Record<string, number>, key: string): void {
 }
 
 /**
- * The command name (leading slash stripped) in a genuine CLI wrapper anchored at the very start of
- * `text`, or `''` when the text does not open with `<command-name>` or carries no `<command-message>`
- * sibling. Anchored — unlike `matchCommandNames` — because this feeds a Turns exclusion: a typed
- * prompt that merely quotes a wrapper mid-text (e.g. asking about one) is real user text and must
- * still count as a turn, not be mistaken for the genuine wrapper line Claude Code writes as the
- * entire message.
+ * Every command name (leading slash stripped) in a genuine CLI wrapper anchored at the very start
+ * of `text`, or `[]` when the text does not open with `<command-name>` followed immediately (only
+ * whitespace between) by its `<command-message>` sibling. Anchored — unlike `matchCommandNames` —
+ * because this feeds a Turns exclusion: a typed prompt that merely quotes a wrapper mid-text (e.g.
+ * asking about one), or opens with a pasted `<command-name>` tag that isn't actually followed by
+ * `<command-message>`, is real user text and must still count as a turn, not be mistaken for the
+ * genuine wrapper line Claude Code writes as the entire message. Returns every name, not just the
+ * first, so a caller can require all of them to agree before excluding the line — Claude Code
+ * writes one command per line, but nothing here assumes that holds.
  */
-export function wrappedCommandName(text: string): string {
-  if (!/^\s*<command-name>/.test(text) || !text.includes('<command-message>')) return '';
+export function wrappedCommandNames(text: string): string[] {
+  if (!GENUINE_WRAPPER_START.test(text)) return [];
+  const names: string[] = [];
   COMMAND_TAG.lastIndex = 0;
-  const match = COMMAND_TAG.exec(text);
-  return match ? match[1].replace(/^\//, '').trim() : '';
+  let match: RegExpExecArray | null;
+  while ((match = COMMAND_TAG.exec(text)) !== null) {
+    const cmd = match[1].replace(/^\//, '').trim();
+    if (cmd) names.push(cmd);
+  }
+  return names;
 }
 
 /**

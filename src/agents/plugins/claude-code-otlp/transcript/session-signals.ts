@@ -1,5 +1,5 @@
 import { countContentLines } from '@/utils/file-operations.js';
-import { wrappedCommandName } from '../../claude/session/claude-named-invocations.js';
+import { wrappedCommandNames } from '../../claude/session/claude-named-invocations.js';
 
 /**
  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
@@ -204,7 +204,8 @@ export function countTurns(lines: readonly SignalLine[]): number {
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
-    if (LOCAL_ONLY_COMMANDS.has(wrappedCommandName(text))) continue;
+    const commandNames = wrappedCommandNames(text);
+    if (commandNames.length > 0 && commandNames.every((name) => LOCAL_ONLY_COMMANDS.has(name))) continue;
     turns += 1;
   }
   return turns;

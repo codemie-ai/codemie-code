@@ -257,6 +257,29 @@ describe('countTurns', () => {
       'what does this transcript line mean: <command-name>/clear</command-name>\n<command-message>clear</command-message>';
     expect(countTurns([user(quoted)])).toBe(1);
   });
+
+  it('counts a real prompt that opens with a pasted command-name tag but has no command-message right after it (review nit)', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const text =
+      '<command-name>/clear</command-name> tell me what this transcript tag means: <command-message>';
+    expect(countTurns([user(text)])).toBe(1);
+  });
+
+  it('counts a line with two command wrappers when at least one of them calls the model (review nit)', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const twoCommands =
+      '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>\n' +
+      '<command-name>/compact</command-name>\n<command-message>compact</command-message>';
+    expect(countTurns([user(twoCommands)])).toBe(1);
+  });
+
+  it('excludes a line with two command wrappers only when every one of them is local-only', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const twoLocalOnly =
+      '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>\n' +
+      '<command-name>/usage</command-name>\n<command-message>usage</command-message>';
+    expect(countTurns([user('typed prompt'), user(twoLocalOnly)])).toBe(1);
+  });
 });
 
 describe('collectCompactions', () => {
