@@ -116,8 +116,14 @@ The same exception covers `codemie analytics sync bootstrap`'s lead state,
 `~/.codemie/analytics-sync-bootstrap.json` (mode `0o600`, written via `writePrivateJson()` in
 `src/cli/commands/analytics/sync/private-file.ts`). It holds the full webhook URL, including
 `sig=`, because the guided wizard saves after every step so an interrupted or repeated run can
-resume and reprint the install command. The same rules apply: `--webhook` mode never reads or
-writes it, and the wizard shows the saved webhook only as its host.
+resume and reprint the install command. The file is versioned: it records which delivery
+`targets` the lead chose (webhook, git, or both) and, for the git target, the repository URL,
+branch and path (`gitRepoUrl`/`gitBranch`/`gitPath`) with the test outcome. No credential is
+ever stored: a git URL with embedded credentials (`user:token@…`) is rejected at entry and
+again when a saved state is reused, and push access comes from each developer's own SSH key
+or credential helper. The same rules apply: non-interactive mode (`--webhook`/`--git-repo`)
+never reads or writes it, and the wizard shows the saved webhook and git repository only as
+their host.
 
 ---
 
