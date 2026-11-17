@@ -98,7 +98,7 @@ function sameLocalProxy(endpoint: string | undefined, proxyUrl: string): boolean
  */
 const OFF = ['', '0', 'false', 'no', 'off'];
 const ON = ['1', 'true', 'yes', 'on'];
-function flagState(v: string | undefined): 'off' | 'on' | 'unknown' {
+export function flagState(v: string | undefined): 'off' | 'on' | 'unknown' {
   const t = (v ?? '').trim().toLowerCase();
   return OFF.includes(t) ? 'off' : ON.includes(t) ? 'on' : 'unknown';
 }
@@ -143,7 +143,7 @@ function underBase(candidate: string | undefined, base: string | undefined): boo
   return !!candidate && !!base && (candidate === base || candidate.startsWith(`${base}/`));
 }
 
-const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+export const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
 /** Conservative: anything but an explicit off value counts as set, so an unfamiliar spelling never reads as OAuth. */
 const flagSet = (v: string | undefined): boolean => flagState(v) !== 'off';
 /** Credentials that make Claude authenticate with something other than the saved OAuth login. Only presence is read. */
