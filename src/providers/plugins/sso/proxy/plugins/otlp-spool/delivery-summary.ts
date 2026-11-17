@@ -22,6 +22,13 @@ const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable'
 const ORGANIZATION_ENCODING_STALL_REASON = 'organization_encoding_unsupported';
 
 /**
+ * Session holds whose unsent bytes are not reported as "on hold": the status already names them on its own
+ * (endpoint mismatch, classification stalls), or they are the short wait of a new session for its stamp, which
+ * would flicker in the status of a healthy machine.
+ */
+const NOT_REPORTED_AS_HELD = new Set(['analytics_endpoint_mismatch', 'stamp_pending', ...CLASSIFICATION_STALL_REASONS]);
+
+/**
  * What the spool says about analytics delivery, aggregated over every session. Derived from
  * existing files only, and deliberately capability-free: the daemon's capability resolve (a
  * credential read, possibly an owner-verification network probe) and this spool scan touch
@@ -39,6 +46,11 @@ const ORGANIZATION_ENCODING_STALL_REASON = 'organization_encoding_unsupported';
 export interface SpoolDeliverySummary {
   /** Sum of unsent bytes (size - cursor) across all spool streams of all sessions. */
   pendingBytes: number;
+  /**
+   * The part of `pendingBytes` that belongs to sessions held as a whole (a hold on one stream does not count) for a
+   * reason the status does not already name. Absent when there is none.
+   */
+  heldBytes?: number;
   /** The spool could not be read completely, so `pendingBytes` may be too low. */
   incomplete?: boolean;
   /** A session with pending data is held because the analytics endpoint does not match the credential identity. */
@@ -119,6 +131,7 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
   const live = status.holds?.session
     ? []
     : await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
+  const heldBytes = status.holds?.session && !NOT_REPORTED_AS_HELD.has(holdReason) ? pendingBytes : 0;
   const latestDrop = sessionDrop(status);
   const sendFailure = live.reduce<SendFailure | undefined>(
     (first, rec) => earlier(first, rec && { nextAt: rec.nextAt, ...(rec.detail ? { detail: rec.detail } : {}) }),
@@ -129,6 +142,7 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     mismatchHeld,
     classificationStalled,
     organizationEncodingStalled,
+    ...(heldBytes > 0 ? { heldBytes } : {}),
     ...(sendFailure ? { sendFailure } : {}),
     ...(latestDrop ? { latestDrop } : {}),
   };
@@ -154,6 +168,7 @@ export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
       const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map((id) => summarizeSession(id)));
       for (const s of batch) {
         summary.pendingBytes += s.pendingBytes;
+        if (s.heldBytes) summary.heldBytes = (summary.heldBytes ?? 0) + s.heldBytes;
         summary.mismatchHeld ||= s.mismatchHeld;
         const sendFailure = earlier(summary.sendFailure, s.sendFailure);
         if (sendFailure) summary.sendFailure = sendFailure;

@@ -43,6 +43,7 @@ describe('createProxyAnalyticsCommand', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.resetModules();
     await rm(tempDir, { recursive: true, force: true });
@@ -368,6 +369,8 @@ describe('createProxyAnalyticsCommand', () => {
     });
 
     it('shows the next retry and the error code of a failing send, with no Run line', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.parse('2026-11-13T14:02:10.000Z')); // the retry time below is still ahead
       mockRunningDaemon({
         status: 'unhealthy',
         reason: 'send_failed',

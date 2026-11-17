@@ -240,10 +240,10 @@ describe('collectDeliveryHealth', () => {
 
       const health = await collectDeliveryHealth(state, ok);
 
-      expect(health).toEqual({ status: 'healthy', pendingBytes: 4096 });
+      expect(health).toEqual({ status: 'healthy', pendingBytes: 4096, heldBytes: 4096 });
       const text = formatDeliveryLines(health).map((l) => stripAnsi(l)).join('\n');
       expect(text).toContain('Delivery: healthy');
-      expect(text).toContain('Unsent data: 4.00 KB (all sessions on this machine)');
+      expect(text).toContain('Unsent data: 4.00 KB (all sessions on this machine), 4.00 KB of it on hold');
       expect(text).not.toContain('Next retry');
       expect(text).not.toContain('Error:');
     });
@@ -259,7 +259,7 @@ describe('collectDeliveryHealth', () => {
 
       const health = await collectDeliveryHealth(state, ok);
 
-      expect(health).toMatchObject({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 4096 + 100, sendFailure: { nextAt, detail: 'http_503' } });
+      expect(health).toMatchObject({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 4096 + 100, heldBytes: 4096, sendFailure: { nextAt, detail: 'http_503' } });
     });
   });
 
@@ -520,14 +520,19 @@ describe('formatDeliveryLines', () => {
    * ended on 2026-11-01, so these fixtures never sit near a clock change; the changes have their own tests below.
    */
   const NEXT_RETRY = '2026-11-13 09:32:10 -05:00';
+  /** The clock of these tests: half an hour before the fixtures' retry time, so it is still ahead. */
+  const NOW = '2026-11-13T14:02:10.000Z';
   let savedTz: string | undefined;
 
   beforeEach(() => {
     savedTz = process.env.TZ;
     process.env.TZ = 'America/New_York';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse(NOW));
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (savedTz === undefined) delete process.env.TZ;
     else process.env.TZ = savedTz;
   });
@@ -578,6 +583,27 @@ describe('formatDeliveryLines', () => {
       `Next retry: ${NEXT_RETRY}`,
       'Error: http_503',
     ]);
+  });
+
+  it.each([
+    ['is in the past', Date.parse(NOW) - 16 * 3_600_000],
+    ['is just now', Date.parse(NOW)],
+  ])('prints the next retry as due now when its time %s, never as a past date', (_name, nextAt) => {
+    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 0, sendFailure: { nextAt, detail: 'http_503' } }));
+
+    expect(lines).toContain('Next retry: due now');
+    expect(lines.join('\n')).not.toMatch(/Next retry: \d{4}-/);
+  });
+
+  it('names the part of the unsent data that is on hold after the unsent amount', () => {
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 11_460_000, heldBytes: 4096 }))).toEqual([
+      'Delivery: healthy',
+      'Unsent data: 10.93 MB (all sessions on this machine), 4.00 KB of it on hold',
+    ]);
+  });
+
+  it('prints no on-hold part when nothing is held', () => {
+    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))[1]).toBe('Unsent data: 2.00 KB (all sessions on this machine)');
   });
 
   it('reads a failure without an HTTP response as the backend being unreachable', () => {

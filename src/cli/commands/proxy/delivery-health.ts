@@ -24,6 +24,8 @@ export interface DeliveryHealth {
   reason?: DeliveryReason;
   /** Unsent bytes across all sessions; absent when the spool could not be read, which is not the same as none. */
   pendingBytes?: number;
+  /** The part of `pendingBytes` held in sessions that are not sent for now; absent when none, or when `pendingBytes` is. */
+  heldBytes?: number;
   /** The spool could not be read completely and no failure was found in what was read, so delivery cannot be judged. */
   incomplete?: true;
   /** When the next send is due and why the last one failed; set only when `reason` is `send_failed`. */
@@ -134,7 +136,7 @@ export async function collectDeliveryHealth(
       : undefined;
 
     const drop = spool.latestDrop ? { latestDrop: spool.latestDrop } : {};
-    const pending = spool.incomplete ? {} : { pendingBytes: spool.pendingBytes };
+    const pending = spool.incomplete ? {} : { pendingBytes: spool.pendingBytes, ...(spool.heldBytes ? { heldBytes: spool.heldBytes } : {}) };
     if (reason) {
       const failure = reason === 'send_failed' && spool.sendFailure ? { sendFailure: spool.sendFailure } : {};
       return { status: 'unhealthy', reason, ...pending, ...failure, ...drop };
@@ -210,12 +212,12 @@ export function unknownHint(health: DeliveryHealth): string {
   return health.incomplete ? 'local analytics data could not be read' : 'restart the proxy to enable all checks';
 }
 
-/** An amount that could not be read is `unknown`, never `none`. */
-function unsentDataMessage(pendingBytes: number | undefined): string {
+/** An amount that could not be read is `unknown`, never `none`. The part held in sessions that are not sent for now is named after it. */
+function unsentDataMessage(pendingBytes: number | undefined, heldBytes?: number): string {
   if (pendingBytes === undefined) return 'Unsent data: unknown';
-  return pendingBytes > 0
-    ? `Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)`
-    : 'Unsent data: none';
+  if (pendingBytes <= 0) return 'Unsent data: none';
+  const held = heldBytes ? `, ${formatBytes(heldBytes)} of it on hold` : '';
+  return `Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)${held}`;
 }
 
 /** The error code of a failed send; no HTTP response at all reads as the backend being unreachable. */
@@ -235,10 +237,12 @@ export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
 
   const rows: ReportRow[] = [
     deliveryRow(health),
-    { message: unsentDataMessage(health.pendingBytes) },
+    { message: unsentDataMessage(health.pendingBytes, health.heldBytes) },
   ];
   if (health.sendFailure) {
-    rows.push({ message: `Next retry: ${formatTime(health.sendFailure.nextAt)}` });
+    // The daemon retries on its next tick, so a time that has come reads as due, never as a past date.
+    const { nextAt } = health.sendFailure;
+    rows.push({ message: `Next retry: ${nextAt <= Date.now() ? 'due now' : formatTime(nextAt)}` });
     if (health.sendFailure.detail) {
       rows.push({ message: `Error: ${describeError(health.sendFailure.detail)}` });
     }
