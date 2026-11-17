@@ -280,6 +280,27 @@ describe('countTurns', () => {
       '<command-name>/usage</command-name>\n<command-message>usage</command-message>';
     expect(countTurns([user('typed prompt'), user(twoLocalOnly)])).toBe(1);
   });
+
+  it('excludes a local-only command from turns when the wrapper is written message-first (review finding)', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const messageFirst = (name: string) =>
+      `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`;
+    expect(
+      countTurns([
+        user('typed prompt'),
+        user(messageFirst('exit')),
+        user(messageFirst('model')),
+        user(messageFirst('usage')),
+      ])
+    ).toBe(1); // only the typed prompt
+  });
+
+  it('still counts a message-first command that calls the model, like /compact', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const messageFirst = (name: string) =>
+      `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`;
+    expect(countTurns([user(messageFirst('compact'))])).toBe(1);
+  });
 });
 
 describe('collectCompactions', () => {

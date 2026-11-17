@@ -42,7 +42,8 @@ interface RawMessage {
 
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
 const SLASH_LINE = /^\/([A-Za-z0-9][\w:.-]*)(?:\s[\s\S]*)?$/;
-const GENUINE_WRAPPER_START = /^\s*<command-name>[^<]+<\/command-name>\s*<command-message>/;
+const GENUINE_WRAPPER_START =
+  /^\s*(?:<command-name>[^<]+<\/command-name>\s*<command-message>|<command-message>[^<]*<\/command-message>\s*<command-name>)/;
 
 /**
  * The name in a typed `/name [args]` user prompt (a lone string or text block), or `''`. A wrapper
@@ -68,10 +69,12 @@ function bump(map: Record<string, number>, key: string): void {
 
 /**
  * Every command name (leading slash stripped) in a genuine CLI wrapper anchored at the very start
- * of `text`, or `[]` when the text does not open with `<command-name>` followed immediately (only
- * whitespace between) by its `<command-message>` sibling. Anchored — unlike `matchCommandNames` —
- * because this feeds a Turns exclusion: a typed prompt that merely quotes a wrapper mid-text (e.g.
- * asking about one), or opens with a pasted `<command-name>` tag that isn't actually followed by
+ * of `text`, or `[]` when the text does not open with `<command-name>` and `<command-message>`
+ * immediately adjacent (only whitespace between), in either order — fixtures across this codebase
+ * disagree on which tag Claude Code writes first, and `isLocalCommandTurn` (`orchestrator.ts`)
+ * already accepts either, so this does too. Anchored — unlike `matchCommandNames` — because this
+ * feeds a Turns exclusion: a typed prompt that merely quotes a wrapper mid-text (e.g. asking about
+ * one), or opens with a pasted `<command-name>` tag that isn't actually paired with a
  * `<command-message>`, is real user text and must still count as a turn, not be mistaken for the
  * genuine wrapper line Claude Code writes as the entire message. Returns every name, not just the
  * first, so a caller can require all of them to agree before excluding the line — Claude Code
