@@ -162,19 +162,23 @@ export function isGenuineUserTurn(parsed: SignalLine): boolean {
 
 /**
  * Whether the line at `i` is a command Claude Code itself marked as having run locally, with no
- * model call — the nearest preceding line that carries a `message` is a `<local-command-caveat>`
- * line, Claude Code's own signal for this, present regardless of the command's name. Name-list-free
- * by design: a static denylist of local-only command names always drifts as Claude Code adds new
+ * model call — the nearest preceding line carrying text is a `<local-command-caveat>` line,
+ * Claude Code's own signal for this, present regardless of the command's name. Name-list-free by
+ * design: a static denylist of local-only command names always drifts as Claude Code adds new
  * ones (see PR #824 review — 34/2308+ real transcript lines misclassified across names never on
- * the list). Skips non-message bookkeeping lines (`file-history-snapshot`, `cost-state`, ...) while
- * scanning backward — the same lines `isCountedTranscriptLine` (orchestrator.ts) lets through
- * rather than filtering, so strict index adjacency to `i - 1` is not safe (CR-002, PR #824 review).
+ * the list). Skips any line with no usable text while scanning backward: non-message bookkeeping
+ * lines (`file-history-snapshot`, `cost-state`, ...) the same way `isCountedTranscriptLine`
+ * (orchestrator.ts) lets them through rather than filtering, but also a `message` line that
+ * carries no text of its own — `tool_result`-only content, or an explicit `message: null` — which
+ * strict adjacency to the first `message`-bearing line (the original fix) stopped at too early,
+ * missing the caveat sitting just behind it (CR-004, PR #824 review round 4). Strict index
+ * adjacency to `i - 1` is not safe either way (CR-002, PR #824 review).
  */
 function isMarkedLocalCommand(lines: readonly SignalLine[], i: number): boolean {
   for (let j = i - 1; j >= 0; j--) {
-    const line = lines[j];
-    if (line.message === undefined) continue;
-    return userLineText(line).trimStart().startsWith('<local-command-caveat>');
+    const text = userLineText(lines[j]);
+    if (text === '') continue;
+    return text.trimStart().startsWith('<local-command-caveat>');
   }
   return false;
 }
@@ -190,9 +194,14 @@ function isCompactCommand(text: string): boolean {
   return /<command-name>\/compact<\/command-name>/.test(text);
 }
 
-/** Whether `text` is a genuine, un-wrapped `/compact` invocation typed straight into the CLI. */
+/**
+ * Whether `text` is a genuine, un-wrapped `/compact` invocation typed straight into the CLI.
+ * Anchored with a word boundary (end of string or whitespace right after `/compact`), not a bare
+ * `startsWith`: free text or a different command sharing the prefix (`/compactify ...`) must not
+ * false-match and silently suppress a real, unrelated `/compact` rescue (CR-003, PR #824 review).
+ */
 function isTypedCompactText(text: string): boolean {
-  return text.trimStart().startsWith('/compact');
+  return /^\/compact(?:\s|$)/.test(text.trimStart());
 }
 
 /**

@@ -406,6 +406,76 @@ describe('countTurns', () => {
       ])
     ).toBe(2);
   });
+
+  it('round-4 CR-003: a free-text prompt sharing the /compact prefix must not suppress an unrelated /compact rescue', () => {
+    // isTypedCompactText is anchored with a word boundary, not a bare startsWith: "/compactify" or
+    // other text merely starting with "/compact" is not the typed trigger for this invocation.
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('/compactify the deployment pipeline please'),
+        boundary(),
+        compactSummary(),
+        caveat(),
+        wrappedCommand('compact'),
+        stdout('Compacted'),
+      ])
+    ).toBe(2); // the free-text prompt + the rescued, unrelated /compact
+  });
+
+  it('round-4 CR-004: a tool_result-only message line between the caveat and its wrapper does not break exclusion', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const toolResultLine = (): SignalLine => ({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 't1' } as unknown] },
+    });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        caveat(),
+        toolResultLine(), // carries a message field, but no text — must not be mistaken for the caveat's neighbor
+        wrappedCommand('add-dir'),
+        stdout(),
+      ])
+    ).toBe(1);
+  });
+
+  it('round-4 CR-004: an explicit message: null line between the caveat and its wrapper does not break exclusion', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    const nullMessageLine = (): SignalLine => ({ type: 'user', message: null as unknown as { content?: unknown } });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        caveat(),
+        nullMessageLine(),
+        wrappedCommand('add-dir'),
+        stdout(),
+      ])
+    ).toBe(1);
+  });
+
+  it('round-4 CR-002: the full 15-Nov regression shape (prompt + /context + /usage + /compact + 2 skills + /init) counts TURNS=5', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('a genuine typed prompt'),
+        caveat(),
+        wrappedCommand('context'), // marked local, no model call — excluded
+        stdout(),
+        caveat(),
+        wrappedCommand('usage'), // marked local, no model call — excluded
+        stdout(),
+        boundary(),
+        compactSummary(),
+        caveat(),
+        wrappedCommand('compact'), // marked local, but rescued: calls the model
+        stdout('Compacted'),
+        wrappedCommand('skill-one'), // skill-backed command, not preceded by a caveat — calls the model
+        wrappedCommand('skill-two'),
+        wrappedCommand('init'), // calls the model, not preceded by a caveat
+      ])
+    ).toBe(5);
+  });
 });
 
 describe('collectCompactions', () => {
