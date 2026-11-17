@@ -255,8 +255,14 @@ describe('CoworkEventProducer.run', () => {
     expect(usage.filter((event) => event['model'] === ROUTE).map((event) => [event['message_id'], event['model_raw']]))
       .toEqual([['msg_synthetic_A', 'claude-opus-5']]);
     expect(usage.filter((event) => event['agent_id'] === AGENT)).toHaveLength(2);
-    expect(lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event)
-      .toMatchObject({ session_title: 'Synthetic notes task', timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    const sessionStart = lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event;
+    expect(sessionStart).toMatchObject({ timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    // EPMCDME-17317: Desktop's own auto-title ("Synthetic notes task" in the fixture's metadata.json)
+    // must never reach the wire as session_title, even though Desktop set one.
+    expect(sessionStart).not.toHaveProperty('session_title');
+    for (const { event } of lines) {
+      expect(event).not.toHaveProperty('session_title');
+    }
     expect(lines.filter((spoolLine) => spoolLine.event['git_branch'] !== '' || spoolLine.event['cwd'] !== 'Cowork')).toEqual([]);
     expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBe('synthetic-project');
   });

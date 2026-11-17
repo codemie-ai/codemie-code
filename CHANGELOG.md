@@ -4,9 +4,19 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.10] - 2026-11-17
+
+### Added
+
+- `codemie analytics sync bootstrap` asks first where developer machines deliver their reports (Teams webhook, a git repository, or both) and shows only the steps that target needs
+
 ### Fixed
 
 - `codemie proxy analytics status` and `codemie proxy status` no longer report delivery as unhealthy, with a retry time that has already passed, because of a session that is held and not retried; the held data still counts as unsent and `Unsent data` names the part on hold (`heldBytes` in `--json`). `Next retry` reads `due now` once its time has come, and it and `Last dropped` show times in your local time zone (`2026-11-16 01:24:22 +03:00`); `--json` keeps epoch milliseconds
+- `codemie install codemie-code --supported` installs the pinned supported version
+- `codemie hook` exits 0 silently when it runs outside a CodeMie session
+- Kimi native install works on Windows
+- The MS Graph skill's `emails --read` prints the full email body
 
 ## [0.16.9] - 2026-11-16
 
