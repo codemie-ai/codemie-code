@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.9] - 2026-11-16
+
+### Added
+
+- `codemie-claude models select|list|add|remove` offers non-Claude models from the profile's project catalog in Claude Code's `/model` picker and in Claude Desktop's model list
+- Copilot CLI analytics cover managed and native sessions: tool and usage metrics, per-request usage and session summaries, counted once per Copilot session
+
+### Changed
+
+- `codemie proxy connect --claude-code-otlp` prints a shorter confirmation: the repository name instead of the path, no configuration tables and no restart hint
+- `codemie proxy analytics status` uses sections, adds unsent data and retry details, and drops the current project; `--json` returns `delivery` and a `connectors` array
+- Claude Desktop is offered every Claude model the profile's project allows
+
+### Fixed
+
+- Analytics prices Claude Fable 5.2 and Gemini 4 Hydrogen sessions instead of leaving their cost empty
+- Repository names no longer include the drive letter (`C:\Repositories` is `Repositories`)
+- Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
+- `codemie-claude --resume` accepts the CodeMie session id as well as Claude's own session id
+- When the SSO login expires, the proxy keeps its port, answers 401 and opens a browser sign-in instead of stopping
+- Claude Desktop no longer gets stuck on a 401 from gateway SSO discovery
+- Analytics delivery health reports classification stalls (unreachable or unsupported) as unhealthy
+- Unconsented Personal Claude sessions are held locally instead of being sent
+- Session analytics have a retry budget, and the wrapper prints on exit which sessions are still queued or were dropped
+- Copilot desktop wrapper blocks are stripped from session prompts
+
 ## [0.16.8] - 2026-11-12
 
 ### Added

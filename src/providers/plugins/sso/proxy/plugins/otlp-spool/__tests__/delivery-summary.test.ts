@@ -40,19 +40,25 @@ describe('summarizeSpoolDelivery', () => {
     await writeFile(statusFile(id), JSON.stringify(status));
   }
 
-  const failure = (cursor: number, end: number): NonNullable<SessionStatus['delivery']>['hooks'] => ({
-    reason: 'delivery_failed', since: 1000, cursor, end, attempts: 1, nextAt: 2000,
+  const failure = (cursor: number, end: number, nextAt: number, detail?: string): NonNullable<SessionStatus['delivery']>['hooks'] => ({
+    reason: 'delivery_failed', since: 1000, cursor, end, attempts: 1, nextAt, ...(detail ? { detail } : {}),
   });
 
   it('reports nothing for an empty or missing spool', async () => {
     await rm(spoolRoot(), { recursive: true, force: true });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, sendFailed: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
+  });
+
+  it('marks the summary incomplete when the spool root exists but cannot be listed', async () => {
+    await rm(spoolRoot(), { recursive: true, force: true });
+    await writeFile(spoolRoot(), 'not a directory');
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 0, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false, incomplete: true });
   });
 
   it('sums unsent bytes across streams and sessions', async () => {
     await session('a', { hooks: 100, logs: 50 }, (s) => { s.cursors.hooks = 40; });
     await session('b', { metricsJson: 30 });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 60 + 50 + 30, mismatchHeld: false, sendFailed: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 60 + 50 + 30, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
   });
 
   it('flags a mismatch hold only while the session has pending data', async () => {
@@ -66,29 +72,101 @@ describe('summarizeSpoolDelivery', () => {
 
   it('ignores every other hold reason', async () => {
     await session('other', { hooks: 10 }, (s) => { s.holds = { session: { reason: 'stamp_pending', since: 1 } }; });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 10, mismatchHeld: false, sendFailed: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 10, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
   });
 
-  it('flags a live delivery-failure record', async () => {
-    await session('failing', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100) }; });
-    expect((await summarizeSpoolDelivery()).sendFailed).toBe(true);
+  it('reports a live delivery-failure record with its retry time and detail', async () => {
+    await session('failing', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 2000, 'http_503') }; });
+    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 2000, detail: 'http_503' });
+  });
+
+  it('reports the earliest retry across streams and sessions, with the detail of that same record', async () => {
+    await session('late', { hooks: 100, logs: 100 }, (s) => {
+      s.delivery = { hooks: failure(0, 100, 9000, 'http_500'), logs: failure(0, 100, 5000, 'http_502') };
+    });
+    await session('early', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 3000, 'request_error') }; });
+    await session('unreachable-late', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 7000) }; });
+    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 3000, detail: 'request_error' });
+  });
+
+  it('omits the detail when the earliest failure record has none', async () => {
+    await session('no-detail', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 1500) }; });
+    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 1500 });
   });
 
   it('ignores a failure record whose cursor has moved', async () => {
-    await session('moved', { hooks: 100 }, (s) => { s.cursors.hooks = 50; s.delivery = { hooks: failure(0, 100) }; });
-    expect((await summarizeSpoolDelivery()).sendFailed).toBe(false);
+    await session('moved', { hooks: 100 }, (s) => { s.cursors.hooks = 50; s.delivery = { hooks: failure(0, 100, 2000) }; });
+    expect((await summarizeSpoolDelivery()).sendFailure).toBeUndefined();
   });
 
   it('ignores a failure record whose file is shorter than its end', async () => {
-    await session('short', { hooks: 60 }, (s) => { s.delivery = { hooks: failure(0, 100) }; });
-    expect((await summarizeSpoolDelivery()).sendFailed).toBe(false);
+    await session('short', { hooks: 60 }, (s) => { s.delivery = { hooks: failure(0, 100, 2000) }; });
+    expect((await summarizeSpoolDelivery()).sendFailure).toBeUndefined();
   });
 
   it('counts the stream files of a corrupt status as pending and sets no flags', async () => {
     await writeFile(streamFile('corrupt', 'hooks'), 'x'.repeat(25));
     await writeFile(streamFile('corrupt', 'logs'), 'x'.repeat(5));
     await writeFile(statusFile('corrupt'), '{not json');
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 30, mismatchHeld: false, sendFailed: false });
+    expect(await summarizeSpoolDelivery()).toEqual({
+      pendingBytes: 30,
+      mismatchHeld: false,
+      classificationStalled: false,
+      organizationEncodingStalled: false,
+    });
+  });
+
+  it('flags classificationStalled when held on a qualifying reason with pending data', async () => {
+    await session('stalled', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(true);
+  });
+
+  it('flags classificationStalled for organization_encoding_unsupported too', async () => {
+    await session('stalled-encoding', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(true);
+  });
+
+  it('flags organizationEncodingStalled only for organization_encoding_unsupported with pending data', async () => {
+    await session('stalled-encoding', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery()).organizationEncodingStalled).toBe(true);
+  });
+
+  it('does not flag organizationEncodingStalled for publication_contract_unavailable', async () => {
+    await session('stalled-contract', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
+    });
+    const summary = await summarizeSpoolDelivery();
+    expect(summary.classificationStalled).toBe(true);
+    expect(summary.organizationEncodingStalled).toBe(false);
+  });
+
+  it('does not flag organizationEncodingStalled on organization_encoding_unsupported without pending bytes', async () => {
+    await session('stalled-encoding-sent', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'organization_encoding_unsupported', since: 1 } };
+      s.cursors.hooks = 10;
+    });
+    expect((await summarizeSpoolDelivery()).organizationEncodingStalled).toBe(false);
+  });
+
+  it('never flags classificationStalled for publication_stopped', async () => {
+    await session('stopped', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_stopped', since: 1 } };
+    });
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
+  });
+
+  it('does not flag classificationStalled on a qualifying reason without pending bytes', async () => {
+    await session('stalled-sent', { hooks: 10 }, (s) => {
+      s.holds = { session: { reason: 'publication_contract_unavailable', since: 1 } };
+      s.cursors.hooks = 10;
+    });
+    expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
   });
 
   it('reports the newest drop across sessions: a local no_project loss after a backend discard', async () => {

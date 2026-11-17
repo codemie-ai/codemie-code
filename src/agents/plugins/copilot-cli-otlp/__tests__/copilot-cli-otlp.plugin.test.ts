@@ -405,6 +405,27 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     expect(JSON.stringify(event)).not.toMatch(/copilot_tauri_workspace|current_datetime/);
   });
 
+  it('strips every desktop-app block (workspace, working context, artifacts, branch rename) before the user text', async () => {
+    const wrappers =
+      '<copilot_tauri_workspace>\nBranch fields are JSON strings.\n</copilot_tauri_workspace>\n' +
+      '<copilot_working_context>\ncwd: /Users/dev/qa-16018/chat1\n</copilot_working_context>\n' +
+      '<copilot_artifacts>\nartifacts_dir: /Users/dev/.copilot/artifacts/0a5481ce\n</copilot_artifacts>\n' +
+      '<branch_rename_request>\nRename the branch.\n</branch_rename_request>\n' +
+      '<current_datetime>2026-11-13T12:00:00+02:00</current_datetime>\n';
+
+    const event = await forwardedPrompt(`${wrappers}Do these three things one after another`);
+
+    expect(event.prompt).toBe('Do these three things one after another');
+    expect(event.prompt_body).toBe('Do these three things one after another');
+    expect(JSON.stringify(event)).not.toMatch(/copilot_artifacts|branch_rename_request|artifacts_dir|\/Users\/dev/);
+  });
+
+  it('strips a desktop-app block whose tag is not known yet, as long as it is a copilot_* block', async () => {
+    const event = await forwardedPrompt('<copilot_future_context>\ninternal\n</copilot_future_context>\nFix the bug');
+
+    expect(event.prompt).toBe('Fix the bug');
+  });
+
   it('omits the prompt but still forwards the event when only the preamble is present', async () => {
     const event = await forwardedPrompt(preamble);
 
