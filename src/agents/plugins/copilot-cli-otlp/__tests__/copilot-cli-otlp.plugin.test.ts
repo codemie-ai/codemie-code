@@ -446,6 +446,66 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     expect(event.prompt).toBe('How to use <current_datetime> in prompts and keep the rest');
   });
 
+  const systemNotification =
+    '<system_notification> Reminder: This session currently has an auto-generated or placeholder name. ' +
+    'Before replying to the user, call the `rename_session` tool to give it a short title. </system_notification>';
+  const sourceJson = '<app_user_message_source_json>{"source":"user","id":"m1"}</app_user_message_source_json>';
+
+  it('strips the trailing <system_notification> reminder the desktop app appends after the user text', async () => {
+    const event = await forwardedPrompt(`Read notes.txt and reply with its first line only. ${systemNotification}`);
+
+    expect(event.prompt).toBe('Read notes.txt and reply with its first line only.');
+    expect(event.prompt_body).toBe('Read notes.txt and reply with its first line only.');
+    expect(JSON.stringify(event)).not.toMatch(/system_notification|rename_session/);
+  });
+
+  it('strips leading and trailing desktop-app blocks together, including <app_user_message_source_json>', async () => {
+    const event = await forwardedPrompt(`${preamble}List the lines of list.txt.\n${systemNotification}\n${sourceJson}`);
+
+    expect(event.prompt).toBe('List the lines of list.txt.');
+    expect(event.prompt_body).toBe('List the lines of list.txt.');
+    expect(JSON.stringify(event)).not.toMatch(/system_notification|app_user_message_source_json|copilot_tauri_workspace/);
+  });
+
+  it('stores the whole user text when a long reminder follows it, instead of cutting inside the reminder', async () => {
+    const userText = 'Please review the changes in the repository and summarise the risks. '.repeat(2).trim();
+    const event = await forwardedPrompt(`${userText}\n${systemNotification}`);
+
+    expect(event.prompt_body).toBe(userText);
+  });
+
+  it('does not take a story id from a trailing desktop-app block', async () => {
+    const event = await forwardedPrompt(`reply with ok\n<system_notification>Worktree qa-16018/chat1</system_notification>`);
+
+    expect(event.prompt).toBe('reply with ok');
+    expect(event.story_id).toBeFalsy();
+  });
+
+  it('keeps a story id the user wrote before the trailing block', async () => {
+    const event = await forwardedPrompt(`EPMCDME-16523 check: reply with ok\n${systemNotification}`);
+
+    expect(event.prompt).toBe('EPMCDME-16523 check: reply with ok');
+    expect(event.story_id).toBe('EPMCDME-16523');
+  });
+
+  it('omits the prompt when only trailing desktop-app blocks remain', async () => {
+    const event = await forwardedPrompt(`${systemNotification}\n${sourceJson}`);
+
+    expect(event.type).toBe('agent.prompt.submit');
+    expect(event).not.toHaveProperty('prompt');
+  });
+
+  it('keeps a user mention of a trailing-block tag in the middle or at the end of the text', async () => {
+    const mention = 'What is <system_notification>x</system_notification> for? Also see <system_notification>';
+    expect((await forwardedPrompt(mention)).prompt).toBe(mention);
+
+    vi.clearAllMocks();
+    const withReminder = await forwardedPrompt(
+      `What is <system_notification>x</system_notification> for?\n${systemNotification}`
+    );
+    expect(withReminder.prompt).toBe('What is <system_notification>x</system_notification> for?');
+  });
+
   it('leaves a CLI prompt without a preamble unchanged, including other tags', async () => {
     const event = await forwardedPrompt('Explain <div> tags in HTML');
 
