@@ -14,6 +14,12 @@ export interface BootstrapOptions {
   webhook?: string;
   /** `--webhook-b64`: the trigger URL as base64url, for shells that mangle a raw URL. */
   webhookB64?: string;
+  /** `--git-repo`: URL of a team git repository to push the daily report into. */
+  gitRepo?: string;
+  /** `--git-branch`: branch to push to (default: the repository's default branch). */
+  gitBranch?: string;
+  /** `--git-path`: repo-relative directory the report is pushed under (default: the root). */
+  gitPath?: string;
   lookbackDays?: string;
   includeExternal?: string;
 }
