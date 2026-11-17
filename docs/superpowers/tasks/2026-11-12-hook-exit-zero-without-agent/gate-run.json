@@ -1,0 +1,12 @@
+{"schema":1,"branch":"EPMCDME-16960_hook-exit-zero-without-agent","head":"b4239133b2afb01e2b961bd33b5009b7c5874189","runner":"npm","started_at":"2026-11-12T13:05:00Z","completed_at":"2026-11-12T13:12:00Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":2000,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":3000,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":5000,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":9000,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"PASS","duration_ms":70000,"command":"npx vitest run tests/integration/hook-stdout.test.ts src/cli/commands/__tests__/hook.*.test.ts (9 files, 259 tests)","exit_code":0,"notes":"Scoped per user constraint to hook tests with HOME/CODEMIE_HOME in mktemp -d; full unit and cli projects not run."},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":500,"command":"npm run commitlint:last","exit_code":0},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":1000,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Stage files to scan locally; CI secrets-detection job (reusable workflow) runs it for real."},
+{"id":"ci-secrets-detection","source":"ci","status":"N/A","command":"reusable-secrets-detection.yml@main","notes":"Remote reusable workflow, cannot run locally."},
+{"id":"ci-windows-tests","source":"ci","status":"N/A","command":"vitest run --project unit/cli on windows-latest","notes":"Windows runner unavailable; full suites not run per user constraint."}
+],"failures":{}}
