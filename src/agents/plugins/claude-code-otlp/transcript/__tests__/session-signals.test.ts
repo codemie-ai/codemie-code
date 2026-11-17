@@ -232,6 +232,21 @@ describe('countTurns', () => {
     ).toBe(1);
   });
 
+  it('excludes /model, matching real Claude Code transcripts (caveat -> wrapper -> stdout, no separately-typed raw line)', () => {
+    // Unlike /compact, a real /model invocation (verified against a real local transcript) has no
+    // second, un-wrapped text line before it — the marked-local wrapper is the only representation.
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('earlier prompt'),
+        caveat(),
+        wrappedCommand('model'),
+        stdout('Set model to Opus'),
+        user('next prompt'),
+      ])
+    ).toBe(2);
+  });
+
   it('excludes a marked-local command whose follow-up marker is a system line (newer Claude Code versions)', () => {
     const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
     expect(
