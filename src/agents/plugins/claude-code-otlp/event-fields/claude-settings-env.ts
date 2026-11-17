@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { join, posix } from 'node:path';
 import { resolveHomeDir } from '@/utils/paths.js';
 
 export interface ClaudeSettingsEnv {
@@ -36,24 +36,68 @@ export function settingsLayerPaths(
   ];
 }
 
-type Layer = Record<string, unknown> | 'absent' | 'unreadable';
+export type SettingsLayerState = 'absent' | 'malformed' | 'unreadable' | 'ok';
 
-async function readLayer(file: string): Promise<Layer> {
+export interface SettingsLayerResult {
+  path: string;
+  /** absent: no file; malformed: not valid JSON; unreadable: I/O error or a root that is not an object; ok: parsed. */
+  state: SettingsLayerState;
+  /** Set only when `state` is 'ok'. */
+  parsed?: Record<string, unknown>;
+}
+
+function isMissing(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+/** Reads one of Claude Code's own JSON settings files (strict JSON; the VS Code file is JSONC and is read elsewhere). */
+export async function readSettingsLayer(file: string): Promise<SettingsLayerResult> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf-8');
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unreadable';
+    return { path: file, state: isMissing(err) ? 'absent' : 'unreadable' };
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : 'unreadable';
+    parsed = JSON.parse(raw);
   } catch {
-    return 'unreadable';
+    return { path: file, state: 'malformed' };
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { path: file, state: 'unreadable' };
+  }
+  return { path: file, state: 'ok', parsed: parsed as Record<string, unknown> };
+}
+
+/** `managed-settings.d` directories, one beside each managed-settings.json of the platform. */
+function managedDropInDirs(platform: NodeJS.Platform): string[] {
+  return managedSettingsPaths(platform).map((file) => `${posix.dirname(file)}/managed-settings.d`);
+}
+
+/**
+ * Managed drop-in files (`managed-settings.d/*.json`), each directory in name order. A missing directory yields
+ * nothing; a directory that exists but cannot be listed yields one 'unreadable' result for the directory itself.
+ * `dropInDirs` replaces the platform default (tests inject a tmp dir).
+ */
+export async function readManagedDropIns(
+  platform: NodeJS.Platform = process.platform,
+  dropInDirs: string[] = managedDropInDirs(platform)
+): Promise<SettingsLayerResult[]> {
+  const results: SettingsLayerResult[] = [];
+  for (const dir of dropInDirs) {
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch (err) {
+      if (!isMissing(err)) results.push({ path: dir, state: 'unreadable' });
+      continue;
+    }
+    const files = names.filter((n) => n.endsWith('.json')).sort();
+    for (const name of files) results.push(await readSettingsLayer(join(dir, name)));
+  }
+  return results;
 }
 
 /** A missing file is no override; an unreadable/malformed one (or a non-object `env`) is unknown, never "absent". */
@@ -62,13 +106,14 @@ export async function readClaudeSettingsEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): Promise<ClaudeSettingsEnv> {
-  const layers = await Promise.all(settingsLayerPaths(cwd, env, platform).map(readLayer));
+  const layers = await Promise.all(settingsLayerPaths(cwd, env, platform).map(readSettingsLayer));
   const merged: Record<string, unknown> = {};
   let complete = true;
   let apiKeyHelper = false;
-  for (const layer of layers) {
-    if (layer === 'absent') continue;
-    if (layer === 'unreadable') {
+  for (const result of layers) {
+    if (result.state === 'absent') continue;
+    const layer = result.parsed;
+    if (result.state !== 'ok' || !layer) {
       complete = false;
       continue;
     }
