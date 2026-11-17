@@ -408,6 +408,11 @@ function commandText(name: string): string {
   return `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args></command-args>`;
 }
 
+/** The `<local-command-caveat>` marker line Claude Code writes immediately before a local command's wrapper line. */
+function caveatLine(gitBranch = 'feature'): string {
+  return userLine('<local-command-caveat>Caveat: local commands</local-command-caveat>', { isMeta: true }, gitBranch);
+}
+
 /** An assistant usage line, optionally invoking the `Skill` tool alongside its own usage. */
 function skillAwareLine(opts: {
   uuid: string;
@@ -828,6 +833,21 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     ]);
 
     expect(summary.turns).toBe(2);
+  });
+
+  it('excludes commands Claude Code marks local via a preceding caveat line, but still counts model-calling commands', async () => {
+    const summary = await runFinalSummary('session-local-only-commands', [
+      userLine('hello'),
+      caveatLine(),
+      userLine(commandText('context')),
+      userLine('<local-command-stdout>ok</local-command-stdout>'),
+      caveatLine(),
+      userLine(commandText('usage')),
+      userLine('<local-command-stdout>ok</local-command-stdout>'),
+      userLine(commandText('compact')),
+    ]);
+
+    expect(summary.turns).toBe(2); // 'hello' + '/compact'; /context and /usage are marked local
   });
 
   it('leaves lines_* null when the transcript has no applied edit result', async () => {
