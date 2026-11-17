@@ -68,6 +68,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
@@ -84,6 +85,7 @@ vi.mock('../connectors/omp.js', async (importOriginal) => ({
 vi.mock('../connectors/vscode-claude-code.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode-claude-code.js')>()),
   writeVsCodeClaudeCodeConfig: vi.fn(),
+  getVsCodeClaudeCodeSettingsPath: vi.fn(() => '/mock/vscode/User/settings.json'),
 }));
 vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
@@ -129,6 +131,12 @@ vi.mock('../prompts/analytics-confirmation.js', async (importOriginal) => ({
 }));
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude settings conflict gate has its own tests; here it finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 // A test that connects Claude Desktop leaves the shared mock as it found it: not connected.

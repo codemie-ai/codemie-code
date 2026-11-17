@@ -37,13 +37,14 @@ import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState }
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  getDesktopConfigPath,
   readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
 } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
-import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig, type ConnectorGateway } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
 import { readConfiguredOtlpPort } from './connectors/claude-code-otlp-endpoint.js';
@@ -69,13 +70,20 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { isNonInteractiveEnvironment } from '@/utils/interactive.js';
+import { canPromptForProject, isNonInteractiveEnvironment } from '@/utils/interactive.js';
 import { verifyActiveCli } from '@/utils/active-cli.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import {
   CLAUDE_DESKTOP,
   VSCODE_BYOK,
 } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  applyConsented,
+  detectAndAsk,
+  type ConsentToken,
+} from '@/agents/plugins/claude/cloud-provider-conflict/gate.js';
+import type { ConflictFlow, ConflictPaths } from '@/agents/plugins/claude/cloud-provider-conflict/resolver.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -316,6 +324,78 @@ export function printProxyError(error: unknown, label: string): never {
   }
 
   process.exit(1);
+}
+
+// ── Bedrock settings conflict gate ───────────────────────────────────────────
+
+/** VS Code settings files of the editions that exist; an edition without a user-data directory is left out. */
+function resolveVsCodeSettingsFiles(): string[] {
+  const files: string[] = [];
+  for (const insiders of [false, true]) {
+    try {
+      files.push(getVsCodeClaudeCodeSettingsPath(insiders));
+    } catch (error) {
+      if (!(error instanceof ConfigurationError)) throw error;
+    }
+  }
+  return files;
+}
+
+/**
+ * The Claude flows to check for the selected targets, each with the extra files only this orchestrator can
+ * name. Project settings are never read here: a connect run configures the user's apps, not a project.
+ * Claude Code analytics on its own is only warned about; any other target is not a Claude flow.
+ */
+async function claudeConflictChecks(targets: ConnectTargets): Promise<Array<{ flow: ConflictFlow; paths?: ConflictPaths }>> {
+  const checks: Array<{ flow: ConflictFlow; paths?: ConflictPaths }> = [];
+  if (targets.claudeDesktop) {
+    checks.push({
+      flow: 'connect-desktop',
+      paths: {
+        desktopApplied: await getDesktopConfigPath(),
+        desktopManaged: getClaudeDesktopManagedSettingsPath(),
+      },
+    });
+  }
+  if (targets.vscodeClaudeCode) {
+    checks.push({ flow: 'connect-vscode', paths: { vscodeSettings: resolveVsCodeSettingsFiles() } });
+  }
+  if (checks.length === 0 && targets.claudeCodeOtlp) {
+    checks.push({ flow: 'connect-otlp-only' });
+  }
+  return checks;
+}
+
+/**
+ * Asks about Bedrock settings that would send Claude traffic around the gateway. Every stop (cancel, managed,
+ * unknown, no terminal) aborts the command through the caller's error path; nothing is changed until the
+ * returned tokens are applied.
+ */
+async function checkBedrockConflicts(
+  targets: ConnectTargets,
+  profile: { provider?: string },
+  silent: boolean
+): Promise<ConsentToken[]> {
+  const tokens: ConsentToken[] = [];
+  for (const check of await claudeConflictChecks(targets)) {
+    const outcome = await detectAndAsk({
+      flow: check.flow,
+      canPrompt: canPromptForProject() && !silent,
+      profile,
+      paths: check.paths,
+    });
+    if (outcome.kind === 'stop') {
+      throw new ConfigurationError(outcome.guidance);
+    }
+    tokens.push(outcome.token);
+  }
+  return tokens;
+}
+
+function printBackupNote(backupDirs: readonly string[]): void {
+  for (const dir of backupDirs) {
+    console.error(chalk.yellow(`Backup of your Claude settings: ${dir}`));
+  }
 }
 
 // ── Unified connect orchestrator ─────────────────────────────────────────────
@@ -917,6 +997,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
   let projectBinding: ProjectBindingState | undefined;
+  const backupDirs: string[] = [];
   try {
     // Without a TTY the confirmation cannot be shown; --silent is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
@@ -969,6 +1050,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       profile,
       config.codeMieUrl
     );
+
+    // Before anything is started or written: Bedrock settings in Claude's own configuration would send
+    // Claude traffic around the gateway this command is about to connect.
+    const consents = await checkBedrockConflicts(targets, config, Boolean(opts.silent));
+
     if (targets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
         opts.scope ?? 'user',
@@ -983,6 +1069,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
           return;
         }
       }
+    }
+
+    for (const consent of consents) {
+      const switched = await applyConsented(consent);
+      if (switched.backupDir) backupDirs.push(switched.backupDir);
     }
 
     const cwd = process.cwd();
@@ -1006,6 +1097,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     if (startedInThisRun) {
       await rollbackDaemon();
     }
+    printBackupNote(backupDirs);
     printProxyError(error, 'Failed to connect proxy');
     // printProxyError calls process.exit and never returns; this explicit return
     // guarantees control can never fall through to the dispatch below with
@@ -1071,6 +1163,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // already printed their own line.
   printFailures(results);
   if (anyFailed) {
+    printBackupNote(backupDirs);
     process.exitCode = 1;
   }
   const olderCli = await findOlderCliOnPath();
