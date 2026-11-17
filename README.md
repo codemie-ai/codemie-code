@@ -84,9 +84,9 @@ Confirm the installed Node.js version with `node --version` before proceeding. A
 
 For Windows and macOS, CodeMie ships two installer options:
 
-- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) and Windows (x64) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
+  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest) [![Download for Windows](install/assets/download-windows.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
 - **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
@@ -660,7 +660,7 @@ codemie proxy analytics disable
 # Exclude the current project, even when Global scope is enabled
 codemie proxy analytics exclude
 
-# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+# Show delivery health, unsent data, the effective scope and the tracked/excluded projects
 codemie proxy analytics status
 ```
 
@@ -750,7 +750,7 @@ No plaintext key or generated placeholder is written to that file. On first setu
 
 ## Connect Claude Desktop via CodeMie Proxy
 
-Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations. Cowork sessions also appear on the CLI Analytics tab — turns, tools, subagents, tokens and cost — under your user and the profile's CodeMie project.
 
 ### Prerequisites
 
@@ -776,6 +776,8 @@ codemie proxy inspect desktop --limit 5
 codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
+
+With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

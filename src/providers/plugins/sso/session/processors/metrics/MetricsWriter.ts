@@ -14,6 +14,7 @@ import { logger } from '../../../../../../utils/logger.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
 import { appendJsonlLines, withSessionFile, type LockBounds } from '../../utils/locked-jsonl.js';
 import { createErrorContext, formatErrorForLog } from '../../../../../../utils/errors.js';
+import { deltaIdOf } from './delta-id.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
 
 /** The record's own slice of a shared transcript: [`startTime`, `upperBound`), plus what stops the lock wait. */
@@ -61,7 +62,7 @@ export class MetricsWriter {
     try {
       const done = await withSessionFile('metrics', this.sessionId, window, false, async () => {
         const known = await this.readRecordIds();
-        const lines: string[] = [];
+        const accepted: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
         for (const delta of deltas) {
           if (known.has(delta.recordId)) {
             result.dup++;
@@ -77,9 +78,14 @@ export class MetricsWriter {
             continue;
           }
           known.add(delta.recordId);
-          const full: MetricDelta = { ...delta, syncStatus: 'pending', syncAttempts: 0 };
-          lines.push(JSON.stringify(full) + '\n');
+          accepted.push(delta);
         }
+        // One id for the batch, made once here and never recomputed
+        const deltaId = deltaIdOf(accepted.map(d => d.recordId));
+        const lines = accepted.map(d => {
+          const full: MetricDelta = { ...d, syncStatus: 'pending', syncAttempts: 0, deltaId };
+          return JSON.stringify(full) + '\n';
+        });
         if (lines.length > 0) {
           await appendJsonlLines(this.filePath, lines.join(''));
         }

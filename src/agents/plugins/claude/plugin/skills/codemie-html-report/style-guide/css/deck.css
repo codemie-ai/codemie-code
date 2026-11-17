@@ -9,6 +9,10 @@ html.cm-deck {
   --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
 }
+/* A deck keeps the report's Geist Mono interface face out: its text is Geist, its labels and
+   numbers name --font-mono themselves. It draws no page glow either. */
+:root { --font-ui: var(--font-sans); --font-text: var(--font-sans); }
+body::before { content: none; }
 :root {
   --ink: var(--color-text-primary);
   --ink-2: color-mix(in srgb, var(--color-text-muted) 72%, var(--color-text-primary));
@@ -92,7 +96,7 @@ html.cm-deck:not(.deck-ready) .deck-stage { opacity: 0; }
 
 /* These resets outrank a single class, so a class that styles a p on a slide is written .slide .x. */
 .slide :is(h1, h2, h3, h4, p, ul, ol, dl, dd, figure) { margin: 0; }
-.slide p { font-size: inherit; line-height: inherit; color: inherit; }
+.slide p { font-size: inherit; line-height: inherit; color: inherit; max-width: none; }
 .slide :is(b, strong) { font-weight: 650; color: var(--ink); }
 .slide :is(b, strong, span, em):is(.c0, .c1, .c2, .c3, .c4, .c5, .ok, .warn, .bad) { color: var(--k-text); }
 
@@ -468,7 +472,7 @@ html.cm-deck:not(.deck-ready) .deck-stage { opacity: 0; }
 .slide .note { color: var(--ink-2); }
 
 /* --- Tables and charts on a slide --- */
-.slide .table-wrapper { overflow: visible; border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--lift); }
+.slide .table-wrapper { overflow: visible; background: none; border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--lift); }
 .slide .table { font-size: 0.9em; line-height: 1.4; }
 .slide .table :is(th, td) { padding: 0.72em 1em; }
 .slide .table thead th { position: static; white-space: normal; background: var(--wash); border: 0; border-bottom: 1px solid var(--hair); border-radius: 0; font: 600 max(14px, 0.7em)/1.3 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }

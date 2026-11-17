@@ -20,6 +20,7 @@ import {
   type Discard,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
+import { holdForIdleReopen } from './reopen-hold.js';
 import { deliveryGate, ENDED_MARKER_UNWRITTEN, recordUnacknowledged, type HoldExpiry } from './delivery-state.js';
 import {
   isSendAllowed,
@@ -607,6 +608,9 @@ export async function forwardSession(
   if (hooksOnly) {
     return;
   }
+
+  // A reopened session without activity of its own sends nothing of Claude Code's startup records.
+  if (await holdForIdleReopen(sessionId)) return;
 
   for (const stream of OTEL_STREAMS) {
     const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials, evidence, guard);

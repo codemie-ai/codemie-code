@@ -19,7 +19,7 @@ html.light { --cm-ctl-veil: rgba(255, 255, 255, .84); }
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   /* Out of sight until the pointer comes near or a key reaches it, so it never sits on a title. */
   opacity: 0; transition: opacity 160ms ease;
-  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  font-family: var(--font-ui, var(--font-sans, Inter, system-ui, sans-serif));
 }
 .cm-controls[data-pos="top"] { top: 14px; }
 .cm-controls[data-pos="bottom"] { bottom: 16px; flex-direction: column-reverse; }
@@ -135,7 +135,7 @@ body.cm-laser-on, body.cm-laser-on * { cursor: none !important; }
   position: fixed; inset: 0; z-index: 2147483200; display: none;
   grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 16px; padding: 20px;
   background: var(--color-bg-page, #F9F9F9); color: var(--color-text-primary, #333);
-  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  font-family: var(--font-ui, var(--font-sans, Inter, system-ui, sans-serif));
 }
 html.cm-presenter-mode .cm-presenter { display: grid; }
 html.cm-presenter-mode .cm-controls,

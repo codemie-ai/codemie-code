@@ -886,3 +886,67 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     expect(logger.warn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('applyProjectPolicyLocked — a legacy session without a project', () => {
+  const NO_PROJECT_WARNING = '[otlp-spool] session has no CodeMie project: unsent analytics discarded';
+
+  beforeEach(async () => {
+    state.root = await mkdtemp(join(tmpdir(), 'otlp-spool-noproject-'));
+  });
+  afterEach(async () => {
+    await rm(state.root, { recursive: true, force: true });
+  });
+
+  const streamPath = (id: string, name: string): string => join(state.root, `${id}.${name}`);
+
+  async function seed(id: string, files: Record<string, number>): Promise<void> {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    for (const [name, bytes] of Object.entries(files)) {
+      await appendFile(streamPath(id, name), 'x'.repeat(bytes));
+    }
+    await writeStatus(id, { ...createStatus(), projectScanned: true });
+  }
+
+  async function applyPolicy(id: string) {
+    const { applyProjectPolicyLocked } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    const status = await readStatus(id);
+    await applyProjectPolicyLocked(id, status!);
+    return (await readStatus(id))!;
+  }
+
+  it('records the discard as a no_project loss naming the events stream', async () => {
+    await seed('np-record', { 'hooks.ndjson': 120, 'otel_logs.bin': 80 });
+
+    const status = await applyPolicy('np-record');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 200, stream: 'hooks' });
+    expect(status.lastDiscard).toBeUndefined();
+    expect(status.endingDiscard).toBeUndefined();
+  });
+
+  it('warns once per session and keeps the later loss', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    await seed('np-twice', { 'hooks.ndjson': 120 });
+    await applyPolicy('np-twice');
+    await appendFile(streamPath('np-twice', 'hooks.ndjson'), 'x'.repeat(30));
+
+    const status = await applyPolicy('np-twice');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 30, stream: 'hooks' });
+    const warnings = vi.mocked(logger.warn).mock.calls.filter(
+      ([message, details]) => message === NO_PROJECT_WARNING && (details as { sessionId?: string }).sessionId === 'np-twice'
+    );
+    expect(warnings).toEqual([[NO_PROJECT_WARNING, { sessionId: 'np-twice', hooksBytes: 120, otelBytes: 0 }]]);
+  });
+
+  it('names the OTel stream when the events were discarded on an earlier tick', async () => {
+    await seed('np-otel', { 'hooks.ndjson': 120 });
+    await applyPolicy('np-otel');
+    await appendFile(streamPath('np-otel', 'otel_metrics.bin'), 'x'.repeat(50));
+
+    const status = await applyPolicy('np-otel');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 50, stream: 'metrics' });
+  });
+});

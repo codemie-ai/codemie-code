@@ -11,7 +11,8 @@
 
 import { existsSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import {
   applyEdits,
   modify,
@@ -73,6 +74,31 @@ export function getCopilotChatHookFilePath(): string {
   return getCodemiePath('hooks', 'copilot-chat-hooks.json');
 }
 
+/** Hook-file path relative to the home directory with `/` separators, or undefined outside the home. */
+function hookFilePathUnderHome(): string | undefined {
+  const relativeToHome = relative(homedir(), getCopilotChatHookFilePath());
+  if (relativeToHome === '' || relativeToHome.startsWith('..') || isAbsolute(relativeToHome)) return undefined;
+  return relativeToHome.split(sep).join('/');
+}
+
+/**
+ * The `chat.hookFilesLocations` key for the hook file. VS Code accepts workspace-relative paths and
+ * `~/` home-relative paths; it skips absolute ones, including a leading `/` ("glob patterns and
+ * absolute paths not supported"). A file outside the home directory can only be addressed absolutely,
+ * which VS Code will not load, so that fallback is reported by `writeCopilotChatOtlpConfig`.
+ */
+export function getCopilotChatHookFileLocationKey(): string {
+  const underHome = hookFilePathUnderHome();
+  return underHome === undefined ? getCopilotChatHookFilePath() : `~/${underHome}`;
+}
+
+/** Keys earlier CodeMie versions wrote (absolute path, then `/`-prefixed home-relative); VS Code loads neither. */
+function getLegacyHookFileLocationKeys(): string[] {
+  const underHome = hookFilePathUnderHome();
+  return [getCopilotChatHookFilePath(), ...(underHome === undefined ? [] : [`/${underHome}`])]
+    .filter((key) => key !== getCopilotChatHookFileLocationKey());
+}
+
 interface SettingsReadResult {
   settings: Record<string, unknown>;
   raw: string;
@@ -115,42 +141,42 @@ function detectFormattingOptions(raw: string): FormattingOptions {
   return { insertSpaces, tabSize: insertSpaces ? indent.length : 4, eol };
 }
 
-/** Returns the existing `chat.hookFilesLocations` list; refuses any non-array value rather than overwriting it. */
-function readHookFileLocations(existing: unknown): string[] {
-  if (existing === undefined) return [];
-  if (!Array.isArray(existing)) {
+/**
+ * Returns the existing `chat.hookFilesLocations` map (path -> enabled). VS Code defines this
+ * setting as an object; a legacy array (written by older CodeMie versions, ignored by VS Code)
+ * is converted to the object form. Any other value is refused rather than overwritten.
+ */
+function readHookFileLocations(existing: unknown): Record<string, boolean> {
+  if (existing === undefined) return {};
+  if (Array.isArray(existing)) {
+    return Object.fromEntries(existing.filter((v): v is string => typeof v === 'string').map((v) => [v, true]));
+  }
+  if (typeof existing !== 'object' || existing === null) {
     throw new ConfigurationError(
-      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an array and was not changed. ` +
-      'Convert it to an array of paths (or remove it) and retry.'
+      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an object and was not changed. ` +
+      'Convert it to an object of paths (or remove it) and retry.'
     );
   }
-  return existing.filter((v): v is string => typeof v === 'string');
+  return { ...(existing as Record<string, boolean>) };
 }
 
-/** Adds `entry` to an existing `chat.hookFilesLocations` array, deduped. */
-function upsertHookFileLocation(existing: unknown, entry: string): string[] {
+/** Adds `entry` to `chat.hookFilesLocations`, enabled. */
+function upsertHookFileLocation(existing: unknown, entry: string): Record<string, boolean> {
+  return { ...readHookFileLocations(existing), [entry]: true };
+}
+
+function removeHookFileLocations(existing: unknown, entries: string[]): Record<string, boolean> {
   const current = readHookFileLocations(existing);
-  if (current.includes(entry)) {
-    return current;
-  }
-  return [...current, entry];
-}
-
-function removeHookFileLocation(existing: unknown, entry: string): string[] {
-  return readHookFileLocations(existing).filter((v) => v !== entry);
+  for (const entry of entries) delete current[entry];
+  return current;
 }
 
 function buildHookFileContent(hookCommand: string): Record<string, unknown> {
-  const file: Record<string, unknown> = {};
+  const hooks: Record<string, unknown> = {};
   for (const eventName of CHAT_HOOK_EVENT_NAMES) {
-    file[eventName] = [
-      {
-        matcher: '',
-        hooks: [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }],
-      },
-    ];
+    hooks[eventName] = [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }];
   }
-  return file;
+  return { hooks };
 }
 
 /** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook
@@ -186,7 +212,18 @@ export async function writeCopilotChatOtlpConfig(
       'Enable it manually before connecting Copilot Chat analytics; CodeMie will not change this setting.'
     );
   }
-  const hookFileLocations = upsertHookFileLocation(settings[HOOK_FILE_LOCATIONS_KEY], hookFilePath);
+  // Drop the keys older versions wrote; VS Code skips them.
+  const locationKey = getCopilotChatHookFileLocationKey();
+  const hookFileLocations = upsertHookFileLocation(
+    removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], getLegacyHookFileLocationKeys()),
+    locationKey
+  );
+  if (hookFilePathUnderHome() === undefined) {
+    logger.warn(
+      '[proxy] The Copilot Chat hook file is outside the home directory; VS Code loads only workspace-relative or ~/ hook paths, so Copilot Chat hooks will not run',
+      ...sanitizeLogArgs({ hookFilePath })
+    );
+  }
 
   await writeAtomically(hookFilePath, `${JSON.stringify(buildHookFileContent(resolveAbsoluteHookCommand()), null, 2)}\n`);
 
@@ -268,16 +305,17 @@ export async function removeCopilotChatOtlpConfig(
 
   const { settings, raw } = await readSettings(settingsPath);
   const currentLocations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
-  const hadEntry = currentLocations.includes(hookFilePath);
+  const codemieKeys = [getCopilotChatHookFileLocationKey(), ...getLegacyHookFileLocationKeys()];
+  const hadEntry = codemieKeys.some((key) => key in currentLocations);
 
   if (!hadEntry) {
     await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
     return { removed: false, mode: 'noop', settingsPath, reason: 'no CodeMie entries found' };
   }
 
-  const remainingLocations = removeHookFileLocation(settings[HOOK_FILE_LOCATIONS_KEY], hookFilePath);
+  const remainingLocations = removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], codemieKeys);
   const formattingOptions = detectFormattingOptions(raw);
-  const nextText = remainingLocations.length > 0
+  const nextText = Object.keys(remainingLocations).length > 0
     ? applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], remainingLocations, { formattingOptions }))
     : applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], undefined, { formattingOptions }));
 

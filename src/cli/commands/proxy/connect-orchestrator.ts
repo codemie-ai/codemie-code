@@ -34,6 +34,7 @@ import { getEffectiveClientType } from './client-type.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
@@ -165,6 +166,25 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
     return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
+}
+
+/** Identities kept while Claude Desktop is connected: Codex and VS Code BYOK need their own request normalizers. */
+const DESKTOP_KEPT_CLIENT_TYPES: ReadonlySet<string> = new Set(['codex-desktop', 'vscode-byok']);
+
+/**
+ * The identity a daemon is matched and spawned with. While Claude Desktop's applied config points
+ * at CodeMie's local gateway, every identity but a kept one becomes the Desktop one, so no connect,
+ * restart, start or hook cold start turns the Desktop runtime off; the gateway's port comes with it
+ * for a spawn that has no running daemon's port to keep. A kept identity, or no connected Desktop,
+ * is returned unchanged and without a port.
+ */
+export async function withDesktopIdentity(
+  identity: ClientIdentity
+): Promise<{ identity: ClientIdentity; gatewayPort?: number }> {
+  if (DESKTOP_KEPT_CLIENT_TYPES.has(getEffectiveClientType(identity))) return { identity };
+  const gateway = await readDesktopGateway();
+  if (!gateway) return { identity };
+  return { identity: { clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }, gatewayPort: gateway.port };
 }
 
 // ── Daemon matching (shared strict path, spec §3.2) ──────────────────────────
@@ -512,20 +532,17 @@ export function buildRequestedConfig(
   };
 }
 
-/** One per-target write outcome, collected for the summary (spec §3.4). */
+/** One per-target write outcome, collected to report failures and set the exit code (spec §3.4). */
 export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
 }
 
-function printSummary(results: TargetResult[]): void {
-  console.log(chalk.bold('\nTargets configured:'));
+function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (r.ok) {
-      console.log(chalk.green(`  ✓ ${r.label}`));
-    } else {
-      console.log(chalk.red(`  ✗ ${r.label}  — ${r.error ?? 'failed'}`));
+    if (!r.ok) {
+      console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
 }
@@ -554,7 +571,9 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
-      orgMcpServers
+      orgMcpServers,
+      undefined, // default managed-MCP state path
+      state.project
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
@@ -603,7 +622,7 @@ async function runVscodeByok(
   projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
+    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders, state.project);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({
@@ -672,7 +691,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
 /**
  * Configure every requested target over a single daemon lifecycle. Bare invocation
  * (no target flag) prints the target list and returns without side effects. Each
- * target's writer runs independently; a per-target summary is printed and the
+ * target's writer runs independently; failed targets are listed and the
  * process exit code is set to 1 when any requested target fails (spec §3.4).
  */
 interface CodexDesktopRunOptions {
@@ -706,7 +725,7 @@ async function runCodexDesktop(
     const configPath = getCodexDesktopConfigPath();
     console.log(chalk.cyan(`Codex config: ${configPath}`));
 
-    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey, state.project);
     const model = selectCodexModel(discovered, options.model, options.profileModel);
 
     await writeCodexDesktopConfig({
@@ -780,7 +799,7 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
     } else {
       console.log(chalk.dim('  Tracked projects: all projects'));
     }
-    console.log(chalk.dim('  Managed `copilot-cli` launches are ignored by this adapter (no double counting).'));
+    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
     console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
     return { label, ok: true };
   } catch (error) {
@@ -887,7 +906,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
     profile = config.name ?? 'default';
     projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-    // Resolved once so the confirmation header and the post-start table show the same URL.
+    // Resolved here because the confirmation header needs the profile and the effective URL.
     otlpDisplay = targets.claudeCodeOtlp
       ? {
           profile,
@@ -936,13 +955,17 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       syncPluginSkills(),
     ]);
 
-    const identity = deriveDaemonIdentity(activeTargets);
-    clientType = identity.clientType;
+    const derived = deriveDaemonIdentity(activeTargets);
+    // A connect naming Claude Desktop writes the gateway URL itself: identity and port come from the targets alone.
+    const { identity, gatewayPort }: { identity: ClientIdentity; gatewayPort?: number } = activeTargets.claudeDesktop
+      ? { identity: derived.spawnOptions }
+      : await withDesktopIdentity(derived.spawnOptions);
+    clientType = getEffectiveClientType(identity);
 
     // The record is written after wiring succeeds (below), not at spawn time.
     const ensured = await ensureDaemon(
-      buildRequestedConfig(profile, identity.clientType, config, projectBinding),
-      identity.spawnOptions,
+      buildRequestedConfig(profile, clientType, config, projectBinding, gatewayPort),
+      identity,
       config,
       Boolean(opts.force),
       verbose,
@@ -980,11 +1003,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
-  if (activeTargets.claudeCodeOtlp && otlpDisplay) {
+  if (activeTargets.claudeCodeOtlp) {
     results.push(await runClaudeCodeOtlp({
       force: Boolean(opts.force),
       scope: opts.scope ?? 'user',
-      ...otlpDisplay,
     }));
   }
   if (targets.copilotChatOtlp) {
@@ -1006,9 +1028,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await writeConnectionRecord(state, profile, clientType);
   }
 
-  // Spec §3.4: print the per-target summary after all requested targets run,
-  // unconditionally — a single-target success gets the summary block too.
-  printSummary(results);
+  // Spec §3.4: after all requested targets run, list the ones that failed; successes
+  // already printed their own line.
+  printFailures(results);
   if (anyFailed) {
     process.exitCode = 1;
   }

@@ -6,12 +6,16 @@
 /* ============================================================
    HEADINGS
    ============================================================ */
+h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6 {
+  font-family: var(--font-ui);
+  text-wrap: pretty;
+}
+
 h1, .h1 {
   font-size: var(--text-h1);
   line-height: var(--lh-h1);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--color-text-primary);
-  letter-spacing: -0.02em;
 }
 
 h2, .h2 {
@@ -91,10 +95,10 @@ h6, .h6 {
 .text-link        { color: var(--color-text-link); }
 .text-inverse     { color: var(--color-text-inverse); }
 
-.text-success     { color: var(--color-success-text); }
-.text-error       { color: var(--color-error-text); }
-.text-warning     { color: var(--color-warning-text); }
-.text-info        { color: var(--color-info-text); }
+.text-success     { color: var(--color-success-ink); }
+.text-error       { color: var(--color-error-ink); }
+.text-warning     { color: var(--color-warning-ink); }
+.text-info        { color: var(--color-info-ink); }
 
 /* ============================================================
    TEXT STYLE UTILITIES
@@ -131,10 +135,13 @@ h6, .h6 {
 /* ============================================================
    PARAGRAPH
    ============================================================ */
+/* Reading text is Geist, as in a chat answer; the interface around it stays Geist Mono */
 p {
+  font-family: var(--font-text);
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
-  line-height: 1.6;
+  line-height: 1.7;
+  max-width: 88ch;
 }
 
 p + p {
@@ -143,6 +150,7 @@ p + p {
 
 /* Caption / helper text */
 .caption {
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   line-height: 1.4;

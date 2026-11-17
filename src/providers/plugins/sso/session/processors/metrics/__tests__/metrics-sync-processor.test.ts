@@ -34,8 +34,10 @@ describe('MetricsSyncProcessor', () => {
   let originalHome: string | undefined;
   let server: http.Server;
   let bodies: string[];
+  let reply: { status: number; body: unknown };
 
   beforeEach(async () => {
+    reply = { status: 200, body: { success: true, message: 'ok' } };
     originalHome = process.env.CODEMIE_HOME;
     home = mkdtempSync(join(tmpdir(), 'metrics-sync-'));
     process.env.CODEMIE_HOME = home;
@@ -46,8 +48,8 @@ describe('MetricsSyncProcessor', () => {
       req.on('data', chunk => (body += chunk));
       req.on('end', () => {
         bodies.push(body);
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'ok' }));
+        res.writeHead(reply.status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(reply.body));
       });
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
@@ -207,6 +209,36 @@ describe('MetricsSyncProcessor', () => {
 
     expect(result.success).toBe(true);
     expect(bodies.map(body => JSON.parse(body).attributes.llm_model)).toEqual(['model-X']);
+  });
+
+  describe('line model: no attempt cap, a rejected status', () => {
+    const readStatuses = (): Array<{ syncStatus: string; syncAttempts: number }> =>
+      readFileSync(join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+
+    it('a failed delta with syncAttempts 7 is still a send candidate', async () => {
+      const { isDeltaSendCandidate } = await import('../metrics-sync-processor.js');
+      expect(isDeltaSendCandidate({ syncStatus: 'failed', syncAttempts: 7 })).toBe(true);
+      expect(isDeltaSendCandidate({ syncStatus: 'rejected', syncAttempts: 1 })).toBe(false);
+      expect(isDeltaSendCandidate({ syncStatus: 'synced', syncAttempts: 1 })).toBe(false);
+    });
+
+    it('a JSON 400 marks the delta rejected and it is never resent', async () => {
+      reply = { status: 400, body: { code: 400, message: 'bad metric', details: 'no' } };
+      await syncDeltas([delta('r-1', 'pending')]);
+      expect(readStatuses().map(d => d.syncStatus)).toEqual(['rejected']);
+
+      const sent = bodies.length;
+      reply = { status: 200, body: { success: true, message: 'ok' } };
+      await syncDeltas([{ ...delta('r-1', 'pending'), syncStatus: 'rejected' as never }]);
+      expect(bodies).toHaveLength(sent);
+    });
+
+    it('a JSON 404 marks the delta failed and one process() call sends the line once', async () => {
+      reply = { status: 404, body: { code: 404, message: 'nope', details: '' } };
+      await syncDeltas([delta('f-1', 'pending', { syncAttempts: 7 })]);
+      expect(readStatuses().map(d => [d.syncStatus, d.syncAttempts])).toEqual([['failed', 8]]);
+      expect(bodies).toHaveLength(1);
+    });
   });
 
   describe('credentials-superseded check', () => {

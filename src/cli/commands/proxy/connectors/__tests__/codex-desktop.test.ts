@@ -106,6 +106,19 @@ describe('discoverCodexModels', () => {
     expect(models).not.toContain('text-embedding-3-large');
   });
 
+  it('narrows discovery to the profile project via project_id', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [{ deployment_name: 'gpt-5-codex', enabled: true }],
+    } as unknown as Response);
+
+    const { discoverCodexModels } = await import('../codex-desktop.js');
+    await discoverCodexModels('http://127.0.0.1:4001', 'k', 'router-demo');
+
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.searchParams.get('project_id')).toBe('router-demo');
+  });
+
   it('throws ConfigurationError when the proxy exposes no compatible model', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,

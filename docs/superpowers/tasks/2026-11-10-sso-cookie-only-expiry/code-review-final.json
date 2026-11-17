@@ -1,0 +1,236 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-002/CR-003 resolved; CR-001 to be reworded by caller"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User requested fix-up for CR-001..003"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-002/CR-003 resolved; CR-001 to be reworded by caller"
+    }
+  ],
+  "reviewed_head": "e30b1e7d68c46ff8484159bbf431b48a23b2bdab",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-002 resolved by a recorded human decision and CR-003 resolved by a new assistants-chat test in sdk-client.test.ts. CR-001 stays unresolved: commit acf147b1 is not reworded and fix_evidence holds only a deferral decision with no artifact or exit-0 command for an evidence finding.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "auth",
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 1,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commit acf147b1",
+      "title": "Commit subject exceeds 100-char limit",
+      "problem": "Subject of commit acf147b1 (fix(providers): ignore stored expiry of cookie-only SSO credentials in health and status ...) is 105 chars after the type/scope prefix; git-workflow.md and commitlint.config.cjs set subject-max-length to 100.",
+      "impact": "commit-msg hook (commitlint error level) would reject it, so the commit breaks the documented commit format.",
+      "recommendation": "Reword the subject to 100 characters or fewer, e.g. shorten the trailing task suffix or drop 'stored'.",
+      "status": "wont-fix",
+      "check_notes": "Commit not reworded; fix_evidence has only a deferral decision, no artifact or exit-0 command for this evidence finding.",
+      "fix": {
+        "change": "Not changed by implementer; caller rewords commit acf147b1 after the check round",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "Caller (orchestrator) rewords commit acf147b1 after the check round",
+        "rationale": "History rewrite is a git operation the implementer must not perform"
+      },
+      "disposition": {
+        "rationale": "Commit subject length is fixed by a commit reword performed by the caller after approval, per the user's choice; no code diff can resolve it.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/session-rejection.ts",
+      "title": "Every 401 treated as dead SSO session",
+      "problem": "isSessionRejection401 is status-only (statusCode === 401). The spec's capture step for real expired-cookie and non-session 401s was not done, so AC8 (non-session 401 starts no sign-in) cannot be met for the first occurrence; a denied-model or relayed upstream 401 marks analytics auth invalid, drains the body and opens a browser sign-in. Only the post-sign-in loop guard, lock and cooldown bound it. Reachability: the plugin calls the predicate directly on all upstream responses.",
+      "impact": "Spurious browser sign-ins and rewritten 401 bodies for non-session failures; AC8 only partially met.",
+      "recommendation": "Decide: capture real gateway 401s and narrow the predicate (body/header marker), or accept the documented status-only fallback and record it as a known limitation with the spec owner.",
+      "status": "decided",
+      "check_notes": "Decision recorded: accept status-only predicate as known limitation; documented in session-rejection.ts and pinned by a test.",
+      "fix": {
+        "change": "Accepted status-only predicate; limitation made explicit in session-rejection.ts header and pinned by a test",
+        "test": "src/providers/plugins/sso/proxy/plugins/__tests__/session-rejection.test.ts"
+      },
+      "decision": {
+        "outcome": "(b) accept status-only predicate as a known limitation",
+        "rationale": "No real gateway 401 captures exist; loop guard, lock and cooldown bound spurious sign-ins; limitation documented in code and test"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/utils/__tests__/sdk-client.test.ts",
+      "line": 84,
+      "title": "No test for assistants-chat credential load",
+      "problem": "AC4 requires both sdk-client and assistants-chat credential load to succeed with a 24h+1min-old cookie-only credential; only sdk-client is covered.",
+      "impact": "A required acceptance criterion is only partially verified; a regression in the assistants-chat load path would go unnoticed.",
+      "recommendation": "Add a test for the assistants-chat credential load using a stale cookie-only credential, asserting it loads and is not deleted.",
+      "status": "resolved",
+      "check_notes": "sdk-client.test.ts now covers getAuthenticatedClient with a 24h+1min stale cookie-only credential, asserting no clear and client creation.",
+      "fix": {
+        "change": "Added assistants-chat (getAuthenticatedClient) stale cookie-only credential load test",
+        "test": "src/utils/__tests__/sdk-client.test.ts"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "B1: deriveExpiresAt returns a time only for a decodable codemie_access_token exp",
+      "status": "pass",
+      "notes": "sso.auth.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "B2: effectiveExpiresAt returns stored expiresAt only with codemie_access_token",
+      "status": "pass",
+      "notes": "no migration"
+    },
+    {
+      "kind": "spec",
+      "item": "B3: all readers and analytics-cli.js use the rule",
+      "status": "pass",
+      "notes": "health, both setup-steps spots, getStoredCredentials"
+    },
+    {
+      "kind": "spec",
+      "item": "B4: 401 handled via one named function; marker, one detached sign-in, synthetic response",
+      "status": "pass",
+      "notes": "session-rejection.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "B5: in-memory loop guard on identical cookies after sign-in",
+      "status": "pass",
+      "notes": "covered by plugin tests"
+    },
+    {
+      "kind": "spec",
+      "item": "B6: 403 not treated as session rejection",
+      "status": "pass",
+      "notes": "403 pass-through test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: 24h+1min cookie-only credential returned, not cleared",
+      "status": "pass",
+      "notes": "sso.auth.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: gate integration, no sign-in for stale cookie-only credential",
+      "status": "pass",
+      "notes": "auth-gate integration test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: redirect or session-shaped 401 starts exactly one sign-in",
+      "status": "pass",
+      "notes": "it.each over redirect and 401"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: sdk-client and assistants-chat credential load succeed with stale cookie-only credential",
+      "status": "partial",
+      "notes": "only sdk-client covered; no assistants-chat test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: callback with only _oauth2_proxy stores no expiresAt",
+      "status": "pass",
+      "notes": "sso.auth.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: effectiveExpiresAt behaviour; JWT still expires and is deleted",
+      "status": "pass",
+      "notes": "auth, health, setup-steps tests"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6b: analytics-cli.js accepts past-expiry cookie-only, rejects past JWT-bearing",
+      "status": "pass",
+      "notes": "analytics-cli.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: session-shaped 401 triggers same recovery as redirect, once",
+      "status": "pass",
+      "notes": "plugin test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: non-session-shaped 401 or repeat after identical-cookie sign-in starts no sign-in",
+      "status": "partial",
+      "notes": "repeat case covered; predicate status-only so no 401 is non-session-shaped"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: a 403 starts no sign-in",
+      "status": "pass",
+      "notes": "plugin and classifier tests"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "fail",
+      "notes": "5 subjects use allowed types and scopes, but the subject of commit acf147b1 is 105 chars after the colon; git-workflow.md and commitlint.config.cjs subject-max-length cap it at 100"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "changed source files checked against code-quality.md: .js import extensions, explicit return types on exports, logger.debug use, kebab-case file names, no console.log"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "security-practices.md not read in full; no concrete issue found. Loop guard in sso-session-expiry.plugin.ts stores only a sha256 of the rejected cookies and logs no cookie values"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and standards ran; no truncation or reachability gap. Acceptance AC4 (no assistants-chat credential-load test) and AC8 (isSessionRejection401 is status-only, real gateway 401 captures never taken) are partial, and commit acf147b1 subject exceeds the 100-char commitlint cap. 7 candidates dismissed as handled, bounded by lock/cooldown, or legacy-only; nothing deferred.",
+    "confidence": "low",
+    "risk_flags": [
+      "auth",
+      "security"
+    ]
+  }
+}

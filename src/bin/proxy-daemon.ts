@@ -23,6 +23,9 @@ import { daemonStartedAt } from '../cli/commands/proxy/daemon-manager.js';
 import { startAwaitingLoginListener, type AwaitingLoginListener } from '../cli/commands/proxy/awaiting-login-listener.js';
 import { AuthenticationError } from '../providers/plugins/sso/proxy/proxy-errors.js';
 import { getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
+import { startDetachedSsoLogin, type DetachedLoginOutcome } from '../providers/plugins/sso/sso.detached-login.js';
+import { sessionExpiredMessage } from '../providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.js';
+import { markAnalyticsAuthInvalid } from '../utils/analytics-auth-status.js';
 
 function readCliVersion(): string {
   try {
@@ -121,6 +124,22 @@ async function persistState(patch: Record<string, unknown>): Promise<void> {
 }
 
 /**
+ * Called by the awaiting-login listener for a request that carried the gateway key: records the
+ * rejected login for analytics, starts the (locked, throttled) browser sign-in and returns the 401 text.
+ * The full proxy does the same when the gateway answers an expired-session redirect.
+ */
+async function promptSignIn(): Promise<string> {
+  let outcome: DetachedLoginOutcome | undefined;
+  try {
+    await markAnalyticsAuthInvalid('proxy daemon holds the port without SSO credentials', config.targetApiUrl);
+    outcome = await startDetachedSsoLogin(config.targetApiUrl);
+  } catch (error) {
+    logger.warn(`[proxy-daemon] Starting the browser sign-in failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return sessionExpiredMessage(outcome);
+}
+
+/**
  * Start the real proxy; with no SSO credentials, keep the port bound with a listener that answers
  * an actionable 401 and let the watcher swap the proxy in once the user has signed in.
  */
@@ -139,6 +158,8 @@ async function bringUp(): Promise<{ port: number; url: string }> {
       host: config.host as string,
       pinnedPort: config.pinnedPort,
       message: error.message,
+      gatewayKey,
+      onSignInRequest: promptSignIn,
     });
     return awaitingLogin;
   }
@@ -193,6 +214,7 @@ async function restartProxy(): Promise<void> {
         host: config.host as string,
         pinnedPort: true,
         message: 'Proxy recovery failed after sign-in. Automatic recovery will retry on this port.',
+        gatewayKey, // no sign-in prompt here: the user has just signed in
       });
       await persistState({ url: awaitingLogin.url, ...healthPatch() });
     }
@@ -282,6 +304,8 @@ try {
           await restartProxy();
         }
       } : undefined,
+      // While the listener holds the port a deep check would start a browser sign-in on every tick.
+      isAwaitingLogin: () => awaitingLogin !== undefined,
     }
   );
   watcher.start();

@@ -177,6 +177,27 @@ describe('countTurns', () => {
   it('returns 0 for no lines', () => {
     expect(countTurns([])).toBe(0);
   });
+
+  it('counts typed, pasted and command prompts, not lines Claude Code writes itself or auto prompts', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        user([{ type: 'text', text: 'typed block prompt' }]),
+        user('  <pasted_content id="1">pasted</pasted_content>'),
+        user('<command-name>/plan</command-name>'),
+        user([{ type: 'text', text: '[Request interrupted by user]' }]),
+        user('<local-command-stdout>out</local-command-stdout>'),
+        user('<local-command-stderr>err</local-command-stderr>'),
+        user('<local-command-caveat>Caveat</local-command-caveat>'),
+        user('<bash-stdout>out</bash-stdout>'),
+        user('<bash-stderr>err</bash-stderr>'),
+        user('<bash-input>ls</bash-input>'),
+        user('<task-notification><task-id>t1</task-id></task-notification>'),
+        user('<agent-message from="worker">Report</agent-message>'),
+      ])
+    ).toBe(4);
+  });
 });
 
 describe('collectCompactions', () => {

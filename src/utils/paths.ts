@@ -407,6 +407,10 @@ const CLAUDE_DESKTOP_SANDBOX_RE =
  * @example
  * extractRepository('/Users/john/Library/Application Support/Claude-3p/local-agent-mode-sessions/<s>/<u>/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs')
  * // Returns: 'Cowork'
+ *
+ * @example
+ * extractRepository('C:\\Repositories')
+ * // Returns: 'Repositories' (a leading drive letter is never part of the name)
  */
 export function extractRepository(workingDirectory: string): string {
   if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
@@ -415,6 +419,9 @@ export function extractRepository(workingDirectory: string): string {
 
   const parts = splitPath(workingDirectory);
   const filtered = parts.filter(p => p.length > 0);
+  if (filtered.length > 0 && /^[A-Za-z]:$/.test(filtered[0])) {
+    filtered.shift();
+  }
 
   if (filtered.length >= 2) {
     return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;

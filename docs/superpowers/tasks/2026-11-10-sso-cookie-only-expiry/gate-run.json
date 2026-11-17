@@ -1,0 +1,95 @@
+{
+ "schema": 1,
+ "branch": "feat/EPMCDME-17014",
+ "head": "1cc161202d0981c66753ef8c94d00b9288ba4ea3",
+ "runner": "npm",
+ "started_at": "2026-11-10T11:21:58.994146+00:00",
+ "completed_at": "2026-11-10T11:21:58.994146+00:00",
+ "status": "BLOCKED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "license-check",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 1516,
+   "command": "npm run license-check",
+   "exit_code": 0
+  },
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 5026,
+   "command": "npm run lint",
+   "exit_code": 0,
+   "notes": "node_modules/.bin absent; ran with PATH shim symlinks in gl/bin"
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 4084,
+   "command": "npm run typecheck",
+   "exit_code": 0,
+   "notes": "PATH shim"
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 6297,
+   "command": "npm run build",
+   "exit_code": 0,
+   "notes": "PATH shim"
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 59041,
+   "command": "npx vitest run --project unit",
+   "exit_code": 1,
+   "notes": "7 failed in 4 files; matches known pre-existing failures"
+  },
+  {
+   "id": "integration",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 32859,
+   "command": "npx vitest run --project cli",
+   "exit_code": 1,
+   "notes": "8 files fail to load (node-pty missing); matches known pre-existing"
+  },
+  {
+   "id": "secrets",
+   "source": "guide",
+   "status": "SKIPPED",
+   "duration_ms": 641,
+   "command": "npm run validate:secrets",
+   "exit_code": 0,
+   "notes": "Output: 'No staged changes to scan'; nothing scanned. Stage changes to run locally; CI scans unconditionally"
+  },
+  {
+   "id": "commitlint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 560,
+   "command": "npm run commitlint:last",
+   "exit_code": 0
+  },
+  {
+   "id": "pre-commit",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 0,
+   "command": "npm run check:pre-commit",
+   "exit_code": 0,
+   "notes": "covered by typecheck + lint gates"
+  }
+ ],
+ "failures": {
+  "unit": "FAIL  |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts > AgentCLI.handleRun \u2014 per-agent models (EPMCDME-15641) > launches the agent with its own active model and only its own models\nFAIL  |unit| src/agents/core/__tests__/launch-identity.test.ts > launch identity policy > resolveLaunchIdentity > saved URL is the host that served the project list (PR #758 review, finding 2) > a subscription profile lists and saves with the persisted shared URL, never an exported one\nFAIL  |unit| src/agents/core/__tests__/launch-identity.test.ts > launch identity policy > resolveLaunchIdentity > saved URL is the host that served the project list (PR #758 review, finding 2) > an exported CODEMIE_URL on an active unowned profile (no --profile) is not saved\nFAIL  |unit| src/utils/__tests__/config-per-profile-identity.test.ts > ConfigLoader \u2014 per-profile CodeMie identity (EPMCDME-15411) > traceable cases > launch exports the profile project and the session project is that profile project, not the workspace one\nFAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nFAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch through the explicit proxy\nFAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request",
+  "integration": "FAIL  |cli| tests/integration/cli-commands/doctor.test.ts [ tests/integration/cli-commands/doctor.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/error-handling.test.ts [ tests/integration/cli-commands/error-handling.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/help.test.ts [ tests/integration/cli-commands/help.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/list.test.ts [ tests/integration/cli-commands/list.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/profile.test.ts [ tests/integration/cli-commands/profile.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/version.test.ts [ tests/integration/cli-commands/version.test.ts ]\nFAIL  |cli| tests/integration/cli-commands/workflow.test.ts [ tests/integration/cli-commands/workflow.test.ts ]\nFAIL  |cli| tests/integration/skills-integration.test.ts [ tests/integration/skills-integration.test.ts ]"
+ }
+}
