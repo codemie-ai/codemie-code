@@ -157,7 +157,8 @@ describe('proxy-daemon entry point', () => {
         if (!signalListeners[signal].includes(listener)) process.off(signal, listener);
       }
     }
-    await rm(tempDir, { recursive: true, force: true });
+    await (await import('../../utils/logger.js')).logger.close();
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('writes a live state while the runtime start is still pending', async () => {

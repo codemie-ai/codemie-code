@@ -14,6 +14,7 @@ import { Readable } from 'node:stream';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { logger } from '../../../../../../utils/logger.js';
 import { CodeMieProxy } from '../../sso.proxy.js';
 import type { ProxyConfig, ProxyContext } from '../../proxy-types.js';
 import { getPluginRegistry } from '../registry.js';
@@ -163,7 +164,8 @@ afterEach(async () => {
   }
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
-  rmSync(codemieHome, { recursive: true, force: true });
+  await logger.close();
+  rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('the client of a request through the daemon', () => {

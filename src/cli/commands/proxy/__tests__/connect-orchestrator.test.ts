@@ -137,6 +137,17 @@ afterEach(async () => {
   vi.mocked(readDesktopGateway).mockResolvedValue(null);
 });
 
+/**
+ * Every logger instance this file's module graphs wrote with: each vi.resetModules gives a graph its own, and code
+ * of an earlier graph still writes with that graph's instance. Each is closed before a temporary CODEMIE_HOME is
+ * removed — Windows does not remove a directory that holds an open log file.
+ */
+const loggers = new Set<(typeof import('../../../../utils/logger.js'))['logger']>();
+async function closeLoggers(): Promise<void> {
+  loggers.add((await import('../../../../utils/logger.js')).logger);
+  await Promise.all([...loggers].map((instance) => instance.close()));
+}
+
 // Every client config a connect reads lives under a home of the test's own.
 let clientHome: string;
 beforeEach(async () => {
@@ -149,7 +160,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await rm(clientHome, { recursive: true, force: true });
+  await closeLoggers();
+  await rm(clientHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 // ── shared test helpers ──────────────────────────────────────────────────────
@@ -215,7 +227,8 @@ async function withOwnLockHome<T>(fn: (lockPath: string) => Promise<T>): Promise
     return await fn(join(home, 'proxy-daemon.lock'));
   } finally {
     process.env.CODEMIE_HOME = previous;
-    await rm(home, { recursive: true, force: true });
+    await closeLoggers();
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

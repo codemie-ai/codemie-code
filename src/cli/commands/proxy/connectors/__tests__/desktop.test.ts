@@ -1708,7 +1708,8 @@ describe('readDesktopGateway', () => {
 
   afterEach(async () => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    await rm(baseDir, { recursive: true, force: true });
+    await logger.close();
+    await rm(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   async function writeLibrary(meta: unknown, applied?: unknown): Promise<void> {

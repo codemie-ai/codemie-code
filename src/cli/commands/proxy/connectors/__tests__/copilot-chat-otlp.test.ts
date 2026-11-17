@@ -100,6 +100,24 @@ describe('copilot-chat-otlp connector', () => {
     await expect(readCopilotChatHookInstall()).resolves.toBeNull();
   });
 
+  async function writeHookCommand(command: string): Promise<void> {
+    await mkdir(join(process.env.CODEMIE_HOME!, 'hooks'), { recursive: true });
+    await writeFile(getCopilotChatHookFilePath(), JSON.stringify({ hooks: { SessionStart: [{ type: 'command', command }] } }));
+  }
+
+  it('reads back a Windows script path the writer quoted as a JSON string, its backslashes single again', async () => {
+    const script = 'D:\\a\\codemie-code\\bin\\codemie.js';
+    await writeHookCommand(`${JSON.stringify('C:\\Program Files\\nodejs\\node.exe')} ${JSON.stringify(script)} hook --agent copilot-chat-otlp`);
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\codemie-code\\bin\\codemie.js');
+  });
+
+  it('reads back as written a quoted script path that is not the content of a JSON string', async () => {
+    await writeHookCommand('"C:\\Program Files\\nodejs\\node.exe" "D:\\a\\x\\bin\\codemie.js" hook --agent copilot-chat-otlp');
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\x\\bin\\codemie.js');
+  });
+
   describe('user scope', () => {
     it('writes the hook file, registers it in settings and records a user-scope connector', async () => {
       await writeSettingsRaw(JSON.stringify({ 'editor.fontSize': 14 }, null, 2));

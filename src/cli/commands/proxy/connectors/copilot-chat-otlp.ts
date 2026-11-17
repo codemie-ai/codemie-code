@@ -182,8 +182,8 @@ function buildHookFileContent(hookCommand: string): Record<string, unknown> {
 
 /**
  * The `bin/codemie.js` the Copilot Chat hook file's codemie commands run (the script of the first
- * `"<node>" "<script>" hook …` command), or null: no file, an unreadable one, no such command. Never throws,
- * writes nothing.
+ * `"<node>" "<script>" hook …` command, unquoted the way the writer quoted it), or null: no file, an unreadable
+ * one, no such command. Never throws, writes nothing.
  */
 export async function readCopilotChatHookInstall(): Promise<string | null> {
   try {
@@ -194,13 +194,27 @@ export async function readCopilotChatHookInstall(): Promise<string | null> {
       for (const entry of Array.isArray(entries) ? entries : []) {
         const command: unknown = (entry as { command?: unknown } | null)?.command;
         const head = typeof command === 'string' ? parseHookCommandHead(command) : null;
-        if (head && head.paths.length === 2 && /^\s+hook\b/.test(head.rest)) return head.paths[1];
+        if (head && head.paths.length === 2 && /^\s+hook\b/.test(head.rest)) {
+          return unescapeHookPath(head.paths[1]);
+        }
       }
     }
     return null;
   } catch (error) {
     logger.debug('[proxy] Copilot Chat hook file not readable', ...sanitizeLogArgs({ error: String(error) }));
     return null;
+  }
+}
+
+/**
+ * A path of a hook command as the writer was given it: the writer quotes with `JSON.stringify`, so its escapes are
+ * undone; a path that is not the content of a JSON string is taken as written.
+ */
+function unescapeHookPath(path: string): string {
+  try {
+    return JSON.parse(`"${path}"`) as string;
+  } catch {
+    return path;
   }
 }
 

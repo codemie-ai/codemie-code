@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { logger } from '@/utils/logger.js';
 import type { DaemonState } from '../daemon-manager.js';
 import { inspectDesktopProxy, printDesktopInspection } from '../inspect-desktop.js';
 
@@ -26,7 +27,8 @@ describe('proxy inspect desktop', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    await rm(home, { recursive: true, force: true });
+    await logger.close();
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   /** A never-synced Desktop session created at `createdAt`, with its audit transcript. */
