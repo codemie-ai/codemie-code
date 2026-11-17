@@ -324,7 +324,6 @@ export class CoworkEventProducer {
       repoRemote,
       ...(branch && { branch }),
       cliVersion: cliVersion ?? '',
-      title: discovered.title,
       entrypoint: cursor.events.entrypoint,
       clientVersion: cursor.events.clientVersion,
     };

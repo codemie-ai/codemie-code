@@ -64,7 +64,6 @@ export interface CoworkEnvelope {
   repository: string;
   repoRemote?: string;
   cliVersion: string;
-  title?: string;
   entrypoint: string;
   clientVersion: string;
   /** The branch Git reports for the session's folder on the host; absent when the folder has none. */
@@ -90,8 +89,6 @@ interface CoworkLine extends SignalLine {
 type WireEvent = Record<string, unknown>;
 
 const AGENT_DISPATCH_TOOLS = new Set(['Agent', 'Task']);
-/** Events that carry the session title. */
-const TITLED_TYPES = new Set(['agent.session.start', 'agent.prompt.submit']);
 
 export function emptyCoworkEventState(): CoworkEventState {
   return {
@@ -333,7 +330,6 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     cwd: envelope.repository,
     ...(envelope.repoRemote && { repo_remote: envelope.repoRemote }),
     ...(envelope.project && { codemie_project_name: envelope.project }),
-    ...(envelope.title && TITLED_TYPES.has(String(own['type'])) && { session_title: envelope.title }),
     ...own,
     timestamp: own['timestamp'] || fallbackTimestamp,
   }, UNMASKED_FIELD_KEYS) as WireEvent;
