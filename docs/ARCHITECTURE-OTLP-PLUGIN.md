@@ -54,10 +54,10 @@ OtlpAgentAdapter.processOtlpEvent(rawEvent, deps)   (base class, fixed flow)
         │   (no running daemon: restarts it from ~/.codemie/proxy-connection.json,
         │    not from the cwd profile; with no record it falls back to the cwd
         │    profile and the start creates the record;
-        │    clientType/telemetryMode come from the record; an absent value is
-        │    left unset, not guessed; while Claude Desktop is connected to the
-        │    local gateway the identity is claude-desktop on the gateway's port,
-        │    unless the record is codex-desktop or vscode-byok;
+        │    the port is the one the clients were connected with — the record's,
+        │    else the port Claude Desktop points at; the daemon has no client
+        │    identity; a daemon of an older CLI is replaced on its port, except
+        │    on UserPromptSubmit and PostCompact, which adopt it as it is;
         │    project comes from the loaded config;
         │    missing SSO credentials only warn: the daemon starts, holds the port
         │    and answers 401 until login; a live daemon is adopted and Claude
@@ -108,9 +108,9 @@ evaluate(input) → ForwardDecision          (§3: shape every adapter follows)
 - **Effort changes**: on `PostModelSwitch`, an empty effort clears the previous env snapshot value because the newly selected model may not support effort. Other full env refreshes, such as `ConfigChange`, retain the previous value when the hook omits effort.
 - **Story granularity**: each hook subprocess resolves independently. A `Stop` after a prompt containing `story: ABC-1` gets the explicit / branch story, not the marker story. Carrying it across a session would need per-session state.
 - **Known limitations**: (1) the explicit story tier reads `<cwd>/.claude/analytics.local.json` by default (Claude-flavoured); `resolveStoryFor` takes `explicitConfigPath` so another adapter can override it. (2) The block path prints `JSON.stringify(decision)` to stdout, which is Claude Code's hook protocol; a tool with a different block protocol must make that step overridable (e.g. an `emitBlock()` method).
-- **Rollout**: the daemon outlives CLI upgrades. An old daemon recomputes `story_id`, `story_source` and `repo_remote` from its own env and overwrites the hook's values until restarted (`git_branch` is kept). Restart the proxy daemon after upgrading.
+- **Rollout**: the daemon outlives CLI upgrades. An old daemon recomputes `story_id`, `story_source` and `repo_remote` from its own env and overwrites the hook's values until it is replaced (`git_branch` is kept). A daemon of an older CLI is replaced by the next `proxy connect`, `proxy start`, `proxy restart` or hook cold start (the `UserPromptSubmit` and `PostCompact` hooks adopt it for that prompt).
 - **Known limitations**: (1) the explicit story tier reads `<cwd>/.claude/analytics.local.json` by default (Claude-flavoured); `resolveStoryFor` takes `explicitConfigPath` so another adapter can override it. (2) The block path prints `JSON.stringify(decision)` to stdout, which is Claude Code's hook protocol; a tool with a different block protocol must make that step overridable (e.g. an `emitBlock()` method). (3) `ensureOtlpProxy` (the allowlist/proxy-readiness gate, run before `codemie_project_name` is resolved) still keys off the hook's own `cwd`, unwalked — a tool without `CLAUDE_PROJECT_DIR` support, or a hook whose `cwd` has no `.codemie` anywhere above it, can still gate on the wrong profile even though `codemie_project_name` itself no longer does. (4) The mention-tier prefix list is closed and applies to prompts only (see the `extractTicketMentions` doc comment). Residual loss: a real key glued by a dash to a leading listed token (`gpt-4o-EPMCDME-15301`) or a real project key that is on the list is not detected by the mention tier or `ticket_mentions`; off-list tokens such as `us-east-1` or `node-20` still resolve when the prompt holds no upper-case key; and `story_id` may differ from `ticket_mentions[0]` because only the story pick prefers an upper-case key.
-- **Rollout**: the daemon outlives CLI upgrades. Restart the proxy daemon after upgrading. Old-format spool lines and a stale daemon are not handled and produce bad events. For a clean run, stop the daemon and delete `getCodemiePath('proxy', 'otlp-spool')` before the first hook. An old daemon keeps the old behaviour (no `X-CodeMie-Project` header, no project gate) until it is restarted.
+- **Rollout**: the daemon outlives CLI upgrades until it is replaced: `proxy connect`, `proxy start`, `proxy restart` and a hook's cold start replace a daemon of an older CLI (the `UserPromptSubmit` and `PostCompact` hooks adopt it for that prompt). Old-format spool lines and a stale daemon are not handled and produce bad events. For a clean run, stop the daemon and delete `getCodemiePath('proxy', 'otlp-spool')` before the first hook. An old daemon keeps the old behaviour (no `X-CodeMie-Project` header, no project gate) until it is restarted.
 - Wiring which native hooks/events call `codemie hook --agent <adapter-name>` is entirely tool-specific — see §6 for the Claude Code connector; a different tool has its own.
 
 ## 3. The dispatch pattern every `evaluate()` follows

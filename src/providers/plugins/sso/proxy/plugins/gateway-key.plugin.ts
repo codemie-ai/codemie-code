@@ -4,6 +4,7 @@ import type { ProxyContext } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
+import { clientOfGatewayKey, INVALID_GATEWAY_KEY_MESSAGE } from '../proxy-clients.js';
 
 export class GatewayKeyPlugin implements ProxyPlugin {
   id = '@codemie/proxy-gateway-key';
@@ -47,7 +48,8 @@ export class GatewayKeyPlugin implements ProxyPlugin {
           })
         );
 
-        if (!authHeader || authHeader !== expected) {
+        const match = clientOfGatewayKey(authHeader, gatewayKey);
+        if (!match) {
           logger.warn(
             '[gateway-key] Rejected request: invalid or missing gateway key',
             ...sanitizeLogArgs({
@@ -61,7 +63,7 @@ export class GatewayKeyPlugin implements ProxyPlugin {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({
             type: 'error',
-            error: { type: 'authentication_error', message: 'Invalid API key' },
+            error: { type: 'authentication_error', message: INVALID_GATEWAY_KEY_MESSAGE },
           }));
           return true;
         }
@@ -69,6 +71,11 @@ export class GatewayKeyPlugin implements ProxyPlugin {
         delete ctx.headers['authorization'];
         delete ctx.headers['Authorization'];
         ctx.metadata.gatewayKeyValidated = true;
+        // A named key gives the request its client; the shared key keeps the daemon's default client.
+        if (match.client) {
+          ctx.agentName = match.client;
+          ctx.metadata.gatewayKeyClient = match.client;
+        }
         logger.info(
           '[gateway-key] Gateway key validated and authorization header stripped',
           ...sanitizeLogArgs({

@@ -1,50 +1,39 @@
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
-import { ConfigLoader } from '../../../utils/config.js';
-import { ConfigurationError } from '../../../utils/errors.js';
 import {
   checkStatus,
+  readDaemonStatus,
   readState,
-  seedConnectionRecord,
   stopDaemon,
-  writeConnectionRecord,
-  writeState,
 } from './daemon-manager.js';
-import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
-import { launchDaemon, shouldWriteConnectionRecord } from './launch-daemon.js';
+import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
+import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
 import {
+  collectClientNotices,
   collectDesktopCollection,
   collectVisibleDeliveryHealth,
   formatAnalyticsLines,
   formatDesktopLine,
 } from './analytics-delivery-lines.js';
-import { formatDaemonConflict } from './daemon-conflict.js';
 import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
-  daemonMatchesRequest,
+  findOlderCliOnPath,
+  formatOlderCliWarning,
   printProxyError,
   connectTargets,
-  withDesktopIdentity,
-  type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
-import { getEffectiveClientType } from './client-type.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
-
-interface ProxyStartOptions {
-  port?: string;
-  profile?: string;
-}
 
 interface UnifiedConnectOptions {
   claudeCodeOtlp?: boolean;
@@ -98,19 +87,6 @@ function resolveAliasOptions(opts: AliasConnectOptions, command: Command): Alias
   return { ...parentOpts, ...opts };
 }
 
-function parsePortOption(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new ConfigurationError(`Invalid port value: ${value}`);
-  }
-
-  return parsed;
-}
-
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
   proxy
@@ -123,50 +99,11 @@ export function createProxyCommand(): Command {
   proxy
     .command('start')
     .description('Start the background proxy daemon')
-    .option('--port <port>', `Fixed port to listen on (default: ${DEFAULT_DAEMON_PORT})`)
+    .option('--port <port>', `Fixed port to listen on (default: the port the clients were connected with, else ${DEFAULT_DAEMON_PORT})`)
     .option('--profile <name>', 'Profile whose credentials to use')
     .action(async (opts: ProxyStartOptions) => {
       try {
-        // With Claude Desktop connected the daemon starts in Desktop mode, on the gateway's port unless --port names one.
-        const { identity, gatewayPort } = await withDesktopIdentity({});
-        const requestedPort = parsePortOption(opts.port, gatewayPort ?? DEFAULT_DAEMON_PORT);
-        const config = await ConfigLoader.load(
-          process.cwd(),
-          opts.profile ? { name: opts.profile } : undefined
-        );
-        const profile = config.name ?? 'default';
-        const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-
-        const requestedDaemon: RequestedDaemonConfig = {
-          profile,
-          port: requestedPort,
-          project: config.codeMieProject,
-          clientType: getEffectiveClientType(identity),
-          provider: config.provider ?? 'ai-run-sso',
-          targetUrl: config.baseUrl,
-        };
-        const { running, state } = await checkStatus();
-        if (running && state) {
-          if (daemonMatchesRequest(state, requestedDaemon)) {
-            if (opts.profile) {
-              await writeConnectionRecord(state, state.profile, state.clientType);
-            } else {
-              await seedConnectionRecord(state);
-            }
-            console.log(chalk.green(`✓ Proxy already running at ${state.url}  (profile: ${state.profile})`));
-            return;
-          }
-          throw new ConfigurationError(formatDaemonConflict(state));
-        }
-
-        const daemonState = await launchDaemon(config, profile, {
-          port: requestedPort,
-          ...identity,
-          projectBinding,
-          writeRecord: await shouldWriteConnectionRecord(opts.profile),
-        });
-
-        console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
+        await startProxy(opts);
       } catch (error) {
         printProxyError(error, 'Failed to start proxy');
       }
@@ -177,13 +114,16 @@ export function createProxyCommand(): Command {
     .command('stop')
     .description('Stop the background proxy daemon')
     .action(async () => {
-      const { running } = await checkStatus();
-      if (!running) {
-        console.log('Proxy is not running.');
-        return;
+      try {
+        const stopped = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
+          const { running } = await checkStatus();
+          if (running) await stopDaemon();
+          return running;
+        });
+        console.log(stopped ? chalk.green('✓ Proxy stopped') : 'Proxy is not running.');
+      } catch (error) {
+        printProxyError(error, 'Failed to stop proxy');
       }
-      await stopDaemon();
-      console.log(chalk.green('✓ Proxy stopped'));
     });
 
   // ── proxy restart ───────────────────────────────────────────────────────────
@@ -206,7 +146,7 @@ export function createProxyCommand(): Command {
     .option('--deep', 'Also verify upstream/auth reachability (slower)')
     .option('--json', 'Emit status as JSON instead of formatted output')
     .action(async (opts) => {
-      const { running, state } = await checkStatus();
+      const { running, state } = await readDaemonStatus();
       if (!running || !state) {
         if (opts.json) {
           console.log(JSON.stringify({ status: 'stopped' }, null, 2));
@@ -230,9 +170,12 @@ export function createProxyCommand(): Command {
         expectedPid: state.pid,
       });
       const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
-      const desktop = await collectDesktopCollection(state);
-
-      const otlp = await checkClaudeCodeOtlpEndpoint(state);
+      const [desktop, clients, olderCli, otlp] = await Promise.all([
+        collectDesktopCollection(state),
+        collectClientNotices(state),
+        findOlderCliOnPath(),
+        checkClaudeCodeOtlpEndpoint(state),
+      ]);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
 
       if (opts.json) {
@@ -244,10 +187,8 @@ export function createProxyCommand(): Command {
           profile: state.profile,
           uptimeSec,
           level: health.level,
+          version: state.version ?? null,
         };
-        if (state.clientType) {
-          payload.clientType = state.clientType;
-        }
         if (state.project) {
           payload.project = state.project;
         }
@@ -266,6 +207,18 @@ export function createProxyCommand(): Command {
         if (analytics) {
           payload.analytics = analytics;
         }
+        if (clients.clientPortMismatch.length > 0) {
+          payload.clientPortMismatch = clients.clientPortMismatch;
+        }
+        if (clients.clientSharedKey.length > 0) {
+          payload.clientSharedKey = clients.clientSharedKey;
+        }
+        if (olderCli) {
+          payload.olderCliOnPath = olderCli;
+        }
+        if (clients.hooksOfAnotherInstall.length > 0) {
+          payload.hooksOfAnotherInstall = clients.hooksOfAnotherInstall;
+        }
         console.log(JSON.stringify(payload, null, 2));
         return;
       }
@@ -274,18 +227,11 @@ export function createProxyCommand(): Command {
         const label = health.level === 'deep' ? 'running, healthy (upstream OK)' : 'running, healthy';
         console.log(`Status:  ${chalk.green(label)}`);
 
-        // If we explicitly verified upstream/auth and it is now healthy,
-        // clear any stale "last recorded issue" persisted by the watcher.
+        // An explicit upstream/auth check that passed outdates the watcher's recorded issue for this run;
+        // the daemon's watcher clears it from the state itself at its next passing check.
         if (opts.deep && state.health === 'unhealthy') {
-          await writeState({
-            ...state,
-            health: 'ok',
-            healthReason: undefined,
-            lastHealthyAt: new Date().toISOString(),
-          });
           state.health = 'ok';
           state.healthReason = undefined;
-          state.lastHealthyAt = new Date().toISOString();
         }
       } else {
         console.log(`Status:  ${chalk.yellow('running but UNHEALTHY')}`);
@@ -295,13 +241,14 @@ export function createProxyCommand(): Command {
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
       console.log(`  API Key: ${state.gatewayKey}`);
+      console.log(`  Client keys: ${state.gatewayKey}.<client> — written by codemie proxy connect`);
       console.log(`  Profile: ${state.profile}`);
-      if (state.clientType) {
-        console.log(`  Client:  ${state.clientType}`);
-      }
       if (state.project) {
         console.log(`  Project: ${state.project}`);
       }
+      console.log(state.version
+        ? `  Version: ${state.version}`
+        : chalk.yellow('  Version: older CLI — Run: codemie proxy restart'));
       console.log(`  Uptime:  ${uptime}`);
 
       if (desktop) {
@@ -312,6 +259,13 @@ export function createProxyCommand(): Command {
         for (const line of formatAnalyticsLines(analytics)) {
           console.log(line);
         }
+      }
+
+      for (const line of clients.lines) {
+        console.log(line);
+      }
+      if (olderCli) {
+        console.log(chalk.yellow(`  ${formatOlderCliWarning(olderCli)}`));
       }
 
       if (otlpMismatch) {
@@ -482,10 +436,11 @@ export function createProxyCommand(): Command {
     .description('Inspect Claude Desktop proxy telemetry readiness')
     .option('--limit <count>', 'Maximum number of recent sessions to inspect', String(DEFAULT_DESKTOP_INSPECT_LIMIT))
     .action(async (opts) => {
-      const { running, state } = await checkStatus();
-      const persistedState = state ?? await readState();
+      const status = await readDaemonStatus();
+      // A daemon that is not running leaves its state file; the inspection still shows what it last ran with.
+      const state = status.running ? status.state : await readState();
       const limit = Number.parseInt(opts.limit, 10);
-      await printDesktopInspection(running, persistedState, {
+      await printDesktopInspection(status.running, state, {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined
       });
     });

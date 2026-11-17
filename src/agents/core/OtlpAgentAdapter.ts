@@ -141,7 +141,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
     try {
       try {
-        await ensureOtlpProxy(this.name);
+        const event = (hookInput as { hook_event_name?: unknown }).hook_event_name;
+        await ensureOtlpProxy(this.name, typeof event === 'string' ? event : undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);

@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
+- `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
+
+### Changed
+
+- Clients set up by an older CLI move to their own keys at `codemie proxy start` (also `codemie proxy connect` and `codemie proxy restart`); restart the applications the command names afterwards
+- A proxy started by an older CLI is replaced on its port by `codemie proxy connect`, `codemie proxy start`, `codemie proxy restart` and a Claude Code hook
+- The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
+- `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
+
 ## [0.16.10] - 2026-11-17
 
 ### Added

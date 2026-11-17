@@ -85,9 +85,9 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
-codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
+codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port and key
 codemie proxy status             # Show daemon status
-codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
+codemie proxy connect --vscode   # Configure VS Code BYOK to use the local proxy
 codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
@@ -98,7 +98,11 @@ codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
-`codemie proxy connect --claude-desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+`codemie proxy connect --claude-desktop` does more than write the gateway config. While Claude Desktop's applied config points at the running daemon — whichever command started it — the daemon discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie under the client label `claude-desktop`.
+
+**One daemon for every client.** The daemon has no client identity of its own. `proxy connect` writes each client a key of its own — the gateway key with the client's name appended: `codemie-proxy.claude-desktop`, `codemie-proxy.vscode-claude-code`, `codemie-proxy.codex-desktop`, `codemie-proxy.vscode-byok`, and `codemie-proxy.codemie-daemon` for oh-my-pi — and a request is labelled and handled as the client its key names. A key that names no known client is refused like a wrong key. A request with the bare gateway key is served as the client an older CLI recorded for the daemon, else as `codemie-daemon`, so a client set up by an older CLI keeps working.
+
+**After an update.** A daemon started by an older CLI is replaced on its own port by `proxy connect`, `proxy start`, `proxy restart` and a hook's cold start: a hook and `proxy start` start the new daemon from the old one's own state, `proxy restart` keeps its port and key, and `proxy connect` starts it from the profile it connects with, as a connect always does. Claude Code's `UserPromptSubmit` and `PostCompact` hooks keep a live older daemon for that prompt. `proxy connect`, `proxy start` and `proxy restart` then move every client that still holds the bare gateway key to its own key and print one line per client with the application to restart; a config that cannot be written gives one warning line and does not fail the command. After a reboot nothing starts the daemon but a hook or a typed command: run `codemie proxy start`. After a downgrade to an older CLI run `codemie proxy connect` again with that CLI: its daemon accepts the bare gateway key only.
 
 **Model list.** The connector writes no model list into the Desktop config. Desktop asks the daemon's `GET /v1/models` on every start, and the daemon answers from the CodeMie catalog of the profile's project: every Claude model the project allows plus every router that routes only to Claude models, each under its CodeMie name. The newest preferred Opus, Sonnet and Haiku come first (the first is Desktop's default), then the routers, then the rest in catalog order. Non-Claude models the profile opted into with `codemie-claude models select` come last. After the project's Models tab changes, quit and reopen Claude Desktop; `connect` does not need to run again. The daemon must be running when Desktop starts, otherwise the picker stays empty until Desktop retries.
 
@@ -125,7 +129,7 @@ One-time VS Code secret setup required:
 1. Open VS Code and Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).
 2. Find Chat: Manage Language Models
 3. In opened dialog Right-click any CodeMie model → Update API Key
-4. Enter API key: codemie-proxy
+4. Enter API key: codemie-proxy.vscode-byok
 Reload VS Code, then select a CodeMie model from the model picker
 ```
 
@@ -200,10 +204,10 @@ and routing coverage runs as part of `npm test`.
 | Symptom | Likely cause | Action |
 |---|---|---|
 | Model does not appear | VS Code has not reloaded the configuration | Reload VS Code and open Chat: Manage Language Models |
-| Missing or invalid API key | The secret reference does not resolve | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` again |
-| HTTP 401 from localhost | The stored local key is missing or stale | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` |
+| Missing or invalid API key | The secret reference does not resolve | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy.vscode-byok` again |
+| HTTP 401 from localhost | The stored local key is missing or stale | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy.vscode-byok` |
 | HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`. When the login is gone the proxy keeps its port, answers 401 ("CodeMie SSO session expired") and opens a browser sign-in for a request that carries the local key; it resumes by itself after a successful login |
-| Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect vscode` |
+| Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect --vscode` |
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
 | New tenant models missing | VS Code configuration was written before the tenant catalog grew | Re-run `codemie proxy connect --vscode` |
@@ -248,23 +252,25 @@ codemie proxy connect --claude-desktop
 
 After the config is written, quit and reopen Claude Desktop. The older form `codemie proxy connect desktop` still works as a deprecated alias.
 
-**Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends every Cowork session to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. Three things stop a Cowork session from being sent:
+**Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends the Cowork sessions it served to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. These stop a Cowork session from being sent:
 
 - `codemie proxy analytics disable`, or the session's folder under `codemie proxy analytics exclude` — the same switches as for Claude Code; the folder allowlist of `connect --claude-code-otlp` does not apply to Cowork;
 - no CodeMie project for the session's folder — `codemie proxy status` then shows `Last dropped: no_project`;
-- the daemon not running in Desktop mode — see the `Desktop:` line below.
+- Claude Desktop's config not pointing at the running daemon — see the `Desktop:` line below;
+- none of the session's requests having gone through this daemon.
 
-**The daemon stays in Desktop mode.** While Claude Desktop's applied config points at the local CodeMie gateway, `proxy connect` with any other target, `proxy start`, `proxy restart` and a hook's cold start all start the daemon with the `claude-desktop` identity. A daemon started anew asks for the port Claude Desktop points at; `proxy restart` of a running daemon keeps the port it holds. The Desktop identity is never put in place of a `codex-desktop` or `vscode-byok` one, because those clients need their own request handling: `proxy restart` and a hook's cold start keep such a daemon as it is, and `proxy status` then says Desktop is not collecting. A `proxy connect` for other targets replaces the running daemon with the identity of its targets. `proxy start` never replaces a running daemon: beside one with another identity or port it stops with `A proxy is already running with different settings` and the command that stops it. After `codemie proxy disconnect --claude-desktop` the next `proxy connect` derives the identity from its targets again; until then the restart of a running daemon and a hook's cold start keep the identity the daemon was last given.
+**Collection follows Claude Desktop's config, not the way the daemon was started.** Every daemon collects Desktop sessions while Claude Desktop's applied config points at it — its port, with the gateway key or Desktop's own key — whichever of `proxy connect`, `proxy start`, `proxy restart` or a hook's cold start started it. A session active after Desktop was connected is collected, and one that began earlier is sent from that moment on. With Desktop disconnected or pointed at another port nothing new is discovered, and a session already being collected is still finalised. A daemon started anew asks for the port the clients were connected with; `proxy restart` of a running daemon keeps the port it holds. `proxy start` beside a running daemon of another profile or port stops with `A proxy is already running with different settings` and the command that stops it.
 
 **`codemie proxy status` with Claude Desktop connected** prints one more line after `Uptime`:
 
 | Line | Meaning |
 |---|---|
-| `Desktop: collecting` | The daemon runs in Desktop mode on the port Claude Desktop points at. |
-| `Desktop: NOT collecting — the proxy runs as <client>; codemie proxy connect --claude-desktop replaces it` | Another client's proxy is running; connecting Claude Desktop replaces it. |
+| `Desktop: collecting` | Claude Desktop's applied config points at this daemon. |
 | `Desktop: NOT collecting — Claude Desktop points at port <a>, the proxy listens on <b>; run: codemie proxy connect --claude-desktop` | The port Claude Desktop points at was taken; the command re-writes Claude Desktop's config, then restart Claude Desktop. |
 
 Below the `Analytics:` lines (and as a row above the connector section of `codemie proxy analytics status`) a `Last dropped: <reason> (<stream>, <time>)` line (the time in the local time zone, `YYYY-MM-DD HH:mm:ss +HH:MM`) names the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project). `--json` carries the same as `desktop` (`connected`, `collecting`, and, when not collecting, `reason` and `remedy`) and `analytics.latestDrop`.
+
+`codemie proxy status` also prints the CLI version the daemon was started by — `Version: older CLI — Run: codemie proxy restart` for a daemon of an older CLI — and one line for each client whose config points at another port (`<client>: points at port <a>, the proxy listens on <b> — Run: codemie proxy connect <flag>`), still holds the bare gateway key (`<client>: uses the shared key — Run: codemie proxy connect <flag>`) or holds a key this proxy does not accept (`<client>: points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: codemie proxy connect <flag>`). Under a daemon of an older CLI the key lines are not printed: the restart comes first. `--json` carries `version` (`null` for a daemon of an older CLI) and `clientSharedKey` (the clients still on the bare gateway key), and no `clientType`.
 
 #### `codemie proxy inspect desktop`
 
@@ -310,7 +316,7 @@ codemie proxy connect --codex-desktop --profile work
 codemie proxy connect --codex-desktop --model gpt-5-codex
 ```
 
-The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block delimited by sentinel comments: a header region at the top of the file holding `model_provider` and `model`, and a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"`, and a static `Authorization` header carrying the daemon gateway key. Everything outside those two regions — including your comments, key order and formatting — is preserved byte for byte.
+The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block delimited by sentinel comments: a header region at the top of the file holding `model_provider` and `model`, and a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"`, and a static `Authorization` header carrying Codex desktop's own key (`codemie-proxy.codex-desktop`). Everything outside those two regions — including your comments, key order and formatting — is preserved byte for byte.
 
 `~/.codex/auth.json` is never touched. Writing a provider key there would flip the app into API-key auth mode and disable features that depend on your ChatGPT account.
 
@@ -358,11 +364,11 @@ The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/c
 
 An omp provider binds one base URL, API and auth mode, so the OpenAI wire uses `<daemon>/v1` with a Bearer key while the Anthropic Messages wire uses the `<daemon>` root with `authHeader`. Per-model API overrides within one provider are unverified against omp v18.12.3.
 
-Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation and embedding deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. A router's `maxTokens` is the lowest `max_output_tokens` among its tier targets (128,000 on the current catalog). This value comes from metadata, and a `max_tokens: 128001` request was accepted, so it is not a proven hard limit. When no tier cap is known, 32,000 is used. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) once when omp loads the extension, and uses it for both model discovery and inference, so restart omp after the daemon's port or key changes; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation and embedding deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. A router's `maxTokens` is the lowest `max_output_tokens` among its tier targets (128,000 on the current catalog). This value comes from metadata, and a `max_tokens: 128001` request was accepted, so it is not a proven hard limit. When no tier cap is known, 32,000 is used. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) once when omp loads the extension, sends the key with its client name appended (`codemie-proxy.codemie-daemon`), and uses it for both model discovery and inference, so restart omp after the daemon's port or key changes; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy.codemie-daemon` key. If the daemon is down, omp keeps its last cached roster.
 
 To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
 
-When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. It cannot be combined with `--vscode`, because the two need different identities. A later `connect --vscode` restarts the shared daemon as `vscode-byok`, and omp traffic carries that identity until `--omp` is re-run. When `--omp` is combined with `--claude-desktop`/`--vscode-claude-code`, `--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp` or `--codex-desktop`, the daemon takes that target's identity in this priority order: `claude-desktop`, `claude-code-otlp`, `copilot-chat-otlp`, `copilot-cli-otlp`, `codex-desktop`. omp traffic is then attributed to that client, and under every identity except `codex-desktop` it also loses the encrypted reasoning-content recovery that `codemie-daemon` enables. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped before the daemon starts: omp is still installed and the daemon keeps the `codemie-daemon` identity. Without an interactive terminal that combination needs `--silent`, otherwise the whole run fails before omp is configured. An analytics hook (`--claude-code-otlp`, `--copilot-chat-otlp`, `--copilot-cli-otlp`) never restarts a running daemon, but when none is running it starts one with its own identity, which omp then shares until `--omp` is re-run.
+omp's requests carry its own key, so they are labelled and handled as `codemie-daemon` whichever other clients the daemon serves; `--omp` can be combined with any other target, `--vscode` included. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped and omp is still installed. Without an interactive terminal that combination needs `--silent`, otherwise the whole run fails before omp is configured.
 
 `--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
 

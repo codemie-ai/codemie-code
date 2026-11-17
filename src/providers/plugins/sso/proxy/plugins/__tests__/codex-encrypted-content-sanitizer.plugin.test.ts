@@ -38,12 +38,12 @@ function createPluginContext(clientType?: string): PluginContext {
   };
 }
 
-function createProxyContext(body: unknown, url = '/v1/responses'): ProxyContext {
+function createProxyContext(body: unknown, url = '/v1/responses', agentName = 'test-agent'): ProxyContext {
   const requestBody = Buffer.from(JSON.stringify(body), 'utf-8');
   return {
     requestId: 'test-req',
     sessionId: 'test-session',
-    agentName: 'test-agent',
+    agentName,
     method: 'POST',
     url,
     headers: {
@@ -92,14 +92,11 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
       expect(interceptor).toBeDefined();
     });
 
-    it('throws for claude agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('claude')))
-        .rejects.toThrow('Plugin disabled for agent: claude');
-    });
-
-    it('throws for undefined clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext(undefined)))
-        .rejects.toThrow('Plugin disabled');
+    it('declares exactly these clients', () => {
+      expect(plugin.clients).toEqual([
+        'codemie-codex', 'codemie-code', 'codemie-opencode', 'codemie-pi', 'vscode-byok', 'codex-desktop',
+        'codemie-codex-acp', 'codemie-daemon',
+      ]);
     });
   });
 
@@ -210,6 +207,47 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
       await interceptor.onRequest!(request);
 
       expect(JSON.parse(request.requestBody!.toString('utf-8')).input).toHaveLength(1);
+    });
+  });
+
+  describe('the latch is kept per client', () => {
+    const replay = { input: [{ type: 'reasoning', id: 'rs_1', encrypted_content: 'abc==' }] };
+    const inputOf = (context: ProxyContext): unknown[] => JSON.parse(context.requestBody!.toString('utf-8')).input;
+
+    it('a marker in a codex-desktop response strips the next codex-desktop request and no other client\'s', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext());
+      await interceptor.onResponseChunk!(
+        createProxyContext({}, '/v1/responses', 'codex-desktop'),
+        Buffer.from(AFFINITY_REJECTION, 'utf-8')
+      );
+
+      const codex = createProxyContext(replay, '/v1/responses', 'codex-desktop');
+      const byok = createProxyContext(replay, '/v1/responses', 'vscode-byok');
+      const daemon = createProxyContext(replay, '/v1/responses', 'codemie-daemon');
+      for (const context of [codex, byok, daemon]) await interceptor.onRequest!(context);
+
+      expect(inputOf(codex)).toHaveLength(0);
+      expect(inputOf(byok)).toHaveLength(1);
+      expect(inputOf(daemon)).toHaveLength(1);
+    });
+
+    it('edge: two codex-desktop streams and a vscode-byok stream at once, the first latching, strip codex-desktop alone', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext());
+      const first = createProxyContext({}, '/v1/responses', 'codex-desktop');
+      const second = createProxyContext({}, '/v1/responses', 'codex-desktop');
+      const byokStream = createProxyContext({}, '/v1/responses', 'vscode-byok');
+      const clean = Buffer.from('data: {"type":"response.output_text.delta"}', 'utf-8');
+      for (const stream of [first, second, byokStream]) await interceptor.onResponseChunk!(stream, clean);
+      await interceptor.onResponseChunk!(first, Buffer.from(AFFINITY_REJECTION, 'utf-8'));
+      for (const stream of [second, byokStream]) await interceptor.onResponseChunk!(stream, clean);
+
+      const nextCodex = createProxyContext(replay, '/v1/responses', 'codex-desktop');
+      const nextByok = createProxyContext(replay, '/v1/responses', 'vscode-byok');
+      await interceptor.onRequest!(nextCodex);
+      await interceptor.onRequest!(nextByok);
+
+      expect(inputOf(nextCodex)).toHaveLength(0);
+      expect(inputOf(nextByok)).toHaveLength(1);
     });
   });
 

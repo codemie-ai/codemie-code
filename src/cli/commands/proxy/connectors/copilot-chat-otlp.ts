@@ -25,6 +25,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
+import { parseHookCommandHead } from '@/utils/hook-command.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
@@ -177,6 +178,44 @@ function buildHookFileContent(hookCommand: string): Record<string, unknown> {
     hooks[eventName] = [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }];
   }
   return { hooks };
+}
+
+/**
+ * The `bin/codemie.js` the Copilot Chat hook file's codemie commands run (the script of the first
+ * `"<node>" "<script>" hook …` command, unquoted the way the writer quoted it), or null: no file, an unreadable
+ * one, no such command. Never throws, writes nothing.
+ */
+export async function readCopilotChatHookInstall(): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(getCopilotChatHookFilePath(), 'utf-8')) as { hooks?: unknown };
+    const hooks = parsed.hooks;
+    if (!hooks || typeof hooks !== 'object') return null;
+    for (const entries of Object.values(hooks)) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const command: unknown = (entry as { command?: unknown } | null)?.command;
+        const head = typeof command === 'string' ? parseHookCommandHead(command) : null;
+        if (head && head.paths.length === 2 && /^\s+hook\b/.test(head.rest)) {
+          return unescapeHookPath(head.paths[1]);
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    logger.debug('[proxy] Copilot Chat hook file not readable', ...sanitizeLogArgs({ error: String(error) }));
+    return null;
+  }
+}
+
+/**
+ * A path of a hook command as the writer was given it: the writer quotes with `JSON.stringify`, so its escapes are
+ * undone; a path that is not the content of a JSON string is taken as written.
+ */
+function unescapeHookPath(path: string): string {
+  try {
+    return JSON.parse(`"${path}"`) as string;
+  } catch {
+    return path;
+  }
 }
 
 /** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook

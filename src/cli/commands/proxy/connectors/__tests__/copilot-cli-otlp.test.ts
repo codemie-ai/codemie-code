@@ -21,6 +21,7 @@ import {
   CLI_HOOK_TIMEOUT_SECONDS,
   buildHookFileContent,
   getCopilotCliHookFilePath,
+  readCopilotCliHookInstall,
   removeCopilotCliOtlpConfig,
   writeCopilotCliOtlpConfig,
 } from '../copilot-cli-otlp.js';
@@ -91,6 +92,18 @@ describe('copilot-cli-otlp connector (temp COPILOT_HOME / CODEMIE_HOME)', () => 
     if (originalCopilotHome === undefined) delete process.env.COPILOT_HOME;
     else process.env.COPILOT_HOME = originalCopilotHome;
     await rm(testDir, { recursive: true, force: true });
+  });
+
+  it('reads back the script the written hook file runs, and nothing without a readable file', async () => {
+    await expect(readCopilotCliHookInstall()).resolves.toBeNull();
+
+    await writeCopilotCliOtlpConfig({ scope: 'user' });
+    await expect(readCopilotCliHookInstall()).resolves.toBe(
+      join(getDirname(import.meta.url), '../../../../../../bin/codemie.js')
+    );
+
+    await writeFile(getCopilotCliHookFilePath(), '{ not json');
+    await expect(readCopilotCliHookInstall()).resolves.toBeNull();
   });
 
   it('writes the hook file under $COPILOT_HOME/hooks and records a user-scope connector', async () => {

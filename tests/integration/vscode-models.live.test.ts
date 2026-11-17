@@ -28,6 +28,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readState } from '../../src/cli/commands/proxy/daemon-manager.js';
 import { isProcessAlive } from '../../src/utils/processes.js';
+import { VSCODE_BYOK } from '../../src/providers/plugins/sso/proxy/proxy-clients.js';
 import {
   VS_CODE_CAPABILITY_TABLE,
   type VsCodeCapabilityEntry,
@@ -332,16 +333,11 @@ async function resolveLiveConfiguration(): Promise<LiveConfiguration> {
       'CODEMIE_VSCODE_LIVE_API_KEY.'
     );
   }
-  if (state.clientType !== 'vscode-byok') {
-    throw new Error(
-      `The running proxy client is "${state.clientType ?? 'unknown'}"; ` +
-      'live VS Code certification requires a vscode-byok proxy.'
-    );
-  }
 
   return {
     baseUrl: state.url.replace(/\/$/, ''),
-    apiKey: state.gatewayKey,
+    // The named key makes the daemon serve these requests as VS Code BYOK.
+    apiKey: `${state.gatewayKey}.${VSCODE_BYOK}`,
     project: process.env.CODEMIE_VSCODE_PROJECT,
     source: 'running-vscode-proxy',
   };

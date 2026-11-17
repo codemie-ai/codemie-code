@@ -36,19 +36,16 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
 /** Agents that use AI SDKs which inject unsupported reasoning params */
-const ALLOWED_AGENTS = ['codemie-code', 'codemie-opencode', 'codemie-opencode-acp'];
+const ALLOWED_AGENTS: readonly string[] = ['codemie-code', 'codemie-opencode', 'codemie-opencode-acp'];
 
 export class RequestSanitizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-request-sanitizer';
   name = 'Request Sanitizer';
   version = '1.0.0';
   priority = 15; // After auth (10), before header injection (20)
+  clients = ALLOWED_AGENTS;
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
     return new RequestSanitizerInterceptor();
   }
 }

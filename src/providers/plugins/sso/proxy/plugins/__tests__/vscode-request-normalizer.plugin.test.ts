@@ -76,13 +76,9 @@ describe('VsCodeRequestNormalizerPlugin', () => {
       expect(interceptor.name).toBe('vscode-request-normalizer');
     });
 
-    it.each(['codemie-code', 'codemie-codex', undefined])(
-      'rejects non-VS Code client type %s',
-      async clientType => {
-        await expect(plugin.createInterceptor(createPluginContext(clientType)))
-          .rejects.toThrow(`Plugin disabled for agent: ${clientType}`);
-      }
-    );
+    it('declares exactly the VS Code BYOK client', () => {
+      expect(plugin.clients).toEqual(['vscode-byok']);
+    });
   });
 
   describe('request normalization', () => {

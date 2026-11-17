@@ -14,6 +14,7 @@ import TOML from '@iarna/toml';
 
 import { rankCodexModelIdsByRecency } from '@/agents/plugins/codex/codex-models.js';
 import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
+import { CODEX_DESKTOP } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { exec } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
@@ -283,7 +284,8 @@ function parseOrThrow(text: string, configPath: string): Record<string, unknown>
 }
 
 /**
- * Splice the managed block into the user's Codex config and record ownership.
+ * Splice the managed block into the user's Codex config and record ownership. The
+ * provider's `Authorization` carries Codex's named key, `<gatewayKey>.codex-desktop`.
  *
  * The marker state is written BEFORE the config on purpose. If the config write
  * then fails, the marker over-claims — and removal is idempotent, so that is
@@ -319,7 +321,7 @@ export async function writeCodexDesktopConfig(
 
   const blocks = buildManagedBlocks({
     baseUrl: options.baseUrl,
-    gatewayKey: options.gatewayKey,
+    gatewayKey: `${options.gatewayKey}.${CODEX_DESKTOP}`,
     model: options.model,
   });
   const next = spliceManagedBlocks(currentText, blocks);

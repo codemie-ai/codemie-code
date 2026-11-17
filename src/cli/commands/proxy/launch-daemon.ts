@@ -33,13 +33,14 @@ export async function prepareDaemonLaunch(config: LoadedConfig, profile: string)
 /**
  * Whether `proxy start` / `proxy restart` should (re)write proxy-connection.json: an explicit
  * `--profile` always does; without it the daemon may have loaded the cwd profile, so an existing
- * valid record (set by `proxy connect`) is left alone.
+ * valid record (set by `proxy connect`) is left alone. Once the daemon runs, the command moves the client configs
+ * to their named keys, which can drop an older CLI's client identity from the record.
  */
 export async function shouldWriteConnectionRecord(profileOption: string | undefined): Promise<boolean> {
   return Boolean(profileOption) || !(await readConnectionRecord());
 }
 
-/** Spawn the daemon for a prepared config; `overrides` carries port and identity. */
+/** Spawn the daemon for a prepared config; `overrides` carries the port and what a restart keeps. */
 export async function spawnForProfile(
   config: LaunchableConfig,
   profile: string,
@@ -55,14 +56,4 @@ export async function spawnForProfile(
     syncCodeMieUrl: config.codeMieUrl,
     ...overrides,
   });
-}
-
-/** Prepare and spawn in one step, as `proxy start` does. */
-export async function launchDaemon(
-  config: LoadedConfig,
-  profile: string,
-  overrides: Partial<SpawnOptions>
-): Promise<DaemonState> {
-  const prepared = await prepareDaemonLaunch(config, profile);
-  return spawnForProfile(prepared, profile, overrides);
 }

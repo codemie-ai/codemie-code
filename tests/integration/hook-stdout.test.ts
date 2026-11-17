@@ -258,14 +258,32 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
     // The profile has no stored SSO credentials, so the daemon holds a listener and answers 401 until the user
     // signs in. `recordedProfile` seeds the proxy-connection.json that `proxy connect` would have written;
     // without it the hook falls back to the working directory's profile.
+    /** A loopback port no process listens on now. */
+    async function freeLoopbackPort(): Promise<number> {
+      const server = createServer();
+      await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+      const { port } = server.address() as AddressInfo;
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      return port;
+    }
+
     async function runColdOtlpHook(
       extraEnv: Record<string, string>,
       recordedProfile?: string,
       activeProfile = 'hook-stdout-test',
-      recordedSession = true
+      recordedSession = true,
+      deadDaemonPort?: number
     ): Promise<{ home: string; res: RunResult }> {
       const home = freshHome();
       daemonHomes.push(home);
+      // The state a dead daemon left, naming no upstream: the cold start asks for its port.
+      if (deadDaemonPort !== undefined) {
+        writeFileSync(
+          join(home, 'proxy-daemon.json'),
+          JSON.stringify({ pid: 999999, port: deadDaemonPort, url: `http://127.0.0.1:${deadDaemonPort}`, profile: 'gone', gatewayKey: 'codemie-proxy', startedAt: new Date().toISOString() }),
+          'utf-8'
+        );
+      }
       // Notification belongs to an existing session; an unknown owner-less mid-session hook must not start a daemon.
       if (recordedSession) seedLegacyHookSession(home, 'agent-session-under-test');
       writeFileSync(
@@ -365,8 +383,9 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
 
     // The only cases that take a real `codemie hook` process through spawnDaemon: a write to stdout or stderr
     // there (the record write, the status line) would reach the agent's protocol channel.
-    it('with no recorded connection the cold start starts the working directory profile, writes nothing to stdout or stderr, holds the port and records the connection', async () => {
-      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' });
+    it('with no recorded connection the cold start starts the working directory profile, writes nothing to stdout or stderr, holds the port and records the profile and port', async () => {
+      const port = await freeLoopbackPort();
+      const { home, res } = await runColdOtlpHook({ CODEMIE_DEBUG: '1' }, undefined, 'hook-stdout-test', true, port);
 
       expect(res.stdout).toBe('');
       expect(res.stderr).toBe('');
@@ -376,7 +395,8 @@ describe('hook process stdout (codemie hook / codemie sound)', () => {
       expect(existsSync(join(home, 'sso-login.lock'))).toBe(false);
       await expectPortHeldAwaitingLogin(home);
       const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8')) as Record<string, unknown>;
-      expect(record).toMatchObject({ version: 1, profile: 'hook-stdout-test', clientType: 'claude-code-otlp' });
+      expect(record).toMatchObject({ version: 1, profile: 'hook-stdout-test', port });
+      expect(record).not.toHaveProperty('clientType');
     });
 
     it('with a recorded connection the cold start restarts the recorded profile, warns that it has no SSO credentials, writes nothing to stdout or stderr and holds the port', async () => {

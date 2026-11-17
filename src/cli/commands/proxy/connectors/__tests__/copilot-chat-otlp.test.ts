@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
+import { getDirname } from '@/utils/paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
 import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
@@ -33,6 +34,7 @@ import {
   getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
+  readCopilotChatHookInstall,
   removeCopilotChatOtlpConfig,
   writeCopilotChatOtlpConfig,
 } from '../copilot-chat-otlp.js';
@@ -83,6 +85,37 @@ describe('copilot-chat-otlp connector', () => {
       process.env.CODEMIE_HOME = originalCodemieHome;
     }
     await rm(testDir, { recursive: true, force: true });
+  });
+
+  it('reads back the script the written hook file runs, and nothing without a readable file', async () => {
+    await expect(readCopilotChatHookInstall()).resolves.toBeNull();
+
+    await writeSettingsRaw('{}');
+    await writeCopilotChatOtlpConfig({ scope: 'user' });
+    await expect(readCopilotChatHookInstall()).resolves.toBe(
+      join(getDirname(import.meta.url), '../../../../../../bin/codemie.js')
+    );
+
+    await writeFile(getCopilotChatHookFilePath(), '{ not json');
+    await expect(readCopilotChatHookInstall()).resolves.toBeNull();
+  });
+
+  async function writeHookCommand(command: string): Promise<void> {
+    await mkdir(join(process.env.CODEMIE_HOME!, 'hooks'), { recursive: true });
+    await writeFile(getCopilotChatHookFilePath(), JSON.stringify({ hooks: { SessionStart: [{ type: 'command', command }] } }));
+  }
+
+  it('reads back a Windows script path the writer quoted as a JSON string, its backslashes single again', async () => {
+    const script = 'D:\\a\\codemie-code\\bin\\codemie.js';
+    await writeHookCommand(`${JSON.stringify('C:\\Program Files\\nodejs\\node.exe')} ${JSON.stringify(script)} hook --agent copilot-chat-otlp`);
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\codemie-code\\bin\\codemie.js');
+  });
+
+  it('reads back as written a quoted script path that is not the content of a JSON string', async () => {
+    await writeHookCommand('"C:\\Program Files\\nodejs\\node.exe" "D:\\a\\x\\bin\\codemie.js" hook --agent copilot-chat-otlp');
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\x\\bin\\codemie.js');
   });
 
   describe('user scope', () => {

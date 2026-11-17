@@ -3,7 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -267,7 +267,7 @@ describe('createProxyAnalyticsCommand', () => {
       });
       const collectDeliveryHealth = vi.fn().mockResolvedValue(delivery);
       vi.doMock('../daemon-manager.js', () => ({
-        checkStatus: vi.fn().mockResolvedValue({ running: true, state: daemonState }),
+        readDaemonStatus: vi.fn().mockResolvedValue({ running: true, state: daemonState }),
       }));
       vi.doMock('../health-check.js', () => ({ checkProxyHealth }));
       vi.doMock('../delivery-health.js', async () => {
@@ -282,6 +282,17 @@ describe('createProxyAnalyticsCommand', () => {
       const lines = plainOutput().split('\n');
       expect(lines.slice(0, 3)).toEqual(['Delivery: proxy not running', '', title]);
       expect(lines.filter((l) => l.includes('Delivery:'))).toHaveLength(1);
+    });
+
+    it('reads the state of a dead daemon as stopped and leaves its file byte-identical', async () => {
+      const stateFile = join(tempDir, 'proxy-daemon.json');
+      const content = JSON.stringify({ ...daemonState, pid: 999999 });
+      await writeFile(stateFile, content, 'utf-8');
+
+      await runCommand(['status']);
+
+      expect(plainOutput().split('\n')[0]).toBe('Delivery: proxy not running');
+      expect(await readFile(stateFile, 'utf-8')).toBe(content);
     });
 
     it.each(connectors)('%j --json adds delivery: null when the daemon is stopped', async (flags) => {

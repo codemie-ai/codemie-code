@@ -87,6 +87,24 @@ async function resolveBinary(): Promise<string> {
   return 'codemie';
 }
 
+/**
+ * The head of a hook command in the shapes resolveBinary emits — `path`, `"path"`, or `"node" "script.js"`, each
+ * optionally after `& ` — as its unquoted paths, with the head as written and the rest of the command; null when
+ * the command has no head.
+ */
+export function parseHookCommandHead(command: string): { head: string; paths: string[]; rest: string } | null {
+  const match = /^(?:& )?("[^"]*"(?: "[^"]*\.[cm]?js")?|\S+)([\s\S]*)$/.exec(command);
+  if (!match) return null;
+  const [, head, rest] = match;
+  const paths = (head.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$/g, ''));
+  return { head, paths, rest };
+}
+
+/** An absolute path to a `codemie` shim, `codemie.cmd` / `.ps1` / `.exe`, or a `codemie.js` script. */
+export function isAbsoluteCodemiePath(path: string): boolean {
+  return /^([a-zA-Z]:)?[\\/]/.test(path) && /[\\/]codemie(\.(cmd|ps1|exe|[cm]?js))?$/i.test(path);
+}
+
 // Rewrite a leading `codemie` token to `binary`; other commands pass through.
 // Also rewrites absolute paths baked in by older resolvers that point at the
 // bundled agent shim or a file that is gone, so already-installed hooks get repaired.
@@ -98,12 +116,10 @@ export function resolveHookCommand(command: string, binary: string, powershell =
   if (command === 'codemie') return render(binary);
   if (command.startsWith('codemie ')) return render(binary) + command.slice('codemie'.length);
 
-  const match = /^(?:& )?("[^"]*"(?: "[^"]*\.[cm]?js")?|\S+)([\s\S]*)$/.exec(command);
-  if (!match) return command;
-  const [, head, rest] = match;
-  const paths = (head.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$/g, ''));
-  const last = paths[paths.length - 1];
-  const isCodemiePath = /^([a-zA-Z]:)?[\\/]/.test(last) && /[\\/]codemie(\.(cmd|ps1|exe|[cm]?js))?$/i.test(last);
+  const parsed = parseHookCommandHead(command);
+  if (!parsed) return command;
+  const { head, paths, rest } = parsed;
+  const isCodemiePath = isAbsoluteCodemiePath(paths[paths.length - 1]);
   // Shadowed shim, or a codemie path whose file is gone (e.g. an old npm-prefix install):
   // re-resolve instead of keeping a command that can only fail. EPMCDME-15907.
   if (paths.some(isShadowedCodemieShim) || (isCodemiePath && !paths.every((p) => existsSync(p)))) {

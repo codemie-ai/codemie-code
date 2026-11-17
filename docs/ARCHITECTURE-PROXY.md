@@ -166,7 +166,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 - `authMethod` (`'sso' | 'jwt'`), `jwtToken`
 - `repository` / `branch` / `project` (header injection), `gatewayKey` (local daemon auth)
 - `syncApiUrl` / `syncCodeMieUrl` (session sync target and credential lookup, independent of the main upstream)
-- `telemetryMode` (`'none' | 'claude-desktop'`) and related poll/inactivity timeouts (10 s poll, 5 min idle). The Desktop telemetry runtime owns its records (`ownerPid` / `ownerStartedAt` = the daemon process) and:
+- poll and inactivity timeouts of the Desktop telemetry runtime (10 s poll, 5 min idle), which every daemon starts (§6.12.3). The runtime owns its records (`ownerPid` / `ownerStartedAt` = the daemon process) and:
   - ends a session at its last activity (the later of the in-memory and the saved `lastSeenActivityAt`, else `lastDiscoveredAt`, else `startTime`), never at the moment it is finalized; reasons: `desktop-inactive-timeout` (5 min idle), `desktop-daemon-stop` (daemon stop), `desktop-daemon-restart` (the start-up scan);
   - at start, scans its client's `<id>.json` records without blocking the start: an `active` record whose owning daemon is gone is finalized `desktop-daemon-restart` and delivered; an ownerless (legacy) `active` record idle longer than 72 h is closed locally, nothing sent; an undelivered `completed` record with an owner (also one a CLI start closed locally as `desktop-daemon-gone`, flushed first) is delivered. A record of another CodeMie host (its `codemieUrl`) is never delivered by this daemon: an active one of a gone daemon is closed locally as `desktop-daemon-gone` and left for a daemon of that host, a completed one is left as it is;
   - delivers a finalized record (sync, then the end metric) and renames its set `completed_*` only once delivered; a failed delivery is logged and the record stays `<id>.json`; a counted failure (a JSON 4xx other than 401/403/400/409/422, or a JSON 401/403 whose message is the backend's "Access denied" (a permission denial, not an expiry: the backend answers an expired session with 401 "Authentication failed"). A plain 403 still counts as a rejection of the credentials, because no real gateway 403 was captured to tell it from an expiry; a permanent one then waits until the evidence retention ends, or a 2xx without success) spends a real attempt, and the record is renamed unsent and marked `droppedAt` with a `droppedReason` (`rejected by the server` for a JSON 400/409/422, `retry budget exhausted`, `retention expired`; `local errors` is the CLI's, for a finalize that failed locally five times) only once it has been failing for the retry window (24 h, `CODEMIE_DELIVERY_RETRY_WINDOW_MS`) with at least 3 real attempts; an attempt is made only with stored cookies and the analytics auth not marked invalid (otherwise nothing is sent and the record waits for a re-login); an attempt is given back when the server rejects the credentials (a 401 or an SSO login page; this also marks the auth invalid) or answers a permission denial (a 403: it marks nothing invalid and outranks every other failure the attempt met), when no server served it (no connection, a timeout or reset after the send, a 5xx, a 429, or a 4xx whose body is not JSON), when the exit deadline cuts it, or when it fails locally without a request; so an outage never drops a record unsent, hanging requests included, until the evidence retention (`CODEMIE_EVIDENCE_RECORD_IDLE_DAYS`, 90 days by default) ends; an answer of a failing server can follow a request the application already served — a gateway's 502 or 504 is the known case, and every other 5xx and a 429 are given back alike — so its re-send can repeat an end metric; ownerless records are never re-delivered;
@@ -552,7 +552,7 @@ It implements `handleRequest`, not `onRequest`: clients send these requests with
 **Priority**: 7
 **File**: `gateway-key.plugin.ts`
 
-**Purpose**: Validates a static local bearer key (`gatewayKey` on `ProxyConfig`) for daemon-mode clients (Claude Desktop, VS Code BYOK) so they authenticate to the local proxy without ever seeing real SSO/JWT credentials. Strips the header before the request is forwarded upstream.
+**Purpose**: Validates the local bearer key of daemon-mode clients (Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK, oh-my-pi) so they authenticate to the local proxy without ever seeing real SSO/JWT credentials, and names the request's client. A client's key is `gatewayKey` of `ProxyConfig` with the client's name appended (`<gatewayKey>.<client>`, `proxy-clients.ts`); the bare `gatewayKey` is served as the daemon's default client, and a key that names an unknown client is refused like a wrong key. Strips the header before the request is forwarded upstream.
 
 **Hook used**: `handleRequest`, not `onRequest` — this plugin runs in the earlier full-bypass phase (§4.1) so an invalid key is rejected (401) before any auth-injection or normalization plugin sees the request. On a valid key it returns `false` and the request falls through to the normal `onRequest` pipeline.
 
@@ -588,7 +588,7 @@ It implements `handleRequest`, not `onRequest`: clients send these requests with
 **Priority**: 14
 **Files**: `claude-request-normalizer.plugin.ts`, `kimi-request-normalizer.plugin.ts`, `codex-request-normalizer.plugin.ts`
 
-**Purpose**: Fix up agent-specific request body quirks before the request reaches upstream:
+**Purpose**: Fix up agent-specific request body quirks before the request reaches upstream. A normalizer runs for the requests of its own clients; in the daemon a request's client is the one its gateway key names (§6.3):
 
 - **Claude**: normalizes `thinking` params for Claude models
 - **Kimi**: caps Kimi output-token requests to stay within upstream limits
@@ -639,7 +639,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 On `/v1/metrics` the proxy does not inject `X-CodeMie-Client`, `X-CodeMie-Repository`, `X-CodeMie-Branch` or `X-CodeMie-Project`, because a metric can belong to another session or agent than the running launch: `MetricsApiClient` sets them, the client from its sender's client type, the other three from the metric's attributes (the end metric detects the branch only when the record has none), and a request without one stays without it. The entries below for these four headers describe every other path; the remaining entries also apply to `/v1/metrics`.
 
 - `X-CodeMie-Session-ID`: Session UUID for correlation, only `if (context.sessionId && context.sessionId !== 'unknown')`
-- `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-gemini`, `codemie-code`), only `if (config.clientType)`
+- `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-gemini`, `codemie-code`), set when a client is known: in-process the launching agent's client type; in the daemon the client the request's gateway key names (the default client for the bare key)
 - `X-CodeMie-Integration`: Integration ID (only when provider requires integration via `requiresIntegration` flag)
 - `X-CodeMie-CLI-Model`: Model name from config (if configured) — this fires for `vscode-byok` too whenever the active profile has a `model` set, since the daemon receives `--model` for every target (see §6.13)
 - `X-CodeMie-CLI-Timeout`: Timeout value from config (if configured)
@@ -731,7 +731,7 @@ Proxy Stop
 
 #### 6.12.3 Claude Desktop 3P Telemetry Runtime
 
-When the proxy daemon is started in Desktop mode, the daemon also starts a local telemetry runtime for Claude Desktop 3P:
+Every proxy daemon starts a local telemetry runtime for Claude Desktop 3P; it collects while Claude Desktop's applied config points at this daemon (its port and a key the daemon accepts) and pauses otherwise:
 
 - Discovers session metadata under `<config root>/local-agent-mode-sessions/`, where the config root is `~/Library/Application Support/Claude-3p/` on macOS, `%LOCALAPPDATA%\Claude-3p\` on Windows, and `$XDG_CONFIG_HOME/Claude-3p/` (else `~/.config/Claude-3p/`) on Linux
 - Reads sibling `audit.jsonl` transcripts for each detected `local_<session>` directory
@@ -741,14 +741,14 @@ When the proxy daemon is started in Desktop mode, the daemon also starts a local
 - Sends session lifecycle metrics with client identity `claude-desktop`
 - Sends every Cowork session to CLI Analytics as Claude Code plugin events (below)
 
-**Cowork sessions in CLI Analytics.** A Cowork session keeps its Claude Code transcript beside `audit.jsonl`, in `<session dir>/.claude/projects/session/<cliSessionId>.jsonl`, with its subagent files under `<cliSessionId>/subagents/` — the inner transcript. `CoworkEventProducer` (`src/telemetry/runtime/cowork/`) is started by every poll of the runtime, never awaited and one run at a time, so it cannot delay the metrics sync or the daemon's stop. It reads the inner transcript of each Cowork session active in the last 7 days (`CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS`, at most 14) from its own cursor (`~/.codemie/analytics/state/<cliSessionId>.cowork.json`), whenever the daemon started: a session that ran while the daemon was down is read from its beginning. It appends plugin events to the OTLP spool's `hooks` stream, from where the existing tick and forwarder send them in legacy mode with the session's project:
+**Cowork sessions in CLI Analytics.** A Cowork session keeps its Claude Code transcript beside `audit.jsonl`, in `<session dir>/.claude/projects/session/<cliSessionId>.jsonl`, with its subagent files under `<cliSessionId>/subagents/` — the inner transcript. `CoworkEventProducer` (`src/telemetry/runtime/cowork/`) is started by every poll of the runtime, never awaited and one run at a time, so it cannot delay the metrics sync or the daemon's stop. It reads the inner transcript of each Cowork session active in the last 7 days (`CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS`, at most 14) from its own cursor (`~/.codemie/analytics/state/<cliSessionId>.cowork.json`), whenever the daemon started: a session that ran while the daemon was down is read from its beginning. It takes a session only when this daemon served one of its requests or the session already has a cursor: at the first request of a session it serves, the proxy leaves a served mark beside the cursor (`~/.codemie/analytics/state/<cliSessionId>.cowork-served`), so a session whose requests went through another gateway is never sent. At each refresh of its session list, which runs whether analytics is enabled or not, the producer deletes the mark of a session that is no longer in the window once the mark itself is older than the window; a later request of that session writes the mark again. It appends plugin events to the OTLP spool's `hooks` stream, from where the existing tick and forwarder send them in legacy mode with the session's project:
 
 - `agent.usage.request`, `agent.subagent.usage` and `agent.session.summary` come from the Claude Code transcript orchestrator, called as the hook path calls it;
 - `agent.session.start`, `agent.prompt.submit`, `agent.tool.start` / `agent.tool.end` / `agent.tool.error`, `agent.subagent.start` / `agent.subagent.stop` and `agent.session.end` are built from the transcript lines (`cowork-events.ts`), each with a deterministic `event_id` `<type>:<session_id>:<key>`, so a lost cursor re-sends the same ids and the backend drops them. A subagent is stopped at the time of its last line once the result of the call that started it was read; one launched in the background, whose call answers at once, is stopped when the session ends. A session is ended once its last line is older than the inactivity timeout and ended again if it goes on.
 
 Every event carries `platform: claude-code`, the transcript's own `entrypoint` (`local-agent`) and version, the project the runtime resolves for the session, the repository (`Cowork` when the folder has none) and the branch Git reports for the session's folder on the host (empty when the folder is not a repository or its HEAD is detached; the transcript's `gitBranch`, `HEAD` inside Cowork's VM, is never used); none carries an email — the backend stamps the authenticated sender. Strings pass the hook path's secret masking and text limits. The producer honours `codemie proxy analytics disable` and the excluded folders, and ignores the folder allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER` (a Cowork folder is not a tracked project folder). It skips a session of the Code tab (`claude-code-sessions`, which runs the user's own Claude Code hooks), a session without an inner transcript, and a session whose metadata carries `otelConfig` (Desktop exports its own OTel for it). A session with no project is discarded at the tick, as any legacy session is. A session whose project config cannot be loaded is not one with no project: its processing fails with a warning, nothing is appended, and the next run retries it.
 
-This path is intentionally separate from the hook-based `codemie-claude` flow. Claude Desktop does not expose CodeMie-managed lifecycle hooks, so ingestion is file-discovery driven rather than event-callback driven. The shared runtime is generic; client-specific logic lives behind a Desktop adapter (`src/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js`, wired into `src/telemetry/runtime/DesktopTelemetryRuntime.ts`) so future IDE or desktop clients can plug into the same sync pipeline. Started/stopped directly by `src/bin/proxy-daemon.ts` when `--telemetry-mode claude-desktop` is passed.
+This path is intentionally separate from the hook-based `codemie-claude` flow. Claude Desktop does not expose CodeMie-managed lifecycle hooks, so ingestion is file-discovery driven rather than event-callback driven. The shared runtime is generic; client-specific logic lives behind a Desktop adapter (`src/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js`, wired into `src/telemetry/runtime/DesktopTelemetryRuntime.ts`) so future IDE or desktop clients can plug into the same sync pipeline. Started and stopped by `src/bin/proxy-daemon.ts` in every daemon.
 
 #### 6.12.4 API Contract
 
@@ -892,7 +892,7 @@ This path is intentionally separate from the hook-based `codemie-claude` flow. C
 
 The persistent daemon **does** receive a configured model: `spawnDaemon()` passes `--model <normalizedModel>` whenever the active profile has a `model` set, and this is shared across every `proxy connect` target (`--vscode`, `--claude-desktop`, `--codex-desktop`, `--omp`), not restricted to Codex. When present, the daemon injects `X-CodeMie-CLI-Model` (§6.10) for `vscode-byok` traffic same as any other client. What the daemon does _not_ do for VS Code traffic is rewrite the **request body's** model field — the Codex request normalizer (§6.6), which does that kind of body rewrite, explicitly excludes `vscode-byok` from its allowed client list. It validates the local gateway key (via the Gateway Key Plugin, §6.3), injects SSO authentication and CodeMie context headers, then forwards request and response bodies through the existing streaming path byte-for-byte.
 
-The command reuses a healthy daemon when its profile, project, provider, target URL, `vscode-byok` client type, **and configured model** all match (`daemonMatchesRequest()` in `connect-orchestrator.ts` also compares model when the request specifies one — a mismatch spawns a fresh daemon rather than silently reusing a stale one).
+The command reuses a healthy daemon when its profile, project, provider, target URL **and configured model** all match (`daemonMatchesRequest()` in `connect-orchestrator.ts` also compares model when the request specifies one — a mismatch spawns a fresh daemon rather than silently reusing a stale one).
 
 The connector writes the full tenant catalog into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
@@ -928,7 +928,7 @@ sequenceDiagram
     participant GW as CodeMie Gateway
     participant LM as Profile Model
 
-    VS->>PX: POST /v1/responses<br/>store=false<br/>input=full local history<br/>Bearer local gateway key
+    VS->>PX: POST /v1/responses<br/>store=false<br/>input=full local history<br/>Bearer codemie-proxy.vscode-byok
     PX->>PX: Validate and strip local key
     PX->>PX: Inject CodeMie SSO cookies
     PX->>PX: Inject profile/project context headers
@@ -1146,7 +1146,7 @@ src/providers/plugins/sso/session/
 ### 9.1 Startup Flow
 
 ```
-1. Agent CLI starts, or `codemie proxy start` / `codemie proxy connect ...` spawns the daemon
+1. Agent CLI starts, or `codemie proxy start` / `codemie proxy connect ...` / a hook's cold start spawns the daemon
    └─ e.g. codemie-claude "implement feature" --provider ai-run-sso
 
 2. Agent/CLI detects SSO provider (or daemon mode is requested)
@@ -1170,12 +1170,12 @@ src/providers/plugins/sso/session/
    │   state's `startedAt` (Windows: the pid alone), or, failing that start check,
    │   when the shallow `/health` on the state's port answers with that port and
    │   the state's pid
-   ├─ Optionally start DesktopTelemetryRuntime (--telemetry-mode claude-desktop),
-   │   which also runs the Cowork event producer (§6.12.3). While Claude Desktop's
-   │   applied config points at the local gateway with the local gateway key, every
-   │   spawn path (connect, start, restart, a hook's cold start) asks for this mode
-   │   and the gateway's port, never in place of a codex-desktop or vscode-byok
-   │   identity; the restart of a running daemon keeps the port that daemon holds
+   ├─ Start DesktopTelemetryRuntime, which also runs the Cowork event producer
+   │   (§6.12.3); it collects while Claude Desktop's applied config points at this
+   │   daemon. A daemon started anew asks for the port the clients were connected
+   │   with; the restart of a running daemon keeps the port that daemon holds. A
+   │   daemon of an older CLI is replaced on its port by connect, start, restart
+   │   and a hook's cold start
    ├─ Start ProxyWatcher: deep-checks /health every 30s, restarts the proxy
    │   in-process on the SAME pinned port (up to 3 attempts) on failure,
    │   records health: 'unhealthy' in the state file if it gives up
@@ -1248,7 +1248,7 @@ src/providers/plugins/sso/session/
 - Session ID
 - Profile, provider, model
 - Auth method (`sso` | `jwt`), gateway key
-- Telemetry mode and intervals
+- Desktop telemetry intervals
 
 **Environment Variables** (plugin-specific):
 
