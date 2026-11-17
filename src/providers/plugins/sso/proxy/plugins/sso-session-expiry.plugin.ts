@@ -45,7 +45,7 @@
  * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see
  * `createInterceptor`'s guard, which only checks for SSO cookies, not client type) and expects an
  * OpenAI-shaped error instead. Left as-is for this PR (third review round, 2026-10-20); a
- * follow-up should branch on `context.config.clientType` the way the request normalizers do.
+ * follow-up should branch on the request's client (`context.agentName`).
  *
  * This plugin's own code never touches sso.auth-gate.ts or analytics-auth-status.ts — it only
  * calls their existing exported functions, reusing the shared lock file/marker those already

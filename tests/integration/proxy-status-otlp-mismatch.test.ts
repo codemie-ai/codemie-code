@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { delimiter, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, spawnDetached } from '../../src/utils/processes.js';
 import { isolatedEnv, realDir, runIsolatedCli, expectExit, describeRun } from '../helpers/isolated-cli.js';
@@ -22,6 +22,7 @@ const DAEMON_BIN = join(REPO_ROOT, 'bin', 'proxy-daemon.js');
 const DAEMON_DIST = join(REPO_ROOT, 'dist', 'bin', 'proxy-daemon.js');
 
 const GATEWAY_KEY = 'codemie-status-mismatch-test';
+const CLI_VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
 const OTLP_PATH = '/v1/analytics/otlp';
 
 /** A currently free loopback port: listen on 0, read the assigned port, close. */
@@ -47,8 +48,15 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
   const writeSettings = (env: Record<string, string>): void => {
     writeFileSync(settingsFile, JSON.stringify({ env }, null, 2), 'utf-8');
   };
+  // Every client config the status reads lives under the temporary home, and no `codemie` is on PATH.
+  const statusEnv = (): Record<string, string> => ({
+    CODEX_HOME: join(homes.userHome, '.codex'),
+    XDG_CONFIG_HOME: homes.userHome,
+    APPDATA: homes.userHome,
+    PATH: ['/usr/bin', '/bin'].join(delimiter),
+  });
   const status = (...extra: string[]) =>
-    runIsolatedCli(homes, ['proxy', 'status', ...extra], { cwd: root });
+    runIsolatedCli(homes, ['proxy', 'status', ...extra], { cwd: root, env: statusEnv() });
   const statusJson = (): Record<string, unknown> => {
     const result = status('--json');
     expectExit(result, 0);
@@ -111,6 +119,38 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
   it('starts a live daemon the status command can see', () => {
     expect(daemonPid, 'daemon did not become ready within 8s').toBeGreaterThan(0);
     expect(daemonUrl).toContain(String(TEST_PORT));
+  });
+
+  it('prints the daemon\'s Version and no Client line', () => {
+    const result = status();
+
+    expectExit(result, 0);
+    expect(result.stdout, describeRun(result)).toContain(`  Version: ${CLI_VERSION}`);
+    expect(result.stdout).not.toMatch(/^ {2}Client: /m);
+  });
+
+  it('names a Codex config in the temporary home set up for another port', () => {
+    const codexHome = join(homes.userHome, '.codex');
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, 'config.toml'), [
+      '# >>> codemie proxy connect (codex-desktop) provider - managed block, do not edit',
+      '[model_providers.codemie]',
+      'base_url = "http://127.0.0.1:52311/v1"',
+      '[model_providers.codemie.http_headers]',
+      `Authorization = "Bearer ${GATEWAY_KEY}.codex-desktop"`,
+      '# <<< codemie proxy connect (codex-desktop) provider',
+      '',
+    ].join('\n'));
+    try {
+      const result = status();
+
+      expectExit(result, 0);
+      expect(result.stdout, describeRun(result)).toContain(
+        `  Codex desktop: points at port 52311, the proxy listens on ${TEST_PORT} — Run: codemie proxy connect --codex-desktop`
+      );
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 
   describe('stale endpoint (key matches)', () => {

@@ -50,13 +50,10 @@ function bodyOf(context: ProxyContext): Record<string, unknown> {
 describe('CodexRequestNormalizerPlugin', () => {
   beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
 
-  it('refuses to load for a non-Codex client', async () => {
+  it('declares exactly the Codex desktop client', async () => {
     const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
-    const plugin = new CodexRequestNormalizerPlugin();
 
-    await expect(
-      plugin.createInterceptor(makePluginContext({ config: { clientType: 'vscode-byok' } }))
-    ).rejects.toThrow(/disabled/i);
+    expect(new CodexRequestNormalizerPlugin().clients).toEqual(['codex-desktop']);
   });
 
   it('rewrites an undated model to its dated deployment', async () => {

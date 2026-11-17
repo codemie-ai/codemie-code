@@ -5,11 +5,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { homedir, tmpdir } from 'os';
 import { isAbsolute, join } from 'path';
-import { writeFile, readFile, mkdir, rm } from 'fs/promises';
+import { writeFile, readFile, mkdir, rm, lstat, readdir, symlink } from 'fs/promises';
 import { existsSync } from 'fs';
 
 import { logger } from '@/utils/logger.js';
 import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  isDesktopPointedAtLocalProxy,
+  readDesktopGatewayConfig,
+} from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 
 import {
   buildGatewayConfig,
@@ -24,6 +28,7 @@ import {
   type ManagedMcpServerEntry,
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
+  moveDesktopToNamedKey,
   readDesktopGateway,
   reconcileManagedMcpServers,
   removeDesktopConfig,
@@ -604,7 +609,7 @@ describe('writeDesktopConfig', () => {
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
-    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy');
+    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
@@ -782,8 +787,40 @@ describe('writeDesktopConfig', () => {
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4002');
-    expect(config.inferenceGatewayApiKey).toBe('new-key');
+    expect(config.inferenceGatewayApiKey).toBe('new-key.claude-desktop');
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
+  });
+
+  it('writes the named Desktop key, reads the catalog with the shared one, and reads back as pointed at the local proxy', async () => {
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as { headers: Record<string, string> };
+    expect(init.headers.Authorization).toBe('Bearer codemie-proxy');
+    const gateway = await readDesktopGatewayConfig(baseDir);
+    expect(gateway).toEqual({ port: 4001, apiKey: 'codemie-proxy.claude-desktop' });
+    expect(isDesktopPointedAtLocalProxy(gateway, 'codemie-proxy')).toBe(true);
+  });
+
+  it('rewrites a config holding the shared key to one named key, also on a second connect', async () => {
+    const existingId = 'shared-key-config';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+
+    expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayApiKey).toBe('k.claude-desktop');
+  });
+
+  it('removes the named key again on disconnect', async () => {
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    await removeDesktopConfig(baseDir, statePath);
+
+    await expect(readDesktopGatewayConfig(baseDir)).resolves.toBeNull();
   });
 
   it('drops a sign-in mode left by "Sign in with your organization" and pins the static gateway key', async () => {
@@ -1700,9 +1737,46 @@ describe('readDesktopGateway', () => {
     await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
   });
 
+  it('reads a config holding the named Desktop key as connected', async () => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('daemon-own-key.claude-desktop'));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('gives the port of a config whose key Desktop has sealed', async () => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('__sealed__:v1:QUJD'));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('a start with no record port, no state and no OTLP endpoint asks for the port of Desktop\'s sealed config', async () => {
+    const home = join(baseDir, 'home');
+    for (const name of ['HOME', 'USERPROFILE']) vi.stubEnv(name, home);
+    vi.stubEnv('CODEMIE_HOME', join(home, '.codemie'));
+    vi.stubEnv('XDG_CONFIG_HOME', join(home, '.config'));
+    vi.stubEnv('LOCALAPPDATA', join(home, 'AppData', 'Local'));
+    try {
+      const lib = join(getDesktopBaseDir(), 'configLibrary');
+      await mkdir(lib, { recursive: true });
+      await writeFile(join(lib, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      await writeFile(join(lib, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:4123',
+        inferenceGatewayApiKey: '__sealed__:v1:QUJD',
+      }));
+      const { requestedDaemonPort } = await import('../../connect-orchestrator.js');
+      await expect(requestedDaemonPort()).resolves.toBe(4123);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each([
     ['a key that is neither the default nor the daemon state one', 'sk-user-own'],
     ['no key', undefined],
+    ['the key named for another client', 'daemon-own-key.codex-desktop'],
   ])('is null for a loopback gateway config with %s', async (_case, key) => {
     const stateFile = join(baseDir, 'proxy-daemon.json');
     await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
@@ -1736,5 +1810,138 @@ describe('readDesktopGateway', () => {
   it('is null on an unsupported platform', async () => {
     Object.defineProperty(process, 'platform', { value: 'aix', configurable: true });
     await expect(readDesktopGateway()).resolves.toBeNull();
+  });
+});
+
+describe('moveDesktopToNamedKey', () => {
+  let baseDir: string;
+  let lib: string;
+  const originalPlatform = process.platform;
+  const META = JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }], desktopOwn: 1 }, null, 2);
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-move-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    lib = join(baseDir, 'configLibrary');
+    await mkdir(lib, { recursive: true });
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  const olderEntry = (key: string | undefined, extra: Record<string, unknown> = {}) => ({
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+    ...(key === undefined ? {} : { inferenceGatewayApiKey: key }),
+    inferenceGatewayAuthScheme: 'bearer',
+    userOwnField: { nested: true },
+    inferenceModels: ['claude-sonnet-4-6'],
+    ...extra,
+  });
+
+  async function writeLibrary(entry: unknown, meta: string = META): Promise<string> {
+    await writeFile(join(lib, '_meta.json'), meta);
+    const path = join(lib, 'a.json');
+    await writeFile(path, typeof entry === 'string' ? entry : JSON.stringify(entry, null, 2));
+    return path;
+  }
+
+  it.each([
+    ['the shared key, no inferenceCredentialKind', 'codemie-proxy', {}],
+    ['the shared key and inferenceCredentialKind', 'codemie-proxy', { inferenceCredentialKind: 'static' }],
+    ['a sealed key', '__sealed__:v1:QUJD', {}],
+  ])('writes Desktop\'s named key alone into an older CLI\'s entry with %s', async (_case, key, extra) => {
+    const before = olderEntry(key, extra);
+    const path = await writeLibrary(before);
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual({ ...before, inferenceGatewayApiKey: 'codemie-proxy.claude-desktop' });
+    expect(await readFile(join(lib, '_meta.json'), 'utf-8')).toBe(META);
+    await expect(readDesktopGatewayConfig(baseDir)).resolves.toEqual({ port: 4001, apiKey: 'codemie-proxy.claude-desktop' });
+  });
+
+  it('builds the named key from a daemon gateway key that is not the default', async () => {
+    const before = olderEntry('gk');
+    const path = await writeLibrary(before);
+
+    await expect(moveDesktopToNamedKey('gk', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual({ ...before, inferenceGatewayApiKey: 'gk.claude-desktop' });
+  });
+
+  it.each([
+    ['Desktop\'s own named key in plain', olderEntry('codemie-proxy.claude-desktop')],
+    ['the key named for another client', olderEntry('codemie-proxy.codex-desktop')],
+    ['a key the proxy refuses', olderEntry('sk-user-own')],
+    ['no key', olderEntry(undefined)],
+    ['a loopback gateway on another port', { ...olderEntry('codemie-proxy'), inferenceGatewayBaseUrl: 'http://127.0.0.1:4002' }],
+    ['a gateway that is not loopback', { ...olderEntry('codemie-proxy'), inferenceGatewayBaseUrl: 'https://gateway.example.com:4001' }],
+    ['a provider that is not gateway', { ...olderEntry('codemie-proxy'), inferenceProvider: 'bedrock' }],
+    ['an unreadable entry', '{not json'],
+  ])('writes nothing for %s', async (_case, entry) => {
+    const path = await writeLibrary(entry);
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+  });
+
+  it('writes nothing with no applied config', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'), JSON.stringify({ entries: [] }));
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+  });
+
+  it('writes nothing when _meta.json is not JSON', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'), '{not json');
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+    expect(await readFile(join(lib, '_meta.json'), 'utf-8')).toBe('{not json');
+  });
+
+  it('writes nothing on a platform without a Desktop directory', async () => {
+    Object.defineProperty(process, 'platform', { value: 'aix', configurable: true });
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
+  });
+  it('leaves no temporary file beside the moved entry', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    expect((await readdir(lib)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('leaves an applied entry that is a symbolic link, the link and its target', async () => {
+    const target = join(baseDir, 'dotfiles-desktop.json');
+    const bytes = JSON.stringify(olderEntry('codemie-proxy'), null, 2);
+    await writeFile(target, bytes);
+    await writeFile(join(lib, '_meta.json'), META);
+    await symlink(target, join(lib, 'a.json'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('left');
+
+    expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe(bytes);
+  });
+
+  it.skipIf(process.platform === 'win32')('changes nothing for an applied entry that is a link to nothing, and creates nothing at its target', async () => {
+    const target = join(baseDir, 'missing-desktop.json');
+    await writeFile(join(lib, '_meta.json'), META);
+    await symlink(target, join(lib, 'a.json'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
   });
 });

@@ -73,7 +73,7 @@ async function lookupCommandPath(): Promise<string | null | 'timeout'> {
 }
 
 /** Walk up from `startDir` to the first `package.json` and return its directory and manifest. */
-async function findFirstManifest(
+export async function findFirstManifest(
   startDir: string,
   platform: NodeJS.Platform
 ): Promise<{ dir: string; manifest: PackageManifest } | null> {
@@ -92,7 +92,8 @@ async function findFirstManifest(
   }
 }
 
-async function resolvePackage(
+/** The package directory and manifest of the install a `codemie` command path belongs to, else why not. */
+export async function resolvePackage(
   hit: string,
   platform: NodeJS.Platform
 ): Promise<{ dir: string; manifest: PackageManifest } | string> {

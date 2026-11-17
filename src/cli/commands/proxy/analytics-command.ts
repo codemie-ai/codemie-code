@@ -45,7 +45,7 @@ import {
   listActiveAnalyticsConnectors,
   type AnalyticsConnector,
 } from './analytics-connectors.js';
-import { checkStatus } from './daemon-manager.js';
+import { readDaemonStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
 import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
 
@@ -269,7 +269,7 @@ async function includeProject(path: string | undefined, opts: ConnectorOptions):
 
 /** Delivery health of the running daemon, or `null` when it is stopped. */
 async function collectStatusDelivery(): Promise<DeliveryHealth | null> {
-  const { running, state } = await checkStatus();
+  const { running, state } = await readDaemonStatus();
   if (!running || !state) {
     return null;
   }

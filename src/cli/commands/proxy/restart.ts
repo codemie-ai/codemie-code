@@ -1,12 +1,20 @@
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
-import { ToolExecutionError } from '../../../utils/errors.js';
+import { ConfigurationError, ToolExecutionError } from '../../../utils/errors.js';
 import type { ProjectBindingState } from '../../../utils/project-binding.js';
-import { checkStatus, stopDaemon, writeConnectionRecord, type DaemonState } from './daemon-manager.js';
-import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
-import { DEFAULT_DAEMON_PORT, withDesktopIdentity } from './connect-orchestrator.js';
 import {
-  launchDaemon,
+  checkStatus,
+  readConnectionRecord,
+  readDaemonStatus,
+  stopDaemon,
+  writeConnectionRecord,
+  type DaemonState,
+} from './daemon-manager.js';
+import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
+import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
+import { moveClientsToNamedKeys, requestedDaemonPort } from './connect-orchestrator.js';
+import { modelFromState } from './otlp-cold-start.js';
+import {
   prepareDaemonLaunch,
   shouldWriteConnectionRecord,
   spawnForProfile,
@@ -21,20 +29,23 @@ function printRestarted(daemonState: DaemonState): void {
 }
 
 /**
- * Nothing (alive) to preserve: a stale state file is ignored, as `proxy start` does. With Claude
- * Desktop connected the daemon starts in Desktop mode, asking for the gateway's port.
+ * Nothing (alive) to preserve: a stale state file is ignored, as `proxy start` does. The profile is `--profile`,
+ * else the recorded one, else the working directory's active one; the port is the one the clients were connected
+ * with (`requestedDaemonPort`). Prepared before the daemon lock, spawned under it.
  */
-async function restartStopped(opts: ProxyRestartOptions): Promise<void> {
-  const config = await ConfigLoader.load(process.cwd(), opts.profile ? { name: opts.profile } : undefined);
+async function prepareStopped(opts: ProxyRestartOptions): Promise<() => Promise<DaemonState>> {
+  const port = await requestedDaemonPort();
+  const profileName = opts.profile ?? (await readConnectionRecord())?.profile;
+  const config = await ConfigLoader.load(process.cwd(), profileName ? { name: profileName } : undefined);
   const profile = config.name ?? 'default';
   const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-  const { identity, gatewayPort } = await withDesktopIdentity({ clientType: 'codemie-daemon' });
-  printRestarted(await launchDaemon(config, profile, {
-    port: gatewayPort ?? DEFAULT_DAEMON_PORT,
-    ...identity,
-    projectBinding,
-    writeRecord: await shouldWriteConnectionRecord(opts.profile),
-  }));
+  const prepared = await prepareDaemonLaunch(config, profile);
+  const writeRecord = await shouldWriteConnectionRecord(opts.profile);
+  return async () => {
+    const daemonState = await spawnForProfile(prepared, profile, { port, projectBinding, writeRecord });
+    printRestarted(daemonState);
+    return daemonState;
+  };
 }
 
 /** A hook can cold-start a daemon between the stop and the spawn; stop it so the recorded port is free. */
@@ -45,12 +56,12 @@ async function stopRacingDaemon(): Promise<void> {
   }
 }
 
-/** Both post-stop failures leave nothing running; a plain restart would then drop the identity. */
+/** Both post-stop failures leave nothing running; a plain restart would then drop what a restart keeps. */
 function lostIdentityError(state: DaemonState, reason: string, fix: string): ToolExecutionError {
   return new ToolExecutionError(
     'proxy-daemon',
-    `${reason} Nothing is running now, so a plain restart would start a default proxy and drop this ` +
-    `daemon's identity (client: ${state.clientType ?? 'codemie-daemon'}, gateway key and telemetry mode). ` +
+    `${reason} Nothing is running now, so a plain restart would start a default proxy and drop what this ` +
+    `daemon kept (port ${state.port} and its gateway key). ` +
     `${fix}, then run: codemie proxy start --port ${state.port} --profile ${state.profile} ` +
     `and reconnect the client (codemie proxy connect).`
   );
@@ -99,60 +110,77 @@ export function restartProject(
 }
 
 /**
- * Replace a running daemon, keeping its port and identity (the start-time conflict check does not apply).
- * With Claude Desktop connected a replaceable identity becomes the Desktop one; the port is kept.
+ * Replace a running daemon, keeping its port, gateway key, model (`modelFromState`) and project rule
+ * (`restartProject`); the start-time conflict check does not apply. The profile is prepared before the
+ * daemon lock, so a bad profile or expired SSO leaves the working daemon running; the stop and the spawn
+ * run under it.
  */
-async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<void> {
+async function prepareRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<() => Promise<DaemonState>> {
   const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
   const profile = config.name ?? opts.profile ?? state.profile;
   const resolvedBinding = await reportDaemonProfileIdentity(config, 'proxy');
   const { project, projectBinding } = restartProject(state, opts, config.codeMieProject, resolvedBinding);
-  // Fail on a bad profile or expired SSO before the working daemon is touched.
   const prepared = await prepareDaemonLaunch(config, profile);
-  const { identity } = await withDesktopIdentity({
-    clientType: state.clientType,
-    telemetryMode: state.telemetryMode,
-  });
-
-  await stopDaemon();
-  await stopRacingDaemon();
-
-  let daemonState: DaemonState;
-  try {
-    daemonState = await spawnForProfile(prepared, profile, {
-      port: state.port,
-      clientType: identity.clientType,
-      telemetryMode: identity.telemetryMode,
-      gatewayKey: state.gatewayKey,
-      // A switched profile's tenant may not serve the old profile's model.
-      model: opts.profile ? undefined : state.model,
-      project,
-      projectBinding,
-      // Written below, only once the port check has passed: a rolled-back restart leaves no record.
-      writeRecord: false,
-    });
-  } catch (error) {
-    throw spawnFailedError(state, error);
-  }
-
-  if (daemonState.port !== state.port) {
-    // Clients are configured for the recorded port; do not leave a daemon elsewhere.
+  // A switched profile's tenant may not serve the old profile's model.
+  const model = opts.profile ? undefined : await modelFromState(state);
+  return async () => {
     await stopDaemon();
-    throw portMismatchError(state, daemonState.port);
-  }
-  // `profile` is the one the daemon was just spawned for (equal to daemonState.profile).
-  if (await shouldWriteConnectionRecord(opts.profile)) {
-    await writeConnectionRecord(daemonState, profile, identity.clientType);
-  }
-  printRestarted(daemonState);
+    await stopRacingDaemon();
+
+    let daemonState: DaemonState;
+    try {
+      daemonState = await spawnForProfile(prepared, profile, {
+        port: state.port,
+        gatewayKey: state.gatewayKey,
+        model,
+        project,
+        projectBinding,
+        // Written below, only once the port check has passed: a rolled-back restart leaves no record.
+        writeRecord: false,
+      });
+    } catch (error) {
+      throw spawnFailedError(state, error);
+    }
+
+    if (daemonState.port !== state.port) {
+      // Clients are configured for the recorded port; do not leave a daemon elsewhere.
+      await stopDaemon();
+      throw portMismatchError(state, daemonState.port);
+    }
+    // `profile` is the one the daemon was just spawned for (equal to daemonState.profile).
+    if (await shouldWriteConnectionRecord(opts.profile)) {
+      await writeConnectionRecord(daemonState, profile);
+    }
+    printRestarted(daemonState);
+    return daemonState;
+  };
 }
 
-/** `codemie proxy restart`: restart the daemon, preserving its identity when one is running. */
+/** Whether the daemon found under the lock is not the one the restart was prepared for. */
+function daemonChanged(
+  before: { running: boolean; state: DaemonState | null },
+  now: { running: boolean; state: DaemonState | null }
+): boolean {
+  if (before.running !== now.running) return true;
+  return before.running && (before.state?.pid !== now.state?.pid || before.state?.startedAt !== now.state?.startedAt);
+}
+
+/**
+ * `codemie proxy restart`: restart the daemon, preserving what it ran with when one is running. The
+ * status is read and the profile prepared before the daemon lock; under it the status is read again,
+ * and a daemon that changed in between fails the restart, touching nothing. Once the restarted daemon
+ * runs, outside the lock, the clients move to their named keys as at `proxy start`.
+ */
 export async function restartProxy(opts: ProxyRestartOptions): Promise<void> {
-  const { running, state } = await checkStatus();
-  if (!running || !state) {
-    await restartStopped(opts);
-    return;
-  }
-  await restartRunning(state, opts);
+  const before = await readDaemonStatus();
+  const run = before.running && before.state
+    ? await prepareRunning(before.state, opts)
+    : await prepareStopped(opts);
+  const restarted = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
+    if (daemonChanged(before, await checkStatus())) {
+      throw new ConfigurationError('The proxy changed while restarting; run the command again.');
+    }
+    return run();
+  });
+  await moveClientsToNamedKeys(restarted, new Map());
 }

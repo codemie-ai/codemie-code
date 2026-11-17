@@ -746,7 +746,8 @@ export enum AgentAdapterType {
 }
 
 export interface OtlpAdapterDeps {
-  ensureOtlpProxy: (agentName: string) => Promise<void>;
+  /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
+  ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],

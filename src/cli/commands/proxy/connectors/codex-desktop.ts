@@ -7,13 +7,14 @@
  * that the app and the Codex CLI both read is the whole integration seam.
  */
 import { existsSync } from 'node:fs';
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile, lstat, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import TOML from '@iarna/toml';
 
 import { rankCodexModelIdsByRecency } from '@/agents/plugins/codex/codex-models.js';
 import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
+import { CODEX_DESKTOP } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { exec } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
@@ -26,12 +27,13 @@ import {
   CODEMIE_PROVIDER_ID,
   buildManagedBlocks,
   findManagedRegions,
+  replaceManagedAuthorization,
   spliceManagedBlocks,
   stripManagedRegions,
 } from './codex-config-toml.js';
 import { resolveCodexDeployment } from '@/providers/plugins/sso/proxy/plugins/codex-model-resolver.js';
 
-import { writeAtomically } from './vscode.js';
+import { gatewayKeyReading, loopbackPortOf, writeAtomically, type ConnectorGateway } from './vscode.js';
 
 /**
  * Resolve the config file the desktop app reads.
@@ -283,7 +285,8 @@ function parseOrThrow(text: string, configPath: string): Record<string, unknown>
 }
 
 /**
- * Splice the managed block into the user's Codex config and record ownership.
+ * Splice the managed block into the user's Codex config and record ownership. The
+ * provider's `Authorization` carries Codex's named key, `<gatewayKey>.codex-desktop`.
  *
  * The marker state is written BEFORE the config on purpose. If the config write
  * then fails, the marker over-claims — and removal is idempotent, so that is
@@ -319,7 +322,7 @@ export async function writeCodexDesktopConfig(
 
   const blocks = buildManagedBlocks({
     baseUrl: options.baseUrl,
-    gatewayKey: options.gatewayKey,
+    gatewayKey: `${options.gatewayKey}.${CODEX_DESKTOP}`,
     model: options.model,
   });
   const next = spliceManagedBlocks(currentText, blocks);
@@ -353,6 +356,67 @@ export async function writeCodexDesktopConfig(
   );
 
   return state;
+}
+
+function isTable(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * What `connect` wrote into the Codex config, read for the daemon of gateway key `key`: the port of the managed
+ * provider's `base_url` and how the daemon reads its `Authorization`; null when the file is missing or not valid
+ * TOML, holds no managed provider block, or its `base_url` is not a loopback URL with a port. Never throws, writes
+ * nothing.
+ */
+export async function readCodexDesktopGateway(
+  key: string,
+  configPath: string = getCodexDesktopConfigPath()
+): Promise<ConnectorGateway | null> {
+  try {
+    const text = await readFile(configPath, 'utf-8');
+    if (!findManagedRegions(text).table) return null;
+    const parsed = TOML.parse(text) as Record<string, unknown>;
+    const providers = parsed.model_providers;
+    const provider = isTable(providers) ? providers[CODEMIE_PROVIDER_ID] : undefined;
+    if (!isTable(provider)) return null;
+    const port = loopbackPortOf(provider.base_url);
+    if (port === null) return null;
+    const authorization = isTable(provider.http_headers) ? provider.http_headers.Authorization : undefined;
+    return { port, key: gatewayKeyReading(typeof authorization === 'string' ? authorization : undefined, key) };
+  } catch (error) {
+    logger.debug('[proxy] Codex config not readable', ...sanitizeLogArgs({ configPath, error: String(error) }));
+    return null;
+  }
+}
+
+/**
+ * Moves the Codex config from the shared key of the daemon of gateway key `gatewayKey` to Codex's named key: only
+ * the `Authorization` value of the managed provider table becomes `Bearer <gatewayKey>.codex-desktop`; no backup and
+ * no state file is written. `moved` when written; `left` for a config file that is a symbolic link, not written;
+ * `unchanged` when the reader gives anything but the shared key (a named or refused key, no CodeMie block, a missing
+ * or unreadable file). A failed write, or a result that would not read back as the named key, throws.
+ */
+export async function moveCodexDesktopToNamedKey(
+  gatewayKey: string,
+  configPath: string = getCodexDesktopConfigPath()
+): Promise<'moved' | 'left' | 'unchanged'> {
+  if ((await readCodexDesktopGateway(gatewayKey, configPath))?.key !== 'shared') return 'unchanged';
+  if ((await lstat(configPath)).isSymbolicLink()) return 'left';
+
+  const namedKey = `${gatewayKey}.${CODEX_DESKTOP}`;
+  const next = replaceManagedAuthorization(await readFile(configPath, 'utf-8'), namedKey);
+  const providers = next === null ? undefined : (TOML.parse(next) as Record<string, unknown>).model_providers;
+  const provider = isTable(providers) ? providers[CODEMIE_PROVIDER_ID] : undefined;
+  const headers = isTable(provider) ? provider.http_headers : undefined;
+  if (next === null || !isTable(headers) || headers.Authorization !== `Bearer ${namedKey}`) {
+    throw new ConfigurationError(
+      `Refusing to write ${configPath}: the managed Authorization could not be replaced. The file is unchanged.`
+    );
+  }
+
+  await writeAtomically(configPath, next);
+  logger.info('[proxy] Moved Codex desktop to its named key', ...sanitizeLogArgs({ configPath }));
+  return 'moved';
 }
 
 /**

@@ -77,21 +77,26 @@ async function inspectSessions(
   daemonState: DaemonState | null
 ): Promise<DesktopSessionInspection[]> {
   const sessionStore = new SessionStore();
-  const daemonStartedAt = daemonState?.startedAt ? new Date(daemonState.startedAt).getTime() : undefined;
+  const connectedSince = daemonState?.desktopConnectedSince
+    ? new Date(daemonState.desktopConnectedSince).getTime()
+    : undefined;
   const inspections: DesktopSessionInspection[] = [];
 
   for (const discovered of sessions) {
     const persisted = await sessionStore.findSessionByExternalId('claude-desktop', discovered.externalSessionId);
     const reasons: string[] = [];
 
+    // A daemon of an older CLI never writes `version` nor `desktopConnectedSince`, whatever it collects.
     if (!daemonState) {
       reasons.push('daemon-not-running');
-    } else if (daemonState.telemetryMode !== 'claude-desktop') {
-      reasons.push('daemon-not-in-desktop-mode');
+    } else if (!daemonState.version) {
+      reasons.push('daemon-of-older-cli');
+    } else if (connectedSince === undefined) {
+      reasons.push('desktop-not-connected');
     }
 
-    if (daemonStartedAt && discovered.createdAt < daemonStartedAt && !persisted) {
-      reasons.push('session-created-before-daemon-start');
+    if (connectedSince !== undefined && discovered.createdAt < connectedSince && !persisted) {
+      reasons.push('session-created-before-desktop-connected');
     }
 
     if (discovered.isArchived) {
@@ -153,8 +158,6 @@ export async function printDesktopInspection(
 
   console.log(chalk.bold('Claude Desktop Proxy Inspection'));
   console.log(`Daemon running:      ${daemonRunning ? chalk.green('yes') : chalk.red('no')}`);
-  console.log(`Telemetry mode:      ${daemonState?.telemetryMode ?? chalk.red('none')}`);
-  console.log(`Daemon clientType:   ${daemonState?.clientType ?? 'n/a'}`);
   console.log(`Target URL:          ${daemonState?.targetUrl ?? 'n/a'}`);
   console.log(`Sync API URL:        ${daemonState?.syncApiUrl ?? 'n/a'}`);
   console.log(`CodeMie URL:         ${daemonState?.syncCodeMieUrl ?? 'n/a'}`);

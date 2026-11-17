@@ -254,3 +254,22 @@ export function buildManagedBlocks(input: ManagedBlockInput): ManagedBlocks {
 
   return { header, table };
 }
+
+const AUTHORIZATION_LINE = /^([ \t]*Authorization[ \t]*=[ \t]*)("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')/m;
+
+/**
+ * The text with the value of the first `Authorization` line inside the managed table region replaced by
+ * `Bearer <gatewayKey>`; every other byte, the sentinels included, kept. Null when there is no complete table
+ * region or no such line in it.
+ */
+export function replaceManagedAuthorization(text: string, gatewayKey: string): string | null {
+  const table = findManagedRegions(text).table;
+  if (!table) return null;
+  const region = text.slice(table.start, table.end);
+  const match = AUTHORIZATION_LINE.exec(region);
+  if (!match) return null;
+  const valueStart = table.start + match.index + match[1].length;
+  return text.slice(0, valueStart) +
+    toTomlString(`Bearer ${gatewayKey}`) +
+    text.slice(valueStart + match[2].length);
+}

@@ -708,6 +708,8 @@ codemie proxy connect --claude-desktop --vscode --insiders   # combine targets i
 
 Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
 
+One daemon serves every connected client at the same time. `proxy connect` gives each client a key of its own — `codemie-proxy.<client>`, for example `codemie-proxy.claude-desktop` — and a request is labelled and handled as the client its key names. A client set up by an older CLI holds the shared key `codemie-proxy` and keeps working; `codemie proxy connect`, `codemie proxy start` and `codemie proxy restart` move such clients to their own keys and print which application to restart. After a reboot, start the daemon with `codemie proxy start`. After a downgrade to an older CLI — or while an older install stands beside this one and its hooks start its own daemon — a client that holds its own key gets an authentication error (`Invalid API key`), because an older daemon accepts the shared key only: run `codemie proxy connect` again with the CLI whose daemon runs.
+
 Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
@@ -746,7 +748,7 @@ codemie proxy connect --vscode
 
 Use `--profile <name>` for a one-run profile override or `--insiders` for VS Code Insiders. The command writes that profile's model ID into `chatLanguageModels.json` and starts or reuses a transparent CodeMie proxy. The profile's project context is passed separately as `X-CodeMie-Project`.
 
-No plaintext key or generated placeholder is written to that file. On first setup, press ⇧⌘P on macOS or Ctrl+Shift+P on Windows/Linux, run `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, choose **Update API Key**, and enter the local key `codemie-proxy`. VS Code keeps it in secret storage. Reload VS Code after configuration.
+No plaintext key or generated placeholder is written to that file. On first setup, press ⇧⌘P on macOS or Ctrl+Shift+P on Windows/Linux, run `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, choose **Update API Key**, and enter the local key `codemie-proxy.vscode-byok`. VS Code keeps it in secret storage. Reload VS Code after configuration.
 
 ## Connect Claude Desktop via CodeMie Proxy
 
@@ -773,11 +775,11 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 ```bash
 codemie proxy status
 codemie proxy inspect desktop --limit 5
-codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
+codemie proxy restart [--profile <name>]   # restart, keeping port and key
 codemie proxy stop
 ```
 
-With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
+`codemie proxy status` shows the CLI version the daemon was started by and names a client that points at another port or still holds the shared key, with the command that fixes it. With Claude Desktop connected it prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

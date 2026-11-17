@@ -61,6 +61,11 @@ export async function writeOmpExtension(options: { force?: boolean } = {}): Prom
   return { path, changed: true };
 }
 
+/** Whether a file stands at the extension's path, whoever wrote it. */
+export function isOmpExtensionInstalled(): boolean {
+  return existsSync(getOmpExtensionPath());
+}
+
 /** Remove the extension; a file CodeMie did not write is never deleted. */
 export async function removeOmpExtension(): Promise<{ path: string; removed: boolean }> {
   const path = getOmpExtensionPath();

@@ -1,6 +1,7 @@
 /**
  * Desktop Models Plugin
- * Priority: 8 (after GatewayKeyPlugin, so only a caller holding the gateway key is answered)
+ * Priority: 9 (after GatewayKeyPlugin, so only a caller holding the gateway key is answered, and after the client
+ * attribution, which settles whose request it is)
  *
  * Answers Claude Desktop's `GET /v1/models` (Anthropic Models API shape) from the CodeMie
  * catalog of the daemon's project: every project Claude model, ordered by
@@ -29,9 +30,10 @@ import {
 import { readClaudeExtraModels } from '../../sso.claude-extra-models.js';
 import { ConfigLoader } from '../../../../../utils/config.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 
-const ALLOWED_AGENTS = ['claude-desktop'];
+const ALLOWED_AGENTS: readonly string[] = [CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE];
 
 /** Desktop has no use for a creation date, but the Models API marks it required. */
 const CREATED_AT = '1970-01-01T00:00:00Z';
@@ -69,13 +71,10 @@ export class DesktopModelsPlugin implements ProxyPlugin {
   id = '@codemie/proxy-desktop-models';
   name = 'Desktop Models';
   version = '1.0.0';
-  priority = 8;
+  priority = 9;
+  clients = ALLOWED_AGENTS;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
     return new DesktopModelsInterceptor(context);
   }
 }

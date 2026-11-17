@@ -81,7 +81,11 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: 300_000
+  inactivityTimeoutMs: 300_000,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
 };
 
 let codemieHome: string;
@@ -430,7 +434,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
     const started = runtime.start();
     await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
-    expect((runtime as any).isPolling).toBe(false);
+    // The first connected poll runs the pass and waits for it: the record is not reopened meanwhile
     expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart', endTime: T1 });
     resolveEndMetric();
     await started;
@@ -545,22 +549,67 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await runtime.stop();
     });
 
-    it('runs no poll and arms no timer after the pass when stop() came first', async () => {
+    it('runs no second poll and arms no timer after the pass when stop() came during it', async () => {
       const release = pendingEndMetric();
+      desktopActivity('ext-live', T0);
       const adapter = createAdapter();
       const runtime = new DesktopTelemetryRuntime(adapter, config);
       startedRuntimes.push(runtime);
       await runtime.start();
       await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
 
-      await runtime.stop();
-      // stop()'s own final poll
-      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+      let stopped = false;
+      const stopping = runtime.stop().then(() => { stopped = true; });
+      // stop() waits for the first poll, which still waits for its pass
+      // A macrotask turn: a stop() that did not wait would have resolved within it
+      await new Promise(resolve => setImmediate(resolve));
+      expect(stopped).toBe(false);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
       release();
+      await stopping;
+      const discoveriesAtStop = vi.mocked(adapter.discoverSessions).mock.calls.length;
       await (runtime as any).startupChain;
 
-      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+      // the first poll's discovery, stop()'s final poll and the finalization ran before stop() resolved; nothing after
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(discoveriesAtStop);
+      const live = recordFiles()
+        .map(name => JSON.parse(readFileSync(join(sessionsDir(), name), 'utf-8')) as Session)
+        .find(record => record.runtimeCheckpoint?.externalSessionId === 'ext-live');
+      expect(live).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop' });
       expect((runtime as any).timer).toBeUndefined();
+    });
+
+    it('edge: stop() with no poll in flight runs one final poll', async () => {
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+
+      await runtime.stop();
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('edge: a poll in flight that rejects: stop() still runs its final poll and finalizes', async () => {
+      desktopActivity('ext-live', T0);
+      const adapter = createAdapter();
+      let releasePoll!: () => void;
+      vi.mocked(adapter.discoverSessions).mockImplementationOnce(async () => {
+        await new Promise<void>(resolve => { releasePoll = resolve; });
+        throw new Error('metadata read failed');
+      });
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+      const inFlight = runtime.triggerPoll().catch(() => undefined);
+      await waitFor(() => releasePoll !== undefined);
+
+      const stopping = runtime.stop();
+      releasePoll();
+      await inFlight;
+      await stopping;
+
+      // only stop()'s final poll could track it: the poll in flight threw before tracking anything
+      const live = recordFiles()
+        .map(name => JSON.parse(readFileSync(join(sessionsDir(), name), 'utf-8')) as Session)
+        .find(record => record.runtimeCheckpoint?.externalSessionId === 'ext-live');
+      expect(live).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop' });
     });
 
     it('arms no timer when stop() came during the chain\'s first poll', async () => {
@@ -578,8 +627,9 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await runtime.start();
       await pollReached;
 
-      await runtime.stop();
+      const stopping = runtime.stop();
       releasePoll();
+      await stopping;
       await (runtime as any).startupChain;
 
       expect((runtime as any).timer).toBeUndefined();

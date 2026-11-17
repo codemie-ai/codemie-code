@@ -14,6 +14,7 @@ import {
   findManagedRegions,
   restoreDisplacedKeys,
   buildManagedBlocks,
+  replaceManagedAuthorization,
   spliceManagedBlocks,
   stripManagedRegions,
 } from '../codex-config-toml.js';
@@ -207,5 +208,28 @@ describe('unterminated and mismatched sentinels (data-loss guards)', () => {
     const respliced = spliceManagedBlocks(padded, blocks);
 
     expect(respliced.split('[model_providers.codemie]').length - 1).toBe(1);
+  });
+});
+
+describe('replaceManagedAuthorization', () => {
+  const userTable = ['[model_providers.mine.http_headers]', 'Authorization = "Bearer codemie-proxy"', ''].join('\n');
+  const managedTable = (authorization: string): string => [
+    TABLE_OPEN,
+    '[model_providers.codemie.http_headers]',
+    `Authorization = "${authorization}"   # sent by Codex`,
+    TABLE_CLOSE,
+    '',
+  ].join('\n');
+
+  it('replaces the value inside the managed table alone, a same-named line outside it and the trailing text kept', () => {
+    const text = `${userTable}\n${managedTable('Bearer codemie-proxy')}`;
+
+    expect(replaceManagedAuthorization(text, 'codemie-proxy.codex-desktop'))
+      .toBe(`${userTable}\n${managedTable('Bearer codemie-proxy.codex-desktop')}`);
+  });
+
+  it('is null without a complete managed table region', () => {
+    expect(replaceManagedAuthorization(userTable, 'codemie-proxy.codex-desktop')).toBeNull();
+    expect(replaceManagedAuthorization(`${TABLE_OPEN}\nAuthorization = "Bearer codemie-proxy"\n`, 'k')).toBeNull();
   });
 });

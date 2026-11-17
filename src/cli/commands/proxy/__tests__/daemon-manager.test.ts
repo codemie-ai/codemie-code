@@ -49,7 +49,11 @@ import {
   spawnDaemon,
   stopDaemon,
   readConnectionRecord,
+  readDaemonStatus,
   writeConnectionRecord,
+  writeConnectionPort,
+  clearLegacyClientIdentity,
+  hasLegacyClientIdentity,
   seedConnectionRecord,
   type DaemonState,
 } from '../daemon-manager.js';
@@ -182,6 +186,17 @@ describe('checkStatus', () => {
     expect(running).toBe(false);
   });
 
+  it.each([
+    ['an empty', ''],
+    ['an unparsable', '{'],
+  ])('reads %s state file as no daemon at a start and leaves the file in place', async (_label, content) => {
+    await writeFile(TEST_STATE_FILE, content, 'utf-8');
+
+    expect(await readState(TEST_STATE_FILE)).toBeNull();
+    expect(await checkStatus(TEST_STATE_FILE)).toEqual({ running: false, state: null });
+    expect(await readFile(TEST_STATE_FILE, 'utf-8')).toBe(content);
+  });
+
   it('returns running=true when state file has alive PID', async () => {
     await writeState({ ...SAMPLE_STATE, pid: process.pid }, TEST_STATE_FILE);
     const { running, state } = await checkStatus(TEST_STATE_FILE);
@@ -301,6 +316,24 @@ describe('checkStatus', () => {
       expect((await checkStatus(TEST_STATE_FILE)).running).toBe(true);
       expect(existsSync(TEST_STATE_FILE)).toBe(true);
     });
+  });
+});
+
+describe('readDaemonStatus', () => {
+  afterEach(async () => { try { await unlink(TEST_STATE_FILE); } catch { /* ignore */ } });
+
+  it('reads the state of a dead daemon as stopped and leaves its file byte-identical', async () => {
+    const content = JSON.stringify({ ...SAMPLE_STATE, pid: 9999999 }, null, 2);
+    await writeFile(TEST_STATE_FILE, content, 'utf-8');
+
+    expect(await readDaemonStatus(TEST_STATE_FILE)).toEqual({ running: false, state: null });
+    expect(await readFile(TEST_STATE_FILE, 'utf-8')).toBe(content);
+  });
+
+  it('reads a live daemon as running with its state', async () => {
+    await writeState(SAMPLE_STATE, TEST_STATE_FILE);
+
+    expect(await readDaemonStatus(TEST_STATE_FILE)).toEqual({ running: true, state: SAMPLE_STATE });
   });
 });
 
@@ -475,6 +508,7 @@ describe('spawnDaemon', () => {
   afterEach(async () => {
     vi.clearAllMocks();
     try { await unlink(DEFAULT_TEST_STATE_FILE); } catch { /* ignore */ }
+    try { await unlink(DEFAULT_TEST_CONNECTION_FILE); } catch { /* ignore */ }
   });
 
   function arrangeReadyDaemon(): void {
@@ -484,7 +518,7 @@ describe('spawnDaemon', () => {
     });
   }
 
-  it('passes client and project context without model arguments', async () => {
+  it('passes the project and no client identity, without model arguments', async () => {
     arrangeReadyDaemon();
 
     await spawnDaemon({
@@ -493,15 +527,103 @@ describe('spawnDaemon', () => {
       profile: 'work',
       port: 4001,
       project: 'team-project',
-      clientType: 'vscode-byok',
     });
 
     const args = vi.mocked(spawnDetached).mock.calls[0][1];
-    expect(args).toEqual(expect.arrayContaining([
-      '--project', 'team-project',
-      '--client-type', 'vscode-byok',
-    ]));
+    expect(args).toEqual(expect.arrayContaining(['--project', 'team-project']));
     expect(args).not.toContain('--model');
+    expect(args).not.toContain('--client-type');
+    expect(args).not.toContain('--telemetry-mode');
+  });
+
+  it('turns the start values into the daemon arguments one for one, the shared gateway key by default', async () => {
+    arrangeReadyDaemon();
+
+    await spawnDaemon({
+      targetUrl: 'https://t',
+      provider: 'ai-run-sso',
+      profile: 'p',
+      port: 4001,
+      model: 'm1',
+      project: 'A',
+      projectBinding: 'own',
+      syncApiUrl: 'https://s',
+      syncCodeMieUrl: 'https://c',
+    });
+
+    expect(vi.mocked(spawnDetached).mock.calls[0][1].slice(1)).toEqual([
+      '--target-url', 'https://t',
+      '--provider', 'ai-run-sso',
+      '--profile', 'p',
+      '--gateway-key', 'codemie-proxy',
+      '--model', 'm1',
+      '--project', 'A',
+      '--project-binding', 'own',
+      '--state-file', DEFAULT_TEST_STATE_FILE,
+      '--port', '4001',
+      '--sync-api-url', 'https://s',
+      '--sync-codemie-url', 'https://c',
+    ]);
+  });
+
+  it('ignores a live state of another pid and returns the state its own child writes', async () => {
+    const other: DaemonState = { ...SAMPLE_STATE, pid: process.ppid, port: 4002 };
+    vi.mocked(spawnDetached).mockImplementation(() => {
+      void writeFile(DEFAULT_TEST_STATE_FILE, JSON.stringify(other), 'utf-8');
+      // The child is slow to start: its own state lands a few polls after the other daemon's.
+      setTimeout(() => { void writeFile(DEFAULT_TEST_STATE_FILE, JSON.stringify(SAMPLE_STATE), 'utf-8'); }, 400);
+      return SAMPLE_STATE.pid;
+    });
+
+    const state = await spawnDaemon({ targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'default', port: 4001 });
+
+    expect(state).toMatchObject({ pid: SAMPLE_STATE.pid, port: 4001 });
+  });
+
+  describe('a child that writes no state of its own within the ready wait', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    async function spawnUntilSettled(): Promise<unknown> {
+      vi.useFakeTimers({ toFake: ['setTimeout'] });
+      let outcome: unknown;
+      let done = false;
+      const spawning = spawnDaemon({ targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'default', port: 4001 })
+        .then(() => { outcome = 'resolved'; }, (error: unknown) => { outcome = error; })
+        .finally(() => { done = true; });
+      while (!done) {
+        await vi.advanceTimersByTimeAsync(100);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      await spawning;
+      return outcome;
+    }
+
+    it.each([
+      ['a child that died before writing it', 9999999],
+      ['a failed spawn', -1],
+    ])('%s ends in the timeout error and no signal is sent to it', async (_label, pid) => {
+      const signals: Array<string | number | undefined> = [];
+      vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal !== undefined && signal !== 0) signals.push(signal);
+        return true;
+      });
+      vi.mocked(spawnDetached).mockImplementation(() => pid);
+
+      const outcome = await spawnUntilSettled();
+
+      expect(String(outcome)).toContain('Daemon failed to start within 5 seconds');
+      expect(signals).toEqual([]);
+    });
+
+    it('a live state of another daemon is not taken for the child', async () => {
+      await writeFile(DEFAULT_TEST_STATE_FILE, JSON.stringify({ ...SAMPLE_STATE, pid: process.ppid }), 'utf-8');
+      vi.mocked(spawnDetached).mockImplementation(() => SAMPLE_STATE.pid);
+
+      expect(String(await spawnUntilSettled())).toContain('Daemon failed to start within 5 seconds');
+    });
   });
 
   it('forwards the profile model as a --model argument when set', async () => {
@@ -519,7 +641,7 @@ describe('spawnDaemon', () => {
     expect(args).toEqual(expect.arrayContaining(['--model', 'gpt-5.6-luna-2026-07-09']));
   });
 
-  it('omits optional client context when it is not configured', async () => {
+  it('omits optional context when it is not configured', async () => {
     arrangeReadyDaemon();
 
     await spawnDaemon({
@@ -531,7 +653,7 @@ describe('spawnDaemon', () => {
 
     const args = vi.mocked(spawnDetached).mock.calls[0][1];
     expect(args).not.toContain('--model');
-    expect(args).not.toContain('--client-type');
+    expect(args).not.toContain('--project');
   });
 
   it('keeps the gateway key out of every log call', async () => {
@@ -562,7 +684,6 @@ describe('spawnDaemon', () => {
       profile: 'work',
       project: 'team-project',
       clientType: 'codemie-claude',
-      telemetryMode: 'none',
     };
     const WORK_SPAWN = {
       targetUrl: 'https://upstream.example.com',
@@ -570,8 +691,6 @@ describe('spawnDaemon', () => {
       profile: 'work',
       port: 4001,
       project: 'team-project',
-      clientType: 'codemie-claude',
-      telemetryMode: 'none' as const,
     };
 
     function arrangeDaemonState(state: DaemonState): void {
@@ -586,16 +705,54 @@ describe('spawnDaemon', () => {
       try { await rm(DEFAULT_TEST_CONNECTION_FILE, { recursive: true, force: true }); } catch { /* ignore */ }
     });
 
-    it('records profile, clientType and telemetryMode once the daemon is ready', async () => {
+    it('records the profile, and with no record the port it asked for, once the daemon runs on it', async () => {
       arrangeDaemonState(WORK_STATE);
 
       await spawnDaemon(WORK_SPAWN);
 
-      expect(await readConnectionRecord(DEFAULT_TEST_CONNECTION_FILE)).toMatchObject({
-        profile: 'work',
-        clientType: 'codemie-claude',
-        telemetryMode: 'none',
-      });
+      const record = JSON.parse(await readFile(DEFAULT_TEST_CONNECTION_FILE, 'utf-8'));
+      expect(record).toMatchObject({ profile: 'work', port: 4001 });
+      expect(record).not.toHaveProperty('clientType');
+      expect(record).not.toHaveProperty('telemetryMode');
+    });
+
+    it('records no port when the daemon came up on another port than it asked for', async () => {
+      arrangeDaemonState({ ...WORK_STATE, port: 60122 });
+
+      await spawnDaemon(WORK_SPAWN);
+
+      const record = JSON.parse(await readFile(DEFAULT_TEST_CONNECTION_FILE, 'utf-8'));
+      expect(record.profile).toBe('work');
+      expect(record).not.toHaveProperty('port');
+    });
+
+    it('keeps the recorded port when the record has one', async () => {
+      await writeFile(DEFAULT_TEST_CONNECTION_FILE, JSON.stringify({ version: 1, profile: 'work', port: 52311 }), 'utf-8');
+      arrangeDaemonState(WORK_STATE);
+
+      await spawnDaemon(WORK_SPAWN);
+
+      expect(JSON.parse(await readFile(DEFAULT_TEST_CONNECTION_FILE, 'utf-8')).port).toBe(52311);
+    });
+
+    it('without writeRecord sets only the port of a record that has none', async () => {
+      const existing = { version: 1, profile: 'recorded', clientType: 'codex-desktop', updatedAt: 'x' };
+      await writeFile(DEFAULT_TEST_CONNECTION_FILE, JSON.stringify(existing), 'utf-8');
+      arrangeDaemonState(WORK_STATE);
+
+      await spawnDaemon({ ...WORK_SPAWN, writeRecord: false });
+
+      expect(JSON.parse(await readFile(DEFAULT_TEST_CONNECTION_FILE, 'utf-8'))).toEqual({ ...existing, port: 4001 });
+    });
+
+    it('with writeRecord and recordPort false leaves a record without port as it is', async () => {
+      const existing = { version: 1, profile: 'recorded', updatedAt: 'x' };
+      await writeFile(DEFAULT_TEST_CONNECTION_FILE, JSON.stringify(existing), 'utf-8');
+      arrangeDaemonState(WORK_STATE);
+
+      await spawnDaemon({ ...WORK_SPAWN, writeRecord: false, recordPort: false });
+
+      expect(JSON.parse(await readFile(DEFAULT_TEST_CONNECTION_FILE, 'utf-8'))).toEqual(existing);
     });
 
     it('writes nothing when writeRecord is false', async () => {
@@ -650,7 +807,7 @@ describe('daemon cleanup never deletes the connection record', () => {
   });
 
   it('checkStatus on a dead pid clears the state file but keeps the record', async () => {
-    await writeConnectionRecord(DEAD_STATE, 'work', 'codemie-claude', DEFAULT_TEST_CONNECTION_FILE);
+    await writeConnectionRecord(DEAD_STATE, 'work', {}, DEFAULT_TEST_CONNECTION_FILE);
     await writeState(DEAD_STATE, TEST_STATE_FILE);
 
     const { running } = await checkStatus(TEST_STATE_FILE);
@@ -661,7 +818,7 @@ describe('daemon cleanup never deletes the connection record', () => {
   });
 
   it('stopDaemon on a dead-pid state clears proxy-daemon.json but keeps the record', async () => {
-    await writeConnectionRecord(DEAD_STATE, 'work', 'codemie-claude', DEFAULT_TEST_CONNECTION_FILE);
+    await writeConnectionRecord(DEAD_STATE, 'work', {}, DEFAULT_TEST_CONNECTION_FILE);
     await writeState(DEAD_STATE, DEFAULT_TEST_STATE_FILE);
 
     await stopDaemon();
@@ -711,9 +868,18 @@ describe('proxy connection record', () => {
       expect(String(warn.mock.calls[0][0])).toMatch(/profile|object/i);
     });
 
+    it('round-trips the port of the clients\' connection', async () => {
+      await writeConnectionRecord(RUNNING_STATE, 'work', { port: 52311 }, TEST_CONNECTION_FILE);
+
+      expect((await readConnectionRecord(TEST_CONNECTION_FILE))?.port).toBe(52311);
+    });
+
     it.each([
       ['clientType', { clientType: 7 }],
       ['telemetryMode', { telemetryMode: 'bogus' }],
+      ['port', { port: '52311' }],
+      ['port', { port: 0 }],
+      ['port', { port: -1 }],
     ])('drops a wrongly typed %s with a warning naming the field', async (field, bad) => {
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
       await writeFile(TEST_CONNECTION_FILE, JSON.stringify({ version: 1, profile: 'work', ...bad }), 'utf-8');
@@ -728,36 +894,50 @@ describe('proxy connection record', () => {
 
   describe('writeConnectionRecord', () => {
     it('writes the record and returns true', async () => {
-      const ok = await writeConnectionRecord({ ...RUNNING_STATE, project: 'p', telemetryMode: 'none' }, 'work', 'codemie-claude', TEST_CONNECTION_FILE);
+      const ok = await writeConnectionRecord({ ...RUNNING_STATE, project: 'p', telemetryMode: 'none' }, 'work', {}, TEST_CONNECTION_FILE);
 
       expect(ok).toBe(true);
       const record = JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'));
-      expect(record).toMatchObject({ version: 1, profile: 'work', clientType: 'codemie-claude', telemetryMode: 'none' });
+      expect(record).toMatchObject({ version: 1, profile: 'work' });
+      expect(record).not.toHaveProperty('clientType');
+      expect(record).not.toHaveProperty('telemetryMode');
+      expect(record).not.toHaveProperty('port');
       expect(record).not.toHaveProperty('project');
       expect(typeof record.updatedAt).toBe('string');
       expect(record).not.toHaveProperty('gatewayKey');
       expect(record).not.toHaveProperty('url');
     });
 
-    it('merges over the existing record keeping unknown fields and replacing identity wholesale', async () => {
+    it('merges over the existing record keeping unknown fields and the legacy identity and port', async () => {
       await writeFile(TEST_CONNECTION_FILE, JSON.stringify({
-        version: 1, profile: 'old', clientType: 'old-client', telemetryMode: 'claude-desktop', custom: 'keep-me', updatedAt: 'x',
+        version: 1, profile: 'old', clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 52311, custom: 'keep-me', updatedAt: 'x',
       }), 'utf-8');
 
-      const ok = await writeConnectionRecord(RUNNING_STATE, 'work', undefined, TEST_CONNECTION_FILE);
+      const ok = await writeConnectionRecord(RUNNING_STATE, 'work', {}, TEST_CONNECTION_FILE);
 
       expect(ok).toBe(true);
       const record = JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'));
-      expect(record.custom).toBe('keep-me');
-      expect(record.profile).toBe('work');
-      expect(record.clientType).toBe('codemie-claude');
-      expect(record).not.toHaveProperty('telemetryMode');
+      expect(record).toMatchObject({
+        profile: 'work', clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 52311, custom: 'keep-me',
+      });
+    });
+
+    it('replaces only the port when one is given', async () => {
+      await writeFile(TEST_CONNECTION_FILE, JSON.stringify({
+        version: 1, profile: 'work', clientType: 'codex-desktop', port: 52311, updatedAt: 'x',
+      }), 'utf-8');
+
+      await writeConnectionRecord(RUNNING_STATE, 'work', { port: 60122 }, TEST_CONNECTION_FILE);
+
+      expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'))).toMatchObject({
+        profile: 'work', clientType: 'codex-desktop', port: 60122,
+      });
     });
 
     it('returns false with a warning naming both profiles on a profile mismatch', async () => {
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
-      const ok = await writeConnectionRecord(RUNNING_STATE, 'other', undefined, TEST_CONNECTION_FILE);
+      const ok = await writeConnectionRecord(RUNNING_STATE, 'other', {}, TEST_CONNECTION_FILE);
 
       expect(ok).toBe(false);
       expect(existsSync(TEST_CONNECTION_FILE)).toBe(false);
@@ -766,39 +946,26 @@ describe('proxy connection record', () => {
       expect(message).toContain('other');
     });
 
-    it('records a daemon that only has telemetryMode claude-desktop when its effective client type is requested', async () => {
-      const legacyDesktop: DaemonState = { ...RUNNING_STATE, clientType: undefined, telemetryMode: 'claude-desktop' };
+    it('records a daemon whose state names another client type than the record', async () => {
+      await writeFile(TEST_CONNECTION_FILE, JSON.stringify({ version: 1, profile: 'work', clientType: 'vscode-byok' }), 'utf-8');
 
-      const ok = await writeConnectionRecord(legacyDesktop, 'work', 'claude-desktop', TEST_CONNECTION_FILE);
+      const ok = await writeConnectionRecord(RUNNING_STATE, 'work', {}, TEST_CONNECTION_FILE);
 
       expect(ok).toBe(true);
-      const record = JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'));
-      expect(record).toMatchObject({ profile: 'work', telemetryMode: 'claude-desktop' });
-      expect(record).not.toHaveProperty('clientType');
-    });
-
-    it('returns false with a warning naming both client types on a client-type mismatch', async () => {
-      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-
-      const ok = await writeConnectionRecord(RUNNING_STATE, 'work', 'vscode-byok', TEST_CONNECTION_FILE);
-
-      expect(ok).toBe(false);
-      const message = warn.mock.calls.map(c => String(c[0])).join(' ');
-      expect(message).toContain('codemie-claude');
-      expect(message).toContain('vscode-byok');
+      expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8')).clientType).toBe('vscode-byok');
     });
 
     it('returns false without throwing when the path is unwritable', async () => {
       vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
       const unwritable = join(tmpdir(), `no-such-dir-${Date.now()}`, 'proxy-connection.json');
 
-      await expect(writeConnectionRecord(RUNNING_STATE, 'work', undefined, unwritable)).resolves.toBe(false);
+      await expect(writeConnectionRecord(RUNNING_STATE, 'work', {}, unwritable)).resolves.toBe(false);
     });
 
     it('leaves a parseable file after two concurrent writers', async () => {
       const results = await Promise.all([
-        writeConnectionRecord(RUNNING_STATE, 'work', undefined, TEST_CONNECTION_FILE),
-        writeConnectionRecord({ ...RUNNING_STATE, telemetryMode: 'none' }, 'work', undefined, TEST_CONNECTION_FILE),
+        writeConnectionRecord(RUNNING_STATE, 'work', {}, TEST_CONNECTION_FILE),
+        writeConnectionRecord({ ...RUNNING_STATE, telemetryMode: 'none' }, 'work', {}, TEST_CONNECTION_FILE),
       ]);
 
       // On Windows a rename over a file another rename is replacing can be refused; a refused
@@ -807,6 +974,84 @@ describe('proxy connection record', () => {
       expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8')).profile).toBe('work');
       const leftovers = (await readdir(tmpdir())).filter(f => f.startsWith(basename(TEST_CONNECTION_FILE)) && f.endsWith('.tmp'));
       expect(leftovers).toEqual([]);
+    });
+  });
+
+  describe('writeConnectionPort', () => {
+    it('writes nothing when there is no record', async () => {
+      expect(await writeConnectionPort(4001, TEST_CONNECTION_FILE)).toBe(false);
+
+      expect(existsSync(TEST_CONNECTION_FILE)).toBe(false);
+    });
+
+    it('sets the port of an existing record and changes nothing else', async () => {
+      const existing = { version: 1, profile: 'work', clientType: 'codex-desktop', updatedAt: 'x', custom: 1 };
+      await writeFile(TEST_CONNECTION_FILE, JSON.stringify(existing), 'utf-8');
+
+      expect(await writeConnectionPort(4100, TEST_CONNECTION_FILE)).toBe(true);
+
+      expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'))).toEqual({ ...existing, port: 4100 });
+    });
+  });
+
+  describe('clearLegacyClientIdentity', () => {
+    it('removes clientType and telemetryMode and keeps every other field', async () => {
+      await writeFile(TEST_CONNECTION_FILE, JSON.stringify({
+        version: 1,
+        profile: 'work',
+        port: 4100,
+        clientType: 'claude-desktop',
+        telemetryMode: 'claude-desktop',
+        updatedAt: '2026-11-17T00:00:00.000Z',
+      }), 'utf-8');
+
+      expect(await clearLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(true);
+
+      expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8'))).toEqual({
+        version: 1,
+        profile: 'work',
+        port: 4100,
+        updatedAt: '2026-11-17T00:00:00.000Z',
+      });
+    });
+
+    it('does not write a record without them', async () => {
+      const text = JSON.stringify({ version: 1, profile: 'work', port: 4100, updatedAt: 'x' });
+      await writeFile(TEST_CONNECTION_FILE, text, 'utf-8');
+
+      expect(await clearLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(false);
+
+      // A write would have replaced the compact text with the writer's indented JSON.
+      expect(await readFile(TEST_CONNECTION_FILE, 'utf-8')).toBe(text);
+    });
+
+    it('creates nothing when there is no record', async () => {
+      expect(await clearLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(false);
+
+      expect(existsSync(TEST_CONNECTION_FILE)).toBe(false);
+    });
+  });
+
+  describe('hasLegacyClientIdentity', () => {
+    it.each([
+      ['clientType', { clientType: 'codex-desktop' }, true],
+      ['telemetryMode alone', { telemetryMode: 'none' }, true],
+      ['clientType claude-code-otlp', { clientType: 'claude-code-otlp' }, true],
+      ['neither field', {}, false],
+    ])('answers for a record with %s', async (_case, identity, expected) => {
+      await writeFile(TEST_CONNECTION_FILE, JSON.stringify({ version: 1, profile: 'work', port: 4100, ...identity }), 'utf-8');
+
+      expect(await hasLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(expected);
+    });
+
+    it('is false with no record', async () => {
+      expect(await hasLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(false);
+    });
+
+    it('is false for a record file that is not JSON', async () => {
+      await writeFile(TEST_CONNECTION_FILE, '{"clientType": "claude-desktop"', 'utf-8');
+
+      expect(await hasLegacyClientIdentity(TEST_CONNECTION_FILE)).toBe(false);
     });
   });
 

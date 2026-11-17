@@ -101,6 +101,7 @@ import { MetricsRetryExhaustedError } from '@/providers/plugins/sso/session/proc
 import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
 import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
+import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -117,7 +118,11 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS
+  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -2070,11 +2075,8 @@ describe('DesktopTelemetryRuntime', () => {
       vi.setSystemTime(T1);
       appendMessages('ext-1', 1);
 
-      // The index succeeded, so this poll does not wait for the pass and meets its lock
+      // The first poll finalizes the record in its start-up pass, then reopens it once the pass released its lock
       await runtime.start();
-      await runtime.triggerPoll();
-      // Reopened by the triggered poll itself, before the chain's first poll
-      expect(readRecord(sessionId)).toMatchObject({ status: 'active', stretchStartTime: T1 });
       await (runtime as any).startupChain;
 
       expect(readRecord(sessionId)!.stretchStartTime).toBe(T1);
@@ -2248,6 +2250,286 @@ describe('DesktopTelemetryRuntime', () => {
         project: 'project-codemie-docs',
         startTime
       });
+    });
+  });
+
+  describe('collection while Desktop is connected to this daemon', () => {
+    const PORT = 4001;
+    /** The value Desktop writes over the key at its start; only Desktop opens it. */
+    const SEALED_KEY = '__sealed__:v1:QUJD';
+    /** The Desktop connection changes the runtime told the daemon of. */
+    let notices: Array<string | undefined>;
+    let desktopHome: string;
+    /** The real config reader over a temp Desktop base directory. */
+    const collecting: DesktopTelemetryRuntimeConfig = {
+      ...config,
+      readDesktopGateway: undefined,
+      onDesktopConnectedChange: async (since) => { notices.push(since); }
+    };
+
+    /** Desktop's applied config: a gateway at `url` with `key`, or none at all. */
+    function desktopPointsAt(url: string | null, key = 'codemie-proxy'): void {
+      const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+      rmSync(library, { recursive: true, force: true });
+      if (url === null) return;
+      mkdirSync(library, { recursive: true });
+      writeFileSync(join(library, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      writeFileSync(join(library, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway', inferenceGatewayBaseUrl: url, inferenceGatewayApiKey: key
+      }));
+    }
+
+    const startedSessions = () => mockSendSessionStart.mock.calls.map(([session]) => session.sessionId);
+
+    beforeEach(() => {
+      notices = [];
+      desktopHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-home-'));
+      vi.stubEnv('HOME', desktopHome);
+      vi.stubEnv('USERPROFILE', desktopHome);
+      vi.stubEnv('XDG_CONFIG_HOME', join(desktopHome, '.config'));
+      vi.stubEnv('LOCALAPPDATA', join(desktopHome, 'AppData', 'Local'));
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(desktopHome, { recursive: true, force: true });
+    });
+
+    it('connected: sessions are discovered and collected', async () => {
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    it.each([
+      ['the config removed', () => desktopPointsAt(null)],
+      ['another port', () => desktopPointsAt('http://127.0.0.1:4005')],
+      ['another key', () => desktopPointsAt(`http://127.0.0.1:${PORT}`, 'sk-user-own')],
+      ['a non-loopback URL', () => desktopPointsAt(`https://gateway.example.com:${PORT}`)],
+      ['a sealed key on another port', () => desktopPointsAt('http://127.0.0.1:4005', SEALED_KEY)],
+    ])('not connected (%s) at two polls in a row: the second discovers, runs and reconciles nothing, and a tracked session is still finalized', async (_case, disconnect) => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const run = vi.fn(async () => undefined);
+      // Idle long enough for a re-delivery to fall due before the session's inactivity does
+      const inactivityTimeoutMs = 2 * DESKTOP_REDELIVERY_INTERVAL_MS;
+      const runtime = new DesktopTelemetryRuntime(adapter, { ...collecting, inactivityTimeoutMs }, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      const sessionId = sessionIdFor('ext-1')!;
+      await (runtime as any).cowork.inFlight;
+      disconnect();
+      // The first not-connected read works as a connected poll
+      vi.setSystemTime(T0 + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      run.mockClear();
+      const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+
+      vi.setSystemTime(T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(index).not.toHaveBeenCalled();
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined]);
+
+      // The tracked session is still finalized on inactivity (its final flush rediscovers its own transcript)
+      vi.setSystemTime(T0 + inactivityTimeoutMs + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(run).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('connected with a sealed key on the daemon\'s port: collecting, the connection told, a session collected', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      const info = vi.spyOn(logger, 'info');
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(info).toHaveBeenCalledWith('[desktop-telemetry] Claude Desktop connected; collecting', { since: new Date(T0).toISOString() });
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('the named key turning sealed between two polls reads no "not connected" and keeps the activity gate', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, 'codemie-proxy.claude-desktop');
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const info = vi.spyOn(logger, 'info');
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 30_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(runtime, 1);
+
+      expect(info.mock.calls.filter(([message]) => String(message).includes('not connected'))).toEqual([]);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('a daemon started not connected reads no record until the first connected poll, which runs the start-up pass once', async () => {
+      desktopPointsAt(null);
+      const first = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await pollTicks(runtime, 2);
+
+      expect(index).not.toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+      expect(notices).toEqual([]);
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      await pollTicks(runtime, 1);
+      expect(index).toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+
+      // A dead daemon's record that appears later is no start-up pass's: the pass ran once
+      const later = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      await pollTicks(runtime, 2);
+      expect(readRecord(later)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+    });
+
+    it('connected again: a session idle since before skipped, a new one collected, one continued from before sent from the gate on', async () => {
+      const runtime = await startDaemon(createAdapter(), collecting);
+      desktopPointsAt(null);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 25_000);
+      openDesktopChat('ext-old', 1, Date.now());
+      openDesktopChat('ext-cont', 2, Date.now());
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + 30_000);
+      await runtime.triggerPoll();
+      const gate = T0 + 30_000;
+      vi.setSystemTime(T0 + 35_000);
+      appendMessages('ext-cont', 1);
+      openDesktopChat('ext-new', 1, Date.now());
+      vi.setSystemTime(T0 + 40_000);
+      await runtime.triggerPoll();
+
+      expect(startedSessions().sort()).toEqual(['agent-ext-cont', 'agent-ext-new']);
+      expect(readRecord(sessionIdFor('ext-cont')!)).toMatchObject({ startTime: gate });
+      expect(sentDeltas.filter(delta => delta.externalSessionId === 'ext-cont')).toEqual([{ externalSessionId: 'ext-cont', historyIndices: [2] }]);
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined, new Date(gate).toISOString()]);
+    });
+
+    it('connected from the first poll: a session updated between the daemon\'s start and that poll is collected', async () => {
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, T0 - HOUR_MS);
+      touchDesktopChat('ext-1');
+      vi.setSystemTime(T0 + 8_000);
+
+      await runtime.triggerPoll();
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a reader that throws counts as not connected and the poll goes on', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => { throw new Error('EACCES'); }
+      });
+
+      await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() before the first connected poll builds no index, discovers nothing and does not throw', async () => {
+      desktopPointsAt(null);
+      const adapter = createAdapter();
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(adapter, collecting);
+
+      await expect(runtime.stop()).resolves.toBeUndefined();
+
+      expect(index).not.toHaveBeenCalled();
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: the config flips while a session is being finalized: the finalization completes, the next poll discovers nothing', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const sessionId = sessionIdFor('ext-1')!;
+      let releaseEnd!: () => void;
+      mockSendSessionEnd.mockImplementationOnce(() => new Promise<void>(resolve => { releaseEnd = resolve; }));
+
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      const finalizing = runtime.triggerPoll();
+      await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
+      desktopPointsAt(null);
+      releaseEnd();
+      await finalizing;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+
+      // the first poll after the flip still collects; the second in a row is not connected
+      await pollTicks(runtime, 1);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      await pollTicks(runtime, 1);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['reads no gateway', 'none'],
+      ['throws', 'throw'],
+    ] as const)('one poll whose reader %s between two connected ones changes nothing', async (_case, miss) => {
+      let read: 'connected' | 'none' | 'throw' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => {
+          if (read === 'throw') throw new Error('EACCES');
+          return read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' };
+        }
+      });
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, Date.now());
+
+      read = miss;
+      await pollTicks(runtime, 1);
+      read = 'connected';
+      await pollTicks(runtime, 1);
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(3);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a connected read between two not-connected ones resets the count', async () => {
+      let read: 'connected' | 'none' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => (read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' })
+      });
+
+      for (const next of ['none', 'connected', 'none'] as const) {
+        read = next;
+        await pollTicks(runtime, 1);
+      }
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(4);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
     });
   });
 });
