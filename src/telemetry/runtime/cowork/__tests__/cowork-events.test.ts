@@ -27,7 +27,6 @@ const ENVELOPE: CoworkEnvelope = {
   project: 'synthetic-project',
   repository: 'Cowork',
   cliVersion: '0.0.0-test',
-  title: 'Synthetic notes task',
   entrypoint: 'local-agent',
   clientVersion: '2.1.317',
 };
@@ -169,7 +168,15 @@ describe('stampCoworkEvent', () => {
 
     expect(masked['prompt_body']).toBe('use [REDACTED] now');
     expect(long['prompt_body']).toBe('x'.repeat(200));
-    expect(long).toMatchObject({ session_title: 'Synthetic notes task', platform: 'claude-code', schema_version: 2, codemie_project_name: 'synthetic-project' });
+    expect(long).toMatchObject({ platform: 'claude-code', schema_version: 2, codemie_project_name: 'synthetic-project' });
+  });
+
+  it('never sends a session_title, not even on agent.session.start or agent.prompt.submit (EPMCDME-17317)', () => {
+    const start = stampCoworkEvent({ type: 'agent.session.start', timestamp: '2026-11-10T11:00:00.000Z', event_id: 'agent.session.start:x:start' }, ENVELOPE, '');
+    const prompt = stampCoworkEvent({ type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: 'hey', event_id: 'agent.prompt.submit:x:1' }, ENVELOPE, '');
+
+    expect(start).not.toHaveProperty('session_title');
+    expect(prompt).not.toHaveProperty('session_title');
   });
 
   it('gives a summary without its own time the fallback time and the hook path\'s summary id', () => {
