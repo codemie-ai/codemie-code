@@ -156,10 +156,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-/** An ISO time; a time read from a status file outside the date range is printed as stored, not thrown on. */
+/**
+ * A time in the user's time zone as `YYYY-MM-DD HH:mm:ss +HH:MM` (the offset in force at that moment); a time read
+ * from a status file outside the date range is printed as stored, not thrown on.
+ */
 function formatTime(ms: number): string {
   const at = new Date(ms);
-  return Number.isNaN(at.getTime()) ? String(ms) : at.toISOString();
+  if (Number.isNaN(at.getTime())) return String(ms);
+  const pad = (n: number, width = 2): string => String(n).padStart(width, '0');
+  const offsetMinutes = -at.getTimezoneOffset();
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  const offset = `${sign}${pad(Math.trunc(Math.abs(offsetMinutes) / 60))}:${pad(Math.trunc(Math.abs(offsetMinutes) % 60))}`;
+  const date = `${pad(at.getFullYear(), 4)}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  const time = `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+  return `${date} ${time} ${offset}`;
 }
 
 /** The `Last dropped:` row of the newest recorded drop, with the remedy of a session without a project. */

@@ -43,7 +43,10 @@ export interface SpoolDeliverySummary {
   incomplete?: boolean;
   /** A session with pending data is held because the analytics endpoint does not match the credential identity. */
   mismatchHeld: boolean;
-  /** The live delivery-failure record that retries first, across all streams; absent when none fails. */
+  /**
+   * The live delivery-failure record that retries first, across all streams of sessions that are not held; absent when
+   * none fails. A held session is not retried (its forwarder never runs), so its old record is neither live nor a failure.
+   */
   sendFailure?: SendFailure;
   /** A session with pending data is held on a reason that means its classification never completed (see spec AC1-AC3). */
   classificationStalled: boolean;
@@ -111,7 +114,11 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
   const mismatchHeld = pendingBytes > 0 && holdReason === 'analytics_endpoint_mismatch';
   const classificationStalled = pendingBytes > 0 && CLASSIFICATION_STALL_REASONS.has(holdReason);
   const organizationEncodingStalled = pendingBytes > 0 && holdReason === ORGANIZATION_ENCODING_STALL_REASON;
-  const live = await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
+  // A session held as a whole sends nothing, so its failure record is frozen (its retry time passes and never recurs);
+  // its bytes still count as pending above. A hold on a single stream keeps its record: that stream is still retried.
+  const live = status.holds?.session
+    ? []
+    : await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
   const latestDrop = sessionDrop(status);
   const sendFailure = live.reduce<SendFailure | undefined>(
     (first, rec) => earlier(first, rec && { nextAt: rec.nextAt, ...(rec.detail ? { detail: rec.detail } : {}) }),
