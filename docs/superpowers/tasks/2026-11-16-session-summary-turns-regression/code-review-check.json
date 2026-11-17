@@ -1,0 +1,33 @@
+{
+  "decision": "approve",
+  "rationale": "Targeted re-check of the two code-review.final findings against the fix-up diff only (no full lens re-run). CR-001 (lookahead not skipping isMeta/isSidechain bookkeeping lines) is resolved: nextSkillName(fromIndex) now scans forward past any isMeta/isSidechain message before checking for the matching assistant Skill tool_use call, and a new test (claude-named-invocations.test.ts, 'counts a skill-backed command once even when a meta/bookkeeping line sits between it and the Skill call (CR-001)') asserts the dedup still fires across such an interposed line. CR-002 (missing sibling-gate test on the new wrappedCommandName/countTurns path) is resolved: a new test (session-signals.test.ts, 'does not exclude a bare mention of a local-only command name lacking the genuine command-message wrapper (CR-002)') asserts a bare <command-name>/model</command-name> mention with no <command-message> sibling still counts as a turn. The fix-up is a pure, narrow widening of two existing pure functions plus two unit tests; it introduces no new security, public-API, or data-loss risk, so no confirmation-pass lenses were dispatched. Full suite run after the fix-up: 257/257 tests passed in the touched files; the 32 pre-existing failures observed earlier in the run are confined to unrelated files (analytics sync scheduler, otlp-spool retention/privacy, metrics-upload-contract timing) and are not caused by this change.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "Turns excludes non-conversational local slash commands", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "story-ac", "item": "/exit does not increment Turns", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "story-ac", "item": "/model does not increment Turns", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "story-ac", "item": "One real user prompt results in TURNS = 1", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "Regression scenario (1 prompt + /context + 2 skill-commands + /compact + /cost(/usage) + /init ~= 5 turns, not 7)", "status": "partial", "notes": "Unchanged by the fix-up; not required by the plan's Review Focus, not blocking."},
+    {"kind": "spec", "item": "EPMCDME-17201: skill-backed slash command counted once, as a skill, not also as a command", "status": "pass", "notes": "Now robust against an interposed isMeta/isSidechain line (CR-001 fix); directly tested."},
+    {"kind": "spec", "item": "LOCAL_ONLY_COMMANDS starts with exactly: context, usage, cost, exit, quit, clear, resume, model", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "Do not reuse isLocalCommandTurn() for the turns fix", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "Preserve pure/no-I/O convention", "status": "pass", "notes": "nextSkillName/recordCommand remain pure; fix-up adds no I/O."},
+    {"kind": "spec", "item": "Do not touch forkedSlashPromptIds branch", "status": "pass", "notes": "Fix-up diff does not reference that branch."},
+    {"kind": "spec", "item": "Review focus: <command-name> without <command-message> sibling must not be a genuine wrapper, in either fix", "status": "pass", "notes": "Now directly tested on the wrappedCommandName/countTurns path (CR-002 fix)."},
+    {"kind": "spec", "item": "Review focus: a plain typed prompt must never match the denylist or the skill-dedup lookahead", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "Review focus: a non-denylisted command (/compact, /init, /commit) must still count as a turn exactly as today", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "Review focus: command immediately followed by Skill tool_use for a DIFFERENT skill must count as both command AND that skill", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."},
+    {"kind": "spec", "item": "countTurns() must still skip isMeta/isSidechain/isCompactSummary/tool_result-only lines and existing prefix exclusions", "status": "pass", "notes": "Unchanged by the fix-up; carried forward from code-review-final.json."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow (commit format)", "status": "pass", "notes": "Fix-up commit a8c4fd17 follows Conventional Commits (fix(agents): ...) and passed commitlint."},
+    {"standard": "code-quality (TS style, no any, explicit types)", "status": "pass", "notes": "nextSkillName/isSidechain field use explicit types; no any introduced; tsc --noEmit passed in the pre-commit hook."},
+    {"standard": "security", "status": "pass", "notes": "No secrets, injection, or unsafe file/process handling; pure in-memory logic only; gitleaks passed."}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "nextSkillName(fromIndex) now skips isMeta/isSidechain lines before matching the assistant Skill tool_use call; new test proves the dedup still fires across such a line."},
+    {"id": "CR-002", "status": "resolved", "notes": "New countTurns test proves a bare <command-name> mention lacking the <command-message> sibling is not excluded from turns."}
+  ]
+}

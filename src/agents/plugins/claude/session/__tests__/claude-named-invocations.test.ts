@@ -126,6 +126,43 @@ describe('extractOrderedNamedInvocations', () => {
     expect(out.commandInvocations).toEqual({ plan: 2, commit: 1 });
   });
 
+  it('counts a skill-backed slash command independently as both a command and a skill', () => {
+    // A slash command that dispatches to a same-named skill is two distinct, independently
+    // counted invocations here: the summary's own `commands`/`skills` counts are deliberately
+    // not deduplicated against each other. A prior attempt at a lookahead dedup for this shape
+    // (EPMCDME-17201) was reverted after review: three rounds each found a new transcript shape
+    // it missed, real-session data showed the adjacency it assumed essentially never occurs, and
+    // the ticket's actual reported symptom is backend-owned (`agent.skill.dispatch`/OTLP
+    // `command_name`), unaffected by this file either way. This also keeps this extractor
+    // consistent with `src/cli/commands/analytics/cost/dispatch-extractor.ts`'s independent
+    // dispatch-timeline extraction of the same transcript shape.
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('codemie-humanizer')),
+      toolUse('Skill', { skill: 'codemie-humanizer' }),
+    ]);
+    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandInvocations).toEqual({ 'codemie-humanizer': 1 });
+    expect(out.commandsInOrder).toEqual(['codemie-humanizer']);
+  });
+
+  it('still counts a command as a command when no Skill call follows it', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      userText('a plain follow-up prompt, no skill'),
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({});
+  });
+
+  it('counts a command and an unrelated-name Skill call that happens to follow it, independently', () => {
+    const out = extractOrderedNamedInvocations([
+      userStringContent(commandWrapper('plan')),
+      toolUse('Skill', { skill: 'unrelated-skill' }),
+    ]);
+    expect(out.commandInvocations).toEqual({ plan: 1 });
+    expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
+  });
+
   it('returns an empty list when there are no genuine commands', () => {
     const out = extractOrderedNamedInvocations([
       userText('docs mention <command-name>/plan</command-name> only'),
