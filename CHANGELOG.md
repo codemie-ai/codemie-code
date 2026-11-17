@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file, following [Keep
 - The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
 
+### Fixed
+
+- `codemie proxy analytics status` and `codemie proxy status` no longer report delivery as unhealthy, with a retry time that has already passed, because of a session that is held and not retried; the held data still counts as unsent and `Unsent data` names the part on hold (`heldBytes` in `--json`). `Next retry` reads `due now` once its time has come, and it and `Last dropped` show times in your local time zone (`2026-11-16 01:24:22 +03:00`); `--json` keeps epoch milliseconds
+
 ## [0.16.9] - 2026-11-16
 
 ### Added

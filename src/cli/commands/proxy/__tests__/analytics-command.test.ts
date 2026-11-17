@@ -36,12 +36,14 @@ describe('createProxyAnalyticsCommand', () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-'));
     projectRoot = await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-'));
     vi.stubEnv('CODEMIE_HOME', tempDir);
+    vi.stubEnv('TZ', 'America/New_York'); // times print in the local zone; the fixtures are in November, after DST ended (EST, -05:00)
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.resetModules();
     await rm(tempDir, { recursive: true, force: true });
@@ -378,6 +380,8 @@ describe('createProxyAnalyticsCommand', () => {
     });
 
     it('shows the next retry and the error code of a failing send, with no Run line', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.parse('2026-11-13T14:02:10.000Z')); // the retry time below is still ahead
       mockRunningDaemon({
         status: 'unhealthy',
         reason: 'send_failed',
@@ -390,7 +394,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect(lines.slice(0, 5)).toEqual([
         'Delivery: unhealthy (last send to CodeMie failed, retrying)',
         'Unsent data: 3.10 KB (all sessions on this machine)',
-        'Next retry: 2026-11-13T14:32:10.000Z',
+        'Next retry: 2026-11-13 09:32:10 -05:00',
         'Error: backend unreachable',
         '',
       ]);
@@ -409,7 +413,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect(lines.slice(0, 6)).toEqual([
         'Delivery: healthy',
         'Unsent data: none',
-        'Last dropped: no_project (hooks, 2026-11-11T10:00:00.000Z)',
+        'Last dropped: no_project (hooks, 2026-11-11 05:00:00 -05:00)',
         '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
         '',
         'Claude:',

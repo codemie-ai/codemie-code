@@ -1995,6 +1995,14 @@ describe('proxy status', () => {
     });
 
     describe('Desktop line', () => {
+      beforeEach(() => {
+        vi.stubEnv('TZ', 'America/New_York'); // the drop time prints in the local zone; November, after DST ended (EST, -05:00)
+      });
+
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
       const dropAt = Date.parse('2026-11-11T10:00:00.000Z');
       const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: dropAt, local: false };
 
@@ -2024,7 +2032,7 @@ describe('proxy status', () => {
         expect(lines.slice(uptimeIndex + 1, uptimeIndex + 4)).toEqual([
           '  Desktop: collecting',
           `Analytics: ${chalk.green('healthy')}`,
-          '  Last dropped: cli_analytics_disabled (hooks, 2026-11-11T10:00:00.000Z)',
+          '  Last dropped: cli_analytics_disabled (hooks, 2026-11-11 05:00:00 -05:00)',
         ]);
       });
 
