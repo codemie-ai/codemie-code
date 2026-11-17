@@ -248,14 +248,76 @@ describe('countTurns', () => {
     expect(countTurns([wrappedCommand('init')])).toBe(1);
   });
 
-  it('still counts /compact even though it is marked local, because a compact_boundary line follows it', () => {
+  /** The continuation-summary line Claude Code inserts right after a `compact_boundary`. */
+  function compactSummary(): SignalLine {
+    return { type: 'user', isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation...' } };
+  }
+
+  function boundary(): SignalLine {
+    return { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-17T00:00:00.000Z' };
+  }
+
+  it('still counts /compact even though it is marked local, because a compact_boundary line precedes it, in real transcript order (PR #824 review)', () => {
+    // Real Claude Code order: the boundary is written before /compact's own caveat/wrapper/stdout,
+    // not after — confirmed against real transcripts (2.1.138-2.1.326); a forward scan never finds it.
     expect(
       countTurns([
+        boundary(),
+        compactSummary(),
         caveat(),
         wrappedCommand('compact'),
-        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+        stdout('Compacted'),
       ])
     ).toBe(1);
+  });
+
+  it('does not double-count /compact when Claude Code also records the separately-typed raw text line, the full real shape', () => {
+    // Real Claude Code also writes an un-wrapped `/compact` user line before the boundary — already
+    // a genuine turn on its own. Rescuing the wrapped replay too would count the same invocation
+    // twice; confirmed against real local transcripts on this machine (manual-trigger /compact).
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('/compact'), // the raw typed command, not wrapped — already a genuine turn on its own
+        boundary(),
+        compactSummary(),
+        caveat(),
+        wrappedCommand('compact'),
+        stdout('Compacted'),
+      ])
+    ).toBe(1);
+  });
+
+  it('still counts /compact via the rescue when there is no separately-typed raw text line before it (the case the rescue exists for)', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('some earlier real prompt'),
+        boundary(),
+        compactSummary(),
+        caveat(),
+        wrappedCommand('compact'),
+        stdout('Compacted'),
+      ])
+    ).toBe(2); // the earlier, unrelated prompt + the rescued /compact
+  });
+
+  it('does not let a typed /compact line dedup an unrelated later rescue separated by a genuine turn', () => {
+    // The raw-text dedup check must only suppress the rescue when the typed line is the *nearest*
+    // real turn behind the boundary — an intervening genuine prompt means this boundary belongs to
+    // a different, later invocation with no typed line of its own, so the rescue must still apply.
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('/compact'), // an earlier, separate manual compaction (own boundary not shown)
+        user('a genuine prompt after resuming'),
+        boundary(), // this boundary belongs to the second /compact below, not the typed line above
+        compactSummary(),
+        caveat(),
+        wrappedCommand('compact'),
+        stdout('Compacted'),
+      ])
+    ).toBe(3); // the typed line + the genuine prompt + the rescued second /compact
   });
 
   it('excludes consecutive marked-local commands, each preceded by its own caveat line', () => {
@@ -283,15 +345,19 @@ describe('countTurns', () => {
     ).toBe(2);
   });
 
-  it('CR-001: still counts /compact when a self-written stdout line sits between its wrapper and the compact_boundary line', () => {
+  it('CR-001: still counts /compact when a self-written stdout line (from an unrelated earlier command) sits between the previous real turn and the compact_boundary line', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
     expect(
       countTurns([
+        user('earlier real prompt'),
+        stdout('leftover output from an earlier, unrelated local command'),
+        boundary(),
+        compactSummary(),
         caveat(),
         wrappedCommand('compact'),
-        stdout('Compacting conversation...'),
-        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+        stdout('Compacted'),
       ])
-    ).toBe(1);
+    ).toBe(2);
   });
 
   /** A bookkeeping line with no `message` field at all (e.g. `file-history-snapshot`, `cost-state`). */
@@ -312,28 +378,33 @@ describe('countTurns', () => {
     ).toBe(1);
   });
 
-  it('CR-003: does not rescue a non-/compact marked-local command via an unrelated later compact_boundary', () => {
+  it('CR-003: does not rescue a non-/compact marked-local command via an unrelated preceding compact_boundary', () => {
     expect(
       countTurns([
+        boundary(),
+        compactSummary(),
         caveat(),
-        wrappedCommand('usage'), // not /compact — must stay excluded even though a boundary follows
+        wrappedCommand('usage'), // not /compact — must stay excluded even though a boundary precedes
         stdout(),
-        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
       ])
     ).toBe(0);
   });
 
-  it('CR-004: still counts /compact when an auto-prompt line sits between its wrapper and the compact_boundary line', () => {
+  it('CR-004: still counts /compact when an auto-prompt line sits between the previous real turn and the compact_boundary line', () => {
     const autoPrompt = (): SignalLine =>
       ({ type: 'user', message: { content: '<task-notification><task-id>t1</task-id></task-notification>' } });
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
     expect(
       countTurns([
+        user('earlier real prompt'),
+        autoPrompt(),
+        boundary(),
+        compactSummary(),
         caveat(),
         wrappedCommand('compact'),
-        autoPrompt(),
-        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+        stdout('Compacted'),
       ])
-    ).toBe(1);
+    ).toBe(2);
   });
 });
 

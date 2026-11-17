@@ -190,25 +190,54 @@ function isCompactCommand(text: string): boolean {
   return /<command-name>\/compact<\/command-name>/.test(text);
 }
 
+/** Whether `text` is a genuine, un-wrapped `/compact` invocation typed straight into the CLI. */
+function isTypedCompactText(text: string): boolean {
+  return text.trimStart().startsWith('/compact');
+}
+
 /**
- * Whether a `compact_boundary` system line appears between `i` and the next genuine, non-self-written,
- * non-auto-prompt user turn — the one exception where a locally-marked command (`/compact`) still
- * calls the model. Self-written lines (e.g. the `<local-command-stdout>` line `/compact` itself
- * writes before the boundary appears) and auto-injected prompts (`<task-notification>`,
- * `<agent-message`) must not stop the scan early — either would quietly reintroduce the exact
- * over-counting (or undercounting, for auto-prompts) bug this file exists to fix (PR #824 review).
- * Callers must also check {@link isCompactCommand} on the marked-local line itself — an unrelated
- * later boundary must not rescue a different local command (also PR #824 review).
+ * Whether a `compact_boundary` system line appears between the previous genuine, non-self-written,
+ * non-auto-prompt user turn and `i`, with that boundary not already accounted for by a separate,
+ * already-counted turn for the same `/compact` invocation — the one exception where a
+ * locally-marked command (`/compact`) still calls the model.
+ *
+ * Scans *backward*, not forward: on a manually triggered `/compact`, Claude Code writes the
+ * boundary line before that command's own caveat/wrapper/stdout lines, as part of handling the
+ * command synchronously, not after — confirmed against real Claude Code transcripts
+ * (2.1.138–2.1.326, including local ones on this machine). A forward scan never finds it, silently
+ * dropping the `/compact` turn (PR #824 review).
+ *
+ * That same real-transcript evidence also showed every manual `/compact` writing a second,
+ * un-wrapped `user` line straight after the typed command — `isTypedCompactText` — *before* the
+ * boundary, bookkeeping lines, and the wrapped replay. That line is a genuine turn by the main
+ * loop's own ordinary rules (not self-written, not marked local) and is already counted once on
+ * its own pass through {@link countTurns}. If this scan stopped at the boundary alone, every real
+ * manual `/compact` would count twice — once for that typed line, once for the rescued wrapped
+ * replay — which is a worse regression than the one it fixes. So once the boundary is found, the
+ * scan continues past it: if the next real turn behind the boundary is that typed `/compact` line,
+ * this wrapped line is Claude Code's own redundant record of it and must not be rescued.
+ *
+ * Self-written lines (e.g. an earlier local command's own stdout) and auto-injected prompts
+ * (`<task-notification>`, `<agent-message`) must not stop the scan early, for the same reason the
+ * old forward scan couldn't skip them either. Callers must also check {@link isCompactCommand} on
+ * the marked-local line itself — an unrelated earlier boundary must not rescue a different local
+ * command (also PR #824 review).
  */
-function isFollowedByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
-  for (let j = i + 1; j < lines.length; j++) {
+function isPrecededByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
+  let sawBoundary = false;
+  for (let j = i - 1; j >= 0; j--) {
     const line = lines[j];
-    if (line.type === 'system' && line.subtype === 'compact_boundary') return true;
+    if (line.type === 'system' && line.subtype === 'compact_boundary') {
+      sawBoundary = true;
+      continue;
+    }
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
-    if (!isSelfWrittenUserText(text) && !startsWithAny(text, AUTO_PROMPT_PREFIXES)) return false;
+    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    if (!sawBoundary) return false;
+    return !isTypedCompactText(text);
   }
-  return false;
+  return sawBoundary;
 }
 
 /**
@@ -226,7 +255,7 @@ export function countTurns(lines: readonly SignalLine[]): number {
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
     const isLocal = isMarkedLocalCommand(lines, i);
-    const rescuedAsCompact = isLocal && isCompactCommand(text) && isFollowedByCompactBoundary(lines, i);
+    const rescuedAsCompact = isLocal && isCompactCommand(text) && isPrecededByCompactBoundary(lines, i);
     if (isLocal && !rescuedAsCompact) continue;
     turns += 1;
   }
