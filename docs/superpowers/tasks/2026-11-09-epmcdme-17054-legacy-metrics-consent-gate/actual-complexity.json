@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 14,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New legacy-metrics-gate abstraction (freeze-at-start + send-time verdict with final vs transient outcomes) wired into four subsystems: the CLI hook (SessionStart consent freeze, start metric), hook end-metric and delivery accounting, session core (SessionStore merge, Session type, stale-session reconciliation), and the SSO metrics-sync processor; it also reads evidence stop-marker, record-store and the otlp-spool session status. Base L, bumped to XL because the gate governs several independent sender workflows (start, end, usage deltas, stale re-delivery)." },
+    { "dimension": "technical_risk", "reason": "Consent/compliance gating that has to fail closed. The closest pattern is the new pipeline's consent-store/stop-marker/spool-status checks, which are reused here. Still, the final-skip vs transient-retry semantics (endMetricSkipped persisted as delivered vs nothing persisted) and the session-id path-safety check are new. Base M, bumped to L for the compliance/consent requirement." },
+    { "dimension": "file_change_estimate", "reason": "14 files changed per diffstat (718 insertions): 1 new source module (legacy-metrics-gate.ts), 2 new test files (legacy-metrics-gate.test.ts, hook.legacy-metrics-gate.test.ts), the rest modified, across src/agents/core/session, src/agents/core/evidence, src/cli/commands(/hook) and src/providers/plugins/sso/session/processors/metrics. Falls in the 11-15 band, so XL." },
+    { "dimension": "affected_layers", "reason": "4 layers: CLI/API (hook command handlers), Service (gate verdict logic, metrics-sync processor), DB-Persistence (new persisted legacyMetricsConsent field on the Session record plus SessionStore merge; reads stop-marker and spool status files), and External (gating outbound POST /v1/metrics). The persisted session schema gains an additive field with no migration, so L. Total 21 sits right on the M/L boundary; with Component Scope at XL it leans L, matching the project L calibration example profile-provider-decoupling (23)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): affects multiple sender workflows (start metric, end metric, usage-delta sync, stale-session re-delivery)",
+    "Technical Risk bumped from M (3) to L (4): consent/compliance requirement (work-consent gating, fail-closed)"
+  ],
+  "split_recommendation": null
+}

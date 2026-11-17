@@ -109,24 +109,69 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
   return { linesAdded, linesRemoved };
 }
 
+/** Starts of the user lines Claude Code writes itself (an interrupt, a local or shell command's input or output). */
+const SELF_WRITTEN_PREFIXES = [
+  '[Request interrupted by user',
+  '<local-command-stdout>',
+  '<local-command-stderr>',
+  '<local-command-caveat>',
+  '<bash-stdout>',
+  '<bash-stderr>',
+  '<bash-input>',
+];
+
+/** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
+const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
+
+function startsWithAny(text: string, prefixes: readonly string[]): boolean {
+  const start = text.trimStart();
+  return prefixes.some((prefix) => start.startsWith(prefix));
+}
+
+/** The text of a user line: its string content, else its `text` blocks joined in order by a newline. */
+export function userLineText(line: SignalLine): string {
+  const content = line.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block): block is { type: 'text'; text: string } => {
+      const { type, text } = (block ?? {}) as { type?: unknown; text?: unknown };
+      return type === 'text' && typeof text === 'string';
+    })
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/** Whether a user line's text is one Claude Code writes itself, not one the user submitted. */
+export function isSelfWrittenUserText(text: string): boolean {
+  return startsWithAny(text, SELF_WRITTEN_PREFIXES);
+}
+
+/**
+ * Whether `parsed` is a genuine new user turn: a user line that is not meta, sidechain or a
+ * compaction summary and holds text (a plain string or a `text` block), not only `tool_result` blocks.
+ */
+export function isGenuineUserTurn(parsed: SignalLine): boolean {
+  if (parsed.type !== 'user' || parsed.isMeta || parsed.isSidechain || parsed.isCompactSummary) {
+    return false;
+  }
+  const content = parsed.message?.content;
+  if (typeof content === 'string') return true;
+  return Array.isArray(content) && content.some((block) => (block as { type?: unknown } | null)?.type === 'text');
+}
+
 /**
  * Count real user prompts: user lines with text (a plain string or a `text` block) that are not
- * meta, sidechain or compaction-summary lines. Lines holding only `tool_result` blocks are not
- * prompts.
+ * meta, sidechain or compaction-summary lines, and whose text is neither one Claude Code writes
+ * itself nor an auto prompt. Lines holding only `tool_result` blocks are not prompts.
  */
 export function countTurns(lines: readonly SignalLine[]): number {
   let turns = 0;
   for (const line of lines) {
-    if (line.type !== 'user' || line.isMeta || line.isSidechain || line.isCompactSummary) continue;
-    const content = line.message?.content;
-    if (typeof content === 'string') {
-      turns += 1;
-    } else if (
-      Array.isArray(content) &&
-      content.some((block) => (block as { type?: unknown } | null)?.type === 'text')
-    ) {
-      turns += 1;
-    }
+    if (!isGenuineUserTurn(line)) continue;
+    const text = userLineText(line);
+    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    turns += 1;
   }
   return turns;
 }

@@ -30,6 +30,7 @@ import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
@@ -131,6 +132,12 @@ export class AgentCLI {
       this.program.addCommand(setupCommand);
     }
 
+    // Non-Claude models a profile offers alongside Claude ones (Claude Code /model picker and
+    // Claude Desktop). Claude Code has no `models` subcommand of its own, so nothing is shadowed.
+    if (this.adapter.name === ClaudePluginMetadata.name && !this.adapter.ownedSubcommands?.includes('models')) {
+      this.program.addCommand(createClaudeModelsCommand());
+    }
+
     // Add init command for frameworks, but only when the agent binary doesn't
     // already own an 'init' subcommand (avoids shadowing the binary's native command).
     if (!this.adapter.ownedSubcommands?.includes('init')) {
@@ -218,7 +225,11 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
-      const config = await ConfigLoader.load(process.cwd(), {
+      // Every managed agent reads config from the nearest `.codemie` up from the cwd (the project it
+      // exports is what its session records carry); `.env` and the agent itself stay in process.cwd().
+      const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
+      const configDir = await findNearestConfigDir(process.cwd());
+      const config = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,
         model: options.model as string | undefined,
@@ -226,7 +237,7 @@ export class AgentCLI {
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
-      });
+      }, process.cwd());
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
@@ -235,7 +246,7 @@ export class AgentCLI {
 
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
-          && !(await ConfigLoader.hasLocalConfig(process.cwd()));
+          && !(await ConfigLoader.hasLocalConfig(configDir));
 
         if (hasNoConfig) {
           config.provider = ProviderName.BEARER_AUTH;
@@ -338,7 +349,7 @@ export class AgentCLI {
       const { canPromptForProject } = await import('../../utils/interactive.js');
       const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
       const launchIdentity = await resolveLaunchIdentity(config, {
-        workingDir: process.cwd(),
+        workingDir: configDir,
         canPrompt: canPromptForProject({ task: options.task }),
         surface: 'agent',
         jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
@@ -506,6 +517,16 @@ export class AgentCLI {
             Object.assign(providerEnv, buildResumeEnvOverride(true));
             appendAuditEvent('resume_external_confirmed', auditData);
             logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
+          }
+
+          // The user may have passed an id the agent does not know (e.g. a CodeMie session id
+          // shown by analytics). Hand the agent the native id the resolver mapped it to.
+          // Only the `--resume` option is rewritten; a native positional resume stays as typed.
+          const resolvedNativeId = ownership?.nativeResumeId?.replace(/\p{Cc}/gu, '');
+          if (options.resume && resolvedNativeId && resolvedNativeId !== resumeId) {
+            logger.info(`[AgentCLI] Resuming session ${resumeId} as native ${this.adapter.name} session ${resolvedNativeId}`);
+            options.resume = resolvedNativeId;
+            providerEnv[RESUME_SESSION_ENV_KEY] = resolvedNativeId;
           }
         }
       }

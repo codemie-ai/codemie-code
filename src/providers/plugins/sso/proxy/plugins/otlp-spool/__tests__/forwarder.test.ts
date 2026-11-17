@@ -38,11 +38,13 @@ vi.mock('../delivery-state.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('../session-status.js', () => ({
+vi.mock('../session-status.js', async (importOriginal) => ({
+  endsSessionDiscard: (await importOriginal<typeof import('../session-status.js')>()).endsSessionDiscard,
   advanceCursor: advanceCursorMock,
   markSessionEnded: markSessionEndedMock,
   readStatus: readStatusMock,
 }));
+vi.mock('../destination-intent.js', () => ({ recordDestinationMarker: vi.fn(async () => 'marker') }));
 vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
 vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -61,6 +63,8 @@ vi.mock('../otlp-reader.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   proveRange: proveRangeMock,
 }));
+const holdForIdleReopenMock = vi.fn(async () => false);
+vi.mock('../reopen-hold.js', () => ({ holdForIdleReopen: holdForIdleReopenMock }));
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -512,6 +516,36 @@ describe('forwardSession (OTEL JSON streams)', () => {
     return { project: 'Proj A', cursor, records, byteLength };
   }
 
+  it('sends none of the otel streams while the session is held as an idle reopen, and forwards them once it is not', async () => {
+    const record = JSON.stringify({ n: 1 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([record], 0) : null
+    );
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    holdForIdleReopenMock.mockResolvedValueOnce(true);
+    await forwardSession('s1', false, credentials);
+
+    expect(snapshotPendingBytesMock).not.toHaveBeenCalled();
+    expect(snapshotPendingNdjsonRecordsMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs'))).toHaveLength(1);
+  });
+
+  it('keeps forwarding the hook stream of a session held as an idle reopen', async () => {
+    holdForIdleReopenMock.mockResolvedValueOnce(true);
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(snapshotPendingHookRecordsMock).toHaveBeenCalled();
+  });
+
   it('POSTs each masked-JSON record as its own application/json request, routed to the matching signal endpoint', async () => {
     const record = JSON.stringify({ n: 1 });
     snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
@@ -869,14 +903,13 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(backendClass(h, ['Other'])).toBe('unknown');
   });
 
-  it('CR002 wire: a proven direct route keeps the organization and client and backend agree on Personal', async () => {
+  it('CR002 wire: a proven direct route with a non-matching organization is Personal and, without work consent, sends nothing', async () => {
     getPolicyStateMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v1' }));
     fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
-    const h = headersOf(0);
-    expect(h['X-CodeMie-Subscription-Type']).toBe('personal');
-    expect(backendClass(h, ['Other'])).toBe('personal');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1022,7 +1055,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
   });
 
   it('AC4: 409 stale_policy refreshes, re-classifies and resends once', async () => {
-    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Acme', 'Other'], version: 'v2' }));
     fetchMock
       .mockResolvedValueOnce(json({ reason: 'stale_policy', policy_version: 'v2' }, 409))
       .mockResolvedValueOnce(json({}));
@@ -1031,13 +1064,22 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(refreshPolicyMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ force: true }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(headersOf(0)['X-CodeMie-Subscription-Type']).toBe('corporate');
-    expect(headersOf(1)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Policy-Version': 'v2' });
+    expect(headersOf(1)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'corporate', 'X-CodeMie-Policy-Version': 'v2' });
     expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
   });
 
-  it('AC4: a second 409 after the resend keeps the spool (once only)', async () => {
+  it('a 409 whose fresher policy turns the session Personal is not resent without work consent', async () => {
     refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    fetchMock.mockResolvedValueOnce(json({ reason: 'stale_policy', policy_version: 'v2' }, 409));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: a second 409 after the resend keeps the spool (once only)', async () => {
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Acme', 'Other'], version: 'v2' }));
     fetchMock.mockImplementation(async () => json({ reason: 'stale_policy', policy_version: 'v3' }, 409));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);

@@ -67,6 +67,24 @@ export interface TranscriptParseState {
    *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
    *  a state saved before it existed. */
   seenMessageUuids?: string[];
+  /** `uuid`s of the lines a continued session copied from its parent transcript (found through the
+   *  parent's `continued-in` record); never counted or summarised. Absent = none known. */
+  inheritedUuids?: string[];
+  /** Ids of the parent's subagent transcripts; a copy of one in this session is not its own work. */
+  inheritedAgentIds?: string[];
+  /** The parent lookup is final (a parent was found, or the retries were used up), so it is not repeated. */
+  inheritedResolved?: boolean;
+  /** Parent lookups that found nothing (or did not complete) so far; bounds the retries. */
+  inheritedLookups?: number;
+  /** A `resume` SessionStart was suppressed: lifecycle events stay suppressed until a pass reads
+   *  own activity ({@link reopenActive}). */
+  reopened?: boolean;
+  /** Since the last `resume`, a pass read at least one line of the session's own activity. */
+  reopenActive?: boolean;
+  /** When the last `resume` marked the reopen (ms since epoch); the proxy's hold ignores a release seen before it. */
+  reopenedAt?: number;
+  /** A continued session has done work of its own; until then it reports nothing (EPMCDME-16992). */
+  continuationActive?: boolean;
   /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
    *  absent in a state saved before it existed. */
   deferredAgentIds?: string[];
@@ -112,6 +130,11 @@ export function createParseState(): TranscriptParseState {
     lastSessionEnvFields: null,
     lastCompactionEnd: '',
   };
+}
+
+/** A `resume` reopened the session and no pass has read activity of its own since (EPMCDME-16993). */
+export function isReopenedIdle(state: Pick<TranscriptParseState, 'reopened' | 'reopenActive'>): boolean {
+  return state.reopened === true && state.reopenActive !== true;
 }
 
 function getParseStatePath(sessionId: string): string {

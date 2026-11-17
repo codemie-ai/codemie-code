@@ -179,6 +179,52 @@ describe('createSyncProcessor — duplicate payload ids', () => {
     });
   });
 
+  describe('line model: no attempt cap, a rejected status', () => {
+    it('a failed record with syncAttempts 7 is still sent', async () => {
+      writeRecords([makeRecord({ status: 'failed', syncAttempts: 7, error: 'boom' })]);
+      upsertConversation.mockResolvedValue(okResponse);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(readRecords().map(r => [r.status, r.syncAttempts])).toEqual([['success', 8]]);
+    });
+
+    it('a rejected outcome marks the record rejected and it is never resent', async () => {
+      writeRecords([makeRecord()]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'API error: 400 bad', outcome: 'rejected' });
+
+      await runSync();
+      expect(readRecords().map(r => r.status)).toEqual(['rejected']);
+
+      upsertConversation.mockClear();
+      await runSync();
+      expect(upsertConversation).not.toHaveBeenCalled();
+    });
+
+    it('a counted outcome (a JSON 404) marks the record failed and resendable', async () => {
+      writeRecords([makeRecord()]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'API error: 404', outcome: 'counted' });
+
+      await runSync();
+      expect(readRecords().map(r => r.status)).toEqual(['failed']);
+
+      upsertConversation.mockClear();
+      await runSync();
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+    });
+
+    it('one run never sends the same payloadId twice', async () => {
+      const requeued = makeRecord({ timestamp: 1_700_000_000_500, historyIndices: [1], payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hello', history_index: 1 }] } });
+      writeRecords([makeRecord({ status: 'failed', syncAttempts: 9 }), requeued]);
+      upsertConversation.mockResolvedValue({ success: false, message: 'boom', outcome: 'counted' });
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('healing on read (AC2)', () => {
     it('marks pending and retryable failed duplicates of a successful id success without sending', async () => {
       writeRecords([
@@ -428,6 +474,47 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       const statuses = readRecords().map(r => r.status);
       expect(statuses.slice(0, 10).every(st => st === 'superseded')).toBe(true);
       expect(statuses.slice(10).every(st => st === 'success')).toBe(true);
+    });
+  });
+
+  describe('a timer run (stopAtFirstFailure)', () => {
+    const payload = (i: number): TestRecord => makeRecord({
+      payloadId: `conv-${i}@0`,
+      lastProcessedMessageUuid: `conv-${i}@0`,
+      payload: { conversationId: `conv-${i}`, history: [{ role: 'User', message: `m${i}`, history_index: 0 }] },
+    });
+
+    it('sends one payload against a failing server with no in-request retry, and leaves the rest pending', async () => {
+      const { createApiClient } = await import('../apiClient.js');
+      vi.mocked(createApiClient).mockClear();
+      upsertConversation.mockResolvedValue({ success: false, message: 'unavailable', outcome: 'outage' });
+      writeRecords([payload(0), payload(1), payload(2)]);
+
+      await runSync({ abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      // TOTAL attempts: 1 is no retry; 0 would be read by the client as its default of 3
+      expect(vi.mocked(createApiClient).mock.calls[0][0]).toMatchObject({ retryAttempts: 1 });
+      expect(readRecords().map(r => r.status)).toEqual(['failed', 'pending', 'pending']);
+    });
+
+    it('stops at a payload whose send threw', async () => {
+      upsertConversation.mockRejectedValue(new Error('socket hang up'));
+      writeRecords([payload(0), payload(1)]);
+
+      await runSync({ abortSignal: new AbortController().signal, stopAtFirstFailure: true });
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(readRecords().map(r => r.status)).toEqual(['failed', 'pending']);
+    });
+
+    it('without the flag every payload is sent', async () => {
+      upsertConversation.mockResolvedValue({ success: false, message: 'unavailable', outcome: 'outage' });
+      writeRecords([payload(0), payload(1)]);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(2);
     });
   });
 });

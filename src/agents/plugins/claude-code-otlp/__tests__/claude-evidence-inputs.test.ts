@@ -4,14 +4,18 @@ const readSettingsMock = vi.fn();
 const readOrgMock = vi.fn();
 const loadHookConfigMock = vi.fn();
 const getProviderMock = vi.fn();
+const readStateMock = vi.fn();
+const isDaemonAliveMock = vi.fn();
 
 vi.mock('../event-fields/claude-settings-env.js', () => ({ readClaudeSettingsEnv: readSettingsMock }));
 vi.mock('../event-fields/claude-org.js', () => ({ readClaudeOrganization: readOrgMock }));
 vi.mock('@/agents/core/event-fields/identity-fields.js', () => ({ loadHookConfig: loadHookConfigMock }));
 vi.mock('@/providers/index.js', () => ({ ProviderRegistry: { getProvider: getProviderMock } }));
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock, isDaemonAlive: isDaemonAliveMock }));
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+const { logger } = await import('@/utils/logger.js');
 
 const GATEWAY = 'https://llm-gateway.example.com';
 const PROVEN_ROUTED = { routed: true, routing_proof: 'proven' };
@@ -39,6 +43,8 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
     readOrgMock.mockResolvedValue('Acme');
     settings({});
     profile('ai-run-sso', 'sso');
+    readStateMock.mockResolvedValue(null);
+    isDaemonAliveMock.mockResolvedValue(false);
   });
 
   it('reads settings for the hook cwd; native with the settings.json endpoint on the gateway is routed and proven; a gateway session is not paid by the saved login', async () => {
@@ -127,6 +133,69 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
       loadHookConfigMock.mockResolvedValue(undefined);
       settings({ ANTHROPIC_BASE_URL: GATEWAY });
       expect((await call()).routing).toEqual(UNPROVEN);
+    });
+  });
+
+  describe('native session through the live local proxy daemon', () => {
+    const PROXY = 'http://127.0.0.1:4001';
+    const daemon = { pid: 4242, port: 4001, url: PROXY, targetUrl: GATEWAY, profile: 'p', gatewayKey: 'secret', startedAt: '2026-11-09T00:00:00.000Z' };
+
+    beforeEach(() => {
+      process.env.ANTHROPIC_BASE_URL = PROXY;
+      process.env.ANTHROPIC_AUTH_TOKEN = 'gw';
+      profile('ai-run-sso', 'sso', { name: 'p' });
+    });
+    afterEach(() => {
+      delete process.env.ANTHROPIC_BASE_URL;
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+    });
+
+    it('a live daemon whose target is the profile route proves the session routed and api_based', async () => {
+      readStateMock.mockResolvedValue(daemon);
+      isDaemonAliveMock.mockResolvedValue(true);
+      const r = await call() as { routing: unknown; funding_route?: string };
+      expect(r.routing).toEqual(PROVEN_ROUTED);
+      expect(r.funding_route).toBe('api_based');
+    });
+
+    it('a dead daemon leaves the session unproven', async () => {
+      readStateMock.mockResolvedValue(daemon);
+      isDaemonAliveMock.mockResolvedValue(false);
+      const r = await call() as { routing: unknown; funding_route?: string };
+      expect(r.routing).toEqual(UNPROVEN);
+      expect(r.funding_route).toBe('unknown');
+    });
+
+    it('a live daemon started for another profile leaves the session unproven and says why', async () => {
+      readStateMock.mockResolvedValue({ ...daemon, profile: 'other' });
+      isDaemonAliveMock.mockResolvedValue(true);
+      const r = await call() as { routing: unknown; funding_route?: string };
+      expect(r.routing).toEqual(UNPROVEN);
+      expect(r.funding_route).toBe('unknown');
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('another profile'));
+    });
+
+    it('a daemon state without a url fails closed without a liveness check', async () => {
+      readStateMock.mockResolvedValue({ ...daemon, url: undefined });
+      expect((await call()).routing).toEqual(UNPROVEN);
+      expect(isDaemonAliveMock).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting liveness check fails closed', async () => {
+      readStateMock.mockResolvedValue(daemon);
+      isDaemonAliveMock.mockRejectedValue(new Error('ps failed'));
+      expect((await call()).routing).toEqual(UNPROVEN);
+    });
+
+    it('an unreadable daemon state fails closed', async () => {
+      readStateMock.mockRejectedValue(new Error('boom'));
+      expect((await call()).routing).toEqual(UNPROVEN);
+    });
+
+    it('a non-loopback endpoint never reads daemon state', async () => {
+      settings({ ANTHROPIC_BASE_URL: GATEWAY });
+      expect((await call()).routing).toEqual(PROVEN_ROUTED);
+      expect(readStateMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -20,14 +20,14 @@ import {
   RETRY_DELAY_MS
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwIfStopped, type RequestOutcome } from '../../bounded-request.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 
 /**
  * A 2xx HTML page where JSON was expected: fetch follows the redirect of an expired session, so the SSO login page
- * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failure
- * counted by its status, not rejected credentials.
+ * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failing
+ * server's answer, not rejected credentials.
  */
 function isLoginPage(response: Response): boolean {
   return response.headers.get('content-type')?.includes('text/html') === true && response.ok;
@@ -132,17 +132,21 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           conversation_id: conversationId,
           new_messages: history.length,
           total_messages: history.length,
-          created: true
+          created: true,
+          outcome: 'ok'
         };
       }
 
       // Actual API call with retry
       let lastError: Error | null = null;
+      let lastOutcome: RequestOutcome = 'outage';
+      // The tries of this payload are one logical request: only the last try's outcome counts for the caller's attempt
+      const group = newRequestGroup();
 
       for (let attempt = 0; attempt < apiConfig.retryAttempts; attempt++) {
         throwIfStopped(bounds);
         try {
-          const request = boundedRequest(apiConfig.timeout, bounds);
+          const request = boundedRequest(apiConfig.timeout, bounds, group);
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -168,10 +172,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               body: JSON.stringify(payload),
               signal: request.signal
             });
-            request.noteOutcome();
             body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
           } catch (error) {
-            request.noteOutcome(error);
+            lastOutcome = request.noteOutcome(error);
             const stopReason = request.stopReason();
             throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
@@ -180,20 +183,24 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
 
           if (isLoginPage(response)) {
             const message = `API answered ${response.status} with an HTML page (an SSO login page) instead of JSON`;
+            request.noteAnswer(response.status, false, false);
             await rejectCredentials(bounds.abortSignal, message);
             logger.error(`[ConversationApiClient] ${message}`);
-            return { success: false, message };
+            return { success: false, message, outcome: 'auth' };
           }
 
           if (!response.ok) {
             const errorText = body as string;
             let errorData;
+            let bodyIsJson = true;
 
             try {
               errorData = JSON.parse(errorText);
             } catch {
+              bodyIsJson = false;
               errorData = { message: errorText };
             }
+            lastOutcome = request.noteAnswer(response.status, bodyIsJson, false, errorData);
 
             const apiMessage = errorData?.error?.message
               || errorData?.message
@@ -201,7 +208,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             const apiDetails = errorData?.error?.details
               || errorData?.details;
             const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
-            if (response.status === 401) {
+            // A 401 that is the backend's "Access denied" is no expiry: nothing to sign in again for
+            if (response.status === 401 && lastOutcome === 'auth') {
               await rejectCredentials(bounds.abortSignal, message);
             }
 
@@ -210,7 +218,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               logger.error(`[ConversationApiClient] Non-retryable error (${response.status}):`, errorData);
               return {
                 success: false,
-                message
+                message,
+                outcome: lastOutcome
               };
             }
 
@@ -219,6 +228,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           }
 
           // Success
+          request.noteAnswer(response.status, true, true);
           const data = body as {
             conversation_id: string;
             new_messages: number;
@@ -253,7 +263,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             conversation_id: data.conversation_id,
             new_messages: data.new_messages,
             total_messages: data.total_messages,
-            created: data.created
+            created: data.created,
+            outcome: 'ok'
           };
 
         } catch (error: any) {
@@ -276,7 +287,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       logger.error(`[ConversationApiClient] Sync failed after ${apiConfig.retryAttempts} attempts:`, lastError);
       return {
         success: false,
-        message: `Sync failed: ${lastError?.message || 'Unknown error'}`
+        message: `Sync failed: ${lastError?.message || 'Unknown error'}`,
+        outcome: lastOutcome
       };
     }
   };
@@ -324,12 +336,11 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           body: JSON.stringify(metadata),
           signal: request.signal
         });
-        request.noteOutcome();
         if (!response.ok) {
           errorText = await response.text();
         }
       } catch (error) {
-        request.noteOutcome(error);
+        // The delivery ignores this request's failure, so it notes no outcome and never changes what the attempt costs
         const stopReason = request.stopReason();
         throw stopReason ? new SyncStoppedError(stopReason) : error;
       } finally {

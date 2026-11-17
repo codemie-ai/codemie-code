@@ -25,6 +25,7 @@ import type {
   OpenCodeAssistantMessage,
   OpenCodePart,
 } from './opencode-message-types.js';
+import { V2_CONVERSATION_TYPES, messageFromV2Row, partsFromV2Row, type V2MessageRow } from './opencode.storage-v2.js';
 
 /**
  * Check if SQLite reading is available on this system.
@@ -146,7 +147,38 @@ async function queryDb<T>(dbPath: string, sql: string, params: SqlParam[] = []):
 }
 
 /**
- * Raw row shape from the `session` table.
+ * The two table layouts opencode.db can hold. OpenCode v2 writes `session_v2` / `session_message`;
+ * v1 (the built-in codemie-code agent) writes `session` / `message` / `part`. A database upgraded
+ * from v1 keeps its old tables with stale rows, so v2 wins whenever its tables exist.
+ */
+type StorageSchema = 'v1' | 'v2';
+
+const SCHEMA_TABLES: Record<StorageSchema, { session: string; message: string }> = {
+  v1: { session: 'session', message: 'message' },
+  v2: { session: 'session_v2', message: 'session_message' },
+};
+
+async function storageSchema(dbPath: string): Promise<StorageSchema> {
+  const rows = await queryDb<{ name: string }>(
+    dbPath,
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    [SCHEMA_TABLES.v2.session]
+  );
+  return rows.length > 0 ? 'v2' : 'v1';
+}
+
+/** The conversation rows (`user`, `assistant`) of a v2 session, in sequence order. */
+async function readV2ConversationRows(dbPath: string, sessionId: string): Promise<V2MessageRow[]> {
+  return queryDb<V2MessageRow>(
+    dbPath,
+    `SELECT id, session_id, type, data FROM ${SCHEMA_TABLES.v2.message} ` +
+    `WHERE session_id = ? AND type IN (${V2_CONVERSATION_TYPES.map(() => '?').join(', ')}) ORDER BY seq ASC`,
+    [sessionId, ...V2_CONVERSATION_TYPES]
+  );
+}
+
+/**
+ * Raw row shape from the session table (same columns in both layouts).
  * OpenCode uses normalized columns (no JSON `data` blob for sessions).
  */
 interface SessionRow {
@@ -217,9 +249,10 @@ export async function readSessionsFromDb(
     params.push(normalizedCwd, `${normalizedCwd}/`);
   }
 
+  const tables = SCHEMA_TABLES[await storageSchema(dbPath)];
   let sql =
     `SELECT id, project_id, parent_id, slug, directory, title, version, time_created, time_updated ` +
-    `FROM session WHERE ${conditions.join(' AND ')} ORDER BY time_created DESC`;
+    `FROM ${tables.session} WHERE ${conditions.join(' AND ')} ORDER BY time_created DESC`;
 
   if (options?.limit && options.limit > 0) {
     sql += ' LIMIT ?';
@@ -251,9 +284,10 @@ export async function readSessionIdsWithMessages(
 ): Promise<Set<string>> {
   if (sessionIds.length === 0) return new Set();
   const until = window.until === undefined ? '' : ' AND time_created < ?';
+  const tables = SCHEMA_TABLES[await storageSchema(dbPath)];
   const rows = await queryDb<{ session_id: string }>(
     dbPath,
-    `SELECT DISTINCT session_id FROM message WHERE session_id IN (${sessionIds.map(() => '?').join(', ')}) AND time_created >= ?${until}`,
+    `SELECT DISTINCT session_id FROM ${tables.message} WHERE session_id IN (${sessionIds.map(() => '?').join(', ')}) AND time_created >= ?${until}`,
     [...sessionIds, window.since, ...(window.until === undefined ? [] : [window.until])]
   );
   return new Set(rows.map((row) => row.session_id));
@@ -278,6 +312,18 @@ export async function readMessagesFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<OpenCodeMessage[]> {
+  if (await storageSchema(dbPath) === 'v2') {
+    const rows = await readV2ConversationRows(dbPath, sessionId);
+    return rows.flatMap((row) => {
+      try {
+        return [messageFromV2Row(row)];
+      } catch {
+        logger.debug(`[sqlite-reader] Failed to parse message row: ${row.id}`);
+        return [];
+      }
+    });
+  }
+
   const rows = await queryDb<MessageRow>(
     dbPath,
     `SELECT id, session_id, data FROM message WHERE session_id = ?`,
@@ -339,12 +385,19 @@ export async function readMessagesFromDb(
  * (a running tool) is written later than its message's own times.
  */
 export async function readRowTimesFromDb(dbPath: string, sessionId: string): Promise<number[]> {
-  const rows = await queryDb<{ time_created: number | null; time_updated: number | null }>(
-    dbPath,
-    `SELECT time_created, time_updated FROM message WHERE session_id = ? ` +
-    `UNION ALL SELECT time_created, time_updated FROM part WHERE session_id = ?`,
-    [sessionId, sessionId]
-  );
+  // v2 has no separate part rows: a running tool updates its own message row.
+  const rows = await storageSchema(dbPath) === 'v2'
+    ? await queryDb<{ time_created: number | null; time_updated: number | null }>(
+        dbPath,
+        `SELECT time_created, time_updated FROM ${SCHEMA_TABLES.v2.message} WHERE session_id = ?`,
+        [sessionId]
+      )
+    : await queryDb<{ time_created: number | null; time_updated: number | null }>(
+        dbPath,
+        `SELECT time_created, time_updated FROM message WHERE session_id = ? ` +
+        `UNION ALL SELECT time_created, time_updated FROM part WHERE session_id = ?`,
+        [sessionId, sessionId]
+      );
   return rows.flatMap((row) => [row.time_created, row.time_updated])
     .filter((time): time is number => typeof time === 'number');
 }
@@ -363,6 +416,18 @@ export async function readAllPartsForSessionFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<Record<string, OpenCodePart[]>> {
+  if (await storageSchema(dbPath) === 'v2') {
+    const partsMap: Record<string, OpenCodePart[]> = {};
+    for (const row of await readV2ConversationRows(dbPath, sessionId)) {
+      try {
+        partsMap[row.id] = partsFromV2Row(row);
+      } catch {
+        logger.debug(`[sqlite-reader] Failed to parse message row: ${row.id}`);
+      }
+    }
+    return partsMap;
+  }
+
   const rows = await queryDb<PartRow>(
     dbPath,
     `SELECT id, message_id, session_id, data FROM part WHERE session_id = ? ORDER BY id ASC`,

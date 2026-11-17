@@ -17,6 +17,7 @@ import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { exec } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
+import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -165,9 +166,10 @@ export async function backupIfUnmanaged(
  */
 export async function discoverCodexModels(
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  project: string | undefined
 ): Promise<string[]> {
-  const url = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+  const url = buildProxyLlmModelsUrl(proxyUrl, project);
 
   let response: Response;
   try {

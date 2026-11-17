@@ -10,7 +10,7 @@
  * module is touched.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, basename, dirname } from 'path';
@@ -38,7 +38,7 @@ describe('plugin-injector: createPluginInjector', () => {
   afterEach(() => {
     for (const p of written.splice(0)) {
       try {
-        rmSync(p, { force: true });
+        rmSync(p, { recursive: true, force: true });
       } catch {
         /* ignore */
       }
@@ -114,6 +114,49 @@ describe('plugin-injector: createPluginInjector', () => {
     expect(url).toBe(`file://${filePath}`);
     expect(existsSync(filePath)).toBe(true);
     expect(readFileSync(filePath, 'utf-8')).toBe('recreate-me');
+  });
+
+  // A host that loads a plugin from a directory (OpenCode v2: `<dir>/index.ts`) gets a
+  // fileName with a directory part; that directory belongs to the injector.
+  describe('with a fileName below its own directory', () => {
+    const SOURCE = 'export default {};\n';
+    let pluginDir: string;
+    let pluginFile: string;
+    let injector: ReturnType<typeof createPluginInjector>;
+
+    beforeEach(() => {
+      const dirName = `test-plugin-dir-${process.pid}-${Date.now()}`;
+      pluginDir = join(tmpdir(), 'codemie-hooks', dirName);
+      pluginFile = join(pluginDir, 'index.ts');
+      written.push(pluginDir);
+      injector = createPluginInjector(join(dirName, 'index.ts'), SOURCE, 'unit-hooks');
+    });
+
+    it('creates the directory and writes the plugin into it', () => {
+      const url = injector.getPluginFileUrl();
+
+      expect(url).toBe(`file://${pluginFile}`);
+      expect(readFileSync(pluginFile, 'utf-8')).toBe(SOURCE);
+    });
+
+    it('cleanup removes the directory together with the plugin', () => {
+      injector.getPluginFileUrl();
+
+      injector.cleanup();
+
+      expect(existsSync(pluginDir)).toBe(false);
+    });
+
+    it('cleanup keeps a directory that still holds another file', () => {
+      injector.getPluginFileUrl();
+      const sibling = join(pluginDir, 'kept.txt');
+      writeFileSync(sibling, 'not ours', 'utf-8');
+
+      injector.cleanup();
+
+      expect(existsSync(pluginFile)).toBe(false);
+      expect(existsSync(sibling)).toBe(true);
+    });
   });
 });
 

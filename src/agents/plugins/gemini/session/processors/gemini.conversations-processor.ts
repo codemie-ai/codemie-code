@@ -22,6 +22,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { SessionStore } from '../../../../core/session/SessionStore.js';
 import { detectTurns, filterNewMessages, type GeminiMessage, type TurnBoundary } from '../utils/turn-detector.js';
+import { extractMessageText, extractRawMessageText, NON_TEXT_PROMPT_PLACEHOLDER } from '../utils/message-text.js';
 import { extractToolThoughts } from '../utils/tool-aggregator.js';
 import { mkdir } from 'fs/promises';
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
@@ -72,29 +73,37 @@ export class GeminiConversationsProcessor implements SessionProcessor {
       // 4. Transform turns to conversation payloads
       const payloads = this.transformTurnsToPayloads(turns, context, lastHistoryIndex);
 
+      const lastMessage = messages[messages.length - 1]; // Use all messages, not just new
+
+      if (payloads.length === 0) {
+        // Advance past skipped turns without changing the history index
+        await this.updateSyncState(context.sessionId!, lastMessage.id, 0, lastHistoryIndex);
+        logger.info(`[${this.name}] No turns to sync (${turns.length} turns skipped)`);
+        return { success: true, message: 'No turns to sync' };
+      }
+
       // 5. Write payloads to JSONL
       if (!(await this.writePayloads(context.sessionId!, payloads, context))) {
         logger.warn(`[${this.name}] Conversation write dropped, will retry on the next pass`);
         return { success: true, message: 'Conversation write dropped' };
       }
 
-      // 6. Update sync state
-      const lastMessage = messages[messages.length - 1]; // Use all messages, not just new
-      const finalHistoryIndex = lastHistoryIndex + turns.length;
+      // 6. Update sync state (count emitted turns only)
+      const finalHistoryIndex = lastHistoryIndex + payloads.length;
 
       await this.updateSyncState(
         context.sessionId!,
         lastMessage.id,
-        turns.length,
+        payloads.length,
         finalHistoryIndex
       );
 
-      logger.info(`[${this.name}] Processed ${turns.length} turns (${newMessages.length} messages)`);
+      logger.info(`[${this.name}] Processed ${payloads.length} turns (${newMessages.length} messages)`);
       return {
         success: true,
-        message: `Processed ${turns.length} turns`,
+        message: `Processed ${payloads.length} turns`,
         metadata: {
-          turnsProcessed: turns.length,
+          turnsProcessed: payloads.length,
           messagesProcessed: newMessages.length
         }
       };
@@ -120,23 +129,29 @@ export class GeminiConversationsProcessor implements SessionProcessor {
     let currentHistoryIndex = lastHistoryIndex;
 
     for (const turn of turns) {
-      currentHistoryIndex++; // Increment for each new turn
+      // Aggregate content from all gemini messages
+      const aggregatedContent = turn.geminiMessages
+        .map(m => extractMessageText(m.content) ?? '')
+        .filter(c => c.length > 0)
+        .join('\n\n');
+
+      // Non-text prompts (attachment-only, <session_context>-only) still get their replies synced
+      const userText = extractMessageText(turn.userMessage.content);
+      if (userText === null && aggregatedContent.length === 0) {
+        continue; // Nothing to sync: skip without consuming an index
+      }
+
+      currentHistoryIndex++; // Increment for each emitted turn
 
       // User record
       const userRecord = {
         role: 'User',
-        message: turn.userMessage.content,
+        message: userText ?? NON_TEXT_PROMPT_PLACEHOLDER,
         history_index: currentHistoryIndex,
         date: turn.userMessage.timestamp,
-        message_raw: turn.userMessage.content,
+        message_raw: extractRawMessageText(turn.userMessage.content),
         file_names: []
       };
-
-      // Aggregate content from all gemini messages
-      const aggregatedContent = turn.geminiMessages
-        .map(m => m.content)
-        .filter(c => c.trim().length > 0)
-        .join('\n\n');
 
       // Extract tool thoughts
       const thoughts = extractToolThoughts(turn.geminiMessages);

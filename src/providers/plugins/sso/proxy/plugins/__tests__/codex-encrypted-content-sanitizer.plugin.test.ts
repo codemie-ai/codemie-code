@@ -86,6 +86,7 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
       'codemie-opencode',
       'codemie-pi',
       'vscode-byok',
+      'codemie-daemon',
     ])('creates interceptor for %s', async clientType => {
       const interceptor = await plugin.createInterceptor(createPluginContext(clientType));
       expect(interceptor).toBeDefined();
@@ -289,6 +290,21 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
       await interceptor.onRequest!(context);
 
       expect(context.requestBody!.toString('utf-8')).toBe(originalStr);
+    });
+  });
+
+  describe('Reasoning state removal once latched — codemie-daemon', () => {
+    it('removes encrypted state on later requests after the upstream rejects it', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('codemie-daemon'));
+      await latchFallback(interceptor);
+      const context = createProxyContext({
+        model: 'gpt-6-luna',
+        input: [{ type: 'reasoning', encrypted_content: 'xyz==' }],
+      });
+
+      await interceptor.onRequest!(context);
+
+      expect(JSON.parse(context.requestBody!.toString('utf-8')).input).toHaveLength(0);
     });
   });
 

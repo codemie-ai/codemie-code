@@ -84,9 +84,9 @@ Confirm the installed Node.js version with `node --version` before proceeding. A
 
 For Windows and macOS, CodeMie ships two installer options:
 
-- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon) and Windows (x64) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
+  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest) [![Download for Windows](install/assets/download-windows.svg)](https://github.com/codemie-ai/codemie-connect/releases/latest)
 - **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
@@ -542,7 +542,7 @@ codemie-pi --resume <session-id>              # open a specific session
 |---|---|
 | **Managed agent dir** | `~/.pi/agent` is copied once to `<project>/.pi/codemie/agent`; Pi runs against the copy via `PI_CODING_AGENT_DIR`. Your skills, prompts, and extensions carry over — your Pi home is never modified. |
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
-| **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
+| **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
 | **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
@@ -660,7 +660,7 @@ codemie proxy analytics disable
 # Exclude the current project, even when Global scope is enabled
 codemie proxy analytics exclude
 
-# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+# Show delivery health, unsent data, the effective scope and the tracked/excluded projects
 codemie proxy analytics status
 ```
 
@@ -700,6 +700,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -710,8 +711,12 @@ Flags are composable: a single run configures every target you pass, prints a pe
 Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
+codemie proxy disconnect --claude-desktop --vscode-claude-code
 codemie proxy disconnect --codex-desktop
+codemie proxy disconnect --omp
 ```
+
+`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. Quit and reopen the app afterwards.
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
 
@@ -745,7 +750,7 @@ No plaintext key or generated placeholder is written to that file. On first setu
 
 ## Connect Claude Desktop via CodeMie Proxy
 
-Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations. Cowork sessions also appear on the CLI Analytics tab — turns, tools, subagents, tokens and cost — under your user and the profile's CodeMie project.
 
 ### Prerequisites
 
@@ -771,6 +776,8 @@ codemie proxy inspect desktop --limit 5
 codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
+
+With Claude Desktop connected, `codemie proxy status` prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

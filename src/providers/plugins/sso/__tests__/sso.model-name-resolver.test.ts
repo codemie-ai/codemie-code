@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTenantModelId } from '../model-name-resolver.js';
+import { resolveTenantModelId } from '../sso.model-name-resolver.js';
 
 describe('resolveTenantModelId', () => {
   it.each([

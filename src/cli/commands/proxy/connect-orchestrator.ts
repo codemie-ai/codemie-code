@@ -34,6 +34,7 @@ import { getEffectiveClientType } from './client-type.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
@@ -58,6 +59,7 @@ import {
 } from './claude-code-otlp-flow.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
+import { writeOmpExtension } from './connectors/omp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -77,6 +79,7 @@ export interface ConnectTargets {
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
+  omp?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -105,6 +108,7 @@ export type EffectiveClientType =
   | 'claude-desktop'
   | 'vscode-byok'
   | 'codex-desktop'
+  | 'codemie-daemon'
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
   | typeof COPILOT_CHAT_OTLP_AGENT_NAME
   | typeof COPILOT_CLI_OTLP_AGENT_NAME;
@@ -122,16 +126,18 @@ export interface DaemonIdentity {
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
+    | { clientType: 'codemie-daemon' }
     | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CHAT_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CLI_OTLP_AGENT_NAME };
 }
 
 /**
- * Derive the single daemon identity for a target set (spec §3.3 — primary by
- * priority: `claude-desktop` > `vscode-claude-code` > `vscode-byok`). The two
- * Anthropic-gateway targets share the `claude-desktop` identity, so the priority
- * collapses onto exactly the two existing identities — no new telemetry value.
+ * Derive the single daemon identity for a target set, first match wins:
+ * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `copilot-chat-otlp` >
+ * `copilot-cli-otlp` > `codex-desktop` > `codemie-daemon` (`omp`) > `vscode-byok`.
+ * One daemon carries one client type, so lower-priority targets share the winner's identity.
+ * `connectTargets` rejects `omp` combined with VS Code BYOK because they need different identities.
  *
  * The hooks-only Copilot targets never export OTel through this daemon and only need it
  * running by the time their first real hook fires (`ensureOtlpProxy`, started lazily);
@@ -154,7 +160,31 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
   }
+  // omp alone uses the generic identity `codemie proxy start` already spawns: it needs no
+  // client-specific request normalization, and a new client value would change attribution.
+  if (targets.omp) {
+    return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
+  }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
+}
+
+/** Identities kept while Claude Desktop is connected: Codex and VS Code BYOK need their own request normalizers. */
+const DESKTOP_KEPT_CLIENT_TYPES: ReadonlySet<string> = new Set(['codex-desktop', 'vscode-byok']);
+
+/**
+ * The identity a daemon is matched and spawned with. While Claude Desktop's applied config points
+ * at CodeMie's local gateway, every identity but a kept one becomes the Desktop one, so no connect,
+ * restart, start or hook cold start turns the Desktop runtime off; the gateway's port comes with it
+ * for a spawn that has no running daemon's port to keep. A kept identity, or no connected Desktop,
+ * is returned unchanged and without a port.
+ */
+export async function withDesktopIdentity(
+  identity: ClientIdentity
+): Promise<{ identity: ClientIdentity; gatewayPort?: number }> {
+  if (DESKTOP_KEPT_CLIENT_TYPES.has(getEffectiveClientType(identity))) return { identity };
+  const gateway = await readDesktopGateway();
+  if (!gateway) return { identity };
+  return { identity: { clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }, gatewayPort: gateway.port };
 }
 
 // ── Daemon matching (shared strict path, spec §3.2) ──────────────────────────
@@ -358,6 +388,7 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
+  '  --omp                  oh-my-pi (installs a live CodeMie model catalog extension)',
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
   `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
   `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
@@ -365,6 +396,7 @@ const TARGET_LIST = [
   'Examples:',
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
+  '  codemie proxy connect --omp',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
@@ -377,7 +409,7 @@ const TARGET_LIST = [
 function hasAnyTarget(t: ConnectTargets): boolean {
   return Boolean(
     t.claudeDesktop || t.claudeCodeOtlp || t.copilotChatOtlp || t.copilotCliOtlp ||
-    t.vscode || t.vscodeClaudeCode || t.codexDesktop
+    t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.omp
   );
 }
 
@@ -392,6 +424,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
+  if (t.omp) { flags.push('--omp'); labels.push('oh-my-pi'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }
@@ -499,20 +532,17 @@ export function buildRequestedConfig(
   };
 }
 
-/** One per-target write outcome, collected for the summary (spec §3.4). */
+/** One per-target write outcome, collected to report failures and set the exit code (spec §3.4). */
 export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
 }
 
-function printSummary(results: TargetResult[]): void {
-  console.log(chalk.bold('\nTargets configured:'));
+function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (r.ok) {
-      console.log(chalk.green(`  ✓ ${r.label}`));
-    } else {
-      console.log(chalk.red(`  ✗ ${r.label}  — ${r.error ?? 'failed'}`));
+    if (!r.ok) {
+      console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
 }
@@ -541,7 +571,9 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
-      orgMcpServers
+      orgMcpServers,
+      undefined, // default managed-MCP state path
+      state.project
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
@@ -590,7 +622,7 @@ async function runVscodeByok(
   projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
+    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders, state.project);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({
@@ -659,7 +691,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
 /**
  * Configure every requested target over a single daemon lifecycle. Bare invocation
  * (no target flag) prints the target list and returns without side effects. Each
- * target's writer runs independently; a per-target summary is printed and the
+ * target's writer runs independently; failed targets are listed and the
  * process exit code is set to 1 when any requested target fails (spec §3.4).
  */
 interface CodexDesktopRunOptions {
@@ -693,7 +725,7 @@ async function runCodexDesktop(
     const configPath = getCodexDesktopConfigPath();
     console.log(chalk.cyan(`Codex config: ${configPath}`));
 
-    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey, state.project);
     const model = selectCodexModel(discovered, options.model, options.profileModel);
 
     await writeCodexDesktopConfig({
@@ -767,13 +799,34 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
     } else {
       console.log(chalk.dim('  Tracked projects: all projects'));
     }
-    console.log(chalk.dim('  Managed `copilot-cli` launches are ignored by this adapter (no double counting).'));
+    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
     console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
     return { label, ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('[proxy] Failed to configure Copilot CLI analytics', ...sanitizeLogArgs({ error: message }));
     console.log(chalk.yellow(`  Could not configure Copilot CLI analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
+async function runOmp(force: boolean): Promise<TargetResult> {
+  const label = 'oh-my-pi';
+  try {
+    const result = await writeOmpExtension({ force });
+    console.log(chalk.green(
+      result.changed
+        ? `\u2713 oh-my-pi extension installed (${result.path})`
+        : `\u2713 oh-my-pi extension already up to date (${result.path})`
+    ));
+    console.log(chalk.dim('  Providers codemie (OpenAI wire) and codemie-claude (Anthropic wire) list the'));
+    console.log(chalk.dim('  same catalog as `codemie models list`, with cost and context limits.'));
+    console.log(chalk.dim('  Set CODEMIE_OMP_BASE_URL to send inference through another local proxy hop.'));
+    console.log(chalk.yellow('  Restart omp, or run `omp models refresh`, to load the catalog.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] oh-my-pi configuration failed', ...sanitizeLogArgs({ error: message }));
     return { label, ok: false, error: message };
   }
 }
@@ -785,6 +838,14 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
     return;
+  }
+
+  // omp and VS Code BYOK need different daemon identities, and one daemon carries one.
+  if (targets.omp && targets.vscode) {
+    printProxyError(new ConfigurationError(
+      '--omp cannot be combined with --vscode: they need different proxy identities and share one daemon.\n' +
+      'Run `codemie proxy connect --omp` for oh-my-pi, or `codemie proxy connect --vscode` for VS Code.'
+    ), 'Failed to connect proxy');
   }
 
   const verbose = Boolean(opts.verbose);
@@ -845,7 +906,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
     profile = config.name ?? 'default';
     projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-    // Resolved once so the confirmation header and the post-start table show the same URL.
+    // Resolved here because the confirmation header needs the profile and the effective URL.
     otlpDisplay = targets.claudeCodeOtlp
       ? {
           profile,
@@ -894,13 +955,17 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       syncPluginSkills(),
     ]);
 
-    const identity = deriveDaemonIdentity(activeTargets);
-    clientType = identity.clientType;
+    const derived = deriveDaemonIdentity(activeTargets);
+    // A connect naming Claude Desktop writes the gateway URL itself: identity and port come from the targets alone.
+    const { identity, gatewayPort }: { identity: ClientIdentity; gatewayPort?: number } = activeTargets.claudeDesktop
+      ? { identity: derived.spawnOptions }
+      : await withDesktopIdentity(derived.spawnOptions);
+    clientType = getEffectiveClientType(identity);
 
     // The record is written after wiring succeeds (below), not at spawn time.
     const ensured = await ensureDaemon(
-      buildRequestedConfig(profile, identity.clientType, config, projectBinding),
-      identity.spawnOptions,
+      buildRequestedConfig(profile, clientType, config, projectBinding, gatewayPort),
+      identity,
       config,
       Boolean(opts.force),
       verbose,
@@ -938,11 +1003,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
-  if (activeTargets.claudeCodeOtlp && otlpDisplay) {
+  if (activeTargets.claudeCodeOtlp) {
     results.push(await runClaudeCodeOtlp({
       force: Boolean(opts.force),
       scope: opts.scope ?? 'user',
-      ...otlpDisplay,
     }));
   }
   if (targets.copilotChatOtlp) {
@@ -950,6 +1014,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   }
   if (targets.copilotCliOtlp) {
     results.push(await runCopilotCliOtlp({ scope: opts.scope }));
+  }
+  if (activeTargets.omp) {
+    results.push(await runOmp(Boolean(opts.force)));
   }
 
   const anyFailed = results.some((r) => !r.ok);
@@ -961,9 +1028,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await writeConnectionRecord(state, profile, clientType);
   }
 
-  // Spec §3.4: print the per-target summary after all requested targets run,
-  // unconditionally — a single-target success gets the summary block too.
-  printSummary(results);
+  // Spec §3.4: after all requested targets run, list the ones that failed; successes
+  // already printed their own line.
+  printFailures(results);
   if (anyFailed) {
     process.exitCode = 1;
   }

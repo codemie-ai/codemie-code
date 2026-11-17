@@ -28,9 +28,9 @@ Run order is fastest-to-slowest. Each gate is a real `npm run` script in `packag
 
 ### Build
 
-**Run**: `npm run build` (`tsc && tsc-alias && npm run copy-plugin`)
-**Pass**: `dist/` rebuilt; `npm run copy-plugin` (`scripts/copy-plugins.js`) succeeds.
-**Fail**: TypeScript or path-alias error; missing plugin sources for `copy-plugin`.
+**Run**: `npm run build` (`tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline && npm run bundle-omp-extension`)
+**Pass**: `dist/` rebuilt; `copy-plugin` succeeds; esbuild emits `dist/agents/plugins/claude/plugin/statusline.bundle.mjs` and `dist/cli/commands/proxy/connectors/omp/codemie-models.bundle.js`.
+**Fail**: TypeScript or path-alias error; missing plugin sources for `copy-plugin`; esbuild bundle error in `scripts/bundle-statusline.mjs` or `scripts/bundle-omp-extension.mjs`.
 **Auto-fix**: none — fix the underlying error.
 **Skip if**: pure docs / `.ai-run/guides/` edits.
 

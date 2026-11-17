@@ -41,10 +41,19 @@ const TEST_BASE_URL_2 = 'https://codemie-test2.example.com';
 const TEST_API_URL_1 = `${TEST_BASE_URL_1}/code-assistant-api`;
 const TEST_API_URL_2 = `${TEST_BASE_URL_2}/code-assistant-api`;
 
+// Build an unsigned JWT whose exp (ms) matches the credential expiresAt
+function makeJwt(expMs: number): string {
+  const enc = (o: object): string => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${enc({ alg: 'none' })}.${enc({ exp: Math.floor(expMs / 1000) })}.sig`;
+}
+
+const VALID_EXPIRES_AT = Date.now() + 24 * 60 * 60 * 1000; // 24 hours from now
+const EXPIRED_AT = Date.now() - 60 * 60 * 1000; // 1 hour ago
+
 const VALID_CREDENTIALS_1: SSOCredentials = {
-  cookies: { session: 'test-session-1' },
+  cookies: { session: 'test-session-1', codemie_access_token: makeJwt(VALID_EXPIRES_AT) },
   apiUrl: TEST_API_URL_1,
-  expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24 hours from now
+  expiresAt: VALID_EXPIRES_AT
 };
 
 const VALID_CREDENTIALS_2: SSOCredentials = {
@@ -54,9 +63,16 @@ const VALID_CREDENTIALS_2: SSOCredentials = {
 };
 
 const EXPIRED_CREDENTIALS: SSOCredentials = {
-  cookies: { session: 'expired-session' },
+  cookies: { session: 'expired-session', codemie_access_token: makeJwt(EXPIRED_AT) },
   apiUrl: TEST_API_URL_1,
-  expiresAt: Date.now() - 60 * 60 * 1000 // 1 hour ago
+  expiresAt: EXPIRED_AT
+};
+
+// Cookie-only session (no codemie_access_token): no locally known expiry
+const COOKIE_ONLY_CREDENTIALS: SSOCredentials = {
+  cookies: { session: 'cookie-only-session' },
+  apiUrl: TEST_API_URL_1,
+  expiresAt: EXPIRED_AT
 };
 
 const GLOBAL_CREDENTIALS: SSOCredentials = {
@@ -396,13 +412,40 @@ describe('SSO Per-URL Credential Management', () => {
       expect(retrievedAgain).toBeNull();
     });
 
+    it('should not clear or expire cookie-only credentials locally', async () => {
+      const store = CredentialStore.getInstance();
+      const sso = new CodeMieSSO();
+
+      await store.storeSSOCredentials(COOKIE_ONLY_CREDENTIALS, TEST_BASE_URL_1);
+
+      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.cookies.session).toBe('cookie-only-session');
+
+      const config: CodeMieConfigOptions = {
+        provider: 'ai-run-sso',
+        codeMieUrl: TEST_BASE_URL_1,
+        baseUrl: TEST_API_URL_1,
+        apiKey: 'sso-provided',
+        model: 'test-model'
+      };
+
+      const result = await SSOSetupSteps.validateAuth!(config);
+      expect(result.valid).toBe(true);
+      expect(result.expiresAt).toBeUndefined();
+
+      const status = await SSOSetupSteps.getAuthStatus!(config);
+      expect(status.authenticated).toBe(true);
+      expect(status.expiresAt).toBeUndefined();
+    });
+
     it('should calculate remaining time correctly', async () => {
       const store = CredentialStore.getInstance();
 
       // Create credentials expiring in 1 hour
       const oneHourFromNow = Date.now() + 60 * 60 * 1000;
       const credentials: SSOCredentials = {
-        cookies: { session: 'test' },
+        cookies: { session: 'test', codemie_access_token: makeJwt(oneHourFromNow) },
         apiUrl: TEST_API_URL_1,
         expiresAt: oneHourFromNow
       };

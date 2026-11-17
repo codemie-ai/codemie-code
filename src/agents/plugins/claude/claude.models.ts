@@ -1,6 +1,16 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
-import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
+import {
+  buildModelLabelIndex,
+  describeRouter,
+  isClaudeFamilyModel,
+  orderModelsForPicker,
+} from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieCatalogForEnv, projectFromEnv } from '../../../providers/plugins/sso/sso.catalog.js';
+import {
+  claudeExtraModelsFromEnv,
+  isServableCatalogModel as isServableModel,
+} from '../../../providers/plugins/sso/sso.claude-extra-models.js';
+import { getPlatformUrlFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -36,24 +46,6 @@ const TIER_ENV_VAR: Record<ClaudeModelTier, string> = {
   opus: 'CODEMIE_OPUS_MODEL',
 };
 
-const CLAUDE_INCOMPATIBLE_MODEL_PATTERNS: RegExp[] = [
-  /embedding/i,
-  /rerank/i,
-  /whisper/i,
-  /tts/i,
-  /moderation/i,
-  /image/i,
-  /vision-only/i,
-];
-
-const CLAUDE_FAMILY_PATTERNS: RegExp[] = [
-  /claude/i,
-  /anthropic/i,
-  /sonnet/i,
-  /opus/i,
-  /haiku/i,
-];
-
 // `model` (the default tier) accepts any Claude-family model; the other tiers
 // must additionally match their own name.
 const TIER_PATTERN: Record<ClaudeModelTier, RegExp | null> = {
@@ -85,27 +77,15 @@ function modelIdentifiers(model: LlmModel): string[] {
   );
 }
 
-/**
- * Whether a deployment can serve an agent session at all: enabled, tool- and stream-capable,
- * and not an embedding/rerank/audio endpoint. Says nothing about model family on purpose —
- * `isClaudeCompatibleModel` layers the family check on top, and only for auto-selection.
- */
-function isServableModel(model: LlmModel): boolean {
-  if (!model.enabled) return false;
-  if (model.features?.tools === false || model.features?.streaming === false) return false;
-  return !CLAUDE_INCOMPATIBLE_MODEL_PATTERNS.some((pattern) => pattern.test(getSearchText(model)));
-}
-
 function isClaudeCompatibleModel(model: LlmModel, tier: ClaudeModelTier): boolean {
   if (!isServableModel(model)) return false;
 
-  const searchText = getSearchText(model);
-  if (!CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText))) {
+  if (!isClaudeFamilyModel(model)) {
     return false;
   }
 
   const tierPattern = TIER_PATTERN[tier];
-  return tierPattern ? tierPattern.test(searchText) : true;
+  return tierPattern ? tierPattern.test(getSearchText(model)) : true;
 }
 
 function extractVersionParts(text: string): number[] {
@@ -158,7 +138,10 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
   const jwtToken = env.CODEMIE_JWT_TOKEN;
   const baseUrl = env.CODEMIE_BASE_URL;
   const platformUrl = getPlatformUrlFromEnv(env);
-  const cacheKey = jwtToken && baseUrl ? `jwt:${baseUrl}` : `sso:${platformUrl ?? ''}`;
+  const projectKey = projectFromEnv(env) ?? '';
+  const cacheKey = jwtToken && baseUrl
+    ? `jwt:${baseUrl}:${projectKey}`
+    : `sso:${platformUrl ?? ''}:${projectKey}`;
 
   if (
     cachedCatalog &&
@@ -168,22 +151,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
     return cachedCatalog.models;
   }
 
-  let models: LlmModel[];
-  if (jwtToken && baseUrl) {
-    logger.debug('[claude-models] Fetching CodeMie model list via JWT auth');
-    models = await fetchCodeMieLlmModels(baseUrl, jwtToken);
-  } else if (platformUrl) {
-    const found = await getStoredPlatformCredentialsFromEnv(env);
-    if (!found) {
-      throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
-      );
-    }
-    logger.debug('[claude-models] Fetching CodeMie model list via SSO auth');
-    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
-  } else {
-    models = [];
-  }
+  const models = (await fetchCodeMieCatalogForEnv(env, { logPrefix: '[claude-models]' })) ?? [];
 
   cachedCatalog = { key: cacheKey, fetchedAt: Date.now(), models };
   return models;
@@ -292,6 +260,9 @@ export async function buildModelLabelMap(env: NodeJS.ProcessEnv): Promise<Record
   }
 }
 
+/** Picker description for an opted-in non-Claude model. */
+const NON_CLAUDE_MODEL_NOTE = 'Not a Claude model; some Claude Code features may not work';
+
 export interface ModelPickerOption {
   model: string;
   label: string;
@@ -299,31 +270,14 @@ export interface ModelPickerOption {
 }
 
 /**
- * Whether a catalog entry — plain model or router — resolves to a Claude-family backend, for
- * the model picker. Mirrors codex-models.ts's `isCodexCompatibleModel`: a LiteLLM auto-router's
- * own alias name is family-agnostic by convention (`claude-smart-router` and `gpt-smart-router`
- * are both named like routers, not like their target), so `counterfactual_model` — the concrete
- * deployment it currently resolves to — is the deterministic signal to judge it by when present.
- * A Switchyard virtual router carries no target-model field to check deterministically, so
- * CodeMie's own naming convention (base_name/label embedding the constituent families, e.g.
- * `sy-signal-claude-sonnet-haiku` vs `sy-signal-gpt-terra-luna`) is trusted instead — the same
- * name check already used for a plain model.
- */
-function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
-  const counterfactual = model.litellm_router?.counterfactual_model;
-  if (counterfactual) {
-    return CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(counterfactual));
-  }
-  return CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(getSearchText(model)));
-}
-
-/**
  * Builds the option list for Claude Code's `modelPicker` settings key (v2.1.243+) from the live
  * CodeMie catalog: every enabled, servable model that resolves to a Claude-family backend —
  * a plain Claude-named deployment, or a router (Switchyard virtual router / LiteLLM auto-router
- * — see `isRouterCatalogEntry`) whose target is Claude-family (see `isClaudeFamilyPickerEntry`).
+ * — see `isRouterCatalogEntry`) whose target is Claude-family (see `isClaudeFamilyModel`).
  * A router targeting a different family (e.g. a GPT auto-router) is excluded — Claude Code can't
- * drive it anyway, so listing it would just be catalog noise.
+ * drive it anyway, so listing it would just be catalog noise. The exception is a model the
+ * profile opted into via `claudeExtraModels` (`codemie-claude models select`): it is listed
+ * with a note that it is not a Claude model.
  *
  * Ranked with the same `rankModel`/`compareRankedModels` ordering already used for tier
  * auto-resolution, then the selected model, routers and the rest are grouped in that order (stable, so each group keeps that ranking).
@@ -338,8 +292,13 @@ function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
 export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<ModelPickerOption[]> {
   try {
     const catalog = await fetchCatalog(env);
+    // Non-Claude models the profile opted into (`codemie-claude models select`) join the
+    // lineup; they rank after Claude models, since their ids carry no Claude version.
+    const extraIds = new Set(claudeExtraModelsFromEnv(env));
+    const isOptedIn = (model: LlmModel): boolean =>
+      modelIdentifiers(model).some((id) => extraIds.has(id));
     const rankedByScore = catalog
-      .filter((model) => isServableModel(model) && isClaudeFamilyPickerEntry(model))
+      .filter((model) => isServableModel(model) && (isClaudeFamilyModel(model) || isOptedIn(model)))
       .map((model) => {
         try {
           return { ranked: rankModel(model), model };
@@ -370,7 +329,8 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
     for (const { ranked: rankedModel, model } of ranked) {
       if (seen.has(rankedModel.id)) continue; // a model may rank under >1 identifier
       seen.add(rankedModel.id);
-      const description = describeRouter(model, labelIndex) || undefined;
+      const description = describeRouter(model, labelIndex)
+        || (isClaudeFamilyModel(model) ? undefined : NON_CLAUDE_MODEL_NOTE);
       options.push({
         model: applyContextWindow(rankedModel.id, model.max_input_tokens),
         label: model.label || rankedModel.id,
@@ -491,9 +451,9 @@ export async function resolveClaudeModel(
     return keepWithContextWindow();
   }
 
-  // CLAUDE_FAMILY_PATTERNS only picks a sensible Claude model automatically; it cannot see through
-  // a gateway or router alias (`gpt-smart-router`), so using it to *validate* a configured id would
-  // silently replace working models. If the deployment is live in the unfiltered catalog, keep it.
+  // isClaudeFamilyModel only picks a sensible Claude model automatically; an id it rejects (a
+  // gateway alias, a router like `gpt-smart-router`) may still be a deliberately configured working
+  // model, so using it to *validate* a configured id would silently replace working models. If the deployment is live in the unfiltered catalog, keep it.
   // Deliberately NOT narrowed to `tier === 'model'`: a tier var may pin a router alias
   // (`CODEMIE_HAIKU_MODEL=claude-smart-router`) that is filtered out of `ranked`; re-resolving it
   // would defeat the routing. Same accepted tradeoff as above: a stale value survives until retired.

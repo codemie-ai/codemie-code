@@ -1,6 +1,9 @@
 import path from 'node:path';
+import { lstat, readFile } from 'node:fs/promises';
+import type { ProjectBindingState } from '@/utils/project-binding.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { getCodemiePath } from '@/utils/paths.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveHookCredentials } from '../hook-credentials.js';
@@ -40,11 +43,12 @@ export interface IdentityCandidateFields {
  */
 export async function resolveIdentityFields(
   { cwd, sessionId }: OtlpHookContext,
-  record?: EvidenceRecord
+  record?: EvidenceRecord,
+  policy: ProjectPolicy = {}
 ): Promise<IdentityFields> {
   const [identityResult, projectName, version] = await Promise.all([
     resolveIdentityTier(cwd),
-    resolveProjectName(cwd, sessionId, record),
+    resolveProjectName(cwd, sessionId, record, policy),
     getCurrentCliVersion().catch(() => null),
   ]);
   return {
@@ -72,10 +76,11 @@ async function resolveIdentityTier(
 }
 
 /**
- * `CODEMIE_PROJECT` (exported by the launcher into the agent's own process env, the same
- * source `Session.project` uses) wins when present, since it is set once for the whole
- * session and cannot drift as the hook's `cwd` moves, and is never pinned against (it is
- * already fixed per session).
+ * In a managed launch (and for callers without `configuredWins`) `CODEMIE_PROJECT` (exported by the launcher into the agent's own process
+ * env, the same source `Session.project` uses) wins when present, since it is set once for the
+ * whole session and cannot drift as the hook's `cwd` moves, and is never pinned against. A native
+ * Claude/Copilot session has no launcher, so there the configured project wins and a shell
+ * `CODEMIE_PROJECT` is only the fallback (see ProjectPolicy).
  *
  * Otherwise, with a `sessionId`, the first hook's resolution — the nearest `.codemie` found
  * by walking up from `CLAUDE_PROJECT_DIR` toward the filesystem root, or the global active
@@ -89,20 +94,25 @@ async function resolveIdentityTier(
 async function resolveProjectName(
   cwd: string,
   sessionId: string | undefined,
-  record?: EvidenceRecord
+  record?: EvidenceRecord,
+  policy: ProjectPolicy = {}
 ): Promise<string> {
   // A stamped session's durable record is the single source: event project, spool binding and
   // headers must agree, so env/pin/config are never consulted again (nor is a pin written).
   if (record) {
     return record.project ?? '';
   }
-  return resolveSessionProject(cwd, sessionId);
+  return resolveSessionProject(cwd, sessionId, policy);
 }
 
 /** The env/pin/config resolution, used for unstamped sessions and once to seed a new record. */
-export async function resolveSessionProject(cwd: string, sessionId: string | undefined): Promise<string> {
+export async function resolveSessionProject(
+  cwd: string,
+  sessionId: string | undefined,
+  policy: ProjectPolicy = {}
+): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
-  if (envProject) {
+  if (envProject && !configuredWins(policy)) {
     return envProject;
   }
 
@@ -111,53 +121,157 @@ export async function resolveSessionProject(cwd: string, sessionId: string | und
     return pinned;
   }
 
-  const resolved = await resolveProjectNameFromConfig(cwd);
+  const resolved = await projectFromHookConfig(await loadHookConfig(cwd, { walk: policy.walkFromCwd }), policy);
   return sessionId ? pinProjectName(sessionId, resolved) : resolved;
+}
+
+/**
+ * Opted into by the Claude Code and Copilot hook adapters only, so a native session resolves its
+ * project like the managed launcher of the same tool: the configured project wins over a shell
+ * `CODEMIE_PROJECT`, and config is found from the nearest `.codemie` up from the hook's cwd (Claude
+ * has `CLAUDE_PROJECT_DIR` for that already). Other adapters and callers keep the plain behavior.
+ */
+export interface ProjectPolicy {
+  configuredWins?: boolean;
+  walkFromCwd?: boolean;
+}
+
+function configuredWins(policy: ProjectPolicy): boolean {
+  return policy.configuredWins === true && launchMode(process.env) === 'native';
+}
+
+/**
+ * Under `configuredWins` a shell `CODEMIE_PROJECT` is only the fallback for a profile without a
+ * project, and never for `own`/`none` profiles (the managed launcher strips it for those).
+ */
+async function projectFromHookConfig(
+  hook: Awaited<ReturnType<typeof loadHookConfig>>,
+  policy: ProjectPolicy
+): Promise<string> {
+  const configured = hook?.config.codeMieProject;
+  if (configured || !configuredWins(policy)) return configured ?? '';
+  const shell = process.env['CODEMIE_PROJECT']?.trim();
+  if (!shell) return '';
+  // The shell value is attributed only when the profile identity is confirmed; anything unknown fails closed.
+  if (!hook) return withheld('hook config unavailable');
+  let state: ProjectBindingState | undefined;
+  try {
+    state = (await ConfigLoader.resolveProfileIdentity(hook.configDir, hook.config.name)).state;
+  } catch (error) {
+    return withheld(`identity lookup failed (${errorName(error)})`);
+  }
+  // Only a profile that can carry no project of its own falls back to the shell value: own/none and anything unrecognized do not.
+  if (state !== 'local' && state !== 'unowned' && state !== 'not-applicable') {
+    return state === 'own' || state === 'none' ? '' : withheld('profile identity state unrecognized');
+  }
+  // ConfigLoader reads a malformed config file as empty, so a lookup alone cannot confirm the identity;
+  // this only checks that each existing file is a readable JSON object, not its schema.
+  const files = [path.join(hook.configDir, '.codemie', 'codemie-cli.config.json'), getCodemiePath('codemie-cli.config.json')];
+  for (const file of files) {
+    if (!(await configFileIsReadable(file))) return withheld('config file unreadable');
+  }
+  return shell;
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'error';
+}
+
+function withheld(reason: string): string {
+  logger.debug(`[event-fields] shell CODEMIE_PROJECT not attributed: ${reason}`);
+  return '';
+}
+
+/** A missing file is fine (no such scope); an existing one must be a JSON object. */
+async function configFileIsReadable(file: string): Promise<boolean> {
+  try {
+    const value: unknown = JSON.parse(await readFile(file, 'utf-8'));
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
+function isGlobalConfigFile(dir: string): boolean {
+  const norm = (p: string): string => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  return norm(path.join(dir, '.codemie', 'codemie-cli.config.json')) === norm(getCodemiePath('codemie-cli.config.json'));
 }
 
 /** The profile config the hook resolves for `cwd` (same walk as the project lookup); undefined on failure. */
 export async function loadHookConfig(
   cwd: string,
-  opts: { fromCwd?: boolean; profile?: string } = {}
+  opts: { fromCwd?: boolean; profile?: string; walk?: boolean } = {}
 ): Promise<{ config: CodeMieConfigOptions; configDir: string } | undefined> {
   // `fromCwd`: walk up from the hook's own cwd instead of the session's fixed project dir (used to notice a folder change).
-  const start = opts.fromCwd ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim();
+  // `walk` (Copilot) always starts at the hook's own cwd, even when a parent Claude Code process left CLAUDE_PROJECT_DIR behind.
+  const start = opts.fromCwd || opts.walk ? cwd : process.env['CLAUDE_PROJECT_DIR']?.trim() || undefined;
   try {
     const configDir = start ? await findNearestConfigDir(start) : cwd;
+    // `.env` stays where it always was: the hook's cwd when `walk` found the config dir, else the config dir.
+    const envDir = opts.walk ? cwd : configDir;
     // A managed launch exports the profile it was started with (`--profile X` included); it, not the
     // globally active profile, selects hook config, routing proof and project. Native has no such export.
     const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
     const profileName = opts.profile || launched || (await ConfigLoader.getActiveProfileName(configDir));
-    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
+    const selection = profileName ? { name: profileName } : undefined;
+    const config = envDir === configDir
+      ? await ConfigLoader.load(configDir, selection)
+      : await ConfigLoader.load(configDir, selection, envDir);
     return { config, configDir };
-  } catch {
+  } catch (error) {
+    logger.debug(`[event-fields] hook config unavailable (${errorName(error)})`);
     return undefined;
   }
 }
 
 /** The project the hook's current cwd resolves to, ignoring the session pin: `CODEMIE_PROJECT` wins, else the config found from cwd. */
-export async function resolveProjectAtCwd(cwd: string, profile?: string): Promise<string> {
+export async function resolveProjectAtCwd(cwd: string, profile?: string, policy: ProjectPolicy = {}): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
-  if (envProject) return envProject;
-  return (await loadHookConfig(cwd, { fromCwd: true, profile }))?.config.codeMieProject ?? '';
+  if (envProject && !configuredWins(policy)) return envProject;
+  return projectFromHookConfig(await loadHookConfig(cwd, { fromCwd: true, profile, walk: policy.walkFromCwd }), policy);
 }
 
-async function resolveProjectNameFromConfig(cwd: string): Promise<string> {
-  return (await loadHookConfig(cwd))?.config.codeMieProject ?? '';
-}
-
-/** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */
-export async function findNearestConfigDir(startDir: string): Promise<string> {
+/**
+ * The nearest ancestor (inclusive) holding a `.git` marker: a directory in a normal repo, a file in a linked
+ * worktree (the marker is only detected, Git metadata is not validated). Only a definite absence continues
+ * upward; any other filesystem error (e.g. an unreadable marker) means the boundary is unknown and yields
+ * `undefined`, so the caller stays at the launch dir instead of reaching into a containing worktree.
+ */
+async function gitWorktreeRoot(startDir: string): Promise<string | undefined> {
   let dir = startDir;
   for (;;) {
-    if (await ConfigLoader.hasLocalConfig(dir)) {
+    try {
+      await lstat(path.join(dir, '.git'));
+      return dir;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        logger.debug(`[event-fields] git boundary unknown (${code ?? errorName(error)}): config lookup stays at the launch dir`);
+        return undefined;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
+  }
+}
+
+/**
+ * The local `.codemie` config dir for `startDir`: `startDir` itself when it has one, else the nearest ancestor
+ * that has one up to and including the Git worktree root. The walk never leaves the worktree, and outside a
+ * worktree only `startDir` is considered, so a config planted in a parent or shared directory is never picked up.
+ * `startDir` itself is returned when none qualifies. An ancestor whose `.codemie` config is the global config file
+ * is not a local override.
+ */
+export async function findNearestConfigDir(startDir: string): Promise<string> {
+  const root = await gitWorktreeRoot(startDir);
+  let dir = startDir;
+  for (;;) {
+    if (await ConfigLoader.hasLocalConfig(dir) && (dir === startDir || !isGlobalConfigFile(dir))) {
       return dir;
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      return startDir;
-    }
-    dir = parent;
+    if (dir === root || !root) return startDir;
+    dir = path.dirname(dir);
   }
 }
 

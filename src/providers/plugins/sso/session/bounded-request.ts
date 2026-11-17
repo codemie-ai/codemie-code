@@ -43,7 +43,7 @@ const signalsThatSent = new WeakSet<AbortSignal>();
 
 /**
  * Records that a request started under `signal`.
- * Lets a caller that owns the signal tell an attempt that reached the server from one stopped before it.
+ * Lets a caller that owns the signal tell an attempt that made a request from one stopped before any.
  */
 export function noteSendAttempt(signal: AbortSignal | undefined): void {
   if (signal) signalsThatSent.add(signal);
@@ -67,6 +67,38 @@ export function noteAuthFailure(signal: AbortSignal | undefined): void {
 /** Whether a request under `signal` met rejected credentials (see {@link noteAuthFailure}). */
 export function authWasRejected(signal: AbortSignal): boolean {
   return signalsRejected.has(signal);
+}
+
+const signalsAwaitingDestination = new WeakSet<AbortSignal>();
+
+/**
+ * Records that a legacy metric under `signal` was withheld while the backend's answer on the session's destination is
+ * still to come (EPMCDME-17054 `destination-unconfirmed` / `destination-pending`): nothing was tried, so the caller
+ * that owns the signal does not count it as a delivery attempt.
+ */
+export function noteAwaitingDestination(signal: AbortSignal | undefined): void {
+  if (signal) signalsAwaitingDestination.add(signal);
+}
+
+/** Whether a legacy metric under `signal` waits for the destination's confirmation (see {@link noteAwaitingDestination}). */
+export function awaitingDestination(signal: AbortSignal): boolean {
+  return signalsAwaitingDestination.has(signal);
+}
+
+const signalsWithLocalFailure = new WeakSet<AbortSignal>();
+
+/**
+ * Records that a processor under `signal` failed locally (a lock timeout, a file error) and the sync caught it into a
+ * failed result: no request reached a server for it, so the caller that owns the signal gives the attempt back, as it
+ * does for a thrown local failure, and the failing clock is not cleared.
+ */
+export function noteLocalFailure(signal: AbortSignal | undefined): void {
+  if (signal) signalsWithLocalFailure.add(signal);
+}
+
+/** Whether a processor under `signal` failed locally (see {@link noteLocalFailure}). */
+export function hadLocalFailure(signal: AbortSignal): boolean {
+  return signalsWithLocalFailure.has(signal);
 }
 
 /** Node system error codes of a connection that never opened: the request was never sent. */
@@ -93,10 +125,128 @@ export function requestNeverLeft(error: unknown): boolean {
 
 const signalsReached = new WeakSet<AbortSignal>();
 const signalsNeverLeft = new WeakSet<AbortSignal>();
+const signalsFailingServer = new WeakSet<AbortSignal>();
 
 /**
- * Records that a request under `signal` reached the server or may have: it got any HTTP answer, timed out, or failed
- * after its connection opened (a reset after the send), so a server may have served it.
+ * Whether an answer is a failing server's: a 5xx, a 429, or a 4xx whose body is not JSON (a proxy's or WAF's own
+ * page). A 401 is rejected credentials whatever its body; a JSON 4xx is the application's verdict on the request.
+ */
+export function isFailingServerAnswer(status: number, bodyIsJson: boolean): boolean {
+  if (status >= 500 || status === 429) return true;
+  return status >= 400 && status !== 401 && !bodyIsJson;
+}
+
+/**
+ * Whether a sync API answer is the backend's permission denial, not an expiry: a JSON 401 or 403 whose message is
+ * "Access denied". The backend raises exactly that 401 for a conversation the user cannot write
+ * (`raise_access_denied` in `rest_api/routers/utils.py`, used by `PUT /v1/conversations/{id}/history`), while an
+ * expired, missing or invalid session is its 401 "Authentication failed" (`authenticate`). Signing in again cannot
+ * fix a denial, so it is a counted failure and goes through the retry budget, not `auth`, which never spends it.
+ */
+export function isAccessDeniedAnswer(status: number, bodyIsJson: boolean, body?: unknown): boolean {
+  if (!bodyIsJson || (status !== 401 && status !== 403)) return false;
+  const parsed = body as { error?: { message?: unknown }; message?: unknown } | null | undefined;
+  const message = parsed?.error?.message ?? parsed?.message;
+  return typeof message === 'string' && message.trim().toLowerCase() === 'access denied';
+}
+
+/**
+ * Whether a sync API answer means "the credentials are expired or rejected": any 401 or 403, except the backend's
+ * "Access denied" (see {@link isAccessDeniedAnswer}).
+ *
+ * A 401 is rejected credentials, as the sync clients already treat it (conversations/apiClient.ts,
+ * metrics/metrics-api-client.ts), unless its body is the backend's "Access denied".
+ *
+ * A plain 403 stays `auth` on purpose, though it is NOT backend-verified as an expiry. What the backend and the
+ * deployment show: the backend answers an expired, missing or invalid session with a 401 "Authentication failed"
+ * (`authenticate`) and has no 403 on `PUT /v1/conversations/{id}/history` or `POST /v1/metrics`; the ingress sends
+ * the session check to oauth2-proxy (`deploy-templates/values.yaml`: `auth-url` `/oauth2/auth`, `auth-signin`
+ * `/oauth2/start`), where an expired cookie becomes the 302 to `/oauth2/start` the clients already treat as auth
+ * (conversations/apiClient.ts, sso-session-expiry.plugin.ts), and a 403 of that check is an authorization refusal.
+ * oauth2-proxy's own configuration is not in the repository and no real capture of a gateway 403 exists
+ * (proxy/plugins/session-rejection.ts says the same of an expiry 401), so a 403 is kept `auth`: if it were an expiry,
+ * counting it would drop data a re-login delivers, while as `auth` a permanent denial waits until the evidence
+ * retention ends (90 days). The OTLP forwarder treats 401, 403 and 302 alike as auth failure
+ * (proxy/plugins/otlp-spool/forwarder.ts). Revisit with a captured gateway 403.
+ * Not covered here: a 2xx HTML SSO login page and a 302 to /oauth2/start (they carry no 401/403 status).
+ */
+export function isExpiredCredentialAnswer(status: number, bodyIsJson: boolean, body?: unknown): boolean {
+  return (status === 401 || status === 403) && !isAccessDeniedAnswer(status, bodyIsJson, body);
+}
+
+/**
+ * What one request under a caller's signal came to:
+ * - `ok`: served and accepted;
+ * - `auth`: the credentials are expired or rejected (see {@link isExpiredCredentialAnswer});
+ * - `rejected`: the server read the request and refused it for good (JSON 400, 409 or 422; a 409 is the backend's "Conversation is finished": a finished conversation never takes more messages);
+ * - `outage`: no server served it (never connected, timed out, reset, 5xx, 429, a non-JSON 4xx); spends no real attempt;
+ * - `counted`: a server answered with a verdict that is none of the above (a JSON 4xx, a 2xx that is not a success);
+ * - `not-attempt`: the caller's abort or deadline stopped it.
+ */
+export type RequestOutcome = 'ok' | 'auth' | 'rejected' | 'outage' | 'counted' | 'not-attempt';
+
+/** Classifies an answered request by its status, body kind and success. */
+export function classifyAnswer(status: number, bodyIsJson: boolean, success: boolean, body?: unknown): RequestOutcome {
+  if (success) return 'ok';
+  if (isExpiredCredentialAnswer(status, bodyIsJson, body)) return 'auth';
+  if (isFailingServerAnswer(status, bodyIsJson)) return 'outage';
+  if (bodyIsJson && (status === 400 || status === 409 || status === 422)) return 'rejected';
+  return 'counted';
+}
+
+/** Classifies a request that got no usable answer: a stop by the caller is no attempt, anything else an outage. */
+export function classifyError(_error: unknown, stopReason: SyncStopReason | undefined): RequestOutcome {
+  return stopReason ? 'not-attempt' : 'outage';
+}
+
+/** Weakest first. `auth` outranks `counted`: an attempt that met a permission denial never spends the budget, whatever else it met. */
+const OUTCOME_SEVERITY: readonly RequestOutcome[] = ['not-attempt', 'outage', 'counted', 'auth', 'rejected'];
+
+/**
+ * One logical request: the tries of a client's retry loop. Only the last try's outcome stays noted under the caller's
+ * signal, so a try that failed and a retry that went through leave no outage behind.
+ */
+export type RequestGroup = object;
+
+/** A fresh group for one logical request (see {@link RequestGroup}). */
+export function newRequestGroup(): RequestGroup {
+  return {};
+}
+
+interface NotedOutcome {
+  outcome: RequestOutcome;
+  group?: RequestGroup;
+}
+
+const outcomesBySignal = new WeakMap<AbortSignal, NotedOutcome[]>();
+
+/** A new try of `group` replaces what the earlier tries of it noted. */
+function forgetGroup(signal: AbortSignal | undefined, group: RequestGroup | undefined): void {
+  const noted = signal && group ? outcomesBySignal.get(signal) : undefined;
+  if (signal && noted) outcomesBySignal.set(signal, noted.filter((entry) => entry.group !== group));
+}
+
+function recordOutcome(signal: AbortSignal | undefined, outcome: RequestOutcome, group?: RequestGroup): void {
+  if (!signal || outcome === 'ok') return;
+  outcomesBySignal.set(signal, [...(outcomesBySignal.get(signal) ?? []), { outcome, group }]);
+}
+
+/**
+ * The worst outcome noted under `signal` (rejected > auth > counted > outage > not-attempt), or undefined when none was
+ * (nothing sent, or only successes).
+ */
+export function attemptOutcome(signal: AbortSignal): RequestOutcome | undefined {
+  let worst: RequestOutcome | undefined;
+  for (const { outcome } of outcomesBySignal.get(signal) ?? []) {
+    if (!worst || OUTCOME_SEVERITY.indexOf(outcome) > OUTCOME_SEVERITY.indexOf(worst)) worst = outcome;
+  }
+  return worst;
+}
+
+/**
+ * Records that a request under `signal` reached a server: it failed after its connection opened (a timeout, a reset
+ * after the send, a body that could not be read), or got an answer that is neither a success nor a failing server's (see
+ * {@link isFailingServerAnswer}). The outcome classifier ({@link classifyError}) treats a timeout or reset as an outage.
  */
 export function noteServerReached(signal: AbortSignal | undefined): void {
   if (signal) signalsReached.add(signal);
@@ -107,12 +257,23 @@ export function noteNeverLeft(signal: AbortSignal | undefined): void {
   if (signal) signalsNeverLeft.add(signal);
 }
 
+/** Records that a request under `signal` got a failing server's answer (see {@link isFailingServerAnswer}). */
+export function noteFailingServer(signal: AbortSignal | undefined): void {
+  if (signal) signalsFailingServer.add(signal);
+}
+
+/** Whether a request under `signal` got a failing server's answer (see {@link noteFailingServer}). */
+export function failingServerAnswered(signal: AbortSignal): boolean {
+  return signalsFailingServer.has(signal);
+}
+
 /**
- * Whether no request under `signal` reached the server: one failed before its connection opened and none reached it
- * or may have (see {@link noteNeverLeft}, {@link noteServerReached}).
+ * Whether no request under `signal` was served: one failed before its connection opened or got a failing server's
+ * answer, and none ended in a counted failure (see {@link noteNeverLeft}, {@link noteFailingServer},
+ * {@link noteServerReached}). A successful request does not change it.
  */
-export function attemptNeverReached(signal: AbortSignal): boolean {
-  return signalsNeverLeft.has(signal) && !signalsReached.has(signal);
+export function attemptNotServed(signal: AbortSignal): boolean {
+  return (signalsNeverLeft.has(signal) || signalsFailingServer.has(signal)) && !signalsReached.has(signal);
 }
 
 export interface BoundedRequest {
@@ -123,15 +284,22 @@ export interface BoundedRequest {
   /** Clears the timer and the abort listener */
   dispose(): void;
   /**
-   * Notes on the caller's signal what became of the request: without `error` its response arrived; an `error` that
-   * never left notes {@link noteNeverLeft}, any other {@link noteServerReached}.
+   * Notes on the caller's signal a request that got no usable answer: an `error` that never left notes
+   * {@link noteNeverLeft}, any other (a timeout, a reset, a body that could not be read, the caller's abort)
+   * {@link noteServerReached}.
    */
-  noteOutcome(error?: unknown): void;
+  noteOutcome(error: unknown): RequestOutcome;
+  /**
+   * Notes on the caller's signal an answered request once its status and body kind are known: a success notes
+   * nothing, a failing server's answer {@link noteFailingServer}, any other {@link noteServerReached}.
+   */
+  noteAnswer(status: number, bodyIsJson: boolean, success: boolean, body?: unknown): RequestOutcome;
 }
 
 /** The signal for one request: its own `timeoutMs`, capped by the remaining budget, plus the caller's abort. */
-export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRequest {
+export function boundedRequest(timeoutMs: number, bounds: SyncBounds, group?: RequestGroup): BoundedRequest {
   noteSendAttempt(bounds.abortSignal);
+  forgetGroup(bounds.abortSignal, group);
   const controller = new AbortController();
   const remaining = remainingMs(bounds);
   const cappedByDeadline = remaining < timeoutMs;
@@ -155,9 +323,21 @@ export function boundedRequest(timeoutMs: number, bounds: SyncBounds): BoundedRe
       clearTimeout(timer);
       bounds.abortSignal?.removeEventListener('abort', onAbort);
     },
-    noteOutcome: (error?: unknown) => {
-      if (error !== undefined && requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
+    noteOutcome: (error: unknown): RequestOutcome => {
+      if (requestNeverLeft(error)) noteNeverLeft(bounds.abortSignal);
       else noteServerReached(bounds.abortSignal);
+      const outcome = classifyError(error, reason);
+      recordOutcome(bounds.abortSignal, outcome, group);
+      return outcome;
+    },
+    noteAnswer: (status: number, bodyIsJson: boolean, success: boolean, body?: unknown): RequestOutcome => {
+      if (!success) {
+        if (isFailingServerAnswer(status, bodyIsJson)) noteFailingServer(bounds.abortSignal);
+        else noteServerReached(bounds.abortSignal);
+      }
+      const outcome = classifyAnswer(status, bodyIsJson, success, body);
+      recordOutcome(bounds.abortSignal, outcome, group);
+      return outcome;
     },
   };
 }

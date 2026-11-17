@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BaseAgentAdapter } from '../../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../../types.js';
-import { launchMode, oauthAccountPays, routedViaCodemie, type RoutingInput } from '../routing.js';
+import { launchMode, localProxyCandidate, oauthAccountPays, routedViaCodemie, type RoutingInput } from '../routing.js';
 
 vi.mock('../../../../providers/core/registry.js', () => {
   const providers: Record<string, { authType: string }> = {
@@ -259,6 +259,85 @@ describe('routedViaCodemie - native', () => {
     it('unreadable settings (settingsUnknown) is unproven even with no endpoint anywhere', () => {
       expect(routedViaCodemie({ ...base, settingsUnknown: true })).toEqual(UNPROVEN);
       expect(routedViaCodemie({ ...base })).toEqual({ routed: false, routing_proof: 'proven' });
+    });
+  });
+});
+
+describe('routedViaCodemie - native via local proxy daemon', () => {
+  const PROXY = 'http://127.0.0.1:4001';
+  const env = { ANTHROPIC_BASE_URL: PROXY, ANTHROPIC_AUTH_TOKEN: 'gw' };
+  const daemon = { url: PROXY, targetUrl: GATEWAY, profile: 'p' };
+  const PROVEN_ROUTED = { routed: true, routing_proof: 'proven' };
+  const NOT_PROVEN = { routed: false, routing_proof: 'unproven' };
+  /** A native session on profile `p` with the live daemon above, unless overridden. */
+  const via = (e: NodeJS.ProcessEnv, extra: Partial<RoutingInput> = {}): RoutingInput =>
+    input(e, { profileBaseUrl: GATEWAY, profileName: 'p', localProxy: daemon, ...extra });
+
+  it('endpoint is the live daemon, its target is the profile route and it serves the hook profile => routed/proven', () => {
+    expect(routedViaCodemie(via(env))).toEqual(PROVEN_ROUTED);
+  });
+
+  it("only the daemon's own host form matches: localhost and [::1] are other sockets than 127.0.0.1", () => {
+    expect(routedViaCodemie(via({ ...env, ANTHROPIC_BASE_URL: 'http://localhost:4001' }))).toEqual(NOT_PROVEN);
+    expect(routedViaCodemie(via({ ...env, ANTHROPIC_BASE_URL: 'http://[::1]:4001/' }))).toEqual(NOT_PROVEN);
+    expect(routedViaCodemie(via({ ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:4001/' }))).toEqual(PROVEN_ROUTED);
+  });
+
+  it('a loopback endpoint on another port is unproven', () => {
+    expect(routedViaCodemie(via({ ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:4002' }))).toEqual(NOT_PROVEN);
+  });
+
+  it('no localProxy is unproven', () => {
+    expect(routedViaCodemie(via(env, { localProxy: undefined }))).toEqual(NOT_PROVEN);
+  });
+
+  it('a daemon target that is not the profile route is unproven', () => {
+    expect(routedViaCodemie(via(env, { localProxy: { ...daemon, targetUrl: 'https://other.example.com' } }))).toEqual(NOT_PROVEN);
+  });
+
+  it('a daemon without a target and a profile without a base URL is unproven (never undefined === undefined)', () => {
+    expect(routedViaCodemie(via(env, { profileBaseUrl: undefined, localProxy: { url: PROXY, profile: 'p' } }))).toEqual(NOT_PROVEN);
+  });
+
+  it('a daemon started for another profile is unproven, even on the same base URL', () => {
+    expect(routedViaCodemie(via(env, { profileName: 'other' }))).toEqual(NOT_PROVEN);
+    expect(routedViaCodemie(via(env, { localProxy: { url: PROXY, targetUrl: GATEWAY } }))).toEqual(NOT_PROVEN);
+    expect(routedViaCodemie(via(env, { profileName: undefined }))).toEqual(NOT_PROVEN);
+  });
+
+  it('a non-CodeMie provider is never proven routed', () => {
+    expect(routedViaCodemie(via(env, { codemieProvider: false })).routed).toBe(false);
+  });
+
+  it('a settings.json endpoint pointing at the proxy is proven', () => {
+    expect(routedViaCodemie(via({}, { settingsEnv: { ANTHROPIC_BASE_URL: PROXY } }))).toEqual(PROVEN_ROUTED);
+  });
+
+  it('a cloud provider base URL is never compared to the proxy', () => {
+    expect(routedViaCodemie(via({ CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BEDROCK_BASE_URL: PROXY })).routed).toBe(false);
+  });
+
+  describe('localProxyCandidate', () => {
+    it('is true for a native CodeMie launch on a loopback endpoint', () => {
+      expect(localProxyCandidate(input(env))).toBe(true);
+      expect(localProxyCandidate(input({}, { settingsEnv: { ANTHROPIC_BASE_URL: PROXY } }))).toBe(true);
+    });
+
+    it('is false for a remote endpoint, a managed launch, a non-CodeMie provider, unreadable settings or any unresolvable cloud flag', () => {
+      expect(localProxyCandidate(input({ ANTHROPIC_BASE_URL: GATEWAY }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CODEMIE_SESSION_ID: 's' }))).toBe(false);
+      expect(localProxyCandidate(input(env, { codemieProvider: false }))).toBe(false);
+      expect(localProxyCandidate(input(env, { settingsUnknown: true }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CLAUDE_CODE_USE_BEDROCK: '1' }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CLAUDE_CODE_USE_FOUNDRY: '1' }))).toBe(false);
+      expect(localProxyCandidate(input({ ...env, CLAUDE_CODE_USE_VERTEX: 'maybe' }))).toBe(false);
+    });
+
+    it('agrees with routedViaCodemie: whenever it is false, a live daemon cannot prove the session', () => {
+      for (const e of [{ ...env, CLAUDE_CODE_USE_FOUNDRY: '1' }, { ...env, CLAUDE_CODE_USE_VERTEX: 'maybe' }, { ...env, CLAUDE_CODE_USE_BEDROCK: '1' }]) {
+        expect(localProxyCandidate(input(e))).toBe(false);
+        expect(routedViaCodemie(via(e)).routed).toBe(false);
+      }
     });
   });
 });

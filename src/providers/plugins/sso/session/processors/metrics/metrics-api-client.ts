@@ -31,7 +31,8 @@ import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../uti
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwIfStopped, type RequestGroup, type RequestOutcome } from '../../bounded-request.js';
+import { CodeMieError } from '../../../../../../utils/errors.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
@@ -41,6 +42,20 @@ interface MetricsRequestError extends Error {
   responseText?: string;
   /** True when the server rejected the provided credentials (401 or an HTML SSO login page) */
   isAuthFailure?: boolean;
+  /** What the request came to (see RequestOutcome); `rejected` makes the delta terminal */
+  outcome?: RequestOutcome;
+}
+
+/** A metric whose retries all failed: the last try's `outcome` and the error it ended with, as its `cause`. */
+export class MetricsRetryExhaustedError extends CodeMieError {
+  readonly outcome: RequestOutcome | undefined;
+
+  constructor(retries: number, lastError: Error | undefined) {
+    super(`Failed after ${retries} retries: ${lastError?.message}`);
+    this.name = 'MetricsRetryExhaustedError';
+    this.cause = lastError;
+    this.outcome = (lastError as MetricsRequestError | undefined)?.outcome;
+  }
 }
 
 /**
@@ -72,6 +87,8 @@ class MetricsApiClient {
 
   async sendMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
     let lastError: Error | undefined;
+    // The tries of this metric are one logical request: only the last try's outcome counts for the caller's attempt
+    const group = newRequestGroup();
 
     for (let attempt = 0; attempt <= this.config.retryAttempts; attempt++) {
       try {
@@ -82,7 +99,7 @@ class MetricsApiClient {
         }
         throwIfStopped(this.bounds);
 
-        const response = await this.sendRequest(metric);
+        const response = await this.sendRequest(metric, group);
         // Server accepted our credentials — clear any stale invalid-auth marker
         await clearAnalyticsAuthStatus();
         return response;
@@ -119,10 +136,10 @@ class MetricsApiClient {
       }
     }
 
-    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`, { cause: lastError });
+    throw new MetricsRetryExhaustedError(this.config.retryAttempts, lastError);
   }
 
-  private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
+  private async sendRequest(metric: SessionMetric, group: RequestGroup): Promise<MetricsSyncResponse> {
     const url = `${this.config.baseUrl}${CODEMIE_ENDPOINTS.METRICS}`;
     const body = JSON.stringify(metric);
 
@@ -180,7 +197,8 @@ class MetricsApiClient {
       headers['Cookie'] = this.config.cookies;
     }
 
-    const request = boundedRequest(this.config.timeout, this.bounds);
+    const request = boundedRequest(this.config.timeout, this.bounds, group);
+    let answered = false;
 
     try {
       const response = await fetch(url, {
@@ -189,10 +207,17 @@ class MetricsApiClient {
         body,
         signal: request.signal
       });
-      request.noteOutcome();
 
       const responseText = await response.text();
-      const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
+      answered = true;
+      let data: MetricsSyncResponse | MetricsApiError;
+      try {
+        data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
+      } catch (error) {
+        (error as MetricsRequestError).outcome = request.noteAnswer(response.status, false, false);
+        throw error;
+      }
+      const outcome = request.noteAnswer(response.status, true, response.ok && (data as MetricsSyncResponse | null)?.success === true, data);
 
       if (!response.ok) {
         if ('code' in data && 'details' in data) {
@@ -204,7 +229,8 @@ class MetricsApiClient {
           const error = new Error(errorMessage) as MetricsRequestError;
           error.statusCode = response.status;
           error.response = data;
-          error.isAuthFailure = response.status === 401;
+          error.isAuthFailure = response.status === 401 && outcome === 'auth';
+          error.outcome = outcome;
           throw error;
         }
 
@@ -212,7 +238,8 @@ class MetricsApiClient {
         const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
-        error.isAuthFailure = response.status === 401;
+        error.isAuthFailure = response.status === 401 && outcome === 'auth';
+        error.outcome = outcome;
         throw error;
       }
 
@@ -223,6 +250,7 @@ class MetricsApiClient {
         const error = new Error(`API returned malformed metrics response: missing boolean success`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
+        error.outcome = outcome;
         throw error;
       }
 
@@ -230,6 +258,7 @@ class MetricsApiClient {
         const error = new Error(`API reported failure: ${successData.message}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
+        error.outcome = outcome;
         throw error;
       }
 
@@ -237,7 +266,7 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
-      request.noteOutcome(error);
+      if (!answered) (error as MetricsRequestError).outcome = request.noteOutcome(error);
       if ((error as Error).name === 'AbortError') {
         const stopReason = request.stopReason();
         if (stopReason) {
@@ -275,7 +304,7 @@ function parseMetricsResponse(
     error.responseText = excerpt;
     // fetch follows the redirect of expired cookies, so the SSO login page lands as a 2xx HTML page
     // (Keycloak answers HTTP 200 + login HTML); an HTML 4xx / 5xx is a proxy's or WAF's own error page
-    // (413, a 403 block page, a 502), a failure counted by its status, not rejected credentials
+    // (413, a 403 block page, a 502), a failing server's answer, not rejected credentials
     const isHtml = Boolean(contentType?.includes('text/html'));
     error.isAuthFailure = statusCode === 401 || (isHtml && statusCode >= 200 && statusCode < 300);
     throw error;

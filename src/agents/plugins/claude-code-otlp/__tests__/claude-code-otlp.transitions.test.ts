@@ -136,7 +136,7 @@ describe('hook-side transitions', () => {
     const t = await setup();
     await t.record({ profile: 'original' });
     expect(await t.gate(hook())).toBe('continue');
-    expect(projectMock).toHaveBeenCalledWith(hook().cwd, 'original');
+    expect(projectMock).toHaveBeenCalledWith(hook().cwd, 'original', { configuredWins: true });
     projectMock.mockResolvedValue('other-project');
     expect(await t.gate(hook({ cwd: join(tmpdir(), 'other-repo') }))).toBe('stop');
   });

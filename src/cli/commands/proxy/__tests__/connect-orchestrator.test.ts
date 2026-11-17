@@ -40,6 +40,7 @@ vi.mock('../daemon-manager.js', async (importOriginal) => ({
 vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),
   spawnDetached: vi.fn(),
+  resolveRepositoryName: vi.fn(async () => 'owner/repo'),
   // The start comparison runs `ps`; the test that exercises it switches this to the real one with `ps` mocked
   isOwnerAlive: vi.fn(async () => true),
 }));
@@ -54,10 +55,14 @@ vi.mock('../connectors/desktop.js', () => ({
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
+  readDesktopGateway: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('../connectors/vscode.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode.js')>()),
   writeVsCodeLanguageModelsConfig: vi.fn(),
+}));
+vi.mock('../connectors/omp.js', () => ({
+  writeOmpExtension: vi.fn(),
 }));
 vi.mock('../connectors/vscode-claude-code.js', () => ({
   writeVsCodeClaudeCodeConfig: vi.fn(),
@@ -95,18 +100,24 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js')>()),
   getClaudeSettingsPath: vi.fn(),
-  canonicalizePath: vi.fn(async (path: string) => path),
   readAllowlistState: vi.fn().mockResolvedValue({ kind: 'absent' }),
 }));
 vi.mock('@/utils/project-root.js', () => ({
   resolveProjectRoot: vi.fn().mockReturnValue('/mock/project'),
 }));
-vi.mock('../prompts/analytics-confirmation.js', () => ({
+vi.mock('../prompts/analytics-confirmation.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../prompts/analytics-confirmation.js')>()),
   promptAnalyticsConfirmation: vi.fn().mockResolvedValue('enable'),
 }));
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
 }));
+
+// A test that connects Claude Desktop leaves the shared mock as it found it: not connected.
+afterEach(async () => {
+  const { readDesktopGateway } = await import('../connectors/desktop.js');
+  vi.mocked(readDesktopGateway).mockResolvedValue(null);
+});
 
 // ── shared test helpers ──────────────────────────────────────────────────────
 
@@ -295,16 +306,15 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { resolveRepositoryName } = await import('@/utils/processes.js');
     vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
 
+    expect(resolveRepositoryName).toHaveBeenCalledWith('/mock/project');
     expect(promptAnalyticsConfirmation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: 'project',
-        currentProjectPath: '/mock/project',
-      })
+      expect.objectContaining({ repositoryName: 'owner/repo' })
     );
     const promptArgs = vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0];
     expect(promptArgs).not.toHaveProperty('name');
@@ -313,18 +323,20 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
   });
 
-  it('shows the Global prompt when scope is omitted and a declined default writes nothing', async () => {
+  it('shows the prompt without a project name when scope is omitted and a declined default writes nothing', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { resolveRepositoryName } = await import('@/utils/processes.js');
     vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeCodeOtlp: true } });
 
     expect(promptAnalyticsConfirmation).toHaveBeenCalledTimes(1);
-    expect(promptAnalyticsConfirmation).toHaveBeenCalledWith(expect.objectContaining({ scope: 'user' }));
+    expect(vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0].repositoryName).toBeUndefined();
+    expect(resolveRepositoryName).not.toHaveBeenCalled();
     expect(checkStatus).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(stopDaemon).not.toHaveBeenCalled();
@@ -367,6 +379,9 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
     expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ scope: 'user' }));
+    const printed = console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
+    expect(printed).toContain('CodeMie URL: https://x.example.com');
+    expect(printed.some((message) => message.startsWith('Repository:'))).toBe(false);
   });
 
   it('--scope project --silent skips the prompt and writes the Project scope', async () => {
@@ -384,6 +399,9 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
     expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
     expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project' }));
+    const printed = console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
+    expect(printed).toContain('CodeMie URL: https://x.example.com');
+    expect(printed).toContain('Repository: owner/repo');
   });
 
   for (const scope of [undefined, 'project'] as const) {
@@ -657,8 +675,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
     expect(process.exitCode).toBe(0);
     expect(stopDaemon).not.toHaveBeenCalled();
-    // A per-target summary is printed for a multi-target run.
-    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
   });
 
   it('partial failure: one target fails, another succeeds → exit 1, daemon kept', async () => {
@@ -826,7 +843,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(process.exitCode).toBe(0);
   });
 
-  it('single successful target still prints the per-target summary (spec §3.4)', async () => {
+  it('single successful target prints no per-target summary', async () => {
     await withFreshDaemon();
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
@@ -835,80 +852,11 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     await connectTargets({ targets: { vscode: true } });
 
     expect(process.exitCode).toBe(0);
-    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
-    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false, undefined);
   });
 
-  it('prints the resolved Claude Code analytics configuration', async () => {
-    await setupHappyMocks({
-      name: 'preview',
-      baseUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api',
-      codeMieUrl: 'https://codemie.lab.epam.com',
-      ssoConfig: { apiUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api' },
-    });
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(spawnDaemon).mockResolvedValue(
-      daemonState({
-        clientType: 'claude-code-otlp',
-        syncApiUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api',
-      }) as Awaited<ReturnType<typeof spawnDaemon>>
-    );
-    const { connectTargets } = await import('../connect-orchestrator.js');
-
-    await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
-
-    const output = console_.log().mock.calls
-      .map(([message]) => stripAnsi(String(message)))
-      .join('\n');
-    expect(output).toMatch(/Using profile\s+│\s+preview/);
-    expect(output).not.toMatch(/^Profile\s+│/m);
-    expect(output).toMatch(/CodeMie URL\s+│\s+https:\/\/codemie-preview\.lab\.epam\.com/);
-    expect(output).not.toContain('Analytics destination:');
-    expect(output).toMatch(/Scope\s+│\s+project/);
-    expect(output).not.toContain('Tracked projects');
-    expect(output).not.toContain('/repo/project');
-    expect(output).toContain('First-time setup needs a Claude Code restart');
-    expect(console_.log()).toHaveBeenCalledWith(
-      expect.stringContaining('Claude Code Analytics configured successfully')
-    );
-  });
-
-  it('prints default scope and all projects without a CodeMie URL when allowlist is empty', async () => {
-    await setupHappyMocks({
-      name: 'preview',
-      codeMieUrl: undefined,
-    });
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(spawnDaemon).mockResolvedValue(
-      daemonState({ clientType: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
-    );
-    vi.mocked(writeClaudeCodeOtlpConfig).mockResolvedValue({
-      written: true,
-      path: '/mock/claude/settings.json',
-      backupPath: null,
-      hookEvents: 8,
-      envVars: 9,
-      allowlist: [],
-    });
-    const { connectTargets } = await import('../connect-orchestrator.js');
-
-    await connectTargets({ targets: { claudeCodeOtlp: true } });
-
-    const output = console_.log().mock.calls
-      .map(([message]) => stripAnsi(String(message)))
-      .join('\n');
-    expect(output).toMatch(/Using profile\s+│\s+preview/);
-    expect(output).not.toMatch(/^Profile\s+│/m);
-    expect(output).not.toContain('CodeMie URL');
-    expect(output).toMatch(/Scope\s+│\s+user/);
-    expect(output).not.toContain('Tracked projects');
-    expect(output).not.toContain('all projects');
-  });
-
-  it('omits tracked projects and wiring details after the proxy starts', async () => {
+  it('prints only the success line after the proxy starts', async () => {
     await setupHappyMocks({ name: 'preview' });
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
@@ -928,10 +876,16 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
     await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
 
-    const lines = console_.log().mock.calls
-      .flatMap(([message]) => stripAnsi(String(message)).split('\n'));
-    const output = lines.join('\n');
+    const output = console_.log().mock.calls
+      .flatMap(([message]) => stripAnsi(String(message)).split('\n'))
+      .join('\n');
+    expect(output).toContain('Claude Code Analytics configured successfully');
     for (const hidden of [
+      'First-time setup',
+      'restart',
+      'Analytics Configuration',
+      'Targets configured',
+      '│',
       'Tracked projects',
       '/repo/project-',
       'wired to codemie hook',
@@ -943,22 +897,11 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     ]) {
       expect(output).not.toContain(hidden);
     }
-    // The table keeps its rows, all sharing one bar column.
-    const tableRows = lines.filter((line) => line.includes('│'));
-    expect(tableRows.length).toBeGreaterThanOrEqual(2);
-    const barColumn = tableRows[0].indexOf('│');
-    for (const row of tableRows) {
-      expect(row.indexOf('│')).toBe(barColumn);
-    }
-    expect(output).toMatch(/Using profile\s+│\s+preview/);
-    expect(output).toMatch(/Scope\s+│\s+project/);
   });
 
   describe('Claude Code analytics display wiring', () => {
     async function connectAndCapture(configOverrides: Record<string, unknown>): Promise<{
       promptArgs: Record<string, unknown>;
-      confirmedUrl: string | undefined;
-      output: string;
     }> {
       await setupHappyMocks(configOverrides);
       const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
@@ -972,15 +915,11 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await connectTargets({ targets: { claudeCodeOtlp: true } });
 
       const promptArgs = vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0] as unknown as Record<string, unknown>;
-      const output = console_.log().mock.calls
-        .map(([message]) => stripAnsi(String(message)))
-        .join('\n');
-      const tableUrl = output.match(/CodeMie URL\s+│\s+(\S+)/)?.[1];
-      return { promptArgs, confirmedUrl: tableUrl, output };
+      return { promptArgs };
     }
 
-    it('passes the profile name and the matching-origin CodeMie URL to the prompt and the table', async () => {
-      const { promptArgs, confirmedUrl } = await connectAndCapture({
+    it('passes the profile name and the matching-origin CodeMie URL to the prompt', async () => {
+      const { promptArgs } = await connectAndCapture({
         name: 'work',
         baseUrl: 'https://x.example.com/api',
         codeMieUrl: 'https://x.example.com/ui',
@@ -990,11 +929,10 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         profile: 'work',
         codeMieUrl: 'https://x.example.com/ui',
       }));
-      expect(confirmedUrl).toBe('https://x.example.com/ui');
     });
 
-    it('passes the baseUrl origin to both when the workspace CodeMie URL has a different origin', async () => {
-      const { promptArgs, confirmedUrl } = await connectAndCapture({
+    it('passes the baseUrl origin to the prompt when the workspace CodeMie URL has a different origin', async () => {
+      const { promptArgs } = await connectAndCapture({
         name: 'work',
         baseUrl: 'https://api.example.com/code-assistant-api',
         codeMieUrl: 'https://other.example.com',
@@ -1004,19 +942,16 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         profile: 'work',
         codeMieUrl: 'https://api.example.com',
       }));
-      expect(confirmedUrl).toBe('https://api.example.com');
     });
 
-    it('passes an undefined CodeMie URL to both when none is configured, still naming the profile', async () => {
-      const { promptArgs, confirmedUrl, output } = await connectAndCapture({
+    it('passes an undefined CodeMie URL to the prompt when none is configured, still naming the profile', async () => {
+      const { promptArgs } = await connectAndCapture({
         name: 'work',
         codeMieUrl: undefined,
       });
 
       expect(promptArgs.profile).toBe('work');
       expect(promptArgs.codeMieUrl).toBeUndefined();
-      expect(confirmedUrl).toBeUndefined();
-      expect(output).not.toContain('CodeMie URL');
     });
 
     it('falls back to the default profile name when the profile is unnamed', async () => {
@@ -1722,6 +1657,109 @@ describe('runCodexDesktop', () => {
   });
 });
 
+describe('omp identity and VS Code BYOK conflict', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+  });
+
+  it('rejects --omp with --vscode before profile resolution or side effects', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    const errorSpy = vi.spyOn(console, 'error');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await expect(connectTargets({ targets: { omp: true, vscode: true }, profile: 'x' }))
+      .rejects.toThrow('process.exit:1');
+
+    expect(ConfigLoader.load).not.toHaveBeenCalled();
+    expect(checkStatus).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(writeVsCodeLanguageModelsConfig).not.toHaveBeenCalled();
+    expect(writeOmpExtension).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--omp cannot be combined with --vscode'));
+  });
+
+  it('keeps omp when combined with the Claude Code VS Code extension', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeVsCodeClaudeCodeConfig } = await import('../connectors/vscode-claude-code.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-desktop' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    vi.mocked(writeVsCodeClaudeCodeConfig).mockResolvedValue({ path: '/x' } as Awaited<ReturnType<typeof writeVsCodeClaudeCodeConfig>>);
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true, vscodeClaudeCode: true } });
+
+    expect(writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+    expect(writeOmpExtension).toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('falls back to the codemie-daemon identity for omp when Claude Code analytics is declined', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+    vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ clientType: 'codemie-daemon' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true, claudeCodeOtlp: true } });
+
+    expect(writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+    expect(writeOmpExtension).toHaveBeenCalledTimes(1);
+    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ clientType: 'codemie-daemon' }));
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('derives the generic identity for omp and preserves target priority', async () => {
+    const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
+    expect(deriveDaemonIdentity({ omp: true })).toEqual({
+      clientType: 'codemie-daemon',
+      spawnOptions: { clientType: 'codemie-daemon' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, claudeDesktop: true })).toEqual({
+      clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, vscodeClaudeCode: true })).toEqual({
+      clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, claudeCodeOtlp: true })).toEqual({
+      clientType: 'claude-code-otlp', spawnOptions: { clientType: 'claude-code-otlp' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, codexDesktop: true })).toEqual({
+      clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, copilotChatOtlp: true })).toEqual({
+      clientType: 'copilot-chat-otlp', spawnOptions: { clientType: 'copilot-chat-otlp' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, copilotCliOtlp: true })).toEqual({
+      clientType: 'copilot-cli-otlp', spawnOptions: { clientType: 'copilot-cli-otlp' },
+    });
+  });
+});
+
 describe('assertSsoCredentials', () => {
   const BASE_URL = 'https://x.example.com/api';
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -1789,5 +1827,217 @@ describe('assertSsoCredentials', () => {
 
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Desktop identity while Claude Desktop is connected', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+  });
+
+  type State = Awaited<ReturnType<typeof import('../daemon-manager.js').checkStatus>>['state'];
+
+  /** Happy profile, Claude Desktop connected to `gatewayPort` (or not, with null), and the given running daemon. */
+  async function arrange(gatewayPort: number | null, running: Record<string, unknown> | null) {
+    await setupHappyMocks();
+    const daemon = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    vi.mocked(readDesktopGateway).mockResolvedValue(gatewayPort === null ? null : { port: gatewayPort });
+    vi.mocked(daemon.checkStatus).mockResolvedValue(
+      running ? { running: true, state: running as State } : { running: false, state: null }
+    );
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    vi.mocked(daemon.writeConnectionRecord).mockResolvedValue(true);
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    return { daemon, connectTargets };
+  }
+
+  it('keeps a running Desktop-mode daemon when Claude Code analytics alone is connected', async () => {
+    const desktop = matchingDesktopState({ clientType: 'claude-desktop' });
+    const s = await arrange(4001, desktop);
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }),
+      'p',
+      'claude-desktop'
+    );
+  });
+
+  it('respawns a claude-code-otlp daemon in Desktop mode on the gateway port', async () => {
+    const otlp = matchingDesktopState({ clientType: 'claude-code-otlp', telemetryMode: undefined });
+    const s = await arrange(4001, otlp);
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-desktop' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.stopDaemon).toHaveBeenCalled();
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4001 })
+    );
+  });
+
+  it('derives the identity from the targets once Desktop is disconnected', async () => {
+    const s = await arrange(null, matchingDesktopState({ clientType: 'claude-desktop' }));
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-code-otlp', telemetryMode: undefined }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+
+    expect(s.daemon.stopDaemon).toHaveBeenCalled();
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ clientType: 'claude-code-otlp', port: 4001 });
+    expect(spawned.telemetryMode).toBeUndefined();
+  });
+
+  it('a connect naming Claude Desktop spawns with the target identity on the default port', async () => {
+    const s = await arrange(4005, null);
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState() as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await s.connectTargets({ targets: { claudeDesktop: true } });
+
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ telemetryMode: 'claude-desktop', port: 4001 });
+    expect(spawned.clientType).toBeUndefined();
+  });
+
+  it('keeps a running codex-desktop daemon', async () => {
+    const codex = matchingDesktopState({ clientType: 'codex-desktop', telemetryMode: undefined });
+    const s = await arrange(4001, codex);
+
+    await s.connectTargets({ targets: { codexDesktop: true } });
+
+    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it('keeps a Desktop-mode spawn that came up off the gateway port', async () => {
+    const s = await arrange(4005, null);
+    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ clientType: 'claude-desktop', port: 62000, url: 'http://127.0.0.1:62000' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    );
+
+    await expect(s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true })).resolves.toBeUndefined();
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 62000 }),
+      'p',
+      'claude-desktop'
+    );
+  });
+});
+
+describe('ensureOtlpProxy while Claude Desktop is connected', () => {
+  let outputSpies: Array<ReturnType<typeof vi.spyOn>>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.doMock('../../../../providers/core/codemie-auth-helpers.js', () => ({
+      getStoredPlatformCredentials: vi.fn().mockResolvedValue({ token: 't' }),
+    }));
+    outputSpies = [
+      vi.spyOn(process.stdout, 'write').mockImplementation(() => true),
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true),
+      ...(['log', 'info', 'warn', 'error'] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => {})),
+    ];
+  });
+
+  afterEach(() => {
+    for (const spy of outputSpies) spy.mockRestore();
+    vi.doUnmock('../../../../providers/core/codemie-auth-helpers.js');
+    vi.resetModules();
+  });
+
+  async function arrange(record: Record<string, unknown>, gatewayPort: number, spawnedPort: number) {
+    const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
+    const daemon = await import('../daemon-manager.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { readDesktopGateway } = await import('../connectors/desktop.js');
+    const { logger } = await import('../../../../utils/logger.js');
+    await setupHappyMocks();
+    vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
+    vi.mocked(daemon.readState).mockResolvedValue(null);
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record as Awaited<ReturnType<typeof daemon.readConnectionRecord>>);
+    vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(daemon.spawnDaemon).mockResolvedValue(
+      daemonState({ port: spawnedPort, url: `http://127.0.0.1:${spawnedPort}` }) as Awaited<ReturnType<typeof daemon.spawnDaemon>>
+    );
+    vi.mocked(ConfigLoader.loadLocalConfigProfile).mockResolvedValue({ name: 'p' });
+    for (const method of ['warn', 'info', 'status', 'success'] as const) {
+      outputSpies.push(vi.spyOn(logger, method).mockImplementation(() => {}));
+    }
+    return { ensureOtlpProxy, daemon };
+  }
+
+  it('spawns a claude-code-otlp record in Desktop mode on the gateway port, writing nothing to the console', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'claude-code-otlp', updatedAt: '' }, 4005, 4005);
+
+    await s.ensureOtlpProxy('claude-code-otlp');
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+    for (const spy of outputSpies.slice(0, 6)) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('keeps a spawn that came up off the gateway port and points Claude Code at it, writing nothing to the console', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'claude-code-otlp', updatedAt: '' }, 4005, 62000);
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
+
+    await expect(s.ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+    expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 62000, url: 'http://127.0.0.1:62000' })
+    );
+    for (const spy of outputSpies.slice(0, 6)) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('spawns a no-record claude cold start in Desktop mode on the gateway port', async () => {
+    const s = await arrange({}, 4005, 4005);
+    vi.mocked(s.daemon.readConnectionRecord).mockResolvedValue(null);
+
+    await s.ensureOtlpProxy('claude');
+
+    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop', port: 4005 })
+    );
+  });
+
+  it('keeps a codex-desktop record identity and port', async () => {
+    const s = await arrange({ version: 1, profile: 'p', clientType: 'codex-desktop', updatedAt: '' }, 4005, 4001);
+
+    await s.ensureOtlpProxy('claude-code-otlp');
+
+    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    expect(spawned).toMatchObject({ clientType: 'codex-desktop', port: 4001 });
+    expect(spawned.telemetryMode).toBeUndefined();
   });
 });

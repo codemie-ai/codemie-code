@@ -9,6 +9,7 @@ import {
   streamFile,
 } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
+import { repairDestinationIntent } from './destination-intent.js';
 import { createStatus, readStatus } from './session-status.js';
 import { isSessionDrained, lastActivityMs, readSpoolState } from './spool-state.js';
 import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js';
@@ -37,7 +38,8 @@ export async function pendingSpoolSessionIds(): Promise<Set<string>> {
   for (const sessionId of await listSessionIds()) {
     try {
       const status = (await readStatus(sessionId)) ?? createStatus();
-      if (!isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
+      // An owed destination marker pins the record too: the marker is written for it later
+      if (status.destinationIntent || !isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
     } catch {
       pending.add(sessionId); // unknown state: protect
     }
@@ -50,7 +52,8 @@ export async function sweepSpool(): Promise<void> {
   for (const sessionId of await listSessionIds()) {
     try {
       const status = (await readStatus(sessionId)) ?? createStatus();
-      if (!isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
+      // An owed destination marker pins the record too: the marker is written for it later
+      if (status.destinationIntent || !isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
       await sweepSession(sessionId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -67,6 +70,8 @@ export async function sweepSpool(): Promise<void> {
 }
 
 async function sweepSession(sessionId: string): Promise<void> {
+  // An owed destination marker keeps the status (the gate reads the intent meanwhile) until its write succeeds
+  if (await repairDestinationIntent(sessionId)) return;
   // Cheap unlocked pre-scan to keep the sweep off the hot path...
   if (!(await isDeletable(sessionId))) return;
 
@@ -79,6 +84,7 @@ async function sweepSession(sessionId: string): Promise<void> {
 
 async function isDeletable(sessionId: string): Promise<boolean> {
   const status = (await readStatus(sessionId)) ?? createStatus();
+  if (status.destinationIntent) return false;
   const spool = await readSpoolState(sessionId, status);
 
   if (!isSessionDrained(spool)) return false;

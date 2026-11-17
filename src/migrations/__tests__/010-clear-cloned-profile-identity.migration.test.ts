@@ -80,6 +80,33 @@ describe('010-clear-cloned-profile-identity', () => {
     expect(config.workspace).toEqual(SHARED);
   });
 
+  it('clears only cloned trios, keeps distinct ones and assigns no project to any profile', async () => {
+    // @case global-profiles-share-workspace-identity_TC_003
+    await seedLedger(['008-isolate-global-profile-identity']);
+    await seedConfig({
+      cloned: { provider: 'ai-run-sso', ...SHARED },
+      distinct: {
+        provider: 'ai-run-sso',
+        codeMieUrl: 'https://other.example.com',
+        codeMieProject: 'own-proj',
+        codeMieIntegration: { id: 'i2', alias: 'a2' },
+      },
+      bare: { provider: 'ai-run-sso' },
+    });
+
+    expect(await run()).toMatchObject({ success: true, migrated: true });
+    const config = await read();
+    expect(config.profiles.cloned.codeMieUrl).toBeUndefined();
+    expect(config.profiles.cloned.codeMieProject).toBeUndefined();
+    expect(config.profiles.cloned.codeMieIntegration).toBeUndefined();
+    expect(config.profiles.distinct).toMatchObject({
+      codeMieUrl: 'https://other.example.com',
+      codeMieProject: 'own-proj',
+      codeMieIntegration: { id: 'i2', alias: 'a2' },
+    });
+    expect(config.profiles.bare.codeMieProject).toBeUndefined();
+  });
+
   it('does nothing when #701 never ran (released upgrade path)', async () => {
     await seedLedger(['007-decouple-provider-workspace-config', '008-repair-hook-shell-and-stale-paths']);
     await seedConfig({ a: { provider: 'ai-run-sso', ...SHARED }, b: { provider: 'ai-run-sso' } });

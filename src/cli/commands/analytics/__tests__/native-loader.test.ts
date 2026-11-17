@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+import { synthesizeRawSession, loadNativeSessions, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
@@ -142,6 +142,21 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   });
 });
 
+describe('transcriptPathKey', () => {
+  it('gives the same key on win32 for one file recorded with a different drive, folder case or separators', () => {
+    const recorded = 'c:/Users/Dev/.claude/projects/c--Users-Dev-repo/96972b5c.jsonl';
+    const discovered = 'C:\\Users\\dev\\.claude\\projects\\C--Users-Dev-repo\\96972b5c.jsonl';
+
+    expect(transcriptPathKey(recorded, 'win32')).toBe(transcriptPathKey(discovered, 'win32'));
+  });
+
+  it('keeps paths case-sensitive on other platforms', () => {
+    expect(transcriptPathKey('/tmp/does-not-exist/A.jsonl', 'linux')).not.toBe(
+      transcriptPathKey('/tmp/does-not-exist/a.jsonl', 'linux')
+    );
+  });
+});
+
 describe('loadNativeSessions', () => {
   it('skips logs already tracked by CodeMie and synthesizes the rest', async () => {
     const deps: NativeLoaderDeps = {
@@ -164,6 +179,22 @@ describe('loadNativeSessions', () => {
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['fresh']); // tracked one deduped out
     expect(out[0].agentSessionFile).toBe('/logs/fresh.jsonl');
+  });
+
+  it('on win32, dedups a tracked transcript recorded in a different case instead of adding it as native-external', async () => {
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set([transcriptPathKey('c:\\p\\c--repo\\s.jsonl', 'win32')]),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 's', filePath: 'C:\\p\\C--repo\\s.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse: async () => {
+        throw new Error('a tracked transcript must not be parsed again');
+      },
+      realPath: (p) => transcriptPathKey(p, 'win32'),
+      hasOwnershipMarker: () => false,
+    };
+
+    expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
 
   it('drops sessions whose log fails to parse', async () => {
@@ -519,6 +550,25 @@ describe('loadNativeSessions — ownership gate for managed Copilot CLI', () => 
 
     expect(results).toHaveLength(1);
     expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+});
+
+describe('realNativeDeps.parse — copilot-desktop', () => {
+  it('parses a copilot-desktop session with the copilot-cli session adapter', async () => {
+    const { AgentRegistry } = await import('../../../../agents/registry.js');
+    const { realNativeDeps } = await import('../native-loader.js');
+    const parseSessionFile = vi.fn(async () => ({ sessionId: 'd1' }));
+    const spy = vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ parseSessionFile }) } as never);
+
+    try {
+      const parsed = await realNativeDeps.parse('copilot-desktop', '/logs/d1/events.jsonl', 'd1');
+
+      expect(spy).toHaveBeenCalledWith('copilot-cli');
+      expect(parseSessionFile).toHaveBeenCalledWith('/logs/d1/events.jsonl', 'd1');
+      expect(parsed).toEqual({ sessionId: 'd1' });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

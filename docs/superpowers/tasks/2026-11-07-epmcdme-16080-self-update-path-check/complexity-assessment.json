@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "After a non-silent codemie self-update, verify the first codemie on PATH runs the just-installed version and print a clear warning if not (EPMCDME-16080).",
+  "generated": "2026-11-07T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest patterns are native-installer verifyInstallation (version probe via exec), hook-command resolveBinary (Windows .cmd shim swap) and getCommandPath (first PATH match). None covers the hard constraint: the spawned `codemie --version` re-enters bin/codemie.js and runs the start-up update flow, so a stale binary could self-install into its own prefix or prompt. The only existing skip switches are test-env flags (NODE_ENV=test / VITEST), --json argv and hook argv, and CODEMIE_AUTO_UPDATE=false prompts rather than skipping. Windows adds the extensionless shim, shell:true quoting of paths with spaces, and a timeout that may not kill the grandchild. Acceptance details (cross-platform, silent vs non-silent, exit code stays 0) are enumerated, and no existing test covers the non-silent success path or the PATH logic."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk set to L: no exact precedent for suppressing the child's auto-update, plus child-process side effects (self-update by a stale binary, prompt, update lock)."
+  ],
+  "split_recommendation": null
+}

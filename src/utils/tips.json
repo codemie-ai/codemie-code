@@ -264,9 +264,11 @@
   {
     "id": "cmd-proxy-disconnect",
     "category": "Proxy & IDE",
-    "message": "Unwiring Codex Desktop? `codemie proxy disconnect --codex-desktop` removes the CodeMie block from its config.",
+    "message": "Unwiring a client? `codemie proxy disconnect --claude-desktop`, `--vscode-claude-code` or `--codex-desktop` removes the CodeMie config from it.",
     "command": "proxy",
     "commands": [
+      "codemie proxy disconnect --claude-desktop",
+      "codemie proxy disconnect --vscode-claude-code",
       "codemie proxy disconnect --codex-desktop"
     ]
   },
