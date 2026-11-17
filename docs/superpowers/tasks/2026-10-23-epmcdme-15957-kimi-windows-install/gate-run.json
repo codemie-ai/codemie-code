@@ -1,0 +1,11 @@
+{"schema":1,"branch":"EPMCDME-15957_kimi-windows-install","head":"489781c0c05e21b0161d0ae8a623c1b526b4f700","runner":"npm","started_at":"2026-10-23T09:33:28Z","completed_at":"2026-10-23T09:35:10Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license","source":"guide","status":"PASS","duration_ms":3351,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":11088,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":5494,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":8958,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"PASS","duration_ms":35694,"command":"npx vitest run --project unit","exit_code":0,"notes":"5542 passed, 2 skipped"},
+{"id":"integration","source":"guide","status":"PASS","duration_ms":33266,"command":"npx vitest run --project cli","exit_code":0,"notes":"278 passed, 10 skipped"},
+{"id":"secrets","source":"guide","status":"SKIPPED","duration_ms":1806,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'; scan did not run. Stage changes (and have Docker running) to run locally; CI runs it unconditionally."},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":1361,"command":"npm run commitlint:last","exit_code":0,"notes":"Only HEAD~1..HEAD checked"}
+],"failures":{}}
