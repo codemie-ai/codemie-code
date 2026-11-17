@@ -675,6 +675,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
   it.each([
     ['an older version', { version: '0.16.9' }, '0.17.0', true],
     ['no version', { version: undefined }, '0.17.0', true],
+    ['version 0.0.0', { version: '0.0.0' }, '0.17.0', true],
     ['a newer version', { version: '0.18.0' }, '0.17.0', false],
     ['a version that is not x.y.z', { version: '0.17.0-rc.1' }, '0.17.0', false],
     ['a version, beside an own version that is not x.y.z', { version: '0.16.0' }, '0.17.0-rc.1', false],
@@ -1509,12 +1510,12 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     await writeFile(path, text);
   }
 
-  const vscodeSettings = (token: string): string => JSON.stringify({ 'claudeCode.environmentVariables': [
-    { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+  const vscodeSettings = (token: string, port = 4001): string => JSON.stringify({ 'claudeCode.environmentVariables': [
+    { name: 'ANTHROPIC_BASE_URL', value: `http://127.0.0.1:${port}` },
     { name: 'ANTHROPIC_AUTH_TOKEN', value: token },
   ] }, null, '\t');
 
-  const codexConfig = (authorization: string): string => [
+  const codexConfig = (authorization: string, port = 4001): string => [
     '# >>> codemie proxy connect (codex-desktop) header - managed block, do not edit',
     'model_provider = "codemie"',
     'model = "gpt-5.4"',
@@ -1523,7 +1524,7 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     '# >>> codemie proxy connect (codex-desktop) provider - managed block, do not edit',
     '[model_providers.codemie]',
     'name = "CodeMie"',
-    'base_url = "http://127.0.0.1:4001/v1"',
+    `base_url = "http://127.0.0.1:${port}/v1"`,
     'wire_api = "responses"',
     '[model_providers.codemie.http_headers]',
     `Authorization = "${authorization}"`,
@@ -1656,6 +1657,17 @@ describe('connectTargets — the other clients moved off the shared key', () => 
       '✓ Codex desktop moved to its own key — Quit and reopen the ChatGPT desktop app to apply the change.',
     ]));
     expect(process.exitCode).toBe(0);
+  });
+
+  it('--claude-desktop leaves and does not name a Codex config and VS Code settings with the shared key on another loopback port', async () => {
+    await writeAt(codexConfigPath(), codexConfig('Bearer gk', 4002));
+    await writeAt(await vscodeSettingsPath(), vscodeSettings('gk', 4002));
+
+    await connect({ claudeDesktop: true });
+
+    expect(await readFile(codexConfigPath(), 'utf-8')).toBe(codexConfig('Bearer gk', 4002));
+    expect(await readFile(await vscodeSettingsPath(), 'utf-8')).toBe(vscodeSettings('gk', 4002));
+    expect(printed().some((line) => line.includes('moved to its own key'))).toBe(false);
   });
 
   it('--codex-desktop writes the Codex config by its own connect, and the pass does not name it', async () => {
@@ -1855,6 +1867,21 @@ describe('connectTargets — the other clients moved off the shared key', () => 
       await connect({ claudeDesktop: true });
 
       expect(await readRecord()).toEqual(record({}));
+    });
+
+    it('is removed for a vscode-byok record after --vscode, the BYOK named key printed', async () => {
+      const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+      vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
+      await writeAt(recordPath(), JSON.stringify(record({ clientType: 'vscode-byok' })));
+
+      await connect({ vscode: true });
+
+      expect(await readRecord()).toEqual(record({}));
+      expect(printed()).toContain(
+        '  Update the key VS Code holds: open Chat: Manage Language Models, ' +
+        'then right-click any CodeMie model → Update API Key and enter gk.vscode-byok.'
+      );
+      expect(process.exitCode).toBe(0);
     });
 
     it('is removed for a codex-desktop record after --codex-desktop with no Desktop config', async () => {

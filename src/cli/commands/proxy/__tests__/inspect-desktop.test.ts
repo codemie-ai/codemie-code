@@ -83,6 +83,16 @@ describe('proxy inspect desktop', () => {
     expect(await reasonsBySession(older)).toEqual({ local_before: ['daemon-of-older-cli'] });
   });
 
+  it('says daemon-not-running for the kept state of a daemon that is not running, and keeps that state in the result', async () => {
+    await desktopSession('before', BEFORE);
+    const kept = state({ version: '0.17.0', desktopConnectedSince: CONNECTED_AT });
+
+    const result = await inspectDesktopProxy(false, kept);
+
+    expect(result.sessions.map((session) => session.reasons)).toEqual([['daemon-not-running']]);
+    expect(result.daemonState).toEqual(kept);
+  });
+
   it('prints neither a telemetry mode nor a daemon client type', async () => {
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line?: unknown) => { lines.push(String(line)); });

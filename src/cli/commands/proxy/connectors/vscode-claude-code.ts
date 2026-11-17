@@ -259,17 +259,19 @@ export async function writeVsCodeClaudeCodeConfig(
 
 /**
  * Moves the extension's `settings.json` of VS Code (or VS Code Insiders) from the shared key of the daemon of
- * gateway key `gatewayKey` to the extension's named key, `<gatewayKey>.vscode-claude-code`: only the value of the
- * managed `ANTHROPIC_AUTH_TOKEN` changes, in place, comments and formatting kept, atomically. `moved` when written;
- * `left` for a settings file that is a symbolic link, not written; `unchanged` when the reader gives anything but
- * the shared key (a named or refused key, no key, no CodeMie entries, a missing or unreadable file). A failed write
- * throws.
+ * gateway key `gatewayKey`, listening on `port`, to the extension's named key, `<gatewayKey>.vscode-claude-code`:
+ * only the value of the managed `ANTHROPIC_AUTH_TOKEN` changes, in place, comments and formatting kept, atomically.
+ * `moved` when written; `left` for a settings file that is a symbolic link, not written; `unchanged` when the reader
+ * gives another port than `port` or anything but the shared key (a named or refused key, no key, no CodeMie entries,
+ * a missing or unreadable file). A failed write throws.
  */
 export async function moveVsCodeClaudeCodeToNamedKey(
   gatewayKey: string,
+  port: number,
   insiders = false
 ): Promise<'moved' | 'left' | 'unchanged'> {
-  if ((await readVsCodeClaudeCodeGateway(gatewayKey, insiders))?.key !== 'shared') return 'unchanged';
+  const gateway = await readVsCodeClaudeCodeGateway(gatewayKey, insiders);
+  if (gateway?.port !== port || gateway.key !== 'shared') return 'unchanged';
   const configPath = getVsCodeClaudeCodeSettingsPath(insiders);
   if ((await lstat(configPath)).isSymbolicLink()) return 'left';
 

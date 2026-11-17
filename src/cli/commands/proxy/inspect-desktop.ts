@@ -145,7 +145,8 @@ export async function inspectDesktopProxy(
     codeSessionsRoot,
     credentialsUrl,
     hasCredentials: Boolean(credentials?.cookies),
-    sessions: await inspectSessions(sortedSessions, daemonState)
+    // The kept state of a daemon that is not running fills the header alone: its sessions have no daemon.
+    sessions: await inspectSessions(sortedSessions, daemonRunning ? daemonState : null)
   };
 }
 

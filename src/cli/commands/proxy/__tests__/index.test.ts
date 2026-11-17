@@ -782,6 +782,53 @@ describe('proxy start', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
   });
 
+  it('names a running daemon of the same settings on another port than the record\'s as a conflict, and stops or spawns nothing', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, readConnectionRecord, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'default', port: 4001, updatedAt: '' });
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: 4242,
+        url: 'http://127.0.0.1:4005',
+        profile: 'default',
+        port: 4005,
+        gatewayKey: 'local-key',
+        project: 'proj',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://example.com/api',
+        version: '0.17.0',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'default',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieProject: 'proj',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+
+    await expect(createProxyCommand().parseAsync(['start'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(chalk.red([
+      '✗ A proxy is already running with different settings:',
+      '  profile: default',
+      '  port: 4005',
+      '  project: proj',
+      '',
+      'Stop it first:',
+      '  codemie proxy stop',
+    ].join('\n')));
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a matching CodeMie URL', 'https://custom.example.com'],
     ['a workspace URL for another environment', 'https://prod.example.com'],
@@ -1253,6 +1300,39 @@ describe('proxy stop', () => {
     expect(lockAtRead).toEqual([true]);
     expect(stopDaemon).toHaveBeenCalled();
     expect(consoleLogSpy).toHaveBeenCalledWith(chalk.green('✓ Proxy stopped'));
+  });
+});
+
+describe('proxy inspect desktop', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  /** No daemon alive; the state file is read from `clientHome`, written there when `kept` is given. */
+  async function inspectWithoutDaemon(kept?: Record<string, unknown>) {
+    const statePath = join(clientHome, 'proxy-daemon.json');
+    if (kept) await writeFile(statePath, JSON.stringify(kept));
+    const daemon = await import('../daemon-manager.js');
+    const actual = await vi.importActual<typeof import('../daemon-manager.js')>('../daemon-manager.js');
+    vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(daemon.readState).mockImplementation(() => actual.readState(statePath));
+    const { printDesktopInspection } = await import('../inspect-desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['inspect', 'desktop'], { from: 'user' });
+
+    return vi.mocked(printDesktopInspection).mock.calls;
+  }
+
+  it('reads the kept state of a daemon that is not running', async () => {
+    const kept = { pid: 4242, port: 4001, url: 'http://127.0.0.1:4001', profile: 'p', gatewayKey: 'k', startedAt: '2026-11-17T00:00:00.000Z' };
+
+    expect(await inspectWithoutDaemon(kept)).toEqual([[false, kept, { limit: 5 }]]);
+  });
+
+  it('reads no state when there is no state file', async () => {
+    expect(await inspectWithoutDaemon()).toEqual([[false, null, { limit: 5 }]]);
   });
 });
 

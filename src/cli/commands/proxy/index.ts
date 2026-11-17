@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import {
   checkStatus,
   readDaemonStatus,
+  readState,
   stopDaemon,
 } from './daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
@@ -435,9 +436,11 @@ export function createProxyCommand(): Command {
     .description('Inspect Claude Desktop proxy telemetry readiness')
     .option('--limit <count>', 'Maximum number of recent sessions to inspect', String(DEFAULT_DESKTOP_INSPECT_LIMIT))
     .action(async (opts) => {
-      const { running, state } = await readDaemonStatus();
+      const status = await readDaemonStatus();
+      // A daemon that is not running leaves its state file; the inspection still shows what it last ran with.
+      const state = status.running ? status.state : await readState();
       const limit = Number.parseInt(opts.limit, 10);
-      await printDesktopInspection(running, state, {
+      await printDesktopInspection(status.running, state, {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined
       });
     });

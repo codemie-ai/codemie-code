@@ -22,12 +22,11 @@ import { join } from 'node:path';
 import {
   getCodexDesktopConfigPath,
   getCodexDesktopStatePath,
-  moveCodexDesktopToNamedKey,
-  readCodexDesktopGateway,
   writeCodexDesktopConfig,
   removeCodexDesktopConfig,
   BACKUP_SUFFIX,
 } from '../codex-desktop.js';
+import { moveCodexDesktopToNamedKey, readCodexDesktopGateway } from '../codex-desktop-named-key.js';
 
 const DAEMON = {
   proxyUrl: 'http://127.0.0.1:4001',
@@ -177,7 +176,7 @@ describe('readCodexDesktopGateway', () => {
 
 describe('moveCodexDesktopToNamedKey', () => {
   /** A Codex config as an older connect left it, with the user's own comment and table around the managed ones. */
-  const olderConnectConfig = (authorization: string): string => [
+  const olderConnectConfig = (authorization: string, port = 4001): string => [
     '# >>> codemie proxy connect (codex-desktop) header - managed block, do not edit',
     'model_provider = "codemie"',
     'model = "gpt-5.4"',
@@ -190,7 +189,7 @@ describe('moveCodexDesktopToNamedKey', () => {
     '# >>> codemie proxy connect (codex-desktop) provider - managed block, do not edit',
     '[model_providers.codemie]',
     'name = "CodeMie"',
-    'base_url = "http://127.0.0.1:4001/v1"',
+    `base_url = "http://127.0.0.1:${port}/v1"`,
     'wire_api = "responses"',
     '[model_providers.codemie.http_headers]',
     `Authorization = "${authorization}"`,
@@ -212,7 +211,7 @@ describe('moveCodexDesktopToNamedKey', () => {
   ])('moves a config holding the shared key, %s, to the named key, and nothing else', async (_case, key) => {
     writeFileSync(getCodexDesktopConfigPath(), olderConnectConfig(`Bearer ${key}`));
 
-    await expect(moveCodexDesktopToNamedKey(key)).resolves.toBe('moved');
+    await expect(moveCodexDesktopToNamedKey(key, 4001)).resolves.toBe('moved');
 
     expect(readFileSync(getCodexDesktopConfigPath(), 'utf-8')).toBe(olderConnectConfig(`Bearer ${key}.codex-desktop`));
     await expect(readCodexDesktopGateway(key)).resolves.toEqual({ port: 4001, key: 'codex-desktop' });
@@ -226,13 +225,21 @@ describe('moveCodexDesktopToNamedKey', () => {
   ])('leaves the bytes of a config holding %s', async (_case, authorization) => {
     writeFileSync(getCodexDesktopConfigPath(), olderConnectConfig(authorization));
 
-    await expect(moveCodexDesktopToNamedKey('codemie-proxy')).resolves.toBe('unchanged');
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
 
     expect(readFileSync(getCodexDesktopConfigPath(), 'utf-8')).toBe(olderConnectConfig(authorization));
   });
 
+  it('leaves the bytes of a config holding the shared key on another loopback port than the daemon\'s', async () => {
+    writeFileSync(getCodexDesktopConfigPath(), olderConnectConfig('Bearer codemie-proxy', 4002));
+
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
+
+    expect(readFileSync(getCodexDesktopConfigPath(), 'utf-8')).toBe(olderConnectConfig('Bearer codemie-proxy', 4002));
+  });
+
   it('writes nothing when there is no config file', async () => {
-    await expect(moveCodexDesktopToNamedKey('codemie-proxy')).resolves.toBe('unchanged');
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
 
     expect(existsSync(getCodexDesktopConfigPath())).toBe(false);
   });
@@ -242,7 +249,7 @@ describe('moveCodexDesktopToNamedKey', () => {
     writeFileSync(target, olderConnectConfig('Bearer codemie-proxy'));
     symlinkSync(target, getCodexDesktopConfigPath());
 
-    await expect(moveCodexDesktopToNamedKey('codemie-proxy')).resolves.toBe('left');
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('left');
 
     expect(lstatSync(getCodexDesktopConfigPath()).isSymbolicLink()).toBe(true);
     expect(readFileSync(target, 'utf-8')).toBe(olderConnectConfig('Bearer codemie-proxy'));

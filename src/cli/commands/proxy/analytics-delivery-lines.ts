@@ -5,7 +5,7 @@ import type { DaemonState } from './daemon-manager.js';
 import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
 import { moveDesktopToNamedKey, readDesktopGateway } from './connectors/desktop.js';
 import { moveVsCodeClaudeCodeToNamedKey, readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
-import { moveCodexDesktopToNamedKey, readCodexDesktopGateway } from './connectors/codex-desktop.js';
+import { moveCodexDesktopToNamedKey, readCodexDesktopGateway } from './connectors/codex-desktop-named-key.js';
 import { gatewayKeyReading, readVsCodeByokGateway, type ConnectorGateway } from './connectors/vscode.js';
 import { readCopilotCliHookInstall } from './connectors/copilot-cli-otlp.js';
 import { readCopilotChatHookInstall } from './connectors/copilot-chat-otlp.js';
@@ -185,7 +185,7 @@ export const CLIENT_CONFIGS: readonly ClientConfig[] = [
     flag: '--vscode-claude-code',
     read: (state) => readVsCodeClaudeCodeGateway(state.gatewayKey, false),
     moveToNamedKey: {
-      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, false),
+      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, state.port, false),
       hint: 'Reload VS Code to apply changes.',
     },
   },
@@ -195,7 +195,7 @@ export const CLIENT_CONFIGS: readonly ClientConfig[] = [
     flag: '--vscode-claude-code --insiders',
     read: (state) => readVsCodeClaudeCodeGateway(state.gatewayKey, true),
     moveToNamedKey: {
-      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, true),
+      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, state.port, true),
       hint: 'Reload VS Code to apply changes.',
     },
   },
@@ -205,7 +205,7 @@ export const CLIENT_CONFIGS: readonly ClientConfig[] = [
     flag: '--codex-desktop',
     read: (state) => readCodexDesktopGateway(state.gatewayKey),
     moveToNamedKey: {
-      write: (state) => moveCodexDesktopToNamedKey(state.gatewayKey),
+      write: (state) => moveCodexDesktopToNamedKey(state.gatewayKey, state.port),
       hint: 'Quit and reopen the ChatGPT desktop app to apply the change.',
     },
   },

@@ -404,7 +404,7 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
   }
 
   /** Settings as an older connect left them, with the user's own comment and entry beside the managed ones. */
-  function olderConnectSettings(token: string): string {
+  function olderConnectSettings(token: string, port = 4001): string {
     return [
       '{',
       '\t// my editor settings',
@@ -412,7 +412,7 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
       '\t"claudeCode.disableLoginPrompt": true,',
       '\t"claudeCode.environmentVariables": [',
       '\t\t{ "name": "MY_VAR", "value": "mine" },',
-      '\t\t{ "name": "ANTHROPIC_BASE_URL", "value": "http://127.0.0.1:4001" },',
+      `\t\t{ "name": "ANTHROPIC_BASE_URL", "value": "http://127.0.0.1:${port}" },`,
       `\t\t{ "name": "ANTHROPIC_AUTH_TOKEN", "value": "${token}" },`,
       '\t],',
       '}',
@@ -432,7 +432,7 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
   ])('moves %s from the shared key to the named key, and nothing else', async (_case, insiders, key) => {
     await writeRaw(olderConnectSettings(key), insiders);
 
-    expect(await moveVsCodeClaudeCodeToNamedKey(key, insiders)).toBe('moved');
+    expect(await moveVsCodeClaudeCodeToNamedKey(key, 4001, insiders)).toBe('moved');
 
     expect(await readFile(settingsPath(insiders), 'utf-8')).toBe(olderConnectSettings(`${key}.vscode-claude-code`));
     expect(await readVsCodeClaudeCodeGateway(key, insiders)).toEqual({ port: 4001, key: 'vscode-claude-code' });
@@ -444,13 +444,21 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
   ])('leaves the bytes of settings holding %s', async (_case, token) => {
     await writeRaw(olderConnectSettings(token));
 
-    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy')).toBe('unchanged');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
 
     expect(await readFile(settingsPath(), 'utf-8')).toBe(olderConnectSettings(token));
   });
 
+  it('leaves the bytes of settings holding the shared key on another loopback port than the daemon\'s', async () => {
+    await writeRaw(olderConnectSettings('codemie-proxy', 4002));
+
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
+
+    expect(await readFile(settingsPath(), 'utf-8')).toBe(olderConnectSettings('codemie-proxy', 4002));
+  });
+
   it('writes nothing when there is no settings file', async () => {
-    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy')).toBe('unchanged');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
   });
 
   it('leaves a settings file that is a symbolic link, the link and its target', async () => {
@@ -459,7 +467,7 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
     await mkdir(join(vscodeModule.getVsCodeProductDir(false), 'User'), { recursive: true });
     await symlink(target, settingsPath());
 
-    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy')).toBe('left');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('left');
 
     expect((await lstat(settingsPath())).isSymbolicLink()).toBe(true);
     expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy'));
