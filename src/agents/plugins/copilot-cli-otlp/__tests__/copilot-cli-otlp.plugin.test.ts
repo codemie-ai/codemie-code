@@ -506,6 +506,11 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     expect(withReminder.prompt).toBe('What is <system_notification>x</system_notification> for?');
   });
 
+  it('keeps a complete block of a leading-only desktop tag that the user wrote at the end of the text', async () => {
+    const text = 'Explain this: <copilot_artifacts>x</copilot_artifacts>';
+    expect((await forwardedPrompt(text)).prompt).toBe(text);
+  });
+
   it('leaves a CLI prompt without a preamble unchanged, including other tags', async () => {
     const event = await forwardedPrompt('Explain <div> tags in HTML');
 

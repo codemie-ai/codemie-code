@@ -34,7 +34,7 @@ export function resolveCopilotAgentKey(clientName?: string): string {
 // <app_user_message_source_json>), which must not leak into the stored prompt either.
 // Only complete blocks at the very start/end are removed, so a user's own mention of these tags is kept.
 const DESKTOP_WRAPPER_TAGS = 'copilot_[a-z0-9_]+|current_datetime|branch_rename_request';
-const DESKTOP_TRAILER_TAGS = `system_notification|app_[a-z0-9_]+|${DESKTOP_WRAPPER_TAGS}`;
+const DESKTOP_TRAILER_TAGS = 'system_notification|app_[a-z0-9_]+';
 const DESKTOP_PREAMBLE_RE = new RegExp(
   `^\\s*(?:<(${DESKTOP_WRAPPER_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>\\s*)+`,
   'i'
