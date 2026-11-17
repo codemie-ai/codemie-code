@@ -35,7 +35,14 @@ vi.mock('../../../../utils/processes.js', async (importOriginal) => {
   };
 });
 
+// The CLI's own version is read from its package.json: `isOlderDaemon` tests pin it.
+vi.mock('../../../../utils/cli-updater.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/cli-updater.js')>()),
+  getCurrentCliVersion: vi.fn(async () => '0.17.0'),
+}));
+
 import * as exec from '../../../../utils/exec.js';
+import { getCurrentCliVersion } from '../../../../utils/cli-updater.js';
 import { isOwnerAlive, isProcessAlive, processStartedAt, spawnDetached } from '../../../../utils/processes.js';
 import { logger } from '../../../../utils/logger.js';
 
@@ -46,6 +53,7 @@ import {
   checkStatus,
   daemonStartedAt,
   isDaemonAlive,
+  isOlderDaemon,
   spawnDaemon,
   stopDaemon,
   readConnectionRecord,
@@ -1074,5 +1082,31 @@ describe('proxy connection record', () => {
       expect(JSON.parse(await readFile(TEST_CONNECTION_FILE, 'utf-8')).profile).toBe('recorded');
       expect(info).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('isOlderDaemon', () => {
+  it.each([
+    [undefined, '0.17.0', true],
+    [undefined, null, true],
+    ['0.16.9', '0.17.0', true],
+    ['0.0.0', '0.17.0', true],
+    ['0.17.0', '0.17.0', false],
+    ['0.18.0', '0.17.0', false],
+    ['0.17.0-rc.1', '0.17.0', true],
+    ['0.17.0-rc.1', '0.18.0', true],
+    ['0.16.0', '0.17.0-rc.1', true],
+    ['0.17.0', '0.17.0-rc.1', false],
+    ['0.17.0-rc.1', '0.17.0-rc.2', true],
+    ['0.17.0-rc.2', '0.17.0-rc.1', false],
+    ['0.17.0-rc.1', '0.17.0-rc.1', false],
+    ['abc', '0.17.0', false],
+    ['0.16.0', 'abc', false],
+    ['0.16.0', null, false],
+    [17, '0.17.0', false],
+  ] as const)('a state version %s beside an own version %s is older: %s', async (version, own, older) => {
+    vi.mocked(getCurrentCliVersion).mockResolvedValue(own);
+
+    expect(await isOlderDaemon({ version } as unknown as Pick<DaemonState, 'version'>)).toBe(older);
   });
 });

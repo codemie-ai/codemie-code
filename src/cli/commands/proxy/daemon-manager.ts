@@ -6,7 +6,7 @@ import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/processes.js';
-import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
+import { comparePrereleaseVersions } from '../../../utils/version-utils.js';
 import { fetchProxyHealth } from './health-check.js';
 
 /** Poll interval `spawnDaemon` uses while waiting for the daemon to become ready. */
@@ -348,7 +348,8 @@ export async function readDaemonStatus(
 
 /**
  * Whether the daemon was started by an older CLI than this one: a state without `version` is; one with a
- * version is not when this CLI's own version is unreadable or either version is not `x.y.z`.
+ * version is not when this CLI's own version is unreadable or either version is not `x.y.z` with an optional
+ * pre-release suffix and build metadata; otherwise it is when its version is lower by semantic-version precedence.
  */
 export async function isOlderDaemon(state: Pick<DaemonState, 'version'>): Promise<boolean> {
   if (state.version === undefined) return true;
@@ -356,8 +357,7 @@ export async function isOlderDaemon(state: Pick<DaemonState, 'version'>): Promis
   const { getCurrentCliVersion } = await import('../../../utils/cli-updater.js');
   const own = await getCurrentCliVersion();
   if (!own || typeof state.version !== 'string') return false;
-  if (!isValidSemanticVersion(own) || !isValidSemanticVersion(state.version)) return false;
-  return compareVersions(state.version, own) < 0;
+  return comparePrereleaseVersions(state.version, own) === -1;
 }
 
 export interface SpawnOptions {

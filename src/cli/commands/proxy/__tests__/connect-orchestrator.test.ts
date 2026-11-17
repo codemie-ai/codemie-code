@@ -690,8 +690,10 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     ['no version', { version: undefined }, '0.17.0', true],
     ['version 0.0.0', { version: '0.0.0' }, '0.17.0', true],
     ['a newer version', { version: '0.18.0' }, '0.17.0', false],
-    ['a version that is not x.y.z', { version: '0.17.0-rc.1' }, '0.17.0', false],
-    ['a version, beside an own version that is not x.y.z', { version: '0.16.0' }, '0.17.0-rc.1', false],
+    ['a pre-release of the own version', { version: '0.17.0-rc.1' }, '0.17.0', true],
+    ['an older version, beside an own pre-release version', { version: '0.16.0' }, '0.17.0-rc.1', true],
+    ['a version that is not a version', { version: 'abc' }, '0.17.0', false],
+    ['a version, beside an own version that is not a version', { version: '0.16.0' }, 'abc', false],
     ['a version, beside an unreadable own version', { version: '0.16.0' }, null, false],
   ] as const)('a matching healthy daemon with %s is replaced only when older', async (_label, versionField, ownVersion, replaced) => {
     await setupHappyMocks();
@@ -2567,12 +2569,78 @@ describe('ensureOtlpProxy', () => {
       expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
     });
 
-    it('an older daemon whose state names no upstream gets today\'s cold start on the recorded profile', async () => {
-      const s = await arrangeState({ ...OLDER, targetUrl: undefined });
-      vi.mocked(s.daemon.checkStatus).mockResolvedValue({ running: false, state: null });
+    /** The state of a live older daemon that names no upstream. */
+    const NO_UPSTREAM = { ...OLDER, targetUrl: undefined };
+
+    /** `arrangeState` over {@link NO_UPSTREAM}, whose daemon runs until `stopDaemon` is called. */
+    async function arrangeLiveNoUpstream(record: Record<string, unknown> | null = { version: 1, profile: 'p', updatedAt: '' }) {
+      const s = await arrangeState(NO_UPSTREAM, record);
+      const live = daemonState(NO_UPSTREAM) as Awaited<ReturnType<typeof s.daemon.readState>>;
+      let stopped = false;
+      vi.mocked(s.daemon.stopDaemon).mockImplementation(async () => { stopped = true; });
+      vi.mocked(s.daemon.readState).mockImplementation(async () => (stopped ? null : live));
+      vi.mocked(s.daemon.checkStatus).mockImplementation(async () =>
+        (stopped ? { running: false, state: null } : { running: true, state: live }));
+      return s;
+    }
+
+    it.each([
+      ['on the recorded profile', { version: 1, profile: 'p', updatedAt: '' }],
+      ['on the working directory\'s profile with no record', null],
+    ])('a live older daemon whose state names no upstream is stopped, then replaced by today\'s cold start %s', async (_label, record) => {
+      const s = await arrangeLiveNoUpstream(record);
 
       await s.ensureOtlpProxy(AGENT);
 
+      const order = (fn: unknown) => vi.mocked(fn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(s.daemon.stopDaemon).toHaveBeenCalledTimes(1);
+      expect(order(s.daemon.stopDaemon)).toBeLessThan(order(s.daemon.spawnDaemon));
+      expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), record ? { name: 'p' } : undefined);
+      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+        profile: 'p', targetUrl: 'https://x.example.com/api', project: 'C', model: 'm-dir', port: 52311,
+      });
+      expect(s.daemon.seedConnectionRecord).not.toHaveBeenCalledWith(expect.objectContaining({ version: '0.16.0' }));
+    });
+
+    it('keeps: a live older daemon whose state names no upstream, the recorded profile not found — nothing stopped or spawned', async () => {
+      const s = await arrangeLiveNoUpstream();
+      vi.mocked(s.ConfigLoader.loadLocalConfigProfile).mockResolvedValue({});
+
+      await s.ensureOtlpProxy(AGENT);
+
+      expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    });
+
+    it('keeps: a live older daemon whose state names no upstream, no record and a blank baseUrl — nothing stopped or spawned', async () => {
+      const s = await arrangeLiveNoUpstream(null);
+      vi.mocked(s.ConfigLoader.load).mockResolvedValue({ name: 'p', baseUrl: '' } as Awaited<ReturnType<typeof s.ConfigLoader.load>>);
+
+      await s.ensureOtlpProxy(AGENT);
+
+      expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    });
+
+    it.each(['UserPromptSubmit', 'PostCompact'])(
+      'keeps: claude-code-otlp on %s adopts a live older daemon whose state names no upstream as it is',
+      async (event) => {
+        const s = await arrangeLiveNoUpstream();
+
+        await s.ensureOtlpProxy('claude-code-otlp', event);
+
+        expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(expect.objectContaining(NO_UPSTREAM));
+        expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
+        expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      }
+    );
+
+    it('keeps: a state that names no upstream of a daemon no longer alive — nothing stopped, the recorded profile started', async () => {
+      const s = await arrangeState({ ...NO_UPSTREAM, pid: 9999999 });
+
+      await s.ensureOtlpProxy(AGENT);
+
+      expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
       expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'p' });
       expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
         profile: 'p', targetUrl: 'https://x.example.com/api', project: 'C', model: 'm-dir',

@@ -69,6 +69,7 @@ import {
   parseSemanticVersion,
   isValidSemanticVersion,
   compareVersions,
+  comparePrereleaseVersions,
 } from '../version-utils.js';
 import { hasClipboardImage, getClipboardImage } from '../clipboard.js';
 
@@ -251,6 +252,35 @@ describe('version-utils.compareVersions', () => {
     expect(compareVersions('latest', '2.0.0')).toBe(1);
     expect(compareVersions('2.0.0', 'latest')).toBe(-1);
     expect(compareVersions('STABLE', '1.0.0')).toBe(1);
+  });
+});
+
+describe('version-utils.comparePrereleaseVersions', () => {
+  it.each([
+    ['0.16.9', '0.17.0', -1],
+    ['0.17.0', '0.17.0', 0],
+    ['v0.17.0', '0.17.0', 0],
+    ['0.17.0-rc.1', '0.17.0', -1],
+    ['0.17.0', '0.17.0-rc.1', 1],
+    ['0.17.0-rc.1', '0.18.0', -1],
+    ['0.17.0-rc.1', '0.17.0-rc.2', -1],
+    ['0.17.0-rc.9', '0.17.0-rc.10', -1],
+    ['0.17.0-rc', '0.17.0-rc.1', -1],
+    ['0.17.0-1', '0.17.0-alpha', -1],
+    ['0.17.0-alpha', '0.17.0-beta', -1],
+    ['0.17.0+a', '0.17.0+b', 0],
+    ['0.17.0-rc.1+a', '0.17.0', -1],
+    ['0.9.0', '0.10.0', -1],
+    ['0.17.0-99999999999999999998', '0.17.0-99999999999999999999', -1],
+    ['99999999999999999998.0.0', '99999999999999999999.0.0', -1],
+    ['0.17.0-0a1', '0.17.0-0a2', -1],
+  ] as const)('%s against %s is %i', (a, b, expected) => {
+    expect(comparePrereleaseVersions(a, b)).toBe(expected);
+  });
+
+  it.each(['1.2', 'abc', '0.17.0-', '0.17.0-rc..1', 'latest', '0.17.0-rc.01', '01.17.0'])('is null for %s on either side', (bad) => {
+    expect(comparePrereleaseVersions(bad, '0.17.0')).toBeNull();
+    expect(comparePrereleaseVersions('0.17.0', bad)).toBeNull();
   });
 });
 

@@ -137,16 +137,19 @@ async function adoptLiveDaemon(state: DaemonState | null, acceptOlder: boolean):
 }
 
 /**
- * Starts the daemon for the profile on `port`, adopting a live daemon `ensureDaemon` finds (one an older
- * install's hook, which takes no lock, started meanwhile).
+ * Starts the daemon for the profile on `port`. With `stopOlder` the live older daemon read under the lock is
+ * stopped first; `ensureDaemon` then adopts a live daemon it still finds (one an older install's hook, which
+ * takes no lock, started after that read).
  */
 async function startDaemon(
   name: string,
   config: LoadedConfig,
   projectBinding: Awaited<ReturnType<typeof reportDaemonProfileIdentity>>,
-  port: number
+  port: number,
+  stopOlder: boolean
 ): Promise<void> {
   const requested = buildRequestedConfig(name, config, projectBinding, port);
+  if (stopOlder) await stopDaemon();
   const { state: live, startedInThisRun } = await ensureDaemon(requested, config, false, false, true, true);
   if (!startedInThisRun) await seedConnectionRecord(live);
   await refreshClaudeCodeOtlpEndpoint(live);
@@ -159,7 +162,7 @@ async function startDaemon(
  * record path, a blank baseUrl returns silently, missing SSO credentials are only warned (the
  * daemon holds its port until login), and nothing here writes to the console or exits.
  */
-async function coldStartOnWorkingDirectoryProfile(port: number): Promise<void> {
+async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boolean): Promise<void> {
   const cwd = process.cwd();
   let name = 'default';
   try {
@@ -179,7 +182,7 @@ async function coldStartOnWorkingDirectoryProfile(port: number): Promise<void> {
     );
     // An unowned profile is only logged here, never printed or prompted.
     const projectBinding = await reportDaemonProfileIdentity(config, 'hook', cwd);
-    await startDaemon(name, config, projectBinding, port);
+    await startDaemon(name, config, projectBinding, port, stopOlder);
   } catch (error) {
     logger.warn(`[ensureOtlpProxy] cold start failed (profile: ${name})`, ...sanitizeLogArgs(error));
     throw error;
@@ -193,7 +196,8 @@ async function coldStartOnWorkingDirectoryProfile(port: number): Promise<void> {
  * a daemon that is no longer alive — brings the daemon back from that state (`startFromState`); with
  * no such state the daemon starts on the profile `proxy connect` recorded in proxy-connection.json,
  * never on the cwd's active profile (only with no record at all does it fall back to the cwd's
- * profile, see `coldStartOnWorkingDirectoryProfile`), its project from the loaded config. When `agentName`
+ * profile, see `coldStartOnWorkingDirectoryProfile`), its project from the loaded config; a live older
+ * daemon is stopped first, once that profile is loaded and a start is due. When `agentName`
  * is Claude Code's hook adapter and `event` is one of {@link ADOPT_OLDER_DAEMON_EVENTS}, a live older daemon
  * is adopted as it is; every other agent, and a call without an event (the Claude launcher), replaces it.
  *
@@ -218,15 +222,19 @@ export async function ensureOtlpProxy(agentName: string, event?: string): Promis
       await startFromState(state, port);
       return;
     }
-    await coldStartOnRecord(port);
+    // Not adopted above, so a daemon still alive here is an older one this event does not accept.
+    await coldStartOnRecord(port, state !== null && (await isDaemonAlive(state)));
   });
 }
 
-/** Today's cold start: the recorded profile, else the working directory's, on `port`. */
-async function coldStartOnRecord(port: number): Promise<void> {
+/**
+ * Today's cold start: the recorded profile, else the working directory's, on `port`; with `stopOlder` the live
+ * older daemon is stopped right before the start.
+ */
+async function coldStartOnRecord(port: number, stopOlder: boolean): Promise<void> {
   const record = await readConnectionRecord();
   if (!record) {
-    await coldStartOnWorkingDirectoryProfile(port);
+    await coldStartOnWorkingDirectoryProfile(port, stopOlder);
     return;
   }
 
@@ -246,7 +254,7 @@ async function coldStartOnRecord(port: number): Promise<void> {
     logger.info(`[ensureOtlpProxy] cold start (profile: ${name}, ${scope} scope)`);
     // An unowned profile is only logged here, never printed or prompted.
     const projectBinding = await reportDaemonProfileIdentity(config, 'hook', process.cwd());
-    await startDaemon(name, config, projectBinding, port);
+    await startDaemon(name, config, projectBinding, port, stopOlder);
   } catch (error) {
     logger.warn(`[ensureOtlpProxy] cold start failed (profile: ${name})`, ...sanitizeLogArgs(error));
     throw error;
