@@ -67,7 +67,7 @@ export function validateWebhookUrl(webhook: string | undefined): string | undefi
  * counts — `https://<token>@host/r` is the common personal-access-token form. On an
  * `ssh://` or scp-style URL (`git@host:org/r.git`, which has no `://`) a bare username is
  * the normal ssh login and is allowed; only `user:pass@` is flagged. */
-function hasEmbeddedCredentials(rawUrl: string): boolean {
+export function hasEmbeddedCredentials(rawUrl: string): boolean {
   const match = /^(?:([a-zA-Z][a-zA-Z0-9+.-]*):\/\/)?([^@/]+)@/.exec(rawUrl);
   if (match === null) {
     return false;
@@ -84,7 +84,7 @@ function hasEmbeddedCredentials(rawUrl: string): boolean {
 /** `undefined`/blank -> no git repo URL given. Otherwise rejects a value git would parse as
  * an option, and embedded credentials. The rejection never echoes the value, so a
  * password or token in it never reaches the terminal or a log. */
-function validateGitRepoUrl(gitRepo: string | undefined): string | undefined {
+export function validateGitRepoUrl(gitRepo: string | undefined): string | undefined {
   if (gitRepo === undefined || gitRepo.trim() === '') {
     return undefined;
   }
@@ -126,7 +126,7 @@ function isValidBranchName(branch: string): boolean {
 
 /** `undefined`/blank -> remote default branch. Otherwise trims and requires a valid,
  * non-empty branch name. */
-function validateGitBranch(gitBranch: string | undefined): string | undefined {
+export function validateGitBranch(gitBranch: string | undefined): string | undefined {
   if (gitBranch === undefined) {
     return undefined;
   }
@@ -147,7 +147,7 @@ function validateGitBranch(gitBranch: string | undefined): string | undefined {
  * path, anything that escapes the repo once normalised, and any `.git` segment (the
  * repository's own metadata). Returns a normalised
  * posix-relative path, or `undefined` when it normalises to the repo root. */
-function validateGitPath(gitPath: string | undefined): string | undefined {
+export function validateGitPath(gitPath: string | undefined): string | undefined {
   if (gitPath === undefined) {
     return undefined;
   }
@@ -184,7 +184,7 @@ function validateGitPath(gitPath: string | undefined): string | undefined {
 }
 
 /** `undefined` -> no git target given. Otherwise the fully-validated `GitSettings`. */
-function validateGitSettings(options: InstallOptions): GitSettings | undefined {
+export function validateGitSettings(options: InstallOptions): GitSettings | undefined {
   const repoUrl = validateGitRepoUrl(options.gitRepo);
   const branch = validateGitBranch(options.gitBranch);
   const path = validateGitPath(options.gitPath);
@@ -198,6 +198,11 @@ function validateGitSettings(options: InstallOptions): GitSettings | undefined {
     ...(branch !== undefined && { branch }),
     ...(path !== undefined && { path })
   };
+}
+
+/** Whether at least one delivery target is present: a webhook URL, git settings, or both. */
+export function hasAnyTarget(webhookUrl: string | undefined, git: GitSettings | undefined): boolean {
+  return webhookUrl !== undefined || git !== undefined;
 }
 
 /** Defaults to `'json'`; any other value throws, naming `--format`. */
@@ -280,7 +285,7 @@ export function validateInstallOptions(options: InstallOptions): SyncSettings {
   const webhookUrl = validateWebhookUrl(resolveWebhookOption(options));
   const git = validateGitSettings(options);
 
-  if (webhookUrl === undefined && git === undefined) {
+  if (!hasAnyTarget(webhookUrl, git)) {
     throw new SyncConfigError(
       'At least one sync target is required: pass --webhook <url> or --git-repo <url>.'
     );

@@ -19,6 +19,7 @@ import { SyncConfigError } from '@/utils/errors.js';
 
 import type { IncludeExternalPolicy } from './types.js';
 import { encodeWebhook } from './webhook-encoding.js';
+import { hasAnyTarget } from './config-store.js';
 
 /** Flags accepted by `buildInstallCommand`, mirroring `codemie analytics sync install`'s
  * CLI options. At least one of `webhook` / `gitRepo` must be given. */
@@ -85,7 +86,7 @@ function flag(name: string, value: string | number | undefined): string | undefi
  * `SyncTargetMissingError` does.
  */
 export function buildInstallCommand(opts: InstallCommandOptions): string {
-  if (opts.webhook === undefined && opts.gitRepo === undefined) {
+  if (!hasAnyTarget(opts.webhook, opts.gitRepo === undefined ? undefined : { repoUrl: opts.gitRepo })) {
     throw new SyncConfigError('At least one sync target is required: --webhook <url> or --git-repo <url>');
   }
 

@@ -1,0 +1,1 @@
+{"task_id":"1","status":"done","commit":"15b57efc","test_command":"HOME=<tmp> CODEMIE_HOME=<tmp> npx vitest run --project cli tests/integration/msgraph-email-read.test.ts"}

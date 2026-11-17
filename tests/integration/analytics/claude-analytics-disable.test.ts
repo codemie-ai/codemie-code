@@ -31,10 +31,11 @@ const TEST_TIMEOUT_MS = 120_000;
 
 interface StatusJson {
   hooksInstalled: boolean;
+  scope: string;
+  trackedProjects: string[];
   enabled: boolean;
   excludedProjects: string[];
   preferencesCorrupt: boolean;
-  current: { path: string; tracked: boolean; reason: string };
 }
 
 let sandbox: string;
@@ -56,7 +57,9 @@ function runCli(args: string[], options: IsolatedRunOptions = {}): IsolatedRunRe
 function status(cwd: string): StatusJson {
   const result = runCli(['proxy', 'analytics', 'status', '--json'], { cwd });
   expectExit(result, 0);
-  return JSON.parse(result.stdout) as StatusJson;
+  const parsed = JSON.parse(result.stdout) as { connectors: StatusJson[] };
+  expect(parsed.connectors.map((c) => (c as StatusJson & { connector: string }).connector)).toEqual(['claude-code-otlp']);
+  return parsed.connectors[0];
 }
 
 function prefsPath(): string {
@@ -202,8 +205,6 @@ describe('Claude Code analytics opt-out', () => {
 
     const disabled = status(project);
     expect(disabled.enabled).toBe(false);
-    expect(disabled.current.tracked).toBe(false);
-    expect(disabled.current.reason).toBe('disabled');
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_001
@@ -223,10 +224,7 @@ describe('Claude Code analytics opt-out', () => {
     expectExit(enable, 0);
     expect(readPrefs().enabled).toBe(true);
 
-    const enabled = status(project);
-    expect(enabled.enabled).toBe(true);
-    expect(enabled.current.tracked).toBe(true);
-    expect(enabled.current.reason).toBe('tracked');
+    expect(status(project).enabled).toBe(true);
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_001
@@ -247,27 +245,30 @@ describe('Claude Code analytics opt-out', () => {
     const outside = realDir(join(sandbox, 'tc002-project', 'outside'));
     installHooks([tracked]);
 
-    expect(status(tracked).current.reason).toBe('tracked');
+    const allowlisted = status(tracked);
+    expect(allowlisted.scope).toBe('project');
+    expect(allowlisted.trackedProjects.map(norm)).toEqual([norm(tracked)]);
     // A project outside the allowlist sends nothing, with or without the opt-out.
-    expect(status(outside).current.tracked).toBe(false);
-    expect(status(outside).current.reason).toBe('not-in-allowlist');
+    const unlisted = runPromptHook(outside, 'sess-project-outside');
+    expectExit(unlisted.run, 0);
+    expect(unlisted.forwarded).toBe(false);
+    expect(unlisted.wroteState).toBe(false);
 
     expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: tracked }), 0);
-    const disabled = status(tracked);
-    expect(disabled.current.tracked).toBe(false);
-    expect(disabled.current.reason).toBe('disabled');
+    expect(status(tracked).enabled).toBe(false);
     const silenced = runPromptHook(tracked, 'sess-project-disabled');
     expectExit(silenced.run, 0);
     expect(silenced.forwarded).toBe(false);
     expect(silenced.wroteState).toBe(false);
 
     expectExit(runCli(['proxy', 'analytics', 'enable'], { cwd: tracked }), 0);
-    expect(status(tracked).current.reason).toBe('tracked');
+    expect(status(tracked).enabled).toBe(true);
     const resumed = runPromptHook(tracked, 'sess-project-enabled');
     expect(resumed.run.error, describeRun(resumed.run)).toBeUndefined();
     expect(resumed.forwarded).toBe(true);
     // The allowlist stays untouched by disable and enable.
-    expect(status(outside).current.reason).toBe('not-in-allowlist');
+    expect(status(tracked).trackedProjects.map(norm)).toEqual([norm(tracked)]);
+    expect(runPromptHook(outside, 'sess-project-outside-again').forwarded).toBe(false);
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_003
@@ -277,7 +278,7 @@ describe('Claude Code analytics opt-out', () => {
     const projectA = realDir(join(sandbox, 'tc003', 'project-a'));
     const projectB = realDir(join(sandbox, 'tc003', 'project-b'));
 
-    expect(status(projectA).current.tracked).toBe(true);
+    expect(status(projectA).scope).toBe('user');
 
     const exclude = runCli(['proxy', 'analytics', 'exclude', projectA], { cwd: projectB });
     expectExit(exclude, 0);
@@ -285,20 +286,23 @@ describe('Claude Code analytics opt-out', () => {
     expect(stored.enabled).toBe(true);
     expect(stored.excludedProjects.map(norm)).toEqual([norm(projectA)]);
 
-    const inA = status(projectA);
-    expect(inA.current.tracked).toBe(false);
-    expect(inA.current.reason).toBe('project-excluded');
-    const inB = status(projectB);
-    expect(inB.current.tracked).toBe(true);
-    expect(inB.current.reason).toBe('tracked');
+    expect(status(projectB).excludedProjects.map(norm)).toEqual([norm(projectA)]);
+    const inA = runPromptHook(projectA, 'sess-global-a');
+    expectExit(inA.run, 0);
+    expect(inA.forwarded).toBe(false);
+    expect(inA.wroteState).toBe(false);
+    const inB = runPromptHook(projectB, 'sess-global-b');
+    expect(inB.run.error, describeRun(inB.run)).toBeUndefined();
+    expect(inB.forwarded).toBe(true);
 
     const include = runCli(['proxy', 'analytics', 'include', projectA], { cwd: projectB });
     expectExit(include, 0);
     expect(readPrefs().excludedProjects).toEqual([]);
 
-    const restored = status(projectA);
-    expect(restored.current.tracked).toBe(true);
-    expect(restored.current.reason).toBe('tracked');
+    expect(status(projectA).excludedProjects).toEqual([]);
+    const restored = runPromptHook(projectA, 'sess-global-a-again');
+    expect(restored.run.error, describeRun(restored.run)).toBeUndefined();
+    expect(restored.forwarded).toBe(true);
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_003
@@ -312,9 +316,9 @@ describe('Claude Code analytics opt-out', () => {
     expectExit(runCli(['proxy', 'analytics', 'exclude', projectA], { cwd: projectB }), 0);
     expect(readPrefs().enabled).toBe(true);
 
-    expect(status(projectA).current.reason).toBe('project-excluded');
-    expect(status(projectB).current.reason).toBe('tracked');
-    expect(status(outside).current.reason).toBe('not-in-allowlist');
+    const listed = status(projectB);
+    expect(listed.trackedProjects.map(norm)).toEqual([norm(projectA), norm(projectB)]);
+    expect(listed.excludedProjects.map(norm)).toEqual([norm(projectA)]);
 
     const excluded = runPromptHook(projectA, 'sess-project-a');
     expectExit(excluded.run, 0);
@@ -331,7 +335,7 @@ describe('Claude Code analytics opt-out', () => {
     expect(unlisted.wroteState).toBe(false);
 
     expectExit(runCli(['proxy', 'analytics', 'include', projectA], { cwd: projectB }), 0);
-    expect(status(projectA).current.reason).toBe('tracked');
+    expect(status(projectA).excludedProjects).toEqual([]);
     const resumed = runPromptHook(projectA, 'sess-project-a-again');
     expect(resumed.forwarded).toBe(true);
   }, TEST_TIMEOUT_MS);
@@ -352,8 +356,7 @@ describe('Claude Code analytics opt-out', () => {
 
     const report = status(project);
     expect(report.preferencesCorrupt).toBe(true);
-    expect(report.current.tracked).toBe(false);
-    expect(report.current.reason).toBe('preferences-corrupt');
+    expect(report.enabled).toBe(false);
 
     // The installed hook fails closed too: nothing forwarded, nothing written, file untouched.
     const hook = runPromptHook(project, 'sess-corrupt');
@@ -388,7 +391,7 @@ describe('Claude Code analytics opt-out', () => {
     expect(tracked.forwarded).toBe(true);
 
     expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: project }), 0);
-    expect(status(project).current.reason).toBe('disabled');
+    expect(status(project).enabled).toBe(false);
 
     const hook = runPromptHook(project, 'sess-hook-001');
     expectExit(hook.run, 0);

@@ -38,7 +38,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
-import { detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
+import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
@@ -309,11 +309,12 @@ export class CoworkEventProducer {
   private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor): Promise<CoworkEnvelope> {
     const workingDirectory = discovered.workingDirectory;
     const profile = this.options.profile;
-    const [project, repository, repoRemote, cliVersion] = await Promise.all([
+    const [project, repository, repoRemote, branch, cliVersion] = await Promise.all([
       ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
         .then((config) => config.codeMieProject ?? ''),
       resolveRepositoryName(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
+      detectGitBranch(workingDirectory),
       getCurrentCliVersion().catch(() => null),
     ]);
     return {
@@ -321,6 +322,7 @@ export class CoworkEventProducer {
       project,
       repository,
       repoRemote,
+      ...(branch && { branch }),
       cliVersion: cliVersion ?? '',
       title: discovered.title,
       entrypoint: cursor.events.entrypoint,

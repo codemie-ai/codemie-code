@@ -105,6 +105,30 @@ describe('ProxyWatcher', () => {
     expect(cb.onHealthy).toHaveBeenCalledTimes(1);
   });
 
+  it('skips the deep check while the sign-in listener holds the port, and still offers the recovery hook', async () => {
+    let awaiting = true;
+    const onUnauthorized = vi.fn().mockResolvedValue(undefined);
+    const cb = { ...makeCallbacks(), onUnauthorized, isAwaitingLogin: () => awaiting };
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // A deep check would reach the listener as an authenticated request and start a browser sign-in.
+    expect(mockedHealth).not.toHaveBeenCalled();
+    expect(onUnauthorized).toHaveBeenCalledTimes(3);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    // The real proxy is back: normal deep checks resume.
+    awaiting = false;
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+    expect(cb.onHealthy).toHaveBeenCalledTimes(1);
+  });
+
   it('survives a failing recovery hook', async () => {
     mockedHealth.mockResolvedValue(UNAUTHORIZED);
     const onUnauthorized = vi.fn().mockRejectedValue(new Error('port busy'));

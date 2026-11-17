@@ -168,4 +168,14 @@ describe('MetricsWriter.appendDeltas', () => {
     // Guards against a full-file rewrite or a quadratic scan (seconds at 20 000 lines), not against a slow runner
     expect(performance.now() - startedAt).toBeLessThan(1000);
   });
+
+  it('gives every delta of a batch the id of its sorted record ids, whatever their order', async () => {
+    const { deltaIdOf } = await import('../delta-id.js');
+    const writer = new MetricsWriter(SESSION_ID);
+    await writer.appendDeltas([delta('b', START + 2), delta('a', START + 1)], { startTime: START });
+
+    const lines = readFileSync(metricsFile(), 'utf-8').trim().split('\n').map((l) => JSON.parse(l) as MetricDelta & { deltaId?: string });
+    expect(lines.map((l) => l.deltaId)).toEqual([deltaIdOf(['a', 'b']), deltaIdOf(['a', 'b'])]);
+    expect(deltaIdOf(['b', 'a'])).toBe(deltaIdOf(['a', 'b']));
+  });
 });

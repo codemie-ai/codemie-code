@@ -18,6 +18,7 @@ export interface MetricIdentity {
   branch: string;
   project?: string;
   count: number;  // Always 1 (Prometheus compatibility)
+  delta_id?: string;  // Stable id of the deltas this metric carries; the same on every resend
 }
 
 /**
