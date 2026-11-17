@@ -33,31 +33,53 @@ once, and gets one install command back. Each **developer** runs that command on
 codemie analytics sync bootstrap
 ```
 
-A guided setup walks you through 8 steps. Each step shows its position ("Step 2 of 8"):
+A guided setup starts by asking where developer machines should deliver their reports:
+the **Teams webhook**, a **git repository**, or **both**. The other steps are filtered to
+that choice, and each shows its position ("Step 2 of 9"; the total depends on the choice).
+For the webhook target:
 
-1. **Teams channel**: paste the link from the channel's **⋯ → Get link to channel**.
-2. **SharePoint folder**: open the folder in the browser and paste the address bar. Type
+1. **Delivery target**: webhook, git or both.
+2. **Teams channel**: paste the link from the channel's **⋯ → Get link to channel**.
+3. **SharePoint folder**: open the folder in the browser and paste the address bar. Type
    `manual` to give the site and the folder path separately. The simplest choice is a folder
    in the team's own site: Teams → channel → **Files** → **Open in SharePoint** →
    **+ New → Folder**.
-3. **Time zone**: a Windows time zone name, e.g. `W. Europe Standard Time` (default `UTC`).
+4. **Time zone**: a Windows time zone name, e.g. `W. Europe Standard Time` (default `UTC`).
    It is used for the timestamps the flow posts in Teams.
-4. **Import the flow**: the CLI writes `codemie-analytics-flow.zip` into the current
+5. **Import the flow**: the CLI writes `codemie-analytics-flow.zip` into the current
    folder, pre-filled with your channel, folder and time zone. In Power Automate:
    **My flows → Import → Import Package (Legacy)**, upload the zip, map the Teams and
    SharePoint connections, import, then turn the flow **On**. Open the HTTP trigger, set
    **Who can trigger** to **Anyone**, and copy its URL.
-5. **Trigger URL**: paste it. The CLI test-sends a small `setup-check-<stamp>.json` and
+6. **Trigger URL**: paste it. The CLI test-sends a small `setup-check-<stamp>.json` and
    tells you where the file and the Teams reply should appear.
-6. **External sessions**: `never` (recommended), `always` or `windows`. See
-   [Platform notes](#platform-notes).
-7. **Lookback**: the CLI default (7 days today, which follows CLI updates) or a fixed
-   1–30 days.
-8. **Developer command**: one line to share with your team:
+
+For the git target, one step takes the place of steps 2 to 6:
+
+- **Git repository**: the repository URL (SSH or HTTPS), then an optional branch and an
+  optional path inside the repository. Leave branch and path blank to get `install`'s own
+  defaults (the repository's default branch, the repository root). A URL with embedded
+  credentials (`user:token@…`) is refused, and never stored or printed. The CLI then
+  test-pushes a placeholder file to the repository, using a temporary working copy (not your
+  own sync copy or settings). If no report email is configured, it asks for one for the test
+  and does not save it. On failure it prints the likely cause and lets you try again, enter
+  different repository details, or skip the test.
+
+Whatever you chose, the last steps are:
+
+- **External sessions**: `never` (recommended), `always` or `windows`. See
+  [Platform notes](#platform-notes).
+- **Lookback**: the CLI default (7 days today, which follows CLI updates) or a fixed
+  1–30 days.
+- **Developer command**: one line to share with your team:
 
 ```
 codemie analytics sync install --webhook-b64 aHR0cHM6Ly9wcm9k… --include-external "never"
 ```
+
+A git target adds `--git-repo <url>` to that line, with `--git-branch` and `--git-path` when
+you set them. The CLI follows it with a note that push access comes from each developer's own
+SSH key or credential helper, which `install` verifies.
 
 The webhook is printed base64url-encoded, so the line runs unchanged in bash/zsh, PowerShell
 and cmd. **Treat it as a secret:** the encoding is not encryption, and anyone with the line
@@ -66,16 +88,25 @@ channel.
 
 Already have a flow? Answer **yes** to "flow already imported?" and the wizard starts at the
 trigger URL. Ran it before? It shows the saved settings with the webhook masked and offers
-to reuse them. An interrupted run resumes with your earlier answers as defaults.
+three choices: **Reuse** (re-checks every chosen target live, then prints the command),
+**Change targets** (add a target or turn one off; the saved details of a target you turn off
+are kept for later but left out of the printed command and of the reuse checks) and **Start
+over**. An interrupted run resumes with your earlier answers as defaults.
 
-No terminal, or scripting it? Skip the questions:
+No terminal, or scripting it? Skip the questions and name the targets as options:
 
 ```bash
 codemie analytics sync bootstrap --webhook "<trigger URL>" [--lookback-days 14] [--include-external always]
+codemie analytics sync bootstrap --git-repo git@github.com:acme/analytics.git [--git-branch main] [--git-path reports]
 ```
 
-It test-sends, and prints the command only after the webhook accepts the file. On Windows,
-pass the URL as `--webhook-b64` instead (see [Platform notes](#platform-notes)).
+Give `--webhook`/`--webhook-b64`, `--git-repo`, or both. It checks every target you named
+(with both, the webhook test send and the git test push run at the same time) and prints the
+command only after all of them pass. `--git-repo` alone prints a git-only command. A
+`--git-repo` with embedded credentials is refused before anything is sent, and a missing
+report email fails instead of prompting. With no terminal and no target option, it stops and
+names `--webhook`/`--webhook-b64` and `--git-repo`. On Windows, pass the webhook URL as
+`--webhook-b64` instead (see [Platform notes](#platform-notes)).
 
 ### Developer: install (once)
 
@@ -106,7 +137,9 @@ runs on the next wake. It updates along with the CLI, so you don't need to come 
 
 ### Delivering to a git repository
 
-A team can collect into a repository instead of, or as well as, a webhook:
+A team can collect into a repository instead of, or as well as, a webhook. The team lead
+chooses the git target in `bootstrap` (above) and shares the command it prints; a developer
+can also run `install` with the options directly:
 
 ```bash
 codemie analytics sync install --git-repo git@github.com:acme/analytics.git --git-branch main --git-path reports
@@ -385,7 +418,7 @@ only configuration. Every path below is under the CodeMie home, `~/.codemie` by 
 | `analytics-sync-repo/` | each git delivery | a shallow working copy of the team repository |
 | `logs/analytics-sync.log` | each run | one line per target per run |
 | `logs/analytics-sync.launchd.log` | macOS only | launchd's own stdout/stderr |
-| `analytics-sync-bootstrap.json` | `sync bootstrap` (team leads only) | saved wizard answers, including the webhook URL (mode 600) |
+| `analytics-sync-bootstrap.json` | `sync bootstrap` (team leads only) | saved wizard answers: chosen targets, the webhook URL and the git repository, branch and path (mode 600) |
 
 Commands and every option: [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
 Delivery contract and per-platform scheduler detail:

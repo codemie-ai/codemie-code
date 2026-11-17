@@ -1,0 +1,1 @@
+{"task_id":"1","status":"done","commit":"e9392e69","test_command":"HOME=$T USERPROFILE=$T CODEMIE_HOME=$T npx vitest run src/agents/plugins/__tests__/codemie-code.plugin.version-support.test.ts"}
