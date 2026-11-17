@@ -1,5 +1,4 @@
 import { countContentLines } from '@/utils/file-operations.js';
-import { wrappedCommandNames } from '../../claude/session/claude-named-invocations.js';
 
 /**
  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
@@ -124,38 +123,6 @@ const SELF_WRITTEN_PREFIXES = [
 /** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
 const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
 
-/**
- * Commands Claude Code runs locally with no model call behind them, excluded from Turns.
- *
- * NOT the same list as the backend analytics rollup's `SENTINEL_EXACT` — that list serves a
- * different purpose (picking a session's first prompt) and, unlike this one, includes `/compact`,
- * which does call the model and must keep counting as a Turn here. There is no shared source of
- * truth between the two repos and the two lists must stay independent: do not "sync" this set
- * against `SENTINEL_EXACT`. A newly discovered local-only command belongs only here, verified
- * against a real transcript (does the command's line get an `assistant` reply with an
- * `api_request`?) before being added.
- */
-export const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
-  'context',
-  'usage',
-  'cost',
-  'exit',
-  'quit',
-  'clear',
-  'resume',
-  'model',
-  'mcp',
-  'agents',
-  'hooks',
-  'skills',
-  'tasks',
-  'release-notes',
-  'export',
-  'effort',
-  'status',
-  'config',
-]);
-
 function startsWithAny(text: string, prefixes: readonly string[]): boolean {
   const start = text.trimStart();
   return prefixes.some((prefix) => start.startsWith(prefix));
@@ -194,18 +161,46 @@ export function isGenuineUserTurn(parsed: SignalLine): boolean {
 }
 
 /**
+ * Whether the line at `i` is a command Claude Code itself marked as having run locally, with no
+ * model call — the line immediately preceding it is a `<local-command-caveat>` line, Claude
+ * Code's own signal for this, present regardless of the command's name. Name-list-free by
+ * design: a static denylist of local-only command names always drifts as Claude Code adds new
+ * ones (see PR #824 review — 34/2308+ real transcript lines misclassified across names never on
+ * the list).
+ */
+function isMarkedLocalCommand(lines: readonly SignalLine[], i: number): boolean {
+  const prev = lines[i - 1];
+  return !!prev && userLineText(prev).trimStart().startsWith('<local-command-caveat>');
+}
+
+/**
+ * Whether a `compact_boundary` system line appears between `i` and the next genuine user turn —
+ * the one exception where a locally-marked command (`/compact`) still calls the model.
+ */
+function isFollowedByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
+  for (let j = i + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.type === 'system' && line.subtype === 'compact_boundary') return true;
+    if (isGenuineUserTurn(line)) return false;
+  }
+  return false;
+}
+
+/**
  * Count real user prompts: user lines with text (a plain string or a `text` block) that are not
  * meta, sidechain or compaction-summary lines, and whose text is neither one Claude Code writes
- * itself nor an auto prompt. Lines holding only `tool_result` blocks are not prompts.
+ * itself nor an auto prompt, nor a command Claude Code marked as running locally (no model call)
+ * — except `/compact`, which is marked local but still calls the model, detected via the
+ * `compact_boundary` line it produces. Lines holding only `tool_result` blocks are not prompts.
  */
 export function countTurns(lines: readonly SignalLine[]): number {
   let turns = 0;
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
-    const commandNames = wrappedCommandNames(text);
-    if (commandNames.length > 0 && commandNames.every((name) => LOCAL_ONLY_COMMANDS.has(name))) continue;
+    if (isMarkedLocalCommand(lines, i) && !isFollowedByCompactBoundary(lines, i)) continue;
     turns += 1;
   }
   return turns;

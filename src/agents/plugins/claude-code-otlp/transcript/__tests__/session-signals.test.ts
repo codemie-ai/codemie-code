@@ -199,107 +199,88 @@ describe('countTurns', () => {
     ).toBe(4);
   });
 
-  it('excludes known local-only commands (no model call) from turns, EPMCDME-15582 regression', () => {
+  function caveat(): SignalLine {
+    return { type: 'user', isMeta: true, message: { content: '<local-command-caveat>Caveat: local commands</local-command-caveat>' } };
+  }
+
+  function wrappedCommand(name: string): SignalLine {
+    return {
+      type: 'user',
+      message: {
+        content: `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args></command-args>`,
+      },
+    };
+  }
+
+  function stdout(text = 'ok'): SignalLine {
+    return { type: 'user', message: { content: `<local-command-stdout>${text}</local-command-stdout>` } };
+  }
+
+  function localCommandSystemLine(): SignalLine {
+    return { type: 'system', subtype: 'local_command' };
+  }
+
+  it('excludes a command marked local by a preceding <local-command-caveat> line, regardless of its name, EPMCDME-15582 regression', () => {
     const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const wrapped = (name: string) =>
-      `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>`;
     expect(
       countTurns([
         user('typed prompt'),
-        user(wrapped('context')),
-        user(wrapped('usage')),
-        user(wrapped('cost')),
-        user(wrapped('exit')),
-        user(wrapped('quit')),
-        user(wrapped('clear')),
-        user(wrapped('resume')),
-        user(wrapped('model')),
-        user(wrapped('compact')), // calls the model, must still count
-        user(wrapped('init')), // calls the model, must still count
+        caveat(),
+        wrappedCommand('add-dir'), // not in the old denylist — proves the marker, not a name list, drives exclusion
+        stdout(),
       ])
-    ).toBe(3); // typed prompt + /compact + /init
+    ).toBe(1);
   });
 
-  it('does not exclude a bare mention of a local-only command name lacking the genuine command-message wrapper (CR-002)', () => {
+  it('excludes a marked-local command whose follow-up marker is a system line (newer Claude Code versions)', () => {
     const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
     expect(
       countTurns([
         user('typed prompt'),
-        user('<command-name>/model</command-name>'), // no <command-message> sibling: not a genuine invocation
+        caveat(),
+        wrappedCommand('permissions'),
+        localCommandSystemLine(),
+      ])
+    ).toBe(1);
+  });
+
+  it('counts a command wrapper not preceded by a caveat line as a genuine prompt command', () => {
+    expect(countTurns([wrappedCommand('init')])).toBe(1);
+  });
+
+  it('still counts /compact even though it is marked local, because a compact_boundary line follows it', () => {
+    expect(
+      countTurns([
+        caveat(),
+        wrappedCommand('compact'),
+        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+      ])
+    ).toBe(1);
+  });
+
+  it('excludes consecutive marked-local commands, each preceded by its own caveat line', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        caveat(),
+        wrappedCommand('exit'),
+        stdout('Goodbye!'),
+        caveat(),
+        wrappedCommand('usage'),
+        stdout(),
+      ])
+    ).toBe(1);
+  });
+
+  it('does not treat a prompt that merely mentions the caveat tag mid-text as a marker for the next line', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('what does <local-command-caveat> mean?'),
+        wrappedCommand('init'),
       ])
     ).toBe(2);
-  });
-
-  it('excludes additional known local-only commands (no model call) from turns', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const wrapped = (name: string) =>
-      `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>`;
-    expect(
-      countTurns([
-        user('typed prompt'),
-        user(wrapped('mcp')),
-        user(wrapped('agents')),
-        user(wrapped('hooks')),
-        user(wrapped('skills')),
-        user(wrapped('tasks')),
-        user(wrapped('release-notes')),
-        user(wrapped('export')),
-        user(wrapped('effort')),
-        user(wrapped('status')),
-        user(wrapped('config')),
-      ])
-    ).toBe(1); // only the typed prompt
-  });
-
-  it('counts a genuine typed turn that merely quotes a local-only command wrapper mid-text, not at the start', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const quoted =
-      'what does this transcript line mean: <command-name>/clear</command-name>\n<command-message>clear</command-message>';
-    expect(countTurns([user(quoted)])).toBe(1);
-  });
-
-  it('counts a real prompt that opens with a pasted command-name tag but has no command-message right after it (review nit)', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const text =
-      '<command-name>/clear</command-name> tell me what this transcript tag means: <command-message>';
-    expect(countTurns([user(text)])).toBe(1);
-  });
-
-  it('counts a line with two command wrappers when at least one of them calls the model (review nit)', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const twoCommands =
-      '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>\n' +
-      '<command-name>/compact</command-name>\n<command-message>compact</command-message>';
-    expect(countTurns([user(twoCommands)])).toBe(1);
-  });
-
-  it('excludes a line with two command wrappers only when every one of them is local-only', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const twoLocalOnly =
-      '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>\n' +
-      '<command-name>/usage</command-name>\n<command-message>usage</command-message>';
-    expect(countTurns([user('typed prompt'), user(twoLocalOnly)])).toBe(1);
-  });
-
-  it('excludes a local-only command from turns when the wrapper is written message-first (review finding)', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const messageFirst = (name: string) =>
-      `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`;
-    expect(
-      countTurns([
-        user('typed prompt'),
-        user(messageFirst('exit')),
-        user(messageFirst('model')),
-        user(messageFirst('usage')),
-      ])
-    ).toBe(1); // only the typed prompt
-  });
-
-  it('still counts a message-first command that calls the model, like /compact', () => {
-    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
-    const messageFirst = (name: string) =>
-      `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>`;
-    expect(countTurns([user(messageFirst('compact'))])).toBe(1);
   });
 });
 
