@@ -1,0 +1,10 @@
+{"schema":1,"branch":"EPMCDME-16964_msgraph-email-full-body","head":"15b57efc329453b9abc2cfcc0dfc241b27e4578a","runner":"npm","started_at":"2026-11-12T13:55:00Z","completed_at":"2026-11-12T14:00:00Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license-check","source":"guide","status":"PASS","exit_code":0,"command":"npm run license-check"},
+{"id":"lint","source":"guide","status":"PASS","exit_code":0,"command":"npm run lint"},
+{"id":"typecheck","source":"guide","status":"PASS","exit_code":0,"command":"npm run typecheck"},
+{"id":"build","source":"guide","status":"PASS","exit_code":0,"command":"npm run build"},
+{"id":"integration-scoped","source":"guide","status":"PASS","exit_code":0,"command":"vitest run --project cli tests/integration/msgraph-email-read.test.ts (temp HOME/CODEMIE_HOME)","notes":"Scoped per user constraint; full suite not run."},
+{"id":"commitlint","source":"guide","status":"PASS","exit_code":0,"command":"npm run commitlint:last"},
+{"id":"secrets","source":"hook","status":"SKIPPED","exit_code":0,"command":"npm run validate:secrets","notes":"Output: 'No staged changes to scan'. Nothing staged; CI runs gitleaks for real."}],
+"failures":{}}
