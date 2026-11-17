@@ -1,0 +1,1 @@
+[{"location":"src/agents/plugins/claude/plugin/skills/msgraph/scripts/msgraph.js:617","trigger_condition":"body.contentType is 'text' but body.content is null or undefined","guard_snippet":"console.log(body.contentType === 'text' ? (body.content || '') : stripHtml(body.content || ''));","potential_consequence":"Prints literal 'undefined' or 'null' as the email body"}]
