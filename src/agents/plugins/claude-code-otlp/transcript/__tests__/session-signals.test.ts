@@ -282,6 +282,35 @@ describe('countTurns', () => {
       ])
     ).toBe(2);
   });
+
+  it('CR-001: still counts /compact when a self-written stdout line sits between its wrapper and the compact_boundary line', () => {
+    expect(
+      countTurns([
+        caveat(),
+        wrappedCommand('compact'),
+        stdout('Compacting conversation...'),
+        { type: 'system', subtype: 'compact_boundary', timestamp: '2026-11-16T00:00:00.000Z' },
+      ])
+    ).toBe(1);
+  });
+
+  /** A bookkeeping line with no `message` field at all (e.g. `file-history-snapshot`, `cost-state`). */
+  function bookkeepingLine(): SignalLine {
+    return { type: 'file-history-snapshot' };
+  }
+
+  it('CR-002: excludes a marked-local command even when a bookkeeping line (no message field) sits between the caveat and the wrapper', () => {
+    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
+    expect(
+      countTurns([
+        user('typed prompt'),
+        caveat(),
+        bookkeepingLine(),
+        wrappedCommand('add-dir'),
+        stdout(),
+      ])
+    ).toBe(1);
+  });
 });
 
 describe('collectCompactions', () => {

@@ -162,26 +162,35 @@ export function isGenuineUserTurn(parsed: SignalLine): boolean {
 
 /**
  * Whether the line at `i` is a command Claude Code itself marked as having run locally, with no
- * model call — the line immediately preceding it is a `<local-command-caveat>` line, Claude
- * Code's own signal for this, present regardless of the command's name. Name-list-free by
- * design: a static denylist of local-only command names always drifts as Claude Code adds new
+ * model call — the nearest preceding line that carries a `message` is a `<local-command-caveat>`
+ * line, Claude Code's own signal for this, present regardless of the command's name. Name-list-free
+ * by design: a static denylist of local-only command names always drifts as Claude Code adds new
  * ones (see PR #824 review — 34/2308+ real transcript lines misclassified across names never on
- * the list).
+ * the list). Skips non-message bookkeeping lines (`file-history-snapshot`, `cost-state`, ...) while
+ * scanning backward — the same lines `isCountedTranscriptLine` (orchestrator.ts) lets through
+ * rather than filtering, so strict index adjacency to `i - 1` is not safe (CR-002, PR #824 review).
  */
 function isMarkedLocalCommand(lines: readonly SignalLine[], i: number): boolean {
-  const prev = lines[i - 1];
-  return !!prev && userLineText(prev).trimStart().startsWith('<local-command-caveat>');
+  for (let j = i - 1; j >= 0; j--) {
+    const line = lines[j];
+    if (line.message === undefined) continue;
+    return userLineText(line).trimStart().startsWith('<local-command-caveat>');
+  }
+  return false;
 }
 
 /**
- * Whether a `compact_boundary` system line appears between `i` and the next genuine user turn —
- * the one exception where a locally-marked command (`/compact`) still calls the model.
+ * Whether a `compact_boundary` system line appears between `i` and the next genuine, non-self-written
+ * user turn — the one exception where a locally-marked command (`/compact`) still calls the model.
+ * Self-written lines (e.g. the `<local-command-stdout>` line `/compact` itself writes before the
+ * boundary appears) must not stop the scan early — that would quietly reintroduce the exact
+ * over-counting bug this file exists to fix (CR-001, PR #824 review).
  */
 function isFollowedByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
   for (let j = i + 1; j < lines.length; j++) {
     const line = lines[j];
     if (line.type === 'system' && line.subtype === 'compact_boundary') return true;
-    if (isGenuineUserTurn(line)) return false;
+    if (isGenuineUserTurn(line) && !isSelfWrittenUserText(userLineText(line))) return false;
   }
   return false;
 }
