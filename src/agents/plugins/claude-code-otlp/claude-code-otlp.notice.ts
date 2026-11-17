@@ -11,6 +11,7 @@ const TEXT: Record<StopReason, string> = {
   folder_changed: 'the working folder moved to another project or an unconnected folder.',
   consent_revoked: 'the folder is no longer connected for work analytics.',
   consent_missing: 'the folder is not connected for work analytics.',
+  work_consent_required: 'To send analytics for future work sessions, run codemie proxy analytics connect-folder --project "<project-name>" from this folder and start a new session.',
   resume_unknown: 'this resumed or forked session has no recorded scope, so none of it is published.',
   generation_changed: 'analytics collection was turned off and on again during this session.',
   scope_excluded: 'this folder is excluded from analytics.',
@@ -33,5 +34,8 @@ const TEXT: Record<StopReason, string> = {
 const HOLD_ONLY: ReadonlySet<StopReason> = new Set<StopReason>(['hold_contract_unavailable', 'hold_state_unknown', 'hold_personal_unsupported', 'hold_project_unavailable', 'hold_destination_unsupported']);
 
 export function stopNoticeText(reason: StopReason): string {
+  if (reason === 'work_consent_required') {
+    return `CodeMie analytics was not sent for this session. ${TEXT[reason]} Claude keeps working.`;
+  }
   return `CodeMie analytics paused for this session: ${TEXT[reason]} ${HOLD_ONLY.has(reason) ? 'Claude keeps working.' : GUIDE}`;
 }

@@ -56,6 +56,8 @@ vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
   openPostCompactPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
   openSessionStartPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
+  isSessionReopenedIdle: vi.fn(async () => false),
+  markReopenedActive: vi.fn(async () => undefined),
   openSessionEnvCheckPass: vi.fn(async () => ({ sessionEnvFields: null, finalize: vi.fn(async () => {}) })),
   openSubagentPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
   openSessionEndPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}), gitHeadStart: '', sessionStartedAt: '' })),

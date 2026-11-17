@@ -1,0 +1,2 @@
+{"ts":"2026-11-12T09:51:11Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved plan","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-11-12T10:08:45Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved; 0 blocking, 1 deferred pre-existing","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}

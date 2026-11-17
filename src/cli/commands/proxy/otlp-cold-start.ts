@@ -19,6 +19,7 @@ import {
   buildRequestedConfig,
   DEFAULT_DAEMON_PORT,
   ensureDaemon,
+  withDesktopIdentity,
   type LoadedConfig,
 } from './connect-orchestrator.js';
 import { readConfiguredOtlpPort, refreshClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
@@ -78,6 +79,28 @@ async function respawnPort(): Promise<number> {
 }
 
 /**
+ * Matches and spawns the daemon for `identity`; with Claude Desktop connected, in Desktop mode,
+ * asking for the gateway's port and kept wherever it came up.
+ */
+async function startDaemon(
+  name: string,
+  identity: ClientIdentity,
+  config: LoadedConfig,
+  projectBinding: Awaited<ReturnType<typeof reportDaemonProfileIdentity>>
+): Promise<void> {
+  const { identity: spawnIdentity, gatewayPort } = await withDesktopIdentity(identity);
+  const requested = buildRequestedConfig(
+    name,
+    getEffectiveClientType(spawnIdentity),
+    config,
+    projectBinding,
+    gatewayPort ?? (await respawnPort())
+  );
+  const { state: live } = await ensureDaemon(requested, spawnIdentity, config);
+  await refreshClaudeCodeOtlpEndpoint(live);
+}
+
+/**
  * Cold start when there is no usable connection record and no live daemon (first hook after an
  * upgrade, or a deleted or malformed record): start on the working directory's profile as hooks
  * did before the record existed. The daemon's successful start creates the record. Like the
@@ -107,9 +130,7 @@ async function coldStartOnWorkingDirectoryProfile(agentName: string): Promise<vo
     );
     // An unowned profile is only logged here, never printed or prompted.
     const projectBinding = await reportDaemonProfileIdentity(config, 'hook', cwd);
-    const requested = buildRequestedConfig(name, agentName, config, projectBinding, await respawnPort());
-    const { state: live } = await ensureDaemon(requested, { clientType: agentName }, config);
-    await refreshClaudeCodeOtlpEndpoint(live);
+    await startDaemon(name, { clientType: agentName }, config, projectBinding);
   } catch (error) {
     logger.warn(`[ensureOtlpProxy] cold start failed (profile: ${name})`, ...sanitizeLogArgs(error));
     throw error;
@@ -126,7 +147,8 @@ async function coldStartOnWorkingDirectoryProfile(agentName: string): Promise<vo
  * stop the start: the daemon holds its port and answers 401 until the user signs in, and then
  * swaps the real proxy in by itself. The daemon's
  * project comes from the loaded config; the record supplies profile, clientType and
- * telemetryMode only.
+ * telemetryMode only. With Claude Desktop connected, both paths start in Desktop mode on the
+ * gateway's port.
  */
 export async function ensureOtlpProxy(agentName: string): Promise<void> {
   if (await adoptLiveDaemon()) return;
@@ -161,15 +183,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     logger.info(`[ensureOtlpProxy] cold start (profile: ${name}, ${scope} scope)`);
     // An unowned profile is only logged here, never printed or prompted.
     const projectBinding = await reportDaemonProfileIdentity(config, 'hook', process.cwd());
-    const requested = buildRequestedConfig(
-      name,
-      getEffectiveClientType(spawnIdentity),
-      config,
-      projectBinding,
-      await respawnPort()
-    );
-    const { state: live } = await ensureDaemon(requested, spawnIdentity, config);
-    await refreshClaudeCodeOtlpEndpoint(live);
+    await startDaemon(name, spawnIdentity, config, projectBinding);
   } catch (error) {
     logger.warn(`[ensureOtlpProxy] cold start failed (profile: ${name})`, ...sanitizeLogArgs(error));
     throw error;

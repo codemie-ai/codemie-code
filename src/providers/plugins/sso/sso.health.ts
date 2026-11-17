@@ -11,6 +11,7 @@ import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { SSOModelProxy } from './sso.models.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 import { getPlatformUrl, getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
 
 /**
@@ -84,7 +85,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
     });
 
     // 3. Check expiration
-    if (credentials.expiresAt && credentials.expiresAt < Date.now()) {
+    const expiresAt = effectiveExpiresAt(credentials);
+    if (expiresAt && expiresAt < Date.now()) {
       details.push({
         status: 'error',
         message: 'SSO session expired',
@@ -98,8 +100,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
       };
     }
 
-    const expiresInHours = credentials.expiresAt
-      ? Math.round((credentials.expiresAt - Date.now()) / (1000 * 60 * 60))
+    const expiresInHours = expiresAt
+      ? Math.round((expiresAt - Date.now()) / (1000 * 60 * 60))
       : null;
 
     if (expiresInHours !== null) {

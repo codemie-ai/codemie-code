@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../claude-code-otlp.allowlist.js', () => ({
@@ -56,6 +57,8 @@ const resolveClientVersionMock = vi.fn();
 const openMainTranscriptPassMock = vi.fn();
 const openPostCompactPassMock = vi.fn();
 const openSessionStartPassMock = vi.fn();
+const isSessionReopenedIdleMock = vi.fn(async (): Promise<boolean> => false);
+const markReopenedActiveMock = vi.fn(async (): Promise<void> => undefined);
 const openSessionEnvCheckPassMock = vi.fn();
 const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
@@ -88,6 +91,8 @@ vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: openMainTranscriptPassMock,
   openPostCompactPass: openPostCompactPassMock,
   openSessionStartPass: openSessionStartPassMock,
+  isSessionReopenedIdle: isSessionReopenedIdleMock,
+  markReopenedActive: markReopenedActiveMock,
   openSessionEnvCheckPass: openSessionEnvCheckPassMock,
   openSubagentPass: openSubagentPassMock,
   openSessionEndPass: openSessionEndPassMock,
@@ -359,6 +364,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     openPostCompactPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockReset();
     openSessionStartPassMock.mockResolvedValue(emptyPass());
+    isSessionReopenedIdleMock.mockReset();
+    isSessionReopenedIdleMock.mockResolvedValue(false);
+    markReopenedActiveMock.mockReset();
+    markReopenedActiveMock.mockResolvedValue(undefined);
     openSessionEnvCheckPassMock.mockReset();
     openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockReset();
@@ -419,6 +428,31 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       }
     }
   );
+
+  describe('passthrough hooks of a session reopened without a prompt (EPMCDME-16993)', () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const send = async (name: string, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> => {
+      await plugin.processOtlpEvent(JSON.stringify(hookEvent({ hook_event_name: name, ...extra })), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      return forwardedEvents();
+    };
+
+    it.each(['Notification', 'InstructionsLoaded', 'PermissionRequest'])('drops %s while the reopen is idle', async (name) => {
+      isSessionReopenedIdleMock.mockResolvedValue(true);
+      expect(await send(name)).toEqual([]);
+    });
+
+    it.each(['Notification', 'InstructionsLoaded', 'PermissionRequest'])('still sends %s otherwise', async (name) => {
+      const sent = await send(name);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ hook_event_name: name });
+    });
+
+    it('marks the reopen active on a prompt, so the hooks of its turn are not dropped', async () => {
+      vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: true } as never);
+      await send('UserPromptSubmit', { prompt: 'hello' });
+      expect(markReopenedActiveMock).toHaveBeenCalledWith('sid-1');
+    });
+  });
 
   describe('Notification drops and sensitive-file reads', () => {
     it('drops the message and title of a Notification', async () => {
@@ -732,6 +766,55 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       { ensureOtlpProxy, forwardOtlpEventsToSpool }
     );
     expect(forwardedEvents()[0]).not.toHaveProperty('fork_agent_id');
+  });
+
+  describe('Agent result attribution (EPMCDME-16939)', () => {
+    const foregroundResult = JSON.parse(
+      readFileSync(new URL('../event-fields/__tests__/fixtures/foreground-agent-result.json', import.meta.url), 'utf-8')
+    ) as Record<string, unknown>;
+
+    async function forwardPostToolUse(overrides: Record<string, unknown>): Promise<Record<string, unknown>> {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ ...foregroundResult, ...overrides })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      return forwardedEvents()[0];
+    }
+
+    it('stamps fork_agent_id on a foreground Agent agent.tool.end while its tool_response is cut before the id (A1)', async () => {
+      const forwarded = await forwardPostToolUse({});
+      expect(forwarded.fork_agent_id).toBe('a407f25330fd9c1e0');
+      expect(String(forwarded.tool_response)).toHaveLength(300);
+      expect(String(forwarded.tool_response)).not.toContain('a407f25330fd9c1e0');
+      expect(forwarded).not.toHaveProperty('raw');
+    });
+
+    it.each([
+      ['a result with no agentId (denial)', { tool_response: { status: 'denied' } }],
+      ['a malformed text result', { tool_response: 'unexpected text result' }],
+      ['an absent result', { tool_response: undefined }],
+    ])('does not stamp fork_agent_id on an Agent agent.tool.end for %s (A2)', async (_case, overrides) => {
+      expect(await forwardPostToolUse(overrides)).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp fork_agent_id on an Agent failure, which carries no tool_response (A2)', async () => {
+      const { tool_response: _dropped, ...failureBase } = foregroundResult;
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ ...failureBase, hook_event_name: 'PostToolUseFailure', error: 'agent failed' })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      expect(forwardedEvents()[0]).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp fork_agent_id on an Agent agent.tool.start', async () => {
+      expect(await forwardPostToolUse({ hook_event_name: 'PreToolUse', tool_response: undefined })).not.toHaveProperty('fork_agent_id');
+    });
+
+    it('does not stamp the older Task tool (A2)', async () => {
+      expect(await forwardPostToolUse({ tool_name: 'Task' })).not.toHaveProperty('fork_agent_id');
+    });
   });
 
   it('stamps lines_added/lines_removed on agent.tool.end from the Edit structuredPatch', async () => {
@@ -1420,7 +1503,8 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     expect(openSessionStartPassMock).toHaveBeenCalledWith(
       's',
       'abc123def456',
-      expect.objectContaining({ configured_model: '', permission_mode: '' })
+      expect.objectContaining({ configured_model: '', permission_mode: '' }),
+      undefined
     );
     expect(forwardedEvents()[0].git_head_start).toBe('persisted-start-sha');
     expect(pass.finalize).toHaveBeenCalledWith(true);
@@ -1839,5 +1923,89 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(output).toContain('"decision":"block"');
     expect(output).toContain('re-send your prompt');
     log.mockRestore();
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin reopened session without activity (EPMCDME-16993)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+  const hook = (name: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name, ...extra });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
+    openMainTranscriptPassMock.mockReset();
+    openSessionEndPassMock.mockReset();
+  });
+
+  it('forwards nothing for a resume SessionStart of an already started session', async () => {
+    const pass = { ...emptyPass(), sessionEnvFields: SESSION_ENV_FIELDS_STUB, gitHeadStart: 'sha', reopened: true };
+    openSessionStartPassMock.mockResolvedValue(pass);
+
+    await plugin.processOtlpEvent(hook('SessionStart', { source: 'resume' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openSessionStartPassMock).toHaveBeenCalledWith('s', expect.any(String), expect.anything(), 'resume');
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expect(pass.finalize).toHaveBeenCalledWith(true);
+  });
+
+  it('still forwards start and env for a startup SessionStart', async () => {
+    openSessionStartPassMock.mockResolvedValue({
+      ...emptyPass(),
+      sessionEnvFields: SESSION_ENV_FIELDS_STUB,
+      gitHeadStart: 'sha',
+      reopened: false,
+    });
+
+    await plugin.processOtlpEvent(hook('SessionStart', { source: 'startup' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents().map((e) => e.type)).toEqual(['agent.session.start', 'agent.session.env']);
+  });
+
+  it('forwards nothing for a Stop while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards nothing for a SessionEnd while the reopened session is idle', async () => {
+    openSessionEndPassMock.mockResolvedValue({ ...emptySessionEndPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('SessionEnd', { reason: 'other' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards a Stop once the session has activity', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: false });
+
+    await plugin.processOtlpEvent(hook('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents().map((e) => e.type)).toContain('agent.session.stop');
+  });
+  it('forwards nothing for a PreCompact while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('PreCompact', { trigger: 'manual' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('forwards nothing for a StopFailure while the reopened session is idle', async () => {
+    openMainTranscriptPassMock.mockResolvedValue({ ...emptyPass(), suppressLifecycle: true });
+
+    await plugin.processOtlpEvent(hook('StopFailure', { error: 'rate_limit' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });

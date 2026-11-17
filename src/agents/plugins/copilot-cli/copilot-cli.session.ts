@@ -34,7 +34,7 @@ import type { AgentMetadata } from '../../core/types.js';
 import type { Session } from '../../core/session/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
-import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
+import { COPILOT_CLI_AGENT_NAME, extractSlashCommand, normalizeUserPrompt, resolveCopilotAgentKey } from './copilot-cli.constants.js';
 import { readCopilotEvents } from './copilot-cli.storage-utils.js';
 import { locateCopilotTranscript } from './copilot-cli.transcript-lookup.js';
 import {
@@ -64,6 +64,13 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** The whole transcript, for a caller that names no run (a report over the native session). */
 const WHOLE_SESSION: RunBounds = { startTime: -Infinity };
+
+/** The patch of an pply_patch call: its raw string argument, or the string field of its arguments object holding a patch envelope. */
+function patchTextOf(args: unknown): string | undefined {
+  if (typeof args === 'string') return args;
+  if (typeof args !== 'object' || args === null) return undefined;
+  return Object.values(args).find((v): v is string => typeof v === 'string' && v.includes('*** Begin Patch'));
+}
 
 /** Trailing-slash-insensitive directory comparison. */
 function sameDir(a: string | undefined, b: string): boolean {
@@ -160,7 +167,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         projectPath,
         createdAt: createdAt ?? 0,
         updatedAt: manifest.updatedAt,
-        agentName: this.agentName,
+        agentName: resolveCopilotAgentKey(manifest.clientName),
       });
     }
 
@@ -206,6 +213,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     const tools: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
     const skillInvocations: Record<string, number> = {};
+    const commandInvocations: Record<string, number> = {};
     const userPrompts: Array<{ count: number; text: string }> = [];
     const fileOperations: NonNullable<ParsedSession['metrics']>['fileOperations'] = [];
 
@@ -241,9 +249,10 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           // Remember the name and target path; whether the write actually happened is
           // only known at tool.execution_complete.
           const args = data.arguments;
-          toolCallById.set(data.toolCallId, typeof args === 'string'
-            ? { name: data.toolName, patch: args }
-            : { name: data.toolName, path: args?.path });
+          const patch = patchTextOf(args);
+          toolCallById.set(data.toolCallId, patch !== undefined
+            ? { name: data.toolName, patch }
+            : { name: data.toolName, path: typeof args === 'object' ? args?.path : undefined });
           break;
         }
         case 'tool.execution_complete': {
@@ -276,12 +285,17 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           break;
         }
         case 'user.message': {
-          const data = (event.data as { text?: string; content?: string } | undefined) ?? {};
-          const text = typeof data.text === 'string' && data.text.trim()
+          const data = (event.data as { text?: string; content?: string; transformedContent?: string } | undefined) ?? {};
+          const command = extractSlashCommand(data.content, data.transformedContent);
+          if (command && inRun(event, bounds)) {
+            commandInvocations[command] = (commandInvocations[command] ?? 0) + 1;
+          }
+          const rawText = typeof data.text === 'string' && data.text.trim()
             ? data.text
             : typeof data.content === 'string'
               ? data.content
               : undefined;
+          const text = typeof rawText === 'string' ? normalizeUserPrompt(rawText, data.transformedContent) : undefined;
           if (typeof text === 'string' && text.trim() && inRun(event, bounds)) {
             userPrompts.push({ count: 1, text });
           }
@@ -367,6 +381,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         toolStatus,
         fileOperations,
         skillInvocations,
+        commandInvocations,
         userPrompts,
       },
     };

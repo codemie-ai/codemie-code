@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- `codemie proxy analytics status` and `codemie proxy status` no longer report delivery as unhealthy, with a retry time that has already passed, because of a session that is held and not retried; the held data still counts as unsent and `Unsent data` names the part on hold (`heldBytes` in `--json`). `Next retry` reads `due now` once its time has come, and it and `Last dropped` show times in your local time zone (`2026-11-16 01:24:22 +03:00`); `--json` keeps epoch milliseconds
+
+## [0.16.9] - 2026-11-16
+
+### Added
+
+- `codemie-claude models select|list|add|remove` offers non-Claude models from the profile's project catalog in Claude Code's `/model` picker and in Claude Desktop's model list
+- Copilot CLI analytics cover managed and native sessions: tool and usage metrics, per-request usage and session summaries, counted once per Copilot session
+
+### Changed
+
+- `codemie proxy connect --claude-code-otlp` prints a shorter confirmation: the repository name instead of the path, no configuration tables and no restart hint
+- `codemie proxy analytics status` uses sections, adds unsent data and retry details, and drops the current project; `--json` returns `delivery` and a `connectors` array
+- Claude Desktop is offered every Claude model the profile's project allows
+
+### Fixed
+
+- Analytics prices Claude Fable 5.2 and Gemini 4 Hydrogen sessions instead of leaving their cost empty
+- Repository names no longer include the drive letter (`C:\Repositories` is `Repositories`)
+- Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
+- `codemie-claude --resume` accepts the CodeMie session id as well as Claude's own session id
+- When the SSO login expires, the proxy keeps its port, answers 401 and opens a browser sign-in instead of stopping
+- Claude Desktop no longer gets stuck on a 401 from gateway SSO discovery
+- Analytics delivery health reports classification stalls (unreachable or unsupported) as unhealthy
+- Unconsented Personal Claude sessions are held locally instead of being sent
+- Session analytics have a retry budget, and the wrapper prints on exit which sessions are still queued or were dropped
+- Copilot desktop wrapper blocks are stripped from session prompts
+
+## [0.16.8] - 2026-11-12
+
+### Added
+
+- `codemie analytics sync` delivers each developer's priced analytics report once a day to a Power Automate webhook, a git repository, or both; a team lead connects the team with `codemie analytics sync bootstrap` and each developer registers the daily job with the command it prints
+- Claude Desktop Cowork sessions now appear on the CLI Analytics tab (turns, tools, subagents, tokens, cost) once Claude Desktop is connected with `codemie proxy connect --claude-desktop`; sessions that ran while the proxy was stopped are sent when it runs again, up to 7 days back. `codemie proxy analytics disable` and `exclude` apply to them
+- `codemie proxy status` shows whether Claude Desktop sessions are being collected (`Desktop: collecting` / `NOT collecting` with the command that fixes it) and the latest analytics data that was not stored (`Last dropped: <reason>`); `codemie proxy analytics status` shows the latter too
+
 ### Changed
 
 - `codemie-opencode` and `codemie-opencode-acp` now target OpenCode v2; OpenCode v1 is no longer supported (the built-in `codemie-code` agent is unaffected)
@@ -11,9 +49,21 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie-opencode --reasoning-effort` selects an OpenCode model variant and is clamped to the levels the model offers: `minimal`–`xhigh` for Responses API models, `low`–`high` for the others
 - `codemie-pi` uses Pi's built-in MCP support and no longer installs `pi-mcp-adapter`. Installs that still have the adapter keep built-in MCP disabled until it is removed (`pi remove npm:pi-mcp-adapter`)
 - `codemie-pi` takes a model's context window from the CodeMie model catalog when the catalog gives one
+- HTML pages from the Claude plugin's `codemie-html-report` skill (0.4.0) look like the CodeMie app in light and dark: Geist Mono for the interface and Geist for text, the app's cards, stat tiles and tables, and its violet corner light behind the page. Decks are unchanged
 
 ### Fixed
 
+- Cookie-only SSO credentials are no longer expired locally
+- `codemie self-update` warns when the shell still resolves an older `codemie` install
+- Any Pi 1.x release is accepted, and `codemie install pi` installs the latest Pi release
+- Managed and native sessions select the CodeMie project the same way
+- The claude-code-otlp endpoint is refreshed before Claude Code starts
+- Agent tool results in Claude Code sessions carry the forked agent's id in analytics
+- With Claude Desktop connected, connecting another client, `codemie proxy start`, `codemie proxy restart` or a Claude Code hook no longer restarts the proxy outside Desktop mode, which silently stopped the collection of Claude Desktop sessions
+- The route of a model request (`x-litellm-model-name`) is no longer lost from a streamed answer whose first event is split across network chunks, or from a compressed non-streaming answer, so the cost of such a request is priced by its route
+- An analytics session discarded for having no CodeMie project is now logged and shown by `codemie proxy status`
+- The turn count in a Claude Code session summary no longer includes the lines Claude Code writes itself (an interrupted request, the output of a local or `!` command, the `!` command itself) or automatic prompts (a finished background task, an agent's message), so `Turns` on the CLI Analytics tab is no longer raised by them. Sessions already sent are not recounted
+- An undelivered session no longer loses its end metric to an outage that answers with errors: a delivery attempt answered 5xx, 429 or a gateway's error page is given back, so Claude Desktop and CLI sessions are delivered once the server recovers
 - OpenCode v2: choosing a model from the "CodeMie SSO (Responses API)" list no longer fails with `Invalid model name`; the list now holds only the models CodeMie serves, and `--model` starts on the requested model
 - OpenCode v2: sessions sync their metrics and conversations again, hooks (prompt, tool, stop) run, `--reasoning-effort` no longer aborts `--task` runs, and each `codemie-opencode` session runs its own OpenCode server instead of attaching to a background service that held another session's settings
 - OpenCode v2: session titles are generated with the profile's haiku-tier model when it is in the catalog

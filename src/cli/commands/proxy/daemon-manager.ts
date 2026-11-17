@@ -20,6 +20,9 @@ const DAEMON_READY_POLL_INTERVAL_MS = 100;
  */
 export const DAEMON_READY_TIMEOUT_MS = 5_000;
 
+/** The gateway key a daemon is spawned with when the caller names none. */
+export const DEFAULT_GATEWAY_KEY = 'codemie-proxy';
+
 export interface DaemonState {
   pid: number;
   port: number;
@@ -315,7 +318,7 @@ export interface SpawnOptions {
 
 export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
   const stateFile = DEFAULT_STATE_FILE;
-  const gatewayKey = opts.gatewayKey ?? 'codemie-proxy';
+  const gatewayKey = opts.gatewayKey ?? DEFAULT_GATEWAY_KEY;
 
   // Locate the daemon binary relative to this compiled file:
   // dist/cli/commands/proxy/daemon-manager.js → ../../../../bin/proxy-daemon.js
