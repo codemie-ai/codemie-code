@@ -3177,6 +3177,29 @@ describe('proxy restart', () => {
     });
   });
 
+  it('starts a stopped daemon without a model when the profile\'s model is blank', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'p', provider: 'ai-run-sso', baseUrl: 'https://t', codeMieProject: 'A', model: '  ',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
+  });
+
+  it('starts without a model when --profile names a profile whose model is blank', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'other', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: '  ',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
+  });
+
   describe('while Claude Desktop is connected', () => {
     async function connectDesktop(port: number): Promise<void> {
       const { readDesktopGateway } = await import('../connectors/desktop.js');

@@ -321,6 +321,7 @@ export async function writeAtomically(configPath: string, content: string): Prom
   }
 }
 
+/** True only for a symbolic link; false for any other path and when the path is missing or cannot be read. */
 export async function isSymbolicLink(configPath: string): Promise<boolean> {
   try {
     return (await lstat(configPath)).isSymbolicLink();
