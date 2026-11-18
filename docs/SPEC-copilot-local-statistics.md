@@ -1,6 +1,6 @@
 # Specification: GitHub Copilot Local Statistics
 
-**Status:** Draft — implementation is a draft for another team to verify and finalize
+**Status:** Draft implemented — typecheck, lint and build pass; another team verifies against real Windows artifacts
 **Created:** 2026-11-18
 **Branch:** `feature/Ievgen_Kyvgyla-github-copilot-local-statistics`
 **Ports from:** `sl-ai-sdlc-cost-tracking` (`src/parsers/`, Python, Windows-only)
@@ -138,8 +138,16 @@ Verified on macOS during design: 3 entries under `User/profiles/*`,
 ### New — source + CLI
 
 - `src/cli/commands/analytics/sources/copilot-local-source.ts` — implements `AnalyticsSource`.
-- `src/cli/commands/analytics/index.ts` — register `codemie analytics copilot`, mirroring the
-  `analytics otel` subcommand at `index.ts:47`.
+- `src/cli/commands/analytics/index.ts` — registers `codemie analytics copilot`, mirroring the
+  `analytics otel` subcommand. Own options on top of the shared analytics ones:
+
+  | Option | Effect |
+  |---|---|
+  | `--scan-days <days>` | History to scan; defaults to the `--from`/`--last` window, else everything on disk |
+  | `--no-wsl` | Skip Copilot homes inside running WSL distros |
+  | `--no-vscode` | Skip the VS Code extension scan |
+
+- `src/cli/commands/analytics/types.ts` — `CopilotCommandOptions`.
 
 ### Modified
 
@@ -148,6 +156,38 @@ Verified on macOS during design: 3 entries under `User/profiles/*`,
 - `src/cli/commands/analytics/agent-labels.ts` — add `copilot-vscode`. The HTML report's
   client bundle (`report/client/app.js`) carries its own copy of this map and must be updated
   in step.
+
+---
+
+## Implementation notes
+
+### Test seams
+
+Platform resolution is homedir-based on macOS, so an env var alone cannot redirect it. Three
+optional overrides exist purely so the scanners can run against a fixture on any OS:
+
+| Seam | On |
+|---|---|
+| `userDataDirs` | `scanVsCodeSessions()`, `vsCodeChatLocations()` — explicit VS Code user-data roots |
+| `vsCodeUserDataDirs` | `loadCopilotLocalSessions()` |
+| `copilotHome` | `loadCopilotLocalSessions()` — bypasses `~/.copilot` / `COPILOT_HOME` |
+
+### Known wart: Node's SQLite ExperimentalWarning
+
+Node prints `ExperimentalWarning: SQLite is an experimental feature` to stderr on first use of
+`node:sqlite`, so on a machine that has a store to read it lands in the middle of the report.
+
+It cannot be filtered from inside the reader: the warning is emitted on a LATER TICK than any
+scoped `process.on('warning')` window, and a scoped listener never receives it at all
+(verified — a listener attached across both the import and the first `DatabaseSync`
+construction logged nothing, and the warning printed after the listener was removed).
+
+Two workable fixes, both outside the reader's scope, for the finalizing team to pick:
+
+- `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (Node >= 21.3) — verified to suppress it.
+- The same flag added at the `bin/` entry point.
+
+A third option removes the warning entirely: raise `engines.node` once `node:sqlite` is stable.
 
 ---
 
@@ -241,6 +281,38 @@ Per `.ai-run/guides/security/security-practices.md` and the Python original's co
 ---
 
 ## Verification status
+
+### What was exercised during development
+
+Against synthetic fixtures built to the documented shapes — these prove the code's own logic,
+NOT that the shapes match what Copilot writes in the field:
+
+| Checked | Result |
+|---|---|
+| Schema-v8 store: 3 rows across 2 sessions | read; `turns` table present and never queried |
+| Token peeling | `input 150000 / cacheRead 120000 / cacheWrite 10000` → `input 20000`, `cacheRead 120000`, `cacheCreation 10000` |
+| Surface attribution | `client_name: github/autopilot` → `copilot-desktop` while `github/cli` → `copilot-cli`, from an IDENTICAL cwd |
+| `initiator: agent` | → `chat/tool-loop`, `isTurn: false`, session turn count 1 not 2 |
+| `total_nano_aiu` | carried through to the row |
+| VS Code array-path update | `{"kind":1,"k":["requests",0,"promptTokens"],"v":83004}` applied over the `kind:0` snapshot |
+| VS Code legacy string key | `{"kind":2,"k":"requests",...}` appended |
+| `copilot/auto` | resolved to `metadata.resolvedModel` |
+| `toolCallRounds` | 3 rounds → `apiCalls: 3` |
+| `errorDetails` | → `status: 'error'` |
+| Custom chat mode | `modeInstructions.name` → `agentMode`, `isCustomAgent: true` |
+| Pricing + aggregation | per-model split, cost series, deltas, `agentInvocations` all populated from the pricing table |
+| Live run on macOS | 4 scanners ran; store `no_store`, events `absent`, VS Code 0 rows (all 29 local files are empty shells), WSL no distros — degraded cleanly, no crash |
+
+Fixture generators used during development live at `/tmp/make-store.mjs`,
+`/tmp/run-store.mjs`, `/tmp/run-fixture.mjs`, `/tmp/run-loader.mjs` — not committed, since
+tests are added only on explicit request in this repo.
+
+Gates run: `npm run typecheck`, `npm run lint` (zero warnings), `npm run build`, and the
+`cost/__tests__/` Vitest files — run by the pre-commit hook via lint-staged because
+`cost/usage-readers.ts` was refactored (pure extraction of `copilotUsageToTokens`, identical
+math); they pass. The rest of the Vitest suite has not been run on this branch.
+
+### What this machine could not establish
 
 The other team owns verification. What this machine (macOS) could and could not establish:
 
