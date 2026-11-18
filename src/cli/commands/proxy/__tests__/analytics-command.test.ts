@@ -47,8 +47,8 @@ describe('createProxyAnalyticsCommand', () => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.resetModules();
-    await rm(tempDir, { recursive: true, force: true });
-    await rm(projectRoot, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   async function runCommand(args: string[]): Promise<void> {
@@ -862,7 +862,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect((await evaluateClaudeAnalyticsGate(target)).tracked).toBe(true);
       expect((await evaluateCopilotAnalyticsGate('copilot-cli-otlp', target)).tracked).toBe(true);
       expect(output()).toMatch(/is tracked by Claude Code/);
-      await rm(other, { recursive: true, force: true });
+      await rm(other, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
 
     it('include writes the project list first and, when removing the exclusion fails, names the owed step and that a re-run is safe', async () => {
@@ -880,7 +880,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect(err).toMatch(/exclusion/i);
       expect(err).toMatch(/re-run is safe/i);
       expect(output()).not.toMatch(/is tracked by/);
-      await rm(other, { recursive: true, force: true });
+      await rm(other, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
 
     it('include of a child excluded through its parent explains it, names the command that removes it, and reports no success', async () => {

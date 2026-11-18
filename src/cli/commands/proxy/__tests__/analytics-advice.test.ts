@@ -45,7 +45,7 @@ describe('analytics advice', () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.resetModules();
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     process.exitCode = undefined;
   });
 

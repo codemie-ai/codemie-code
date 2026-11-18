@@ -45,7 +45,7 @@ describe('consent grant / revoke / list actions', () => {
     process.exitCode = 0;
     vi.restoreAllMocks();
     vi.resetModules();
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   const run = async (args: string[]) => {

@@ -32,7 +32,7 @@ describe('claude-code-otlp scope', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs();
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   async function settings(): Promise<{ env: Record<string, string>; theme?: string }> {
