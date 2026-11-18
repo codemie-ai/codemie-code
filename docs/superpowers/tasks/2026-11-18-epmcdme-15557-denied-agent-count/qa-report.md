@@ -47,6 +47,14 @@ Tests added or changed by this ticket all pass: `claude-named-invocations`, `orc
 - Live `MetricsProcessor` on the real hook-denied and allowed transcripts (`ab817771`): denied gives no `agentInvocations`, allowed gives `{Explore: 1}`.
 - Pre-fix (`origin/main`) against fixed `MetricsProcessor` over 77 real transcripts with agents, processed in one run: identical in 76, lower in 1 (an errored call removed); never higher.
 
+## Known limitation (accepted)
+
+- In the per-record agent metrics of a live session, an `Agent` or `Task` call is not counted when its turn is still held back at the end of the session and a later turn was already recorded (a sibling tool call that never got a result, or a turn without usage data); this was not seen in 16,125 real turns, and the session summary `agents` count is not affected.
+- Why it stays: the live path counts an Agent call in the run that emits its assistant group (`emittedGroupLines`), because a call counted from the message slice is lost when it is pending in one run and resolved in a later one. The opposite gap is a group that never emits (a sibling call unresolved, or no chunk carries usage) while a later group did: on the final pass nothing emits it. Reproduced on the built code: the held group with a successful `Agent` call gives `{}` when a later group is emitted in the same final run, in an earlier run, or when it has no usage; it is counted when it is the last group or when it resolves later. The slice-based design (`ece9dd1d`) had the opposite gap.
+- Why it is not fixed here: counting each call exactly once in both cases needs state saved between runs. Counting by the run in which a call's result first appears was prototyped and rejected: it counts every call one run late and failed 8 processor tests, 4 of which predate this ticket (`extracts agent subtype from Task tool_use block`, the two resumed-record tests, and the pending-`Task` baseline test) and 4 of which this ticket added. Marking counted groups needs a new persistence path, because `processedRecordIds` holds the ids of delivered delta records only.
+- Frequency: in 178 local main transcripts (16,125 assistant groups) only 3 groups were held back (all with an unresolved tool call), none was followed by a later group, and none held an `Agent`/`Task` call.
+- Not affected: `agent.session.summary.agents` (OTLP) and `ClaudeSessionAdapter.extractMetrics`, which read the whole transcript. No backend consumer of the legacy `agentInvocations` was found.
+
 ## Not verified
 
 - Processing a transcript in growing prefixes through the built `MetricsProcessor`: the harness gave the same one-shot/incremental differences on the pre-fix build, so it does not discriminate; the held-back-group case is covered by the unit tests instead.
