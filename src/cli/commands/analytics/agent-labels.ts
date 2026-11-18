@@ -26,6 +26,7 @@ const AGENT_LABELS: Record<string, string> = {
   openwiki: 'OpenWiki',
   'copilot-cli': 'GitHub Copilot CLI',
   'copilot-desktop': 'GitHub Copilot Desktop',
+  'copilot-vscode': 'GitHub Copilot (VS Code)',
   pi: 'Pi',
   omp: 'Oh My Pi',
 };
