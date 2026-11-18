@@ -8,6 +8,8 @@ All notable changes to this project are documented in this file, following [Keep
 
 - One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
 - `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
+- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client found on the machine (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route
+- `codemie proxy status` ends with an `Analytics clients:` block of the five analytics clients, each `connected`, `not connected` with the command to run, or `not found`, with the daemon stopped too; `--json` carries it as `analyticsClients`
 
 ### Changed
 

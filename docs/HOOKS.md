@@ -576,6 +576,7 @@ The `claude-code-otlp` integration (`codemie proxy connect --claude-code-otlp`) 
 - Absent or `[]`: every project is tracked.
 - Non-empty: an event is tracked when its `cwd` equals or is nested inside a listed path. A missing `cwd` or an invalid value is not tracked.
 - Managed through `connect`/`disconnect --claude-code-otlp --scope user|project` (see [COMMANDS.md](COMMANDS.md#claude-code-otlp-analytics)).
+- `connect --claude-otlp` writes the same list: without `--scope` it keeps an existing list of projects, with `--scope` it acts as `--claude-code-otlp` does.
 
 The filter runs in the hook process. The plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`), not `hook.ts`, decides whether the daemon is ensured: `hook.ts` passes an `ensureOtlpProxy` callback and the plugin calls it only for tracked projects. For an untracked project the hook does nothing: no daemon start, no SSO check, nothing forwarded to the spool.
 
