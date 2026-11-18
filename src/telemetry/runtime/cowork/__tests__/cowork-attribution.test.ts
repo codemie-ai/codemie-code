@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution } from '../cowork-attribution.js';
 import { markCoworkSessionServed } from '../cowork-served-mark.js';
+import { coworkFundingHeaders } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.js';
 
 const ID = '7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
 let codemieHome: string;
@@ -40,6 +41,24 @@ describe('the attribution pin', () => {
     if (content !== undefined) writeFileSync(attributionFile(), content);
 
     expect(await loadCoworkAttribution(ID)).toBeNull();
+  });
+});
+
+describe('the funding headers (coworkFundingHeaders)', () => {
+  it('declare funding with the Project header for a served, pinned session', async () => {
+    await markCoworkSessionServed(ID);
+    await saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' });
+
+    const headers = await coworkFundingHeaders(ID, 'p');
+
+    expect(headers).toMatchObject({ 'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project': 'p' });
+  });
+
+  it('declare nothing when the project cannot travel as a raw header (never funding without a Project header)', async () => {
+    await markCoworkSessionServed(ID);
+    await saveCoworkAttribution(ID, { project: 'проект', projectSource: 'profile' });
+
+    expect(await coworkFundingHeaders(ID, 'проект')).toBeUndefined();
   });
 });
 

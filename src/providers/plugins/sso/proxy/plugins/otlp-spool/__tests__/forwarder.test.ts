@@ -839,6 +839,22 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
   });
 
+  it('a recorded session never declares Cowork funding, even when it would pass the funding gate (EPMCDME-17410)', async () => {
+    vi.doMock('@/telemetry/runtime/cowork/cowork-attribution.js', () => ({ coworkFundingSource: vi.fn(async () => 'profile') }));
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy' });
+    fetchMock.mockImplementation(async () => json({}));
+    try {
+      const { forwardSession } = await import('../forwarder.js');
+      await forwardSession('s1', true, credentials);
+    } finally {
+      vi.doUnmock('@/telemetry/runtime/cowork/cowork-attribution.js');
+    }
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Routed-Via-CodeMie');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Subscription-Type');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Session-Id');
+    expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
+  });
+
   it('hooks 2xx with an empty/non-JSON body: legacy acknowledges the range, an evidence request keeps it queued', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([line('s1')]), cursor: 0 });
     fetchMock.mockImplementation(async () => new Response('', { status: 200, headers: { 'content-type': 'text/plain' } }));
