@@ -293,7 +293,7 @@ Analytics clients:
 | VS Code Claude Code extension | the VS Code user-data directory exists, stable or Insiders | the same hooks are in place and the extension's CodeMie proxy route is in VS Code's settings (stable or Insiders), at the daemon's port and with a key it accepts while it runs |
 | Claude Desktop | the application is in `/Applications` or `~/Applications` (macOS); on Windows and Linux it always counts as found | Claude Desktop's applied config points at this proxy; with the daemon stopped the row reads `not connected` |
 | Copilot Chat | the stable VS Code user-data directory exists | its connector scope is enabled |
-| Copilot CLI | the `copilot` binary (or the command `CODEMIE_COPILOT_BIN` names) is on `PATH`; an absolute `CODEMIE_COPILOT_BIN` is found when that file exists | its connector scope is enabled |
+| Copilot CLI | the `copilot` binary (or the command `CODEMIE_COPILOT_BIN` names) is on `PATH`; a `CODEMIE_COPILOT_BIN` that is a path (absolute, or relative to the current directory) is found when that file exists | its connector scope is enabled |
 
 A row reads `connected`, `not connected — Run: codemie proxy connect <the flag of its vendor>`, or `not found — if it is installed, run: codemie proxy connect <the client's own flag>`. A client that reads connected is shown `connected` whatever the lookup says. With VS Code Insiders alone the extension's row names `codemie proxy connect --claude-otlp --insiders`. Under a daemon of an older CLI a `not connected` row names no command: the restart comes first. A Claude Desktop whose config is a local gateway with a key this proxy does not accept reads `points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: codemie proxy connect --claude-otlp`. A binary is looked up with `which` / `where.exe` under a 3-second limit; a lookup that runs out, or whose `which` / `where.exe` fails to start, counts as found: an aggregate configures the client, and its row is not `not found`. `--json` carries the same five rows as `analyticsClients`, each with `client` (`claude-code`, `vscode-claude-code`, `claude-desktop`, `copilot-chat`, `copilot-cli`), `found`, `connected` and `flag`; with the daemon stopped the output is `status` and `analyticsClients`.
 
@@ -1881,6 +1881,8 @@ codemie version
 - `codemie proxy analytics` still takes one connector flag at a time.
 
 ### Claude Code OTLP analytics
+
+For every Claude client found on the machine at once, use `codemie proxy connect --claude-otlp` ([above](#analytics-for-every-client-of-a-vendor)); it runs the Claude Code setup below together with Claude Desktop's and the VS Code extension's, with the same options. This section describes the Claude Code part, which `--claude-code-otlp` sets up alone.
 
 `codemie proxy connect --claude-code-otlp` writes the hooks and OTel environment variables into the user-level `~/.claude/settings.json`, plus `CODEMIE_ANALYTICS_PROJECT_FILTER`: a JSON array (stored as a string) of absolute project paths that are tracked.
 

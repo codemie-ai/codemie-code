@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import type { DaemonState } from '../daemon-manager.js';
 
 let root = '';
@@ -332,6 +332,50 @@ describe('collectAnalyticsClients', () => {
     vi.stubEnv('CODEMIE_COPILOT_BIN', join(root, 'missing', 'copilot'));
 
     expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(false);
+  });
+
+  it('finds the Copilot CLI by a relative CODEMIE_COPILOT_BIN that exists, with no command lookup of it', async () => {
+    await present('bin', 'copilot');
+    const bin = relative(process.cwd(), join(root, 'bin', 'copilot'));
+    vi.stubEnv('CODEMIE_COPILOT_BIN', bin);
+
+    expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(true);
+    expect(vi.mocked(getCommandPath).mock.calls.map((call) => call[0])).not.toContain(bin);
+  });
+
+  it('reads the Copilot CLI not found by a relative CODEMIE_COPILOT_BIN of no file, with no command lookup of it', async () => {
+    vi.mocked(getCommandPath).mockImplementation(async (command) => `/usr/bin/${command}`);
+    const bin = relative(process.cwd(), join(root, 'missing', 'copilot'));
+    vi.stubEnv('CODEMIE_COPILOT_BIN', bin);
+
+    expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(false);
+    expect(vi.mocked(getCommandPath).mock.calls.map((call) => call[0])).not.toContain(bin);
+  });
+
+  it('looks a bare CODEMIE_COPILOT_BIN name up on PATH', async () => {
+    vi.mocked(getCommandPath).mockImplementation(async (command) => (command === 'my-copilot' ? '/usr/bin/my-copilot' : null));
+    vi.stubEnv('CODEMIE_COPILOT_BIN', 'my-copilot');
+
+    expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(true);
+    expect(getCommandPath).toHaveBeenCalledWith('my-copilot', 3000, { throwIfUnanswered: true });
+  });
+
+  it('reads a backslash CODEMIE_COPILOT_BIN on win32 as a path of no file, with no command lookup of it', async () => {
+    setPlatform('win32');
+    vi.mocked(getCommandPath).mockImplementation(async (command) => `C:\\tools\\${command}`);
+    vi.stubEnv('CODEMIE_COPILOT_BIN', 'bin\\copilot');
+
+    expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(false);
+    expect(vi.mocked(getCommandPath).mock.calls.map((call) => call[0])).not.toContain('bin\\copilot');
+  });
+
+  it('looks a backslash CODEMIE_COPILOT_BIN up on PATH on linux, where a backslash is a file-name character', async () => {
+    setPlatform('linux');
+    vi.mocked(getCommandPath).mockImplementation(async (command) => `/usr/bin/${command}`);
+    vi.stubEnv('CODEMIE_COPILOT_BIN', 'bin\\copilot');
+
+    expect(pick(await collectAnalyticsClients(state), 'copilot-cli').found).toBe(true);
+    expect(getCommandPath).toHaveBeenCalledWith('bin\\copilot', 3000, { throwIfUnanswered: true });
   });
 
   it('reads both Copilot rows not connected with a corrupt scope file', async () => {

@@ -614,9 +614,14 @@ an alias or function in your interactive shell does not configure the scheduler.
 
 ### Claude Code OTLP analytics
 
+To turn analytics on for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The flag below sets up Claude Code alone; `--claude-otlp` takes the same options.
+
 Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
 
 ```bash
+# Every Claude client found on this machine (Claude Code, the VS Code extension, Claude Desktop)
+codemie proxy connect --claude-otlp
+
 # Track every project (the default; same as --scope user). Asks for confirmation first.
 codemie proxy connect --claude-code-otlp
 

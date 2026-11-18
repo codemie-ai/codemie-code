@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -176,13 +176,15 @@ function findClaudeCodeBinary(): Promise<boolean> {
 }
 
 /**
- * An absolute `CODEMIE_COPILOT_BIN` is checked as a file: `where.exe` cannot match an absolute path. A lookup with no
- * answer counts as found.
+ * A `CODEMIE_COPILOT_BIN` that is a path (absolute, or holding `/`, or `\` on Windows) is resolved against the current
+ * directory and checked as a file: `where.exe` matches neither an absolute nor a relative path. Only a bare command name
+ * is looked up on `PATH`; a lookup with no answer counts as found.
  */
 function findCopilotCliBinary(): Promise<boolean> {
   const bin = process.env.CODEMIE_COPILOT_BIN || 'copilot';
-  return lookup('Copilot CLI binary', async () => isAbsolute(bin)
-    ? existsSync(bin)
+  const isPath = isAbsolute(bin) || bin.includes('/') || (process.platform === 'win32' && bin.includes('\\'));
+  return lookup('Copilot CLI binary', async () => isPath
+    ? existsSync(resolve(bin))
     : (await getCommandPath(bin, APPLICATION_LOOKUP_TIMEOUT_MS, { throwIfUnanswered: true })) !== null);
 }
 
