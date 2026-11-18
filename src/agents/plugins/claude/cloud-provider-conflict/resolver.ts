@@ -22,6 +22,7 @@ import {
   type SettingsLayerState,
 } from '@/agents/plugins/claude-code-otlp/event-fields/claude-settings-env.js';
 import { logger } from '@/utils/logger.js';
+import { sanitizeDisplayText } from '@/utils/project-binding.js';
 import type { CloudProviderDescriptor } from './provider.js';
 
 /** `connect-otlp-only` reads nothing: the gate only warns for it. */
@@ -259,13 +260,14 @@ function decide(chain: ConflictLayer[]): Decision {
     if (layer.state === 'absent') continue;
     if (layer.state === 'malformed' && CLAUDE_FILE_SCOPES.includes(layer.scope)) continue;
     if (layer.state === 'malformed' || layer.state === 'unreadable') {
-      return { kind: 'unknown', reason: `${layer.path}: cannot be read, so it is unknown whether ${layer.flagKey} is set there` };
+      const where = sanitizeDisplayText(layer.path);
+      return { kind: 'unknown', reason: `${where}: cannot be read, so it is unknown whether ${sanitizeDisplayText(layer.flagKey)} is set there` };
     }
     if (layer.flag === 'unset') continue;
     if (layer.flag === 'unknown') {
       return {
         kind: 'unknown',
-        reason: `${layer.path}: ${layer.flagKey} has a value that is not a recognised on/off spelling (use 1/true/yes/on or 0/false/no/off)`,
+        reason: `${sanitizeDisplayText(layer.path)}: ${sanitizeDisplayText(layer.flagKey)} has a value that is not a recognised on/off spelling (use 1/true/yes/on or 0/false/no/off)`,
       };
     }
     return layer.flag === 'on' ? { kind: 'on', layer } : { kind: 'none' };
@@ -274,22 +276,39 @@ function decide(chain: ConflictLayer[]): Decision {
 }
 
 function malformedWarning(layer: ConflictLayer): string {
-  return `${layer.path} is not valid JSON, so Claude Code ignores it; CodeMie analytics attribution stays unknown until the file is fixed.`;
+  return `${sanitizeDisplayText(layer.path)} is not valid JSON, so Claude Code ignores it; CodeMie analytics attribution stays unknown until the file is fixed.`;
 }
 
-export async function resolveProviderConflict(input: ResolveConflictInput): Promise<ConflictResolution> {
-  const { provider, flow } = input;
-  if (flow === 'connect-otlp-only') return { verdict: 'none', layers: [], warnings: [] };
+/** Everything one resolve reads from disk and the OS, before any layer is ranked. */
+interface Sources {
+  user: SettingsLayerResult;
+  project?: SettingsLayerResult;
+  local?: SettingsLayerResult;
+  managedFiles: SettingsLayerResult[];
+  dropIns: SettingsLayerResult[];
+  plist?: SettingsLayerResult;
+  registry?: SettingsLayerResult[];
+  desktopApplied?: SettingsLayerResult;
+  desktopManaged?: SettingsLayerResult;
+  vscode?: ConflictLayer[];
+}
 
-  const started = Date.now();
-  const platform = input.platform ?? process.platform;
-  const env = input.env ?? process.env;
+interface ResolveContext {
+  provider: CloudProviderDescriptor;
+  flow: ConflictFlow;
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  agentFlow: boolean;
+}
+
+/** Reads every source the flow needs, in parallel; sources the flow does not look at stay undefined. */
+async function readAllSources(input: ResolveConflictInput, ctx: ResolveContext): Promise<Sources> {
+  const { provider, flow, platform, env, agentFlow } = ctx;
   const cwd = input.cwd ?? process.cwd();
   const paths = input.paths ?? {};
   const runners = input.runners ?? {};
   const timeoutMs = runners.timeoutMs;
 
-  const agentFlow = flow === 'claude-agent' || flow === 'install';
   const defaults = settingsLayerPaths(cwd, env, platform);
   const managedFiles = paths.managedFiles ?? managedSettingsPaths(platform);
   const dropInDirs =
@@ -310,54 +329,64 @@ export async function resolveProviderConflict(input: ResolveConflictInput): Prom
       flow === 'connect-desktop' && paths.desktopManaged ? readSettingsLayer(paths.desktopManaged) : undefined,
       flow === 'connect-vscode' ? Promise.all((paths.vscodeSettings ?? []).map((f) => readVscodeLayer(provider, f))) : undefined,
     ]);
+  return { user, project, local, managedFiles: managedFileResults, dropIns, plist, registry, desktopApplied, desktopManaged, vscode };
+}
 
+/** Managed tier, highest first: OS policy (plist, HKLM), drop-ins (later name wins), managed file, HKCU. */
+function buildManagedChain(provider: CloudProviderDescriptor, sources: Sources): ConflictLayer[] {
   const managed = (r: SettingsLayerResult): ConflictLayer => settingsLayer(provider, r, 'managed', false);
-  // Managed tier, highest first: OS policy (plist, HKLM), drop-ins (later name wins), managed file, HKCU.
-  const registryLayers = (registry ?? []).map(managed);
-  const managedChain: ConflictLayer[] = [
-    ...(plist ? [managed(plist)] : []),
+  const registryLayers = (sources.registry ?? []).map(managed);
+  return [
+    ...(sources.plist ? [managed(sources.plist)] : []),
     ...registryLayers.filter((l) => l.path.startsWith('HKLM')),
-    ...[...dropIns].reverse().map(managed),
-    ...managedFileResults.map(managed),
+    ...[...sources.dropIns].reverse().map(managed),
+    ...sources.managedFiles.map(managed),
     ...registryLayers.filter((l) => !l.path.startsWith('HKLM')),
   ];
+}
 
-  const claudeChain: ConflictLayer[] = [
-    ...managedChain,
-    ...(local ? [settingsLayer(provider, local, 'project-local', true)] : []),
-    ...(project ? [settingsLayer(provider, project, 'project', true)] : []),
-    settingsLayer(provider, user, 'user', true),
+/** Claude Code's own precedence, highest first: managed, local, project, user, then the shell env. */
+function buildClaudeChain(ctx: ResolveContext, sources: Sources): ConflictLayer[] {
+  const { provider, agentFlow, env } = ctx;
+  return [
+    ...buildManagedChain(provider, sources),
+    ...(sources.local ? [settingsLayer(provider, sources.local, 'project-local', true)] : []),
+    ...(sources.project ? [settingsLayer(provider, sources.project, 'project', true)] : []),
+    settingsLayer(provider, sources.user, 'user', true),
     ...(agentFlow ? [envLayer(provider, env)] : []),
   ];
+}
 
+/** The chains whose verdicts are combined, plus the non-Claude layers that are reported next to the Claude ones. */
+function buildChains(ctx: ResolveContext, sources: Sources, claudeChain: ConflictLayer[]): { chains: ConflictLayer[][]; extras: ConflictLayer[] } {
+  const { provider, flow, agentFlow } = ctx;
   const chains: ConflictLayer[][] = [];
   const extras: ConflictLayer[] = [];
   if (agentFlow) {
     chains.push(claudeChain);
   } else if (flow === 'connect-desktop') {
     chains.push(claudeChain);
-    if (desktopManaged) {
-      const layer = desktopLayer(provider, desktopManaged, 'desktop-managed', false);
+    if (sources.desktopManaged) {
+      const layer = desktopLayer(provider, sources.desktopManaged, 'desktop-managed', false);
       extras.push(layer);
       chains.push([layer]);
     }
-    if (desktopApplied) {
-      const layer = desktopLayer(provider, desktopApplied, 'desktop-applied', true);
+    if (sources.desktopApplied) {
+      const layer = desktopLayer(provider, sources.desktopApplied, 'desktop-applied', true);
       extras.push(layer);
       chains.push([layer]);
     }
-  } else if (vscode && vscode.length > 0) {
+  } else if (sources.vscode && sources.vscode.length > 0) {
     // VS Code entries are process env for the extension: below every Claude settings layer, each edition on its own.
-    for (const layer of vscode) chains.push([...claudeChain, layer]);
-    extras.push(...vscode);
+    for (const layer of sources.vscode) chains.push([...claudeChain, layer]);
+    extras.push(...sources.vscode);
   } else {
     chains.push(claudeChain);
   }
+  return { chains, extras };
+}
 
-  const layers = [...claudeChain, ...extras];
-  const decisions = chains.map((chain) => decide(chain));
-  for (const d of decisions) if (d.kind === 'on') d.layer.inEffect = true;
-
+function collectWarnings(layers: ConflictLayer[]): string[] {
   const warnings: string[] = [];
   for (const layer of layers) {
     if (layer.state === 'malformed' && CLAUDE_FILE_SCOPES.includes(layer.scope)) {
@@ -366,10 +395,12 @@ export async function resolveProviderConflict(input: ResolveConflictInput): Prom
       logger.warn(`[cloud-provider-conflict] ${message}`);
     }
   }
+  return warnings;
+}
 
-  const unknownReasons = [
-    ...new Set(decisions.flatMap((d) => (d.kind === 'unknown' ? [d.reason] : []))),
-  ];
+/** Managed-on beats unknown beats editable-on; no source on and nothing unknown is none. */
+function computeVerdict(decisions: Decision[]): { verdict: ConflictVerdict; unknownReasons: string[] } {
+  const unknownReasons = [...new Set(decisions.flatMap((d) => (d.kind === 'unknown' ? [d.reason] : [])))];
   const ons = decisions.flatMap((d) => (d.kind === 'on' ? [d.layer] : []));
   const verdict: ConflictVerdict = ons.some((l) => l.scope === 'managed' || l.scope === 'desktop-managed')
     ? 'conflict-managed'
@@ -378,6 +409,31 @@ export async function resolveProviderConflict(input: ResolveConflictInput): Prom
       : ons.length > 0
         ? 'conflict-editable'
         : 'none';
+  return { verdict, unknownReasons };
+}
+
+export async function resolveProviderConflict(input: ResolveConflictInput): Promise<ConflictResolution> {
+  const { provider, flow } = input;
+  if (flow === 'connect-otlp-only') return { verdict: 'none', layers: [], warnings: [] };
+
+  const started = Date.now();
+  const ctx: ResolveContext = {
+    provider,
+    flow,
+    platform: input.platform ?? process.platform,
+    env: input.env ?? process.env,
+    agentFlow: flow === 'claude-agent' || flow === 'install',
+  };
+  const sources = await readAllSources(input, ctx);
+  const claudeChain = buildClaudeChain(ctx, sources);
+  const { chains, extras } = buildChains(ctx, sources, claudeChain);
+
+  const layers = [...claudeChain, ...extras];
+  const decisions = chains.map((chain) => decide(chain));
+  for (const d of decisions) if (d.kind === 'on') d.layer.inEffect = true;
+
+  const warnings = collectWarnings(layers);
+  const { verdict, unknownReasons } = computeVerdict(decisions);
 
   logger.debug(
     `[cloud-provider-conflict] resolved ${provider.name} for ${flow} in ${Date.now() - started}ms: ${verdict}, ${layers.length} layers`

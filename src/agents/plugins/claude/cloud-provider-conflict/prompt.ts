@@ -110,6 +110,8 @@ function promptLines(findings: ConflictFindings): string[] {
   if (flow === 'install') {
     lines.push('Installing only prepares the agent: nothing routes to the gateway until the next codemie-claude run.');
   }
+  const bypasses = connectSentence(flow);
+  if (bypasses.length > 0) lines.push('', ...bypasses);
   lines.push('');
   return lines;
 }
@@ -160,9 +162,14 @@ export async function askSwitchOrCancel(findings: ConflictFindings, deps: Switch
   }
 }
 
+/** The bypasses a connect run cannot see; stated whenever a connect flow stops or switches. */
 function connectSentence(flow: ConflictFlow): string[] {
   return isConnectFlow(flow)
-    ? ['Connect flows check only the user, managed, Desktop and VS Code layers; a Bedrock project elsewhere is not seen by them.']
+    ? [
+        'Connect flows check only the user, managed, Desktop and VS Code layers; a Bedrock project elsewhere is not seen by them.',
+        'Claude Desktop managed policy on macOS and Windows is not detected.',
+        'A --settings file passed to Claude is not read.',
+      ]
     : [];
 }
 

@@ -236,12 +236,28 @@ describe('stopGuidance', () => {
     expect(text).toMatch(/rerun/i);
   });
 
-  it('mentions the residual connect bypass in one sentence for connect flows only', () => {
+  it('states all three residual bypasses for connect flows only', () => {
     const connect = stopGuidance('non-interactive', findings([layer()], { flow: 'connect-vscode' }));
     expect(connect).toMatch(/Bedrock project elsewhere/);
     expect(connect).toMatch(/user, managed, Desktop and VS Code/);
+    expect(connect).toMatch(/Desktop managed policy on macOS and Windows is not detected/);
+    expect(connect).toMatch(/--settings/);
     const agent = stopGuidance('non-interactive', findings([layer()], { flow: 'claude-agent' }));
     expect(agent).not.toMatch(/Bedrock project elsewhere/);
+    expect(agent).not.toMatch(/--settings/);
+  });
+
+  it('states the residual bypasses in the switch prompt of a connect run, and not in an agent run', async () => {
+    const connect = harness('switch');
+    await askSwitchOrCancel(findings([layer()], { flow: 'connect-desktop' }), connect.deps);
+    const text = connect.lines.join('\n');
+    expect(text).toMatch(/Bedrock project elsewhere/);
+    expect(text).toMatch(/Desktop managed policy on macOS and Windows is not detected/);
+    expect(text).toMatch(/--settings/);
+
+    const agent = harness('switch');
+    await askSwitchOrCancel(findings([layer()], { flow: 'claude-agent' }), agent.deps);
+    expect(agent.lines.join('\n')).not.toMatch(/--settings/);
   });
 
   it('neutralises control characters and never contains a setting value', () => {

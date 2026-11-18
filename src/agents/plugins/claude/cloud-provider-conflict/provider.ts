@@ -25,8 +25,11 @@ export interface CloudProviderDescriptor {
   desktopKeyPrefix: string;
 }
 
-/** `us.` / `eu.` / `apac.` / `global.` cross-region profiles, bare `anthropic.claude-…` ids, and ARNs. */
-const BEDROCK_MODEL_ID = /^(?:(?:us|eu|apac|global)\.anthropic\.|anthropic\.claude-|arn:aws:bedrock:)/i;
+/**
+ * Cross-region inference profiles (`us.`, `eu.`, `jp.`, `au.`, `us-gov.`, `apac.`, `global.` ...), bare
+ * `anthropic.claude-…` ids, and ARNs in any AWS partition (`aws`, `aws-us-gov`, `aws-cn`).
+ */
+const BEDROCK_MODEL_ID = /^(?:(?:[a-z]{2,3}(?:-gov)?|apac|global)\.anthropic\.|anthropic\.claude-|arn:aws[a-z-]*:bedrock:)/i;
 
 const BEDROCK_FLAG = 'CLAUDE_CODE_USE_BEDROCK';
 if (!CLOUD_FLAGS.includes(BEDROCK_FLAG)) {

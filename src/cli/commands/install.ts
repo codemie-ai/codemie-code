@@ -135,6 +135,8 @@ export function createInstallCommand(): Command {
             consent = outcome.token;
           }
 
+          // Set once a switch backed the settings up; a later failure in this run points at the folder again.
+          let settingsBackupDir: string | null = null;
           const applyBedrockConsent = async (): Promise<void> => {
             if (!consent) return;
             const token = consent;
@@ -142,7 +144,20 @@ export function createInstallCommand(): Command {
             const { applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
             const result = await applyConsented(token);
             if (result.backupDir !== null) {
+              settingsBackupDir = result.backupDir;
               console.log(chalk.yellow('Nothing routes to the CodeMie gateway until the next codemie-claude run.'));
+            }
+          };
+          const printBackupDir = (): void => {
+            if (settingsBackupDir) console.error(chalk.white(`Backup of your Claude settings: ${settingsBackupDir}`));
+          };
+          const runAdditionalInstallation = async (): Promise<void> => {
+            await applyBedrockConsent();
+            try {
+              await agent.additionalInstallation?.(options);
+            } catch (error: unknown) {
+              printBackupDir();
+              throw error;
             }
           };
 
@@ -179,8 +194,7 @@ export function createInstallCommand(): Command {
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
-                  await applyBedrockConsent();
-                  await agent.additionalInstallation(options);
+                  await runAdditionalInstallation();
                 }
 
                 return;
@@ -209,8 +223,7 @@ export function createInstallCommand(): Command {
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
-                await applyBedrockConsent();
-                await agent.additionalInstallation(options);
+                await runAdditionalInstallation();
               }
 
               return;
@@ -299,6 +312,7 @@ export function createInstallCommand(): Command {
             }
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${agent.displayName}`);
+            printBackupDir();
             throw error;
           }
           return;

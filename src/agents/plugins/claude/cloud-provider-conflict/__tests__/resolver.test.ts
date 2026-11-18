@@ -94,6 +94,13 @@ describe('resolveProviderConflict', () => {
       expect(layerAt(r, '10-a.json')).toMatchObject({ scope: 'managed', editable: false, inEffect: true });
     });
 
+    it('derives the drop-in directory beside each managed file when none is given', async () => {
+      put('managed/managed-settings.d/10-a.json', ON);
+      const r = await resolve('claude-agent', { paths: { managedDropInDirs: undefined } });
+      expect(r.verdict).toBe('conflict-managed');
+      expect(layerAt(r, '10-a.json')).toMatchObject({ scope: 'managed', editable: false, inEffect: true });
+    });
+
     it('detects a macOS managed plist through the injected runner, only on darwin', async () => {
       const plutil: CommandRunner = async () => ({ code: 0, stdout: JSON.stringify(ON), stderr: '' });
       const runners: ConflictRunners = { plutil, plistExists: () => true };
@@ -317,6 +324,21 @@ describe('resolveProviderConflict', () => {
       expect(r.warnings[0]).toMatch(/analytics attribution/i);
       expect(warn).toHaveBeenCalled();
       expect(JSON.stringify([r, warn.mock.calls])).not.toContain(SECRET);
+    });
+
+    it.skipIf(process.platform === 'win32')('neutralises control characters in the unknown reason and the malformed warning', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const evil = put('user/\u001b[31mevil\u0007.json', '[]');
+      const bad = put('proj/.claude/\u001b[32mbad\u0007.json', '{ broken');
+      const r = await resolve('claude-agent', { paths: { userSettings: evil, projectSettings: bad } });
+      // eslint-disable-next-line no-control-regex
+      const control = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/;
+      expect(r.verdict).toBe('unknown');
+      expect(r.unknownReason).not.toMatch(control);
+      expect(r.unknownReason).toContain('evil');
+      expect(r.warnings.length).toBeGreaterThan(0);
+      for (const w of r.warnings) expect(w).not.toMatch(control);
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(control);
     });
 
     it('leaks no setting value in layers, unknownReason or warnings', async () => {

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  managedDropInDirs,
   managedSettingsPaths,
   readClaudeSettingsEnv,
   readManagedDropIns,
@@ -141,6 +142,17 @@ describe('claude settings env layers (CR-006)', () => {
       put('plain', 'x');
       expect(await readManagedDropIns('linux', [join(root, 'nope', 'managed-settings.d')])).toEqual([]);
       expect(await readManagedDropIns('linux', [join(root, 'plain')])).toEqual([]);
+    });
+
+    it.each([
+      ['linux', ['/etc/claude-code/managed-settings.d']],
+      ['darwin', ['/Library/Application Support/ClaudeCode/managed-settings.d']],
+      [
+        'win32',
+        ['C:/Program Files/ClaudeCode/managed-settings.d', 'C:/ProgramData/ClaudeCode/managed-settings.d'],
+      ],
+    ] as const)('derives the default managed-settings.d directories on %s', (platform, expected) => {
+      expect(managedDropInDirs(platform)).toEqual(expected);
     });
 
     it('defaults to the managed-settings.d directory next to each managed-settings.json of the platform', async () => {

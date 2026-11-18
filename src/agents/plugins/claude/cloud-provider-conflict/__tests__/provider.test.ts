@@ -51,6 +51,11 @@ describe('BEDROCK provider descriptor', () => {
       'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
       'anthropic.claude-3-5-sonnet-20241022-v2:0',
       'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-v1:0',
+      'jp.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      'au.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      'us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      'arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/us-gov.anthropic.claude-sonnet-4-v1:0',
+      'arn:aws-cn:bedrock:cn-north-1:123456789012:inference-profile/x',
     ])('matches the Bedrock id %s', (id) => {
       expect(BEDROCK.isModelId(id)).toBe(true);
     });

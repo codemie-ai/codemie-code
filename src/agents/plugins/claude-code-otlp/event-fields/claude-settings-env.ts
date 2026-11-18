@@ -73,7 +73,7 @@ export async function readSettingsLayer(file: string): Promise<SettingsLayerResu
 }
 
 /** `managed-settings.d` directories, one beside each managed-settings.json of the platform. */
-function managedDropInDirs(platform: NodeJS.Platform): string[] {
+export function managedDropInDirs(platform: NodeJS.Platform): string[] {
   return managedSettingsPaths(platform).map((file) => `${posix.dirname(file)}/managed-settings.d`);
 }
 

@@ -186,6 +186,38 @@ describe('install command Bedrock settings gate', () => {
     expect(applyConsentedMock).not.toHaveBeenCalled();
   });
 
+  it('prints the backup folder when the install fails after a switch was applied', async () => {
+    applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: ['a'] });
+    const agent = fakeAgent();
+    (agent.installVersion as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('npm failed'));
+    getAgentMock.mockReturnValue(agent);
+
+    await expect(runInstall('claude')).rejects.toThrow('exit:1');
+
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude settings: /tmp/backup-dir');
+  });
+
+  it('prints the backup folder when additionalInstallation fails after a switch on an installed agent', async () => {
+    applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: ['a'] });
+    const agent = fakeAgent({ installed: true, installedVersion: '2.1.34', withAdditional: true });
+    (agent.additionalInstallation as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('extra failed'));
+    getAgentMock.mockReturnValue(agent);
+
+    await expect(runInstall('claude')).rejects.toThrow('exit:1');
+
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude settings: /tmp/backup-dir');
+  });
+
+  it('prints no backup line when the install fails and nothing was switched', async () => {
+    const agent = fakeAgent();
+    (agent.installVersion as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('npm failed'));
+    getAgentMock.mockReturnValue(agent);
+
+    await expect(runInstall('claude')).rejects.toThrow('exit:1');
+
+    expect(errorSpy.mock.calls.flat().join('\n')).not.toContain('Backup of your Claude settings');
+  });
+
   it('says nothing routes to the gateway yet when a switch was made', async () => {
     applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup', files: [], changed: ['a'] });
     getAgentMock.mockReturnValue(fakeAgent());

@@ -335,7 +335,11 @@ export class AgentCLI {
         dropInheritedBedrockFlag({ agent: this.adapter.name, provider: config.provider });
         const outcome = await detectAndAsk({
           flow: 'claude-agent',
-          canPrompt: canPromptForProject({ task: options.task }) && this.adapter.name !== 'claude-acp',
+          canPrompt:
+            canPromptForProject({ task: options.task }) &&
+            !options.silent &&
+            !options.printConfig &&
+            this.adapter.name !== 'claude-acp',
           profile: config,
         });
         if (outcome.kind === 'stop') {

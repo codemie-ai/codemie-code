@@ -81,7 +81,7 @@ export class SwitchBlockedError extends ConfigurationError {
     super(
       verdict === 'conflict-managed'
         ? 'A managed policy sets the cloud provider, so it cannot be switched here. Nothing was changed.'
-        : `The cloud provider settings changed and cannot be told apart safely${detail ? `: ${detail}` : ''}. Nothing was changed.`
+        : `The cloud provider settings changed and cannot be told apart safely${detail ? `: ${sanitizeDisplayText(detail)}` : ''}. Nothing was changed.`
     );
     this.name = 'SwitchBlockedError';
   }
@@ -366,24 +366,8 @@ const defaultPrint = (line: string): void => {
   console.log(line);
 };
 
-export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Promise<SwitchResult> {
-  const provider = plan.provider;
-  const empty: SwitchResult = { backupDir: null, files: [], changed: [] };
-
-  // Re-resolve: the state may have changed since the user was asked.
-  const resolution = await resolveProviderConflict(plan);
-  if (resolution.verdict === 'none') return empty;
-  if (resolution.verdict !== 'conflict-editable') throw new SwitchBlockedError(resolution.verdict, resolution.unknownReason);
-
-  let targets: Target[];
-  try {
-    targets = await collectTargets(resolution.layers, provider);
-  } catch (err) {
-    if (err instanceof SwitchFailedError) throw err;
-    throw new SwitchFailedError(`Could not read the settings files (${errorText(err)}). Nothing was changed.`, null);
-  }
-  if (targets.length === 0) return empty;
-
+/** Folder plus manifest and verified copies; a failure removes the folder again and reports that nothing changed. */
+async function backupTargets(targets: Target[], provider: CloudProviderDescriptor, deps: SwitchDeps): Promise<string> {
   const now = (deps.now ?? (() => new Date()))();
   const randomSuffix = deps.randomSuffix ?? ((): string => randomBytes(3).toString('hex'));
   const backupRoot = deps.backupRoot ?? getCodemiePath('backups');
@@ -392,11 +376,15 @@ export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Prom
   try {
     backupDir = await createBackupDir(backupRoot, now, randomSuffix);
     await writeBackup(backupDir, targets, provider, deps, now);
+    return backupDir;
   } catch (err) {
     if (backupDir) await rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
     throw new SwitchFailedError(`Could not back up the settings (${errorText(err)}). Nothing was changed.`, null);
   }
+}
 
+/** Writes each rewritten file; on the first failure the files already written are restored and the error names the backup. */
+async function writeTargets(targets: Target[], backupDir: string, deps: SwitchDeps): Promise<Target[]> {
   const writer = deps.writeFileAtomic ?? writeFileAtomicDefault;
   const written: Target[] = [];
   for (const target of targets) {
@@ -418,6 +406,29 @@ export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Prom
       );
     }
   }
+  return written;
+}
+
+export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Promise<SwitchResult> {
+  const provider = plan.provider;
+  const empty: SwitchResult = { backupDir: null, files: [], changed: [] };
+
+  // Re-resolve: the state may have changed since the user was asked.
+  const resolution = await resolveProviderConflict(plan);
+  if (resolution.verdict === 'none') return empty;
+  if (resolution.verdict !== 'conflict-editable') throw new SwitchBlockedError(resolution.verdict, resolution.unknownReason);
+
+  let targets: Target[];
+  try {
+    targets = await collectTargets(resolution.layers, provider);
+  } catch (err) {
+    if (err instanceof SwitchFailedError) throw err;
+    throw new SwitchFailedError(`Could not read the settings files (${errorText(err)}). Nothing was changed.`, null);
+  }
+  if (targets.length === 0) return empty;
+
+  const backupDir = await backupTargets(targets, provider, deps);
+  const written = await writeTargets(targets, backupDir, deps);
 
   const files = targets.map((t) => ({ path: t.path, kind: t.kind }));
   const changed = written.map((t) => t.path);

@@ -464,6 +464,13 @@ ${entries.join(',\n')}
     expect(backupDirs()).toEqual([]);
   });
 
+  it('neutralises control characters in the detail of a blocked switch', () => {
+    const error = new SwitchBlockedError('unknown', '/tmp/\u001b[31mevil\u0007/settings.json: cannot be read');
+    // eslint-disable-next-line no-control-regex
+    expect(error.message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(error.message).toContain('/tmp/[31mevil/settings.json');
+  });
+
   it('throws without changing anything when the state became unknown', async () => {
     const user = put('user/settings.json', bedrockUser());
     put('proj/.claude/settings.json', '{"env": {"CLAUDE_CODE_USE_BEDROCK": "maybe"}}');

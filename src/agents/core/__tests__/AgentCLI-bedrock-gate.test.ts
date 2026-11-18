@@ -188,6 +188,26 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
     expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
   });
 
+  it('passes canPrompt=false for --silent at a terminal, and true for a plain interactive run', async () => {
+    const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    const stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    vi.stubEnv('CODEMIE_NO_PROMPTS', '');
+    try {
+      await build('claude', vi.fn().mockResolvedValue(undefined))([], {});
+      expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: true }));
+
+      await build('claude', vi.fn().mockResolvedValue(undefined))([], { silent: true });
+      expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
+    } finally {
+      if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+      if (stdoutTTY) Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+  });
+
   it('prints the backup folder when a launch step fails after the switch was applied', async () => {
     mockExit();
     gate.applyConsented.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: [] });
