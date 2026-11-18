@@ -40,12 +40,14 @@ export type DeliveryLossReason = (typeof DELIVERY_LOSS_REASONS)[number];
 /**
  * A loss keeps its hold reason, except an expired `stamp_pending`, which is `no_evidence_timeout`.
  * `no_project`: the tick discarded the backlog of a session that has hook events but no CodeMie project.
+ * `project_conflict_discard`: the backlog of a session whose folders belong to different CodeMie projects was discarded.
  */
-export type LossReason = Exclude<HoldReason, 'stamp_pending'> | 'no_evidence_timeout' | 'no_project' | DeliveryLossReason;
+export type LossReason = Exclude<HoldReason, 'stamp_pending'> | 'no_evidence_timeout' | 'no_project' | 'project_conflict_discard' | DeliveryLossReason;
 export const LOSS_REASONS: readonly LossReason[] = [
   ...HOLD_REASONS.filter((reason): reason is Exclude<HoldReason, 'stamp_pending'> => reason !== 'stamp_pending'),
   'no_evidence_timeout',
   'no_project',
+  'project_conflict_discard',
   ...DELIVERY_LOSS_REASONS,
 ];
 

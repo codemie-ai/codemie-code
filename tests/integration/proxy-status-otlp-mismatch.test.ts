@@ -1,6 +1,8 @@
 /**
  * `codemie proxy status` and `codemie proxy doctor` against a real daemon: Claude Code OTLP endpoint/key mismatch
- * reporting. The status prints facts only and one `Issues found` line; the doctor names the mismatch.
+ * reporting. The status prints facts only and one `Issues found` line; the doctor names the mismatch. It also covers
+ * the latest drop of a session whose project changed (EPMCDME-17386), which `proxy doctor` and
+ * `proxy analytics status --json` report.
  *
  * The daemon is the real detached bin/proxy-daemon.js (JWT boot with a dummy token, so no SSO or
  * network is involved). `proxy status` runs in a child process against a private CODEMIE_HOME and
@@ -16,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, spawnDetached } from '../../src/utils/processes.js';
+import { logger } from '../../src/utils/logger.js';
+import { appendSpool, snapshotPendingBytes } from '../../src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { isolatedEnv, realDir, runIsolatedCli, expectExit, describeRun } from '../helpers/isolated-cli.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -260,6 +264,70 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       expect(text.stdout).not.toContain('does not match');
       expect(payload).not.toHaveProperty('otlpEndpointMismatch');
       expect(doctorOtlp()).toBeUndefined();
+    });
+  });
+
+  describe('a session whose project changed (EPMCDME-17386)', () => {
+    const SESSION = 'c0ffee00-17386-4a11-9b3d-conflict-discard';
+    const HINT = 'the session used folders that belong to different CodeMie projects; part of its data was not sent';
+    let previousHome: string | undefined;
+    let discardedAfter = 0;
+    let discardedBefore = 0;
+
+    const hookLine = (project: string): string =>
+      JSON.stringify({
+        agentName: 'claude-code-otlp',
+        hookEvent: JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: project }),
+      }) + '\n';
+
+    const jsonOf = (stdout: string): Record<string, unknown> =>
+      JSON.parse(stdout.slice(stdout.indexOf('{'))) as Record<string, unknown>;
+
+    beforeAll(async () => {
+      expect(daemonPid, 'daemon did not become ready within 8s').toBeGreaterThan(0);
+      // A connected analytics connector is what makes the delivery section visible at all.
+      writeFileSync(settingsFile, JSON.stringify({
+        hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'codemie hook --agent claude-code-otlp' }] }] },
+      }, null, 2), 'utf-8');
+
+      // The real spool code writes into the daemon's CODEMIE_HOME: a session bound to project A, some OTEL
+      // bytes, then a hook of project B. The next snapshot finds the session conflicted and discards them.
+      previousHome = process.env.CODEMIE_HOME;
+      process.env.CODEMIE_HOME = homes.codemieHome;
+      await appendSpool(SESSION, 'hooks', hookLine('project-a'), ['project-a']);
+      await appendSpool(SESSION, 'logs', Buffer.from('unsent otel bytes'));
+      await appendSpool(SESSION, 'hooks', hookLine('project-b'), ['project-b']);
+      discardedAfter = Date.now();
+      expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
+      discardedBefore = Date.now();
+    }, 30_000);
+
+    afterAll(async () => {
+      // The spool's discard warning opens this process's debug log under the daemon's home; an open handle
+      // keeps that directory from being removed on Windows.
+      await logger.close();
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      writeSettings({});
+    });
+
+    it('proxy doctor reports the discard as the last drop, with the explanation', () => {
+      const result = runIsolatedCli(homes, ['proxy', 'doctor', '--json'], { cwd: root, env: statusEnv() });
+      const report = jsonOf(result.stdout) as { sections: Array<{ id: string; message: string; hint?: string }> };
+      const drop = report.sections.find((section) => section.id === 'delivery' && section.message.startsWith('Last dropped'));
+
+      expect(drop?.message, describeRun(result)).toMatch(/^Last dropped: project_conflict_discard \(logs, \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}\)$/);
+      expect(drop?.hint).toBe(HINT);
+    });
+
+    it('proxy analytics status --json carries it as delivery.latestDrop', () => {
+      const result = runIsolatedCli(homes, ['proxy', 'analytics', 'status', '--json'], { cwd: root, env: statusEnv() });
+
+      expectExit(result, 0);
+      const delivery = jsonOf(result.stdout).delivery as { latestDrop?: { reason: string; stream?: string; at: number; local: boolean } };
+      expect(delivery.latestDrop, describeRun(result)).toMatchObject({ reason: 'project_conflict_discard', stream: 'logs', local: true });
+      expect(delivery.latestDrop!.at).toBeGreaterThanOrEqual(discardedAfter);
+      expect(delivery.latestDrop!.at).toBeLessThanOrEqual(discardedBefore);
     });
   });
 });
