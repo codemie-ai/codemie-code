@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 import { writeFileAtomic } from '@/utils/atomic-write.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { fetchTenantModelDescriptors, type TenantModelDescriptor } from './tenant-catalog.js';
@@ -124,7 +124,7 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
     const alternative = insiders
       ? 'Remove --insiders to configure stable VS Code.'
       : 'Use --insiders if only VS Code Insiders is installed.';
-    throw new ConfigurationError(
+    throw new ClientNotInstalledError(
       `${edition} user data directory was not found at ${productDir}.\n${alternative}`
     );
   }
@@ -276,13 +276,14 @@ async function readProviders(configPath: string): Promise<unknown[]> {
 /**
  * The port the managed CodeMie models of VS Code's (or VS Code Insiders') `chatLanguageModels.json` point at:
  * the first one that differs from the daemon's `port`, else `port`; null when there is no product directory, no
- * readable file, no managed model with a loopback URL. The key is not in this file. Never throws, writes nothing.
+ * readable file, or no managed provider whose model URLs are all loopback (the one the remover removes). The key is not in this file. Never throws, writes nothing.
  */
 export async function readVsCodeByokGateway(port: number, insiders = false): Promise<ConnectorGateway | null> {
   try {
     const providers = await readProviders(getVsCodeLanguageModelsPath(insiders));
+    // The remover's ownership rule: a managed provider with any non-loopback model is the user's, not connected.
     const ports = providers
-      .filter(isManagedProvider)
+      .filter(isCodeMieOwnedProvider)
       .flatMap(provider => Array.isArray(provider.models) ? provider.models : [])
       .map(model => isRecord(model) ? loopbackPortOf(model.url) : null)
       .filter((modelPort): modelPort is number => modelPort !== null);
@@ -423,4 +424,45 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
   }
 
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
+}
+
+/** A managed provider is the proxy's own only when every model URL it holds is loopback; the reader and the remover share it. */
+function isCodeMieOwnedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
+  if (!isManagedProvider(provider)) return false;
+  const models = Array.isArray(provider.models) ? provider.models : [];
+  return models.length > 0 && models.every(model => isRecord(model) && loopbackPortOf(model.url) !== null);
+}
+
+/**
+ * Removes the `CodeMie`/`customendpoint` provider `writeVsCodeLanguageModelsConfig` wrote, only when all its model
+ * URLs are loopback; user-added providers, and a non-loopback provider that happens to be named CodeMie, stay.
+ * Writes nothing when there is nothing to remove.
+ */
+export async function removeVsCodeLanguageModelsConfigAtPath(configPath: string): Promise<{ removed: boolean }> {
+  const providers = await readProviders(configPath);
+  const kept = providers.filter(provider => !isCodeMieOwnedProvider(provider));
+  if (kept.length === providers.length) return { removed: false };
+  try {
+    await writeAtomically(configPath, `${JSON.stringify(kept, null, '\t')}\n`);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to update VS Code language model configuration at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { removed: true };
+}
+
+/**
+ * Removes the CodeMie provider from VS Code BYOK's `chatLanguageModels.json` (stable VS Code, or VS Code Insiders with
+ * `insiders`): the `CodeMie`/`customendpoint` provider whose model URLs are all loopback; the user's own providers and
+ * models stay. See {@link removeVsCodeLanguageModelsConfigAtPath}.
+ *
+ * @returns `{ removed: true }` when the provider was removed; `{ removed: false }` when there was nothing to remove,
+ *   including when the VS Code product directory does not exist (nothing is written then).
+ * @throws ConfigurationError when the file cannot be written (via `removeVsCodeLanguageModelsConfigAtPath`).
+ */
+export async function removeVsCodeLanguageModelsConfig(opts: { insiders: boolean }): Promise<{ removed: boolean }> {
+  if (!existsSync(getVsCodeProductDir(opts.insiders))) return { removed: false };
+  return removeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(opts.insiders));
 }

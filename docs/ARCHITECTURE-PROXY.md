@@ -4,6 +4,8 @@
 **Date**: 2026-09-10
 **Status**: Production
 
+Command usage, worked use cases and deprecated forms: [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ---
 
 ## Table of Contents
@@ -942,7 +944,7 @@ sequenceDiagram
 
 ### 6.14 Claude Code OTLP Per-Project Allowlist
 
-The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook events into a disk spool (`otlp-spool/`). Which projects are tracked is decided by the allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER` (JSON array of absolute paths, stored as a string in `env` of `~/.claude/settings.json`). An absent or empty list tracks every project; a `cwd` inside any entry (nested directories included) is tracked; an invalid value tracks nothing. `codemie proxy connect --claude-code-otlp` writes it (default `--scope user` resets it to `[]`; `--scope project` adds the current project root). `codemie proxy connect --claude-otlp` writes it the same way, except that an omitted `--scope` keeps an existing list of projects. See [COMMANDS.md](COMMANDS.md#claude-code-otlp-analytics).
+The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook events into a disk spool (`otlp-spool/`). Which projects are tracked is decided by the allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER` (JSON array of absolute paths, stored as a string in `env` of `~/.claude/settings.json`). An absent or empty list tracks every project; a `cwd` inside any entry (nested directories included) is tracked; an invalid value tracks nothing. `codemie proxy connect --claude-otlp` writes it (`--scope user` resets it to `[]`; `--scope project` adds the current project root; an omitted `--scope` keeps an existing list of projects). The deprecated per-client flag writes it as before (an omitted `--scope` means `user`) until its removal on 2026-12-31. See [COMMANDS.md](COMMANDS.md#claude-code-otlp-analytics).
 
 **Filtering is hook-side only.** The daemon has no allowlist logic because OTLP carries no `cwd`. The Claude Code OTLP plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`) reads the allowlist on every hook event. For an untracked project it returns early: no daemon start (`ensureOtlpProxy` is not called), no SSO check, no forward to the spool.
 

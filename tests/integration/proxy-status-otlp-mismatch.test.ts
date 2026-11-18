@@ -1,5 +1,6 @@
 /**
- * `codemie proxy status` against a real daemon: Claude Code OTLP endpoint/key mismatch reporting.
+ * `codemie proxy status` and `codemie proxy doctor` against a real daemon: Claude Code OTLP endpoint/key mismatch
+ * reporting. The status prints facts only and one `Issues found` line; the doctor names the mismatch.
  *
  * The daemon is the real detached bin/proxy-daemon.js (JWT boot with a dummy token, so no SSO or
  * network is involved). `proxy status` runs in a child process against a private CODEMIE_HOME and
@@ -62,6 +63,15 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
     expectExit(result, 0);
     return JSON.parse(result.stdout.slice(result.stdout.indexOf('{'))) as Record<string, unknown>;
   };
+  const ISSUES_LINE = 'Issues found — run: codemie proxy doctor';
+  /** The `claude-code-otlp` section of `proxy doctor --json` (its exit code follows its other sections). */
+  const doctorOtlp = (): { status: string; message: string; hint?: string } | undefined => {
+    const result = runIsolatedCli(homes, ['proxy', 'doctor', '--json'], { cwd: root, env: statusEnv() });
+    const report = JSON.parse(result.stdout.slice(result.stdout.indexOf('{'))) as {
+      sections: Array<{ id: string; status: string; message: string; hint?: string }>;
+    };
+    return report.sections.find((section) => section.id === 'claude-code-otlp');
+  };
 
   beforeAll(async () => {
     TEST_PORT = await getFreePort();
@@ -121,15 +131,19 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
     expect(daemonUrl).toContain(String(TEST_PORT));
   });
 
-  it('prints the daemon\'s Version and no Client line', () => {
+  it('prints the daemon\'s Version, the masked key and no Client line', () => {
     const result = status();
 
     expectExit(result, 0);
     expect(result.stdout, describeRun(result)).toContain(`  Version: ${CLI_VERSION}`);
+    expect(result.stdout).toContain('  API Key: ****');
+    expect(result.stdout).not.toContain(GATEWAY_KEY);
     expect(result.stdout).not.toMatch(/^ {2}Client: /m);
+    expect(statusJson().apiKey).toBe('****');
+    expect(status('--show-key').stdout).toContain(`  API Key: ${GATEWAY_KEY}`);
   });
 
-  it('names a Codex config in the temporary home set up for another port', () => {
+  it('points a Codex config in the temporary home set up for another port to proxy doctor', () => {
     const codexHome = join(homes.userHome, '.codex');
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, 'config.toml'), [
@@ -145,9 +159,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       const result = status();
 
       expectExit(result, 0);
-      expect(result.stdout, describeRun(result)).toContain(
-        `  Codex desktop: points at port 52311, the proxy listens on ${TEST_PORT} — Run: codemie proxy connect --codex-desktop`
-      );
+      expect(result.stdout, describeRun(result)).toContain(ISSUES_LINE);
+      expect(result.stdout).not.toContain('Codex desktop');
     } finally {
       rmSync(codexHome, { recursive: true, force: true });
     }
@@ -157,22 +170,22 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
     const staleEndpoint = `http://127.0.0.1:47999${OTLP_PATH}`;
 
     // @case otlp-endpoint-respawn-recovery_TC_003
-    it('--json reports otlpEndpointMismatch with the configured and expected endpoints', () => {
+    it('status --json carries no mismatch field; proxy doctor reports the configured and expected endpoints', () => {
       writeSettings({
         OTEL_EXPORTER_OTLP_ENDPOINT: staleEndpoint,
         OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${GATEWAY_KEY}`,
       });
 
-      const payload = statusJson();
-
-      expect(payload.otlpEndpointMismatch).toEqual({
-        configured: staleEndpoint,
-        expected: `${daemonUrl}${OTLP_PATH}`,
-      });
+      expect(statusJson()).not.toHaveProperty('otlpEndpointMismatch');
+      const section = doctorOtlp();
+      expect(section?.status).toBe('error');
+      expect(section?.message).toContain(
+        `Claude Code OTLP endpoint ${staleEndpoint} does not match this proxy (${daemonUrl}${OTLP_PATH})`
+      );
     });
 
     // @case otlp-endpoint-respawn-recovery_TC_003
-    it('text output warns about the endpoint and prints the repair hint', () => {
+    it('status text prints the Issues line and no warning; proxy doctor gives the repair hint', () => {
       writeSettings({
         OTEL_EXPORTER_OTLP_ENDPOINT: staleEndpoint,
         OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${GATEWAY_KEY}`,
@@ -181,10 +194,9 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       const result = status();
 
       expectExit(result, 0);
-      expect(result.stdout, describeRun(result)).toContain(
-        `Claude Code OTLP endpoint ${staleEndpoint} does not match this daemon (${daemonUrl}${OTLP_PATH})`
-      );
-      expect(result.stdout).toMatch(/Repair:.*codemie proxy connect --claude-code-otlp/);
+      expect(result.stdout, describeRun(result)).toContain(ISSUES_LINE);
+      expect(result.stdout).not.toContain('does not match');
+      expect(doctorOtlp()?.hint).toContain('codemie proxy connect --claude-otlp');
     });
   });
 
@@ -192,19 +204,20 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
     const liveEndpoint = (): string => `${daemonUrl}${OTLP_PATH}`;
 
     // @case otlp-endpoint-respawn-recovery_TC_003
-    it('--json reports a mismatch whose configured endpoint equals the expected one', () => {
+    it('status --json carries no mismatch field; proxy doctor reports the key mismatch', () => {
       writeSettings({
         OTEL_EXPORTER_OTLP_ENDPOINT: liveEndpoint(),
         OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer some-old-key',
       });
 
-      const payload = statusJson();
-
-      expect(payload.otlpEndpointMismatch).toEqual({ configured: liveEndpoint(), expected: liveEndpoint() });
+      expect(statusJson()).not.toHaveProperty('otlpEndpointMismatch');
+      const section = doctorOtlp();
+      expect(section?.status).toBe('error');
+      expect(section?.message).toContain('The gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this proxy');
     });
 
     // @case otlp-endpoint-respawn-recovery_TC_003
-    it('text output warns that the gateway key does not match', () => {
+    it('status text prints the Issues line and not the key warning', () => {
       writeSettings({
         OTEL_EXPORTER_OTLP_ENDPOINT: liveEndpoint(),
         OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer some-old-key',
@@ -213,9 +226,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       const result = status();
 
       expectExit(result, 0);
-      expect(result.stdout, describeRun(result)).toContain(
-        'the gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this daemon'
-      );
+      expect(result.stdout, describeRun(result)).toContain(ISSUES_LINE);
+      expect(result.stdout).not.toContain('OTEL_EXPORTER_OTLP_HEADERS');
     });
   });
 
@@ -231,9 +243,10 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       const payload = statusJson();
 
       expectExit(text, 0);
-      expect(text.stdout).not.toContain('does not match this daemon');
+      expect(text.stdout).not.toContain('does not match');
       expect(payload.port).toBe(TEST_PORT);
       expect(payload).not.toHaveProperty('otlpEndpointMismatch');
+      expect(doctorOtlp()?.status).toBe('ok');
     });
 
     // @case otlp-endpoint-respawn-recovery_TC_003
@@ -244,8 +257,9 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       const payload = statusJson();
 
       expectExit(text, 0);
-      expect(text.stdout).not.toContain('does not match this daemon');
+      expect(text.stdout).not.toContain('does not match');
       expect(payload).not.toHaveProperty('otlpEndpointMismatch');
+      expect(doctorOtlp()).toBeUndefined();
     });
   });
 });

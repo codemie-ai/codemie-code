@@ -18,7 +18,7 @@ import {
   writeAtomically,
   writeVsCodeLanguageModelsConfigAtPath,
 } from '../vscode.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { logger } from '@/utils/logger.js';
 
@@ -547,6 +547,11 @@ describe('readVsCodeByokGateway', () => {
     models: urls.map((url, index) => ({ id: `m${index}`, url })),
   }]);
 
+  it('a missing product directory throws ClientNotInstalledError, still a ConfigurationError', () => {
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ClientNotInstalledError);
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ConfigurationError);
+  });
+
   it('reads back the port its writer wrote, with no key', async () => {
     await mkdir(getVsCodeProductDir(false), { recursive: true });
     await writeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(false), 'http://127.0.0.1:52311', 'codemie-proxy');
@@ -572,6 +577,8 @@ describe('readVsCodeByokGateway', () => {
     ['an unparsable file', async () => writeModels('[{')],
     ['no managed provider', async () => writeModels(JSON.stringify([{ name: 'Other', vendor: 'customendpoint', models: [] }]))],
     ['a non-loopback URL', async () => writeModels(provider('https://models.example.com:4001/v1/chat/completions'))],
+    // The remover keeps a provider with any non-loopback model, so it is not CodeMie's and not connected.
+    ['mixed loopback and non-loopback URLs', async () => writeModels(provider('http://127.0.0.1:4001/v1/chat/completions', 'https://models.example.com/v1/chat/completions'))],
   ])('returns null for %s', async (_case, arrange) => {
     await arrange();
 

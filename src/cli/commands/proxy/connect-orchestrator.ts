@@ -11,6 +11,7 @@ import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
+  ClientNotInstalledError,
   ConfigurationError,
   createErrorContext,
   formatErrorForUser,
@@ -56,21 +57,26 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import { confirmClaudeCodeOtlp, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
+import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js';
 import { CLIENT_CONFIGS, type ClientConfig } from './analytics-delivery-lines.js';
 import {
   aggregateConnectExamples,
-  aggregateListLines,
-  dropMembersOrReportNone,
+  aggregateFlagOf,
+  aggregateListRows,
   failAggregateInvalidProjectList,
   failDesktopWithoutCodeMieUrl,
   memberFlag,
+  membersNotFound,
   membersOf,
-  runAnalyticsMembers,
+  notInstalledLine,
+  type AnalyticsMember,
   withAggregateFlags,
   type AggregateId,
 } from './analytics-clients.js';
+import { CLAUDE_OTLP_FLAG, formatFlagRows, vendorFlags } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -82,6 +88,15 @@ import {
   CLAUDE_DESKTOP,
   VSCODE_BYOK,
 } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { renderHint } from '@/utils/hint.js';
+import {
+  ANALYTICS_TARGETS,
+  confirmScopeDrops,
+  runIfScopeUnchanged,
+  warnIgnoredAnalyticsFlags,
+  type AnalyticsTargetKey,
+  type ScopeBaselines,
+} from './connect-scope-preflight.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -104,21 +119,25 @@ export interface ConnectOptions {
   targets: ConnectTargets;
   profile?: string;
   insiders?: boolean;
-  force?: boolean;
+  /** Replace a running daemon even when it matches and is healthy: the deprecated `--force` only. */
+  restartDaemon?: boolean;
+  /** Replace client config CodeMie did not write (`--overwrite`). */
+  overwrite?: boolean;
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
   /**
-   * Claude Code OTLP tracking scope. Settings always live in ~/.claude/settings.json.
-   * When omitted, connect defaults to Global (`user`), identical to `--scope user`, except that an analytics member
-   * set by an aggregate keeps its stored project list.
+   * Analytics connector tracking scope. Settings always live in ~/.claude/settings.json.
+   * Left undefined when `--scope` is omitted, so the omission stays detectable; connect
+   * coalesces it to Global (`user`) after its checks, identical to `--scope user`, except that an
+   * analytics member set by an aggregate (`--claude-otlp` / `--copilot-otlp`) keeps its stored project list.
    */
   scope?: AllowlistScope;
   /**
-   * Skip the Claude Code analytics confirmation prompt (`--silent`). The only
-   * bypass, and the only non-interactive success path for that target.
+   * Skip the confirmation prompts (`--yes`). The only bypass, and the only
+   * non-interactive success path for the Claude Code analytics target.
    */
-  silent?: boolean;
+  yes?: boolean;
   /** The analytics aggregates given; absent is none. */
   aggregates?: readonly AggregateId[];
 }
@@ -212,12 +231,11 @@ export async function resolveSsoProxyConfig(
       const available = await listCodeMieProfiles();
       const details = available.length > 0
         ? `Profiles to try:\n- ${available.join('\n- ')}`
-        : 'No SSO-backed CodeMie profiles were found. Run: codemie setup';
+        : renderHint({ reason: 'No SSO-backed CodeMie profiles were found', command: 'codemie setup' });
 
       throw new ConfigurationError(
         `Profile "${profileName}" cannot be used for ${clientLabel} proxy because it is not SSO-backed.\n\n` +
-        `Next step:\n` +
-        `  ${commandExample} --profile <name>\n\n` +
+        `${renderHint({ reason: 'Use an SSO-backed profile', command: `${commandExample} --profile <name>` })}\n\n` +
         `${details}`
       );
     }
@@ -244,15 +262,12 @@ export async function resolveSsoProxyConfig(
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
-    ? `Next step:\n` +
-    `  codemie profile switch <codemie-profile>\n` +
-    `  ${commandExample}\n\n` +
+    ? `${renderHint({ reason: 'Switch to an SSO-backed profile', command: `codemie profile switch <codemie-profile> && ${commandExample}` })}\n\n` +
     `Or run once with a specific profile:\n` +
     `  ${commandExample} --profile <codemie-profile>\n\n` +
     `Profiles to try:\n- ${available.join('\n- ')}`
     : `No SSO-backed CodeMie profiles were found.\n\n` +
-    `Next step:\n` +
-    `  codemie setup`;
+    renderHint({ reason: 'Set up a profile', command: 'codemie setup' });
 
   throw new ConfigurationError(
     `${clientLabel} proxy needs an SSO-backed CodeMie profile.\n` +
@@ -284,7 +299,7 @@ export async function assertSsoCredentials(
   if (loginUrl !== null) {
     throw new ConfigurationError(
       `No SSO credentials found for profile '${profileName}'.\n` +
-      `  Run: codemie profile login --url ${loginUrl}`
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
     );
   }
 }
@@ -332,18 +347,21 @@ export function printProxyError(error: unknown, label: string): never {
 
 // ── Unified connect orchestrator ─────────────────────────────────────────────
 
-const TARGET_LIST = [
+/** The bare `proxy connect` target list; every description starts at one column, computed from the longest flag. */
+export const CONNECT_TARGET_LIST = [
   'Select at least one target to configure:',
   '',
-  '  --claude-desktop       Claude Desktop app (MCP servers)',
-  '  --vscode               VS Code Copilot Chat models (BYOK)',
-  '  --vscode-claude-code   VS Code Claude Code extension',
-  '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --omp                  oh-my-pi (installs a live CodeMie model catalog extension)',
-  ...aggregateListLines((a) => a.connectListLines),
-  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
-  `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
-  `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
+  ...formatFlagRows([
+    ['--claude-desktop', 'Claude Desktop app (MCP servers)'],
+    ['--vscode', 'VS Code Copilot Chat models (BYOK)'],
+    ['--vscode-claude-code', 'VS Code Claude Code extension'],
+    ['--codex-desktop', 'Codex desktop app (writes ~/.codex/config.toml)'],
+    ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
+    ...aggregateListRows((a) => a.connectListLine),
+  ]),
+  '',
+  `  Note: ${CLAUDE_OTLP_FLAG} also routes Claude Desktop and the VS Code extension through the proxy; ` +
+    `disconnect ${CLAUDE_OTLP_FLAG} removes that route.`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -352,9 +370,6 @@ const TARGET_LIST = [
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   ...aggregateConnectExamples(),
-  `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CHAT_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CLI_OTLP_AGENT_NAME}`,
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -382,7 +397,7 @@ function describeTargets(t: ConnectTargets, aggregates: readonly AggregateId[]):
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
   if (t.omp) { flags.push('--omp'); labels.push('oh-my-pi'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
-  return { label, commandExample: `codemie proxy connect ${withAggregateFlags(flags, aggregates).join(' ')}` };
+  return { label, commandExample: `codemie proxy connect ${vendorFlags(withAggregateFlags(flags, aggregates)).join(' ')}` };
 }
 
 async function rollbackDaemon(): Promise<void> {
@@ -420,14 +435,14 @@ async function rollbackOwnDaemon(pid: number): Promise<void> {
  * Ensure a single daemon matching `requested` is running and healthy, spawning
  * or restarting it as needed (the reconciled strict-match lifecycle, spec §3.2).
  * A running daemon that differs, was started by an older CLI, fails the deep
- * check, or `force` is replaced; `adoptLive` takes any running daemon as it is.
+ * check, or `restartDaemon` is replaced; `adoptLive` takes any running daemon as it is.
  * `writeRecord: false` writes nothing into the connection record. Called under
  * the daemon lock.
  */
 export async function ensureDaemon(
   requested: RequestedDaemonConfig,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  force?: boolean,
+  restartDaemon?: boolean,
   verbose?: boolean,
   writeRecord = true,
   adoptLive = false
@@ -444,7 +459,7 @@ export async function ensureDaemon(
   const older = Boolean(running && state && (await isOlderDaemon(state)));
 
   let unhealthy = false;
-  if (running && state && matches && !older && !force) {
+  if (running && state && matches && !older && !restartDaemon) {
     const health = await checkProxyHealth({
       port: state.port,
       gatewayKey: state.gatewayKey,
@@ -458,9 +473,9 @@ export async function ensureDaemon(
     }
   }
 
-  if (running && (!matches || older || unhealthy || force)) {
-    if (force) {
-      logger.status('Forcing a fresh proxy restart...');
+  if (running && (!matches || older || unhealthy || restartDaemon)) {
+    if (restartDaemon) {
+      logger.status('Restarting the proxy...');
     } else if (older) {
       logger.status('Restarting proxy: it was started by an older CodeMie CLI...');
     } else if (!matches) {
@@ -540,11 +555,26 @@ export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
+  /**
+   * Set under a vendor flag when the client's host application is not installed at all, so its writer could not run
+   * (`ClientNotInstalledError`): the client was skipped with its own line, which neither fails the run nor counts as
+   * configured.
+   */
+  skipped?: true;
+}
+
+/**
+ * The outcome of a vendor-flag member whose writer threw `ClientNotInstalledError`: one `skipped` line naming the host
+ * application and the command to re-run once it is installed.
+ */
+function skippedResult(label: string, host: string, rerun: string): TargetResult {
+  console.log(chalk.yellow(`${label}: skipped — ${host} not installed; re-run \`${rerun}\` after installing`));
+  return { label, ok: false, skipped: true };
 }
 
 function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (!r.ok) {
+    if (!r.ok && !r.skipped) {
       console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
@@ -675,13 +705,21 @@ async function runVscodeByok(
   }
 }
 
-async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promise<TargetResult> {
+/**
+ * `skipRerun`, given when a vendor flag set the extension, is the command to re-run: a missing VS Code then skips the
+ * extension instead of failing it. Under `--vscode-claude-code` itself a missing VS Code stays a failure.
+ */
+async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRerun?: string): Promise<TargetResult> {
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
+    if (skipRerun && error instanceof ClientNotInstalledError) {
+      logger.debug('[proxy] VS Code Claude Code extension skipped: VS Code is not installed', ...sanitizeLogArgs({ insiders }));
+      return skippedResult('VS Code Claude Code extension', insiders ? 'VS Code Insiders' : 'VS Code', skipRerun);
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(
       '[proxy] Failed to configure VS Code Claude Code extension',
@@ -693,7 +731,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
 }
 
 interface CodexDesktopRunOptions {
-  force?: boolean;
+  overwrite?: boolean;
   model?: string;
   profileModel?: string;
   verbose?: boolean;
@@ -706,15 +744,19 @@ async function runCodexDesktop(
   const label = 'Codex Desktop';
   try {
     const candidates = getCodexDesktopAppCandidates();
-    if (!options.force && !(await findCodexDesktopApp(candidates))) {
+    if (!options.overwrite && !(await findCodexDesktopApp(candidates))) {
       throw new ConfigurationError(
         candidates.length === 0
-          ? `The Codex desktop app is not supported on ${process.platform} ` +
-          '(macOS and Windows only). Re-run with --force to write the config anyway.'
-          : 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
-          `${candidates.join(', ')}. ` +
-          (process.platform === 'win32' ? 'Also queried the current user\'s OpenAI.Codex MSIX package. ' : '') +
-          'Install it, or re-run with --force to write the config anyway.'
+          ? renderHint({
+            reason: `The Codex desktop app is not supported on ${process.platform} (macOS and Windows only)`,
+            action: 're-run with --overwrite to write the config anyway',
+          })
+          : renderHint({
+            reason: 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
+              candidates.join(', ') +
+              (process.platform === 'win32' ? '. Also queried the current user\'s OpenAI.Codex MSIX package' : ''),
+            action: 'install it, or re-run with --overwrite to write the config anyway',
+          })
       );
     }
 
@@ -733,7 +775,7 @@ async function runCodexDesktop(
       baseUrl: new URL('/v1', state.url).toString(),
       gatewayKey: state.gatewayKey,
       model,
-      force: options.force,
+      overwrite: options.overwrite,
     });
 
     console.log(chalk.green(`\u2713 Codex Desktop configured (model: ${model})`));
@@ -751,10 +793,69 @@ async function runCodexDesktop(
 /** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
 export const runCodexDesktopForTest = runCodexDesktop;
 
-async function runOmp(force: boolean): Promise<TargetResult> {
+interface CopilotOtlpRunOptions {
+  scope?: 'user' | 'project';
+  /** With no `scope`: keep a stored list of named projects (a member set by an aggregate). */
+  keepProjectList?: boolean;
+}
+
+async function runCopilotChatOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
+  const label = 'Copilot Chat Analytics';
+  try {
+    const result = await writeCopilotChatOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
+    console.log(chalk.green('✓ Copilot Chat analytics configured (hooks-only, no OTel)'));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`));
+    console.log(chalk.dim(`  Hook file:     ${result.hookFilePath}`));
+    console.log(chalk.dim(`  Settings:      ${result.settingsPath}`));
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  Token usage is unavailable in v1 (no native OTel export is configured).'));
+    console.log(chalk.yellow('  Restart VS Code to apply changes.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Copilot Chat analytics', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Copilot Chat analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
+async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
+  const label = 'Copilot CLI Analytics';
+  try {
+    const result = await writeCopilotCliOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
+    console.log(chalk.green('✓ Copilot CLI analytics configured (hooks-only, no OTel)'));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CLI_OTLP_AGENT_NAME}`));
+    console.log(chalk.dim(`  Hook file: ${result.hookFilePath}`));
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
+    console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Copilot CLI analytics', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Copilot CLI analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
+async function runOmp(overwrite: boolean): Promise<TargetResult> {
   const label = 'oh-my-pi';
   try {
-    const result = await writeOmpExtension({ force });
+    const result = await writeOmpExtension({ overwrite });
     console.log(chalk.green(
       result.changed
         ? `\u2713 oh-my-pi extension installed (${result.path})`
@@ -849,7 +950,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const aggregates = opts.aggregates ?? [];
 
   if (!hasAnyTarget(targets)) {
-    console.log(TARGET_LIST);
+    console.log(CONNECT_TARGET_LIST);
+    process.exitCode = 1;
     return;
   }
 
@@ -866,9 +968,18 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
   }
 
-  const activeTargets = await dropMembersOrReportNone(targets, aggregates, { insiders });
-  if (!activeTargets) return;
+  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes));
+  // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
+  const scope: AllowlistScope = opts.scope ?? 'user';
+
+  // An aggregate wires every member, found or not; one whose application is not found is named after the run.
+  const activeTargets: ConnectTargets = { ...targets };
+  const notFound = await membersNotFound(targets, aggregates, { insiders });
   const members = membersOf(aggregates);
+  // A member an aggregate set keeps its stored project list when --scope is omitted.
+  const keptLists = new Set<AnalyticsTargetKey>(
+    opts.scope === undefined ? ANALYTICS_TARGETS.map((t) => t.key).filter((key) => members.has(key)) : []
+  );
 
   const { label, commandExample } = describeTargets(activeTargets, aggregates);
   // Every target's outcome; a target that fails before the dispatch lands here first.
@@ -884,20 +995,27 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
   let projectBinding: ProjectBindingState | undefined;
+  let scopeBaselines: ScopeBaselines;
   try {
-    // Without a TTY the confirmation cannot be shown; --silent is the only
+    // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
+    // and sees the raw (possibly omitted) --scope.
+    const baselines = await confirmScopeDrops(activeTargets, opts.scope, Boolean(opts.yes), keptLists);
+    if (!baselines || !hasAnyTarget(activeTargets)) return;
+    scopeBaselines = baselines;
+
+    // Without a TTY the confirmation cannot be shown; --yes is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
-    if (activeTargets.claudeCodeOtlp && !opts.silent && isNonInteractiveEnvironment()) {
-      throw new ConfigurationError(
-        'Claude Code analytics requires confirmation, but no interactive terminal is available.\n' +
-        `Re-run with --silent to apply it without a prompt: codemie proxy connect ${memberFlag('claudeCodeOtlp', members)} --silent`
-      );
+    if (activeTargets.claudeCodeOtlp && !opts.yes && isNonInteractiveEnvironment()) {
+      throw new ConfigurationError(renderHint({
+        reason: 'Claude Code analytics requires confirmation, but no interactive terminal is available',
+        command: `codemie proxy connect ${memberFlag('claudeCodeOtlp', members)} --yes`,
+      }));
     }
 
     const resolved = await resolveSsoProxyConfig(opts.profile, label, commandExample);
     config = resolved.config;
     if (!config.baseUrl) {
-      throw new ConfigurationError('No API URL configured. Run: codemie setup');
+      throw new ConfigurationError(renderHint({ reason: 'No API URL configured', command: 'codemie setup' }));
     }
     // The Claude Desktop target fetches org-managed MCP servers via codeMieUrl. Set by an aggregate, it fails alone.
     if (failDesktopWithoutCodeMieUrl(activeTargets, members, config.codeMieUrl, results) && !hasAnyTarget(activeTargets)) {
@@ -923,8 +1041,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       : chalk.cyan(`Using profile: ${profile}`));
     // The confirmation prompt opens with its own `Using profile:` summary line, so this
     // one is skipped when that prompt will be shown to avoid printing it twice. The
-    // non-interactive-without-`--silent` case already threw above.
-    const confirmationWillBeShown = Boolean(activeTargets.claudeCodeOtlp) && !opts.silent;
+    // non-interactive-without-`--yes` case already threw above.
+    const confirmationWillBeShown = Boolean(activeTargets.claudeCodeOtlp) && !opts.yes;
     if (!confirmationWillBeShown) printProfileLine();
 
     await verifySsoCredentials(
@@ -935,9 +1053,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     );
     if (activeTargets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
-        opts.scope ?? 'user',
-        Boolean(opts.force),
-        Boolean(opts.silent),
+        scope,
+        Boolean(opts.overwrite),
+        Boolean(opts.yes),
         otlpDisplay,
       ).catch((error: unknown) => failAggregateInvalidProjectList(error, members, results, () => {
         // The list is checked before the prompt opens, so the prompt never named the profile.
@@ -961,7 +1079,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const ensured = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => ensureDaemon(
       buildRequestedConfig(profile, config, projectBinding, await requestedDaemonPort()),
       config,
-      Boolean(opts.force),
+      Boolean(opts.restartDaemon),
       verbose,
       false
     ));
@@ -982,35 +1100,55 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   // The `proxy connect` flags of the client configs this run wrote, and whether each write succeeded.
   const targetOk = new Map<string, boolean>();
-  const runClient = async (flag: string, result: Promise<TargetResult>): Promise<void> => {
+  /** Whether each analytics member's writer succeeded, for the `configured (not installed yet)` lines. */
+  const memberOk = new Map<AnalyticsMember, boolean>();
+  const runClient = async (flag: string, result: Promise<TargetResult>, member?: AnalyticsMember): Promise<void> => {
     const r = await result;
     results.push(r);
     targetOk.set(flag, r.ok);
+    if (member) memberOk.set(member, r.ok);
   };
   const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    await runClient('--claude-desktop', runClaudeDesktop(state, verbose));
+    await runClient('--claude-desktop', runClaudeDesktop(state, verbose), 'claudeDesktop');
   }
   if (activeTargets.vscode) {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
-    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders));
+    const skipRerun = members.has('vscodeClaudeCode')
+      ? `codemie proxy connect ${editionFlag(aggregateFlagOf('vscodeClaudeCode'))}`
+      : undefined;
+    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders, skipRerun), 'vscodeClaudeCode');
   }
   if (activeTargets.codexDesktop) {
     await runClient('--codex-desktop', runCodexDesktop(state, {
-      force: Boolean(opts.force),
+      overwrite: Boolean(opts.overwrite),
       model: opts.model,
       profileModel: config.model,
       verbose,
     }));
   }
-  results.push(...await runAnalyticsMembers(activeTargets, members, opts));
+  const writerScope = (key: AnalyticsTargetKey): { scope?: AllowlistScope; keepProjectList?: boolean } =>
+    keptLists.has(key) ? { keepProjectList: true } : { scope };
+  const analyticsWriters: Record<AnalyticsTargetKey, () => Promise<TargetResult>> = {
+    claudeCodeOtlp: () => runClaudeCodeOtlp({ overwrite: Boolean(opts.overwrite), ...writerScope('claudeCodeOtlp') }),
+    copilotChatOtlp: () => runCopilotChatOtlp(writerScope('copilotChatOtlp')),
+    copilotCliOtlp: () => runCopilotCliOtlp(writerScope('copilotCliOtlp')),
+  };
+  for (const target of ANALYTICS_TARGETS.filter((entry) => activeTargets[entry.key])) {
+    const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
+    results.push(r);
+    memberOk.set(target.key, r.ok);
+  }
+  for (const member of notFound) {
+    if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));
+  }
   if (activeTargets.omp) {
-    await runClient('--omp', runOmp(Boolean(opts.force)));
+    await runClient('--omp', runOmp(Boolean(opts.overwrite)));
   }
 
-  const anyFailed = results.some((r) => !r.ok);
+  const anyFailed = results.some((r) => !r.ok && !r.skipped);
   const allFailed = results.every((r) => !r.ok);
 
   // Record the connection only once something was actually wired, so a connect that

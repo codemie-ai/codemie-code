@@ -8,6 +8,12 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
+/**
+ * A connector's tracking scope as `proxy analytics` and `proxy doctor` read it: every project (`user`),
+ * only the listed ones (`project`), or a stored value that cannot be read (`invalid`, with the reason).
+ */
+export type ConnectorScopeRead = { scope: 'user' | 'project'; paths: string[] } | { invalid: string };
+
 export type AllowlistState =
   | { kind: 'absent' }
   | { kind: 'valid'; paths: string[] }

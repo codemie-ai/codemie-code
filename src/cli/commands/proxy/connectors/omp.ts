@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { ConfigurationError } from '@/utils/errors.js';
+import { renderHint } from '@/utils/hint.js';
 import { getDirname } from '@/utils/paths.js';
 
 import { removeFileThroughLink, writeAtomically } from './vscode.js';
@@ -39,9 +40,9 @@ export interface WriteOmpExtensionResult {
 
 /**
  * Install (or refresh) the extension. A file at the target path that CodeMie did not write is left
- * alone unless `force` is set, since omp would otherwise lose a user's own extension.
+ * alone unless `overwrite` is set, since omp would otherwise lose a user's own extension.
  */
-export async function writeOmpExtension(options: { force?: boolean } = {}): Promise<WriteOmpExtensionResult> {
+export async function writeOmpExtension(options: { overwrite?: boolean } = {}): Promise<WriteOmpExtensionResult> {
   const path = getOmpExtensionPath();
   const bundle = await readFile(join(getDirname(import.meta.url), 'omp', BUNDLE_FILENAME), 'utf-8');
 
@@ -50,9 +51,12 @@ export async function writeOmpExtension(options: { force?: boolean } = {}): Prom
     if (current === bundle) {
       return { path, changed: false };
     }
-    if (!current.startsWith(OWNERSHIP_MARKER) && !options.force) {
+    if (!current.startsWith(OWNERSHIP_MARKER) && !options.overwrite) {
       throw new ConfigurationError(
-        `${path} exists and was not installed by CodeMie. Move it away, or re-run with --force to replace it.`
+        renderHint({
+          reason: `${path} exists and was not installed by CodeMie`,
+          action: 'move it away, or re-run with --overwrite to replace it',
+        })
       );
     }
   }
