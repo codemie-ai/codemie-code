@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, lstatSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -112,6 +112,39 @@ describe('codex-desktop connect/disconnect round-trip (CODEX_HOME)', () => {
     toml = readFileSync(configPath, 'utf-8');
     expect(toml).toContain('theme = "dark"');            // user key still there
     expect(toml).not.toContain('model_provider = "codemie"'); // managed block gone
+  });
+
+  it.skipIf(process.platform === 'win32')('connect on a config that is a symbolic link keeps the link and writes its target', async () => {
+    const target = join(codexHome, 'dotfiles', 'config.toml');
+    mkdirSync(join(codexHome, 'dotfiles'));
+    writeFileSync(target, '');
+    symlinkSync(target, getCodexDesktopConfigPath());
+
+    await connect();
+
+    expect(lstatSync(getCodexDesktopConfigPath()).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toContain('Authorization = "Bearer codemie-proxy-roundtrip-test.codex-desktop"');
+  });
+
+  it.skipIf(process.platform === 'win32')('connect on a link whose target cannot be written replaces the link with a file', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    const targetDir = join(codexHome, 'read-only-dotfiles');
+    const target = join(targetDir, 'config.toml');
+    mkdirSync(targetDir);
+    writeFileSync(target, '');
+    symlinkSync(target, getCodexDesktopConfigPath());
+    chmodSync(targetDir, 0o555);
+    try {
+      await connect();
+    } finally {
+      chmodSync(targetDir, 0o755);
+    }
+
+    expect(lstatSync(getCodexDesktopConfigPath()).isSymbolicLink()).toBe(false);
+    expect(readFileSync(getCodexDesktopConfigPath(), 'utf-8')).toContain(
+      'Authorization = "Bearer codemie-proxy-roundtrip-test.codex-desktop"'
+    );
+    expect(readFileSync(target, 'utf-8')).toBe('');
   });
 
   it('a second disconnect with no active connection is a clean no-op', async () => {
@@ -244,14 +277,15 @@ describe('moveCodexDesktopToNamedKey', () => {
     expect(existsSync(getCodexDesktopConfigPath())).toBe(false);
   });
 
-  it('leaves a config file that is a symbolic link, the link and its target', async () => {
+  it('moves a config file that is a symbolic link through the link, and a second move leaves it', async () => {
     const target = join(codexHome, 'dotfiles-config.toml');
     writeFileSync(target, olderConnectConfig('Bearer codemie-proxy'));
     symlinkSync(target, getCodexDesktopConfigPath());
 
-    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('left');
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('moved');
+    await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
 
     expect(lstatSync(getCodexDesktopConfigPath()).isSymbolicLink()).toBe(true);
-    expect(readFileSync(target, 'utf-8')).toBe(olderConnectConfig('Bearer codemie-proxy'));
+    expect(readFileSync(target, 'utf-8')).toBe(olderConnectConfig('Bearer codemie-proxy.codex-desktop'));
   });
 });

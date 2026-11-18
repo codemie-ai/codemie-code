@@ -44,10 +44,10 @@ function parsePortOption(value: string | undefined, fallback: number): number {
 export async function startProxy(opts: ProxyStartOptions): Promise<void> {
   // Read before any status check, which can delete the state file the port is read from.
   const requestedPort = opts.port ? parsePortOption(opts.port, DEFAULT_DAEMON_PORT) : await requestedDaemonPort();
-  const config = await ConfigLoader.load(
-    process.cwd(),
-    opts.profile ? { name: opts.profile } : undefined
-  );
+  // Loaded by name, as `proxy connect` loads it: without one the environment overrides the profile's values, and the
+  // next connect would restart the daemon.
+  const profileName = opts.profile ?? await ConfigLoader.getActiveProfileName(process.cwd());
+  const config = await ConfigLoader.load(process.cwd(), profileName ? { name: profileName } : undefined);
   const profile = config.name ?? 'default';
   const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
 

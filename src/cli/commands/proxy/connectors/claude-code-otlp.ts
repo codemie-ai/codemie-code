@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs';
 import type { HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -19,7 +20,7 @@ import {
   rewriteHooksCommandTree,
 } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
-import { writeAtomically } from './vscode.js';
+import { isSymbolicLink, removeFileThroughLink, writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
   type AllowlistScope,
@@ -625,7 +626,7 @@ export async function writeClaudeCodeOtlpConfig(
         // (e.g. EPERM) must not fail the whole connect — just leaves a stale
         // backup for the next cycle to clean up.
         try {
-          await unlink(backupPathCandidate);
+          await removeFileThroughLink(backupPathCandidate);
         } catch (error) {
           logger.warn(
             '[proxy] Could not remove the now-unneeded stale backup file',
@@ -719,6 +720,27 @@ export async function writeClaudeCodeOtlpConfig(
   };
 }
 
+/**
+ * Empties a settings file left with nothing but CodeMie's entries: a regular file is
+ * deleted; a symbolic link keeps pointing at its target, written `{}`, so a synced
+ * dotfile loses CodeMie's entries too. When that target cannot be written the link is
+ * deleted instead.
+ */
+async function emptySettingsFile(settingsPath: string): Promise<void> {
+  if (await isSymbolicLink(settingsPath)) {
+    try {
+      await writeFileAtomic(settingsPath, '{}\n');
+      return;
+    } catch (error) {
+      logger.warn(
+        '[proxy] Could not empty the target of the linked Claude Code settings; removing the link',
+        ...sanitizeLogArgs({ settingsPath, error: error instanceof Error ? error.message : String(error) })
+      );
+    }
+  }
+  await unlink(settingsPath);
+}
+
 export async function removeClaudeCodeOtlpConfig(
   opts: RemoveClaudeCodeOtlpOptions = {}
 ): Promise<RemoveClaudeCodeOtlpResult> {
@@ -799,7 +821,7 @@ export async function removeClaudeCodeOtlpConfig(
   // The one exception: a value `--overwrite` displaced, restored above only
   // while codemie still owns it right now.
   if (isEmpty) {
-    await unlink(settingsPath);
+    await emptySettingsFile(settingsPath);
   } else {
     await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
   }
@@ -807,7 +829,7 @@ export async function removeClaudeCodeOtlpConfig(
     // Best-effort: settings.json is already correctly updated by this point,
     // so a failure here (e.g. EPERM) must not surface as "disconnect failed".
     try {
-      await unlink(backupPath);
+      await removeFileThroughLink(backupPath);
     } catch (error) {
       logger.warn(
         '[proxy] Disconnected successfully but could not remove the stale backup file',

@@ -7,7 +7,7 @@
  * come from the local proxy daemon at omp discovery time, so CodeMie never writes omp's models.yml.
  */
 import { existsSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,7 +15,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { renderHint } from '@/utils/hint.js';
 import { getDirname } from '@/utils/paths.js';
 
-import { writeAtomically } from './vscode.js';
+import { removeFileThroughLink, writeAtomically } from './vscode.js';
 
 /** Installed file name; omp auto-loads every `.ts`/`.js` file in `<agentDir>/extensions/`. */
 export const OMP_EXTENSION_FILENAME = 'codemie-models.js';
@@ -70,7 +70,7 @@ export function isOmpExtensionInstalled(): boolean {
   return existsSync(getOmpExtensionPath());
 }
 
-/** Remove the extension; a file CodeMie did not write is never deleted. */
+/** Remove the extension, a symbolic link's target with it; a file CodeMie did not write is never deleted. */
 export async function removeOmpExtension(): Promise<{ path: string; removed: boolean }> {
   const path = getOmpExtensionPath();
   if (!existsSync(path)) {
@@ -79,6 +79,6 @@ export async function removeOmpExtension(): Promise<{ path: string; removed: boo
   if (!(await readFile(path, 'utf-8')).startsWith(OWNERSHIP_MARKER)) {
     throw new ConfigurationError(`${path} was not installed by CodeMie; leaving it in place.`);
   }
-  await rm(path);
+  await removeFileThroughLink(path);
   return { path, removed: true };
 }

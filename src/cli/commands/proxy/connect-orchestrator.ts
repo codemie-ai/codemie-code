@@ -873,7 +873,7 @@ async function runOmp(overwrite: boolean): Promise<TargetResult> {
 /**
  * Moves every client config of {@link CLIENT_CONFIGS} that has a key-only write and is not one `targetFlags` names to
  * that client's named key; a row written only while the record holds an older CLI's client identity is skipped without
- * it. One line per client moved, left (a symbolic link) or failed. Never throws and never touches the exit code.
+ * it. One line per client moved or failed. Never throws and never touches the exit code.
  */
 async function moveOtherClientsToNamedKeys(state: DaemonState, targetFlags: ReadonlySet<string>): Promise<void> {
   const legacyIdentity = await hasLegacyClientIdentity();
@@ -884,10 +884,6 @@ async function moveOtherClientsToNamedKeys(state: DaemonState, targetFlags: Read
       const outcome = await config.moveToNamedKey.write(state);
       if (outcome === 'moved') {
         console.log(chalk.green(`✓ ${config.label} moved to its own key — ${config.moveToNamedKey.hint}`));
-      } else if (outcome === 'left') {
-        console.log(chalk.yellow(
-          `  ${renderHint({ reason: `${config.label} left on the shared key: its config is a symbolic link`, command: `codemie proxy connect ${config.flag}` })}`
-        ));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
