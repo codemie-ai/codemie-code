@@ -13,20 +13,10 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { createProxyDoctorCommand } from './doctor/command.js';
-import { checkProxyHealth } from './health-check.js';
-import {
-  collectClientNotices,
-  collectDesktopCollection,
-  collectVisibleDeliveryHealth,
-  formatAnalyticsLines,
-  formatDesktopLine,
-} from './analytics-delivery-lines.js';
-import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
+import { composeProxyDoctor } from './doctor/compose.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
-  findOlderCliOnPath,
-  formatOlderCliWarning,
   printProxyError,
   connectTargets,
 } from './connect-orchestrator.js';
@@ -35,8 +25,44 @@ import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { renderHint } from '@/utils/hint.js';
+import {
+  DEPRECATION_REMOVE_ON,
+  deprecate,
+  deprecatedCommand,
+  deprecatedOption,
+  type DeprecationEntry,
+} from '../../deprecation.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
+
+/** How `proxy status` prints the gateway key unless `--show-key` is given (output hygiene, not a secret). */
+const MASKED_KEY = '****';
+
+const STATUS_DEEP_DEPRECATION: DeprecationEntry = {
+  kind: 'deprecated',
+  old: 'codemie proxy status --deep',
+  replacement: 'codemie proxy doctor',
+  removeOn: DEPRECATION_REMOVE_ON,
+};
+
+const INSPECT_DESKTOP_DEPRECATION: DeprecationEntry = {
+  kind: 'deprecated',
+  old: 'codemie proxy inspect desktop',
+  replacement: 'codemie proxy doctor --verbose',
+  removeOn: DEPRECATION_REMOVE_ON,
+};
+
+interface StatusOptions {
+  json?: boolean;
+  showKey?: boolean;
+  deep?: boolean;
+}
+
+function formatUptime(uptimeSec: number): string {
+  if (uptimeSec < 60) return `${uptimeSec}s`;
+  if (uptimeSec < 3600) return `${Math.floor(uptimeSec / 60)}m ${uptimeSec % 60}s`;
+  return `${Math.floor(uptimeSec / 3600)}h ${Math.floor((uptimeSec % 3600) / 60)}m`;
+}
 
 interface UnifiedConnectOptions {
   claudeCodeOtlp?: boolean;
@@ -149,9 +175,13 @@ export function createProxyCommand(): Command {
   proxy
     .command('status')
     .description('Show proxy daemon status')
-    .option('--deep', 'Also verify upstream/auth reachability (slower)')
     .option('--json', 'Emit status as JSON instead of formatted output')
-    .action(async (opts) => {
+    .option('--show-key', 'Show the gateway key in full instead of masked')
+    .addOption(deprecatedOption(STATUS_DEEP_DEPRECATION, '--deep', 'Also verify upstream/auth reachability (slower)'))
+    .action(async (opts: StatusOptions) => {
+      if (opts.deep) {
+        deprecate(STATUS_DEEP_DEPRECATION, { json: opts.json });
+      }
       const { running, state } = await readDaemonStatus();
       if (!running || !state) {
         if (opts.json) {
@@ -164,133 +194,46 @@ export function createProxyCommand(): Command {
       }
 
       const uptimeSec = Math.floor((Date.now() - new Date(state.startedAt).getTime()) / 1000);
-      const uptime = uptimeSec < 60
-        ? `${uptimeSec}s`
-        : uptimeSec < 3600
-          ? `${Math.floor(uptimeSec / 60)}m ${uptimeSec % 60}s`
-          : `${Math.floor(uptimeSec / 3600)}h ${Math.floor((uptimeSec % 3600) / 60)}m`;
-
-      const health = await checkProxyHealth({
-        port: state.port,
-        gatewayKey: state.gatewayKey,
-        deep: Boolean(opts.deep),
-        expectedPid: state.pid,
-      });
-      const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
-      const [desktop, clients, olderCli, otlp] = await Promise.all([
-        collectDesktopCollection(state),
-        collectClientNotices(state),
-        findOlderCliOnPath(),
-        checkClaudeCodeOtlpEndpoint(state),
-      ]);
-      const otlpMismatch = otlp && !otlp.matches ? otlp : null;
+      const deep = Boolean(opts.deep);
+      // `--deep` keeps its old meaning during the deprecation: the composition runs the authenticated check.
+      const report = await composeProxyDoctor({ authProbe: deep, verbose: false });
+      const failed = (ids: string[]): boolean =>
+        report.sections.some((section) => ids.includes(section.id) && section.status === 'error');
+      const healthy = !failed(['daemon']) && !(deep && failed(['auth', 'upstream']));
+      const issues = report.sections.some((section) => section.status === 'warn' || section.status === 'error');
+      const key = opts.showKey ? state.gatewayKey : MASKED_KEY;
 
       if (opts.json) {
         const payload: Record<string, unknown> = {
-          status: health.healthy ? 'healthy' : 'unhealthy',
-          apiKey: state.gatewayKey,
+          status: healthy ? 'healthy' : 'unhealthy',
+          apiKey: key,
           url: state.url,
           port: state.port,
           profile: state.profile,
-          uptimeSec,
-          level: health.level,
+          ...(state.project && { project: state.project }),
           version: state.version ?? null,
+          uptimeSec,
         };
-        if (state.project) {
-          payload.project = state.project;
-        }
-        if (!health.healthy) {
-          payload.reason = health.reason ?? state.healthReason ?? 'unknown';
-        }
-        if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
-          payload.lastRecordedIssue = state.healthReason;
-        }
-        if (otlpMismatch) {
-          payload.otlpEndpointMismatch = { configured: otlpMismatch.configured, expected: otlpMismatch.expected };
-        }
-        if (desktop) {
-          payload.desktop = desktop;
-        }
-        if (analytics) {
-          payload.analytics = analytics;
-        }
-        if (clients.clientPortMismatch.length > 0) {
-          payload.clientPortMismatch = clients.clientPortMismatch;
-        }
-        if (clients.clientSharedKey.length > 0) {
-          payload.clientSharedKey = clients.clientSharedKey;
-        }
-        if (olderCli) {
-          payload.olderCliOnPath = olderCli;
-        }
-        if (clients.hooksOfAnotherInstall.length > 0) {
-          payload.hooksOfAnotherInstall = clients.hooksOfAnotherInstall;
-        }
         console.log(JSON.stringify(payload, null, 2));
         return;
       }
 
-      if (health.healthy) {
-        const label = health.level === 'deep' ? 'running, healthy (upstream OK)' : 'running, healthy';
-        console.log(`Status:  ${chalk.green(label)}`);
-
-        // An explicit upstream/auth check that passed outdates the watcher's recorded issue for this run;
-        // the daemon's watcher clears it from the state itself at its next passing check.
-        if (opts.deep && state.health === 'unhealthy') {
-          state.health = 'ok';
-          state.healthReason = undefined;
-        }
-      } else {
-        console.log(`Status:  ${chalk.yellow('running but UNHEALTHY')}`);
-        console.log(`  Reason:  ${health.reason ?? state.healthReason ?? 'unknown'}`);
-      }
-
+      const upstreamOk = report.sections.some((section) => section.id === 'upstream' && section.status === 'ok');
+      console.log(healthy
+        ? `Status:  ${chalk.green(deep && upstreamOk ? 'running, healthy (upstream OK)' : 'running, healthy')}`
+        : `Status:  ${chalk.yellow('running but UNHEALTHY')}`);
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
-      console.log(`  API Key: ${state.gatewayKey}`);
-      console.log(`  Client keys: ${state.gatewayKey}.<client> — written by codemie proxy connect`);
+      console.log(`  API Key: ${key}`);
+      console.log(`  Client keys: ${key}.<client> — written by codemie proxy connect`);
       console.log(`  Profile: ${state.profile}`);
       if (state.project) {
         console.log(`  Project: ${state.project}`);
       }
-      console.log(state.version
-        ? `  Version: ${state.version}`
-        : chalk.yellow(`  Version: ${renderHint({ reason: 'older CLI', command: 'codemie proxy restart' })}`));
-      console.log(`  Uptime:  ${uptime}`);
-
-      if (desktop) {
-        console.log(formatDesktopLine(desktop));
-      }
-
-      if (analytics) {
-        for (const line of formatAnalyticsLines(analytics)) {
-          console.log(line);
-        }
-      }
-
-      for (const line of clients.lines) {
-        console.log(line);
-      }
-      if (olderCli) {
-        console.log(chalk.yellow(`  ${formatOlderCliWarning(olderCli)}`));
-      }
-
-      if (otlpMismatch) {
-        const keyOnly = otlpMismatch.configured === otlpMismatch.expected;
-        console.log(chalk.yellow(
-          keyOnly
-            ? '  Warning: the gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this daemon; native OTel is rejected.'
-            : `  Warning: Claude Code OTLP endpoint ${otlpMismatch.configured} does not match this daemon (${otlpMismatch.expected}); native OTel is not reaching it.`
-        ));
-        console.log(chalk.yellow(
-          '           To repair, run: codemie proxy connect --claude-code-otlp (same --scope as before; a tracked Claude Code ' +
-          'hook also re-points it), then start a NEW Claude Code session - running sessions keep the old setting.'
-        ));
-      }
-
-      // Surface a recorded give-up reason even when a fresh ping happens to pass.
-      if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
-        console.log(chalk.yellow(`  Note:    last recorded issue — ${state.healthReason}`));
+      console.log(`  Version: ${state.version ?? 'older CLI'}`);
+      console.log(`  Uptime:  ${formatUptime(uptimeSec)}`);
+      if (issues) {
+        console.log(chalk.yellow(renderHint({ reason: 'Issues found', command: 'codemie proxy doctor' })));
       }
     });
 
@@ -440,8 +383,7 @@ export function createProxyCommand(): Command {
   const inspect = new Command('inspect');
   inspect.description('Inspect proxy integrations and telemetry state');
 
-  inspect
-    .command('desktop')
+  inspect.addCommand(deprecatedCommand(INSPECT_DESKTOP_DEPRECATION, 'desktop')
     .description('Inspect Claude Desktop proxy telemetry readiness')
     .option('--limit <count>', 'Maximum number of recent sessions to inspect', String(DEFAULT_DESKTOP_INSPECT_LIMIT))
     .action(async (opts) => {
@@ -452,10 +394,11 @@ export function createProxyCommand(): Command {
       await printDesktopInspection(status.running, state, {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined
       });
-    });
+    }));
 
   proxy.addCommand(connect);
-  proxy.addCommand(inspect);
+  // Its only subcommand is deprecated: the group is hidden with it.
+  proxy.addCommand(inspect, { hidden: true });
   proxy.addCommand(createProxyAnalyticsCommand());
   proxy.addCommand(createProxyDoctorCommand());
 

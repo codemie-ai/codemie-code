@@ -43,7 +43,6 @@ export const RELATED: Record<string, RelatedEntry> = {
     related: [
       { path: 'codemie proxy start', purpose: 'Start the proxy daemon' },
       { path: 'codemie proxy restart', purpose: 'Restart the proxy daemon' },
-      { path: 'codemie proxy inspect desktop', purpose: 'Inspect Claude Desktop proxy state' },
       DOCTOR,
       A_STATUS,
     ],
@@ -54,8 +53,6 @@ export const RELATED: Record<string, RelatedEntry> = {
   'proxy connect desktop': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
   'proxy connect vscode': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
   'proxy disconnect': { related: [CONNECT, STATUS], next: { default: 'codemie proxy status' } },
-  'proxy inspect': { related: [{ path: 'codemie proxy inspect desktop', purpose: 'Inspect Claude Desktop proxy state' }, STATUS], next: {} },
-  'proxy inspect desktop': { related: [STATUS, CONNECT], next: {} },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },
   'proxy analytics enable': { related: [A_STATUS, A_DISABLE], next: { default: 'codemie proxy analytics status' } },

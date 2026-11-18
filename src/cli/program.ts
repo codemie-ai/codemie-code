@@ -67,7 +67,7 @@ export function createProgram(): Command {
   program.addHelpText('after', `
 Claude Desktop 3P:
   codemie proxy connect --claude-desktop      Connect Claude Desktop through CodeMie proxy
-  codemie proxy inspect desktop               Inspect Desktop proxy state, sessions, and sync
+  codemie proxy doctor --verbose              Diagnose the proxy, with Desktop sessions and sync
   codemie proxy stop                          Stop the local proxy daemon
   codemie codebase ui                         Start and open Codebase Memory graph UI
 

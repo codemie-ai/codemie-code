@@ -774,12 +774,12 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 
 ```bash
 codemie proxy status
-codemie proxy inspect desktop --limit 5
+codemie proxy doctor --verbose
 codemie proxy restart [--profile <name>]   # restart, keeping port and key
 codemie proxy stop
 ```
 
-`codemie proxy status` shows the CLI version the daemon was started by and names a client that points at another port or still holds the shared key, with the command that fixes it. With Claude Desktop connected it prints a `Desktop:` line — `collecting`, or `NOT collecting` with the command that fixes it — and, when analytics data was not stored, a `Last dropped: <reason>` line. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
+`codemie proxy status` prints facts only: state, URL, port, profile, project, the CLI version the daemon was started by and uptime, with the gateway key masked (`--show-key` shows it). When anything is wrong it adds one line, `Issues found — run: codemie proxy doctor`. `codemie proxy doctor` names what is wrong — a client that points at another port or still holds the shared key, Claude Desktop not collecting, analytics data that was not stored — with the command that fixes it; `--verbose` adds Claude Desktop's directories and recent sessions. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 
@@ -806,7 +806,7 @@ An empty or relative `XDG_CONFIG_HOME` is ignored, per the XDG spec.
 echo "${XDG_CONFIG_HOME:-(unset)}"
 ls -la ~/.config/Claude-3p/configLibrary/
 cat ~/.config/Claude-3p/configLibrary/_meta.json   # appliedId names the active config
-codemie proxy inspect desktop --limit 5
+codemie proxy doctor --verbose
 ```
 
 Claude Desktop reads its configuration **once at launch**, so fully quit and reopen the app — not just close the window.

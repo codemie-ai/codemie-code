@@ -224,23 +224,23 @@
     ]
   },
   {
-    "id": "cmd-proxy-inspect-desktop",
+    "id": "cmd-proxy-doctor-verbose",
     "category": "Proxy & IDE",
-    "message": "Claude Desktop acting up? `codemie proxy inspect desktop` shows proxy state, recent sessions and sync readiness.",
+    "message": "Claude Desktop acting up? `codemie proxy doctor --verbose` shows what is wrong, plus Desktop's recent sessions and sync readiness.",
     "command": "proxy",
     "commands": [
-      "codemie proxy inspect desktop"
+      "codemie proxy doctor --verbose"
     ]
   },
   {
     "id": "cmd-proxy-status",
     "category": "Proxy & IDE",
-    "message": "Is the local gateway even alive? `codemie proxy status` tells you, and whether analytics are reaching CodeMie — add `--deep` to verify upstream reachability, `--json` for scripts.",
+    "message": "Is the local gateway even alive? `codemie proxy status` tells you the facts (key masked, `--show-key` reveals it, `--json` for scripts) — and points to `codemie proxy doctor` when something is wrong.",
     "command": "proxy",
     "commands": [
       "codemie proxy status",
-      "codemie proxy status --deep",
-      "codemie proxy status --json"
+      "codemie proxy status --json",
+      "codemie proxy doctor"
     ]
   },
   {

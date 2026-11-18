@@ -15,6 +15,18 @@ All notable changes to this project are documented in this file, following [Keep
 - A proxy started by an older CLI is replaced on its port by `codemie proxy connect`, `codemie proxy start`, `codemie proxy restart` and a Claude Code hook
 - The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
+- `codemie proxy status` prints facts only — state, URL, port, profile, project, CLI version and uptime — and, when anything is wrong, one `Issues found — run: codemie proxy doctor` line; client, Claude Desktop, analytics delivery, Claude Code OTLP and PATH findings moved to `codemie proxy doctor`. The gateway key is masked (`****`) in the text, including the `Client keys` line, and in `--json` unless `--show-key` is given. `--json` now carries only `status`, `apiKey`, `url`, `port`, `profile`, `project`, `version` and `uptimeSec`
+
+### Deprecated
+
+Each form below still works until its removal date and prints a one-line notice to stderr naming its replacement.
+
+<!-- deprecation-table:start -->
+| Old | New | Removal |
+| --- | --- | --- |
+| `codemie proxy status --deep` | `codemie proxy doctor` | 2026-12-31 |
+| `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
+<!-- deprecation-table:end -->
 
 ## [0.16.10] - 2026-11-17
 
