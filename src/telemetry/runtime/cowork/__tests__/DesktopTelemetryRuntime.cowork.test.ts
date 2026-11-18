@@ -105,6 +105,24 @@ describe('DesktopTelemetryRuntime and the Cowork producer', () => {
     }
   });
 
+  it('a session being collected gets its end and final summary while Desktop is not connected', async () => {
+    let gateway: { port: number; apiKey: string } | null = { port: 4001, apiKey: 'codemie-proxy' };
+    const runtime = new DesktopTelemetryRuntime(new ClaudeDesktopTelemetryAdapter(), { ...config, readDesktopGateway: async () => gateway });
+    await pollTwice(runtime);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(true);
+
+    gateway = null;
+    vi.setSystemTime(LAST_LINE_MS + 30_000);
+    await pollTwice(runtime);
+    vi.setSystemTime(LAST_LINE_MS + config.inactivityTimeoutMs + 40_000);
+    await pollTwice(runtime);
+
+    const spooled = readFileSync(spoolPath(), 'utf-8').split('\n').filter((line) => line.length > 0)
+      .map((line) => JSON.parse((JSON.parse(line) as { hookEvent: string }).hookEvent) as Record<string, unknown>);
+    expect(spooled.filter((event) => event['type'] === 'agent.session.end')).toHaveLength(1);
+    expect(spooled.filter((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toHaveLength(1);
+  });
+
   it('builds no producer for another adapter', async () => {
     const adapter: LocalTelemetryAdapter = {
       clientType: 'synthetic-client',

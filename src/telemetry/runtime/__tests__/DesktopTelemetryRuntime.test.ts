@@ -2311,10 +2311,10 @@ describe('DesktopTelemetryRuntime', () => {
       ['another key', () => desktopPointsAt(`http://127.0.0.1:${PORT}`, 'sk-user-own')],
       ['a non-loopback URL', () => desktopPointsAt(`https://gateway.example.com:${PORT}`)],
       ['a sealed key on another port', () => desktopPointsAt('http://127.0.0.1:4005', SEALED_KEY)],
-    ])('not connected (%s) at two polls in a row: the second discovers, runs and reconciles nothing, and a tracked session is still finalized', async (_case, disconnect) => {
+    ])('not connected (%s) at two polls in a row: the second discovers and reconciles nothing and starts a not-connected Cowork run, and a tracked session is still finalized', async (_case, disconnect) => {
       openDesktopChat('ext-1', 1, T0);
       const adapter = createAdapter();
-      const run = vi.fn(async () => undefined);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
       // Idle long enough for a re-delivery to fall due before the session's inactivity does
       const inactivityTimeoutMs = 2 * DESKTOP_REDELIVERY_INTERVAL_MS;
       const runtime = new DesktopTelemetryRuntime(adapter, { ...collecting, inactivityTimeoutMs }, { run });
@@ -2329,6 +2329,7 @@ describe('DesktopTelemetryRuntime', () => {
       await runtime.triggerPoll();
       await (runtime as any).cowork.inFlight;
       expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(run).toHaveBeenLastCalledWith(T0 + POLL_INTERVAL_MS, true);
       vi.mocked(adapter.discoverSessions).mockClear();
       run.mockClear();
       const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
@@ -2336,19 +2337,29 @@ describe('DesktopTelemetryRuntime', () => {
 
       vi.setSystemTime(T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
       await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
 
       expect(adapter.discoverSessions).not.toHaveBeenCalled();
-      expect(run).not.toHaveBeenCalled();
+      expect(run.mock.calls).toEqual([[T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS, false]]);
       expect(reconcile).not.toHaveBeenCalled();
       expect(index).not.toHaveBeenCalled();
       expect(notices).toEqual([new Date(T0).toISOString(), undefined]);
 
       // The tracked session is still finalized on inactivity (its final flush rediscovers its own transcript)
+      run.mockClear();
       vi.setSystemTime(T0 + inactivityTimeoutMs + POLL_INTERVAL_MS);
       await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
-      expect(run).not.toHaveBeenCalled();
+      expect(run.mock.calls).toEqual([[T0 + inactivityTimeoutMs + POLL_INTERVAL_MS, false]]);
       expect(reconcile).not.toHaveBeenCalled();
+
+      // Connected again: the next poll starts a connected run
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(run).toHaveBeenLastCalledWith(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS, true);
     });
 
     it('connected with a sealed key on the daemon\'s port: collecting, the connection told, a session collected', async () => {
@@ -2384,10 +2395,14 @@ describe('DesktopTelemetryRuntime', () => {
       desktopPointsAt(null);
       const first = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
       const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
-      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
       startedRuntimes.push(runtime);
       await runtime.start();
       await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      // The first read, with no connected state before, already counts: its poll starts a not-connected run
+      expect(run.mock.calls).toEqual([[T0, false]]);
       await pollTicks(runtime, 2);
 
       expect(index).not.toHaveBeenCalled();
