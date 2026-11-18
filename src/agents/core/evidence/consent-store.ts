@@ -199,6 +199,22 @@ export async function disconnectFolder(scope: Omit<ConsentScope, 'project'>, fol
   });
 }
 
+/** The consent entries of one owner and backend, or `unreadable` when the store cannot be read (never "none"). */
+export type ConsentList = { kind: 'ok'; entries: ConsentEntry[] } | { kind: 'unreadable' };
+
+/**
+ * The entries of this owner and backend, whatever the project: the same scope `disconnectFolder` acts on, so every
+ * listed entry is one the signed-in account can revoke. Never throws.
+ */
+export async function listConsents(scope: Omit<ConsentScope, 'project'>): Promise<ConsentList> {
+  const store = await load();
+  if (store.kind !== 'ok') return store;
+  return {
+    kind: 'ok',
+    entries: store.entries.filter((e) => e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity),
+  };
+}
+
 /** Entries of this owner and backend that still cover the folder (the folder itself or an ancestor), whatever the project. */
 export async function coveringEntries(scope: Omit<ConsentScope, 'project'>, folder: string): Promise<ConsentEntry[]> {
   const store = await load();

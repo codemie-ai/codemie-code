@@ -182,7 +182,7 @@ async function step6ExternalSessions(
   deps.err('');
   deps.err(stepHeading(stepsFor(state.targets), 'external'));
 
-  deps.err('`codemie analytics --include-external` also counts agent sessions not launched through CodeMie.');
+  deps.err('`codemie analytics --include-external always` also counts agent sessions not launched through CodeMie.');
   deps.err('Machines with it on and machines with it off report figures that are not directly comparable.');
 
   const includeExternal = await deps.prompt.select(

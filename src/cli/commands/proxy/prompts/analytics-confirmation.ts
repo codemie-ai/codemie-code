@@ -29,23 +29,58 @@ export async function promptAnalyticsConfirmation(
   options: AnalyticsConfirmationOptions,
 ): Promise<AnalyticsConfirmationResult> {
   console.log(buildAnalyticsConfirmationMessage(options));
+  return (await promptConfirmDecline('Enable Claude Code analytics?')) ? 'enable' : 'cancel';
+}
 
+/** `confirm` drops the project list; `cancel` covers Decline and a closed prompt. */
+export type ScopeDropConfirmationResult = 'confirm' | 'cancel';
+
+/** Inputs of {@link promptScopeDropConfirmation}. */
+export interface ScopeDropConfirmationOptions {
+  /** Connector label, e.g. `Claude Code analytics`. */
+  label: string;
+  /** The tracked projects a user-scope connect drops. */
+  paths: string[];
+}
+
+/**
+ * Lists the projects a user-scope connect drops from a connector's project list and asks
+ * Confirm / Decline with the same inquirer list as {@link promptAnalyticsConfirmation}.
+ * A closed prompt resolves to `cancel`. Callers must gate on an interactive terminal.
+ */
+export async function promptScopeDropConfirmation(
+  options: ScopeDropConfirmationOptions,
+): Promise<ScopeDropConfirmationResult> {
+  console.log([...buildScopeDropLines(options), ''].join('\n'));
+  return (await promptConfirmDecline(`Drop the tracked project list of ${options.label}?`)) ? 'confirm' : 'cancel';
+}
+
+/** The lines naming the projects a user-scope connect drops (pure; also printed in place of the prompt for `--yes`). */
+export function buildScopeDropLines(options: ScopeDropConfirmationOptions): string[] {
+  return [
+    chalk.yellow(`${options.label} tracks only these projects; connecting in user scope tracks every project and drops the list:`),
+    ...options.paths.map((path) => `  - ${path}`),
+  ];
+}
+
+/** The Confirm / Decline list; a closed prompt (Ctrl+C) counts as Decline. */
+async function promptConfirmDecline(message: string): Promise<boolean> {
   try {
     const { enable } = await inquirer.prompt<{ enable: boolean }>([
       {
         type: 'list',
         name: 'enable',
-        message: 'Enable Claude Code analytics?',
+        message,
         choices: [
           { name: 'Confirm', value: true },
           { name: 'Decline', value: false },
         ],
       },
     ]);
-    return enable ? 'enable' : 'cancel';
+    return enable;
   } catch (error) {
     if (error instanceof Error && (error.name === 'ExitPromptError' || error.name === 'AbortPromptError')) {
-      return 'cancel';
+      return false;
     }
     throw error;
   }

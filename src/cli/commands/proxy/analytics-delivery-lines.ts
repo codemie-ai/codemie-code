@@ -2,72 +2,12 @@ import chalk from 'chalk';
 import { realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { DaemonState } from './daemon-manager.js';
-import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
-import { moveDesktopToNamedKey, readDesktopGateway } from './connectors/desktop.js';
-import { moveVsCodeClaudeCodeToNamedKey, readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
-import { moveCodexDesktopToNamedKey, readCodexDesktopGateway } from './connectors/codex-desktop-named-key.js';
-import { gatewayKeyReading, readVsCodeByokGateway, type ConnectorGateway } from './connectors/vscode.js';
-import { readCopilotCliHookInstall } from './connectors/copilot-cli-otlp.js';
-import { readCopilotChatHookInstall } from './connectors/copilot-chat-otlp.js';
-import { readClaudeCodeHookInstall } from './connectors/claude-code-otlp.js';
-import { readDesktopGatewayConfig } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
-import {
-  CLAUDE_DESKTOP,
-  CODEX_DESKTOP,
-  VSCODE_BYOK,
-  VSCODE_CLAUDE_CODE,
-} from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { readDesktopGateway } from './connectors/desktop.js';
+import { CLIENT_TARGETS, type ClientGatewaySpec } from './client-targets.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
-import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { findActiveCli, findFirstManifest, resolvePackage } from '@/utils/active-cli.js';
 import { getDirname, isSamePath } from '@/utils/paths.js';
 import { isWindows } from '@/utils/platform.js';
-import {
-  collectDeliveryHealth,
-  DELIVERY_REASONS,
-  formatDropLines,
-  unknownHint,
-  type DeliveryHealth,
-} from './delivery-health.js';
-import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
-
-/**
- * Analytics delivery health for `proxy status`, or null when no connector is connected (a connected
- * Claude Desktop counts as one).
- * Leftover unsent spool bytes never make it visible: with nothing connected there is nothing to report.
- */
-export async function collectVisibleDeliveryHealth(
-  state: DaemonState,
-  reply: AnalyticsHealthReply | undefined
-): Promise<DeliveryHealth | null> {
-  if (!(await hasActiveAnalyticsConnector())) {
-    return null;
-  }
-  return collectDeliveryHealth(state, reply);
-}
-
-/**
- * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip only when the user can act,
- * then the `Last dropped:` detail when the spool records a drop.
- */
-export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
-  return [...analyticsHeadline(delivery), ...formatDropLines(delivery.latestDrop)];
-}
-
-function analyticsHeadline(delivery: DeliveryHealth): string[] {
-  if (delivery.status === 'healthy') {
-    return [`Analytics: ${chalk.green('healthy')}`];
-  }
-  if (delivery.status === 'unhealthy') {
-    const entry = delivery.reason ? DELIVERY_REASONS[delivery.reason] : undefined;
-    return [
-      `Analytics: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? [`  Run: ${entry.run}`] : []),
-    ];
-  }
-  return [`Analytics: ${chalk.dim(`unknown (${unknownHint(delivery)})`)}`];
-}
 
 export interface DesktopCollection {
   connected: true;
@@ -102,13 +42,6 @@ function describeDesktopCollection(state: DaemonState, gatewayPort: number): Des
   return { connected: true, collecting: false, reason: 'Desktop is not connected to this proxy yet' };
 }
 
-/** The `Desktop:` line for `proxy status`. */
-export function formatDesktopLine(desktop: DesktopCollection): string {
-  return desktop.collecting
-    ? '  Desktop: collecting'
-    : chalk.yellow(`  Desktop: NOT collecting — ${desktop.reason}${desktop.remedy ? `; ${desktop.remedy}` : ''}`);
-}
-
 export interface ClientPortMismatch {
   client: string;
   configuredPort: number;
@@ -137,97 +70,26 @@ export interface ClientNotices {
   lines: string[];
 }
 
-export interface ClientConfig {
-  client: string;
+export interface ClientConfig extends ClientGatewaySpec {
   label: string;
   /** The `proxy connect` flags that write this config. */
   flag: string;
-  /** Desktop's port is named by its `Desktop:` line. */
-  portNamedElsewhere?: true;
-  read: (state: DaemonState) => Promise<ConnectorGateway | null>;
-  /**
-   * The write that moves the config from the shared key (or, for Desktop, a sealed key) to the client's named key,
-   * and what the user does for the application to load it.
-   */
-  moveToNamedKey?: {
-    write: (state: DaemonState) => Promise<'moved' | 'unchanged'>;
-    hint: string;
-  };
-  /** `proxy connect`, `proxy start` and `proxy restart` write this config only while the connection record holds an older CLI's client identity. */
-  movedOnlyWithLegacyIdentity?: true;
 }
 
-async function readDesktopConfigured(state: DaemonState): Promise<ConnectorGateway | null> {
-  const gateway = await readDesktopGatewayConfig();
-  if (!gateway) return null;
-  if (gateway.sealed) return { port: gateway.port };
-  const key = gatewayKeyReading(gateway.apiKey === undefined ? undefined : `Bearer ${gateway.apiKey}`, state.gatewayKey);
-  return { port: gateway.port, key };
-}
+/**
+ * The clients' configs `proxy status` reads and `proxy connect`, `proxy start` and `proxy restart` move to their named
+ * keys: the gateway clients of {@link CLIENT_TARGETS}, in table order.
+ */
+export const CLIENT_CONFIGS: readonly ClientConfig[] = CLIENT_TARGETS.flatMap((target) =>
+  target.gateway ? [{ ...target.gateway, label: target.label, flag: target.flag }] : []
+);
 
-/** The clients' configs `proxy status` reads and `proxy connect`, `proxy start` and `proxy restart` move to their named keys. */
-export const CLIENT_CONFIGS: readonly ClientConfig[] = [
-  {
-    client: CLAUDE_DESKTOP,
-    label: 'Claude Desktop',
-    flag: '--claude-desktop',
-    portNamedElsewhere: true,
-    read: readDesktopConfigured,
-    moveToNamedKey: {
-      write: (state) => moveDesktopToNamedKey(state.gatewayKey, state.port),
-      hint: 'Restart Claude Desktop to apply changes.',
-    },
-    movedOnlyWithLegacyIdentity: true,
-  },
-  {
-    client: VSCODE_CLAUDE_CODE,
-    label: 'VS Code Claude Code extension',
-    flag: '--vscode-claude-code',
-    read: (state) => readVsCodeClaudeCodeGateway(state.gatewayKey, false),
-    moveToNamedKey: {
-      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, state.port, false),
-      hint: 'Reload VS Code to apply changes.',
-    },
-  },
-  {
-    client: VSCODE_CLAUDE_CODE,
-    label: 'VS Code Insiders Claude Code extension',
-    flag: '--vscode-claude-code --insiders',
-    read: (state) => readVsCodeClaudeCodeGateway(state.gatewayKey, true),
-    moveToNamedKey: {
-      write: (state) => moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, state.port, true),
-      hint: 'Reload VS Code to apply changes.',
-    },
-  },
-  {
-    client: CODEX_DESKTOP,
-    label: 'Codex desktop',
-    flag: '--codex-desktop',
-    read: (state) => readCodexDesktopGateway(state.gatewayKey),
-    moveToNamedKey: {
-      write: (state) => moveCodexDesktopToNamedKey(state.gatewayKey, state.port),
-      hint: 'Quit and reopen the ChatGPT desktop app to apply the change.',
-    },
-  },
-  {
-    client: VSCODE_BYOK,
-    label: 'VS Code BYOK',
-    flag: '--vscode',
-    read: (state) => readVsCodeByokGateway(state.port, false),
-  },
-  {
-    client: VSCODE_BYOK,
-    label: 'VS Code Insiders BYOK',
-    flag: '--vscode --insiders',
-    read: (state) => readVsCodeByokGateway(state.port, true),
-  },
-];
-
-const HOOK_CONNECTORS = [
-  { connector: COPILOT_CLI_OTLP_AGENT_NAME, label: 'Copilot CLI hooks', read: readCopilotCliHookInstall },
-  { connector: COPILOT_CHAT_OTLP_AGENT_NAME, label: 'Copilot Chat hooks', read: readCopilotChatHookInstall },
-  { connector: CLAUDE_CODE_OTLP_AGENT_NAME, label: 'Claude Code hooks', read: readClaudeCodeHookInstall },
-] as const;
+/** The hook-based connectors of {@link CLIENT_TARGETS}: whose installed hooks may run another `codemie` install. */
+const HOOK_CONNECTORS = CLIENT_TARGETS.flatMap((target) =>
+  target.readHookInstall
+    ? [{ connector: target.id, label: `${target.label} hooks`, flag: target.flag, read: target.readHookInstall }]
+    : []
+);
 
 /**
  * The package directory, resolved, of the install a `codemie` path belongs to — a shim (symlinked into its
@@ -259,13 +121,12 @@ async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnother
   const lines: string[] = [];
   const own = await ownInstallDir();
   if (!own) return { entries, lines };
-  for (const { connector, label, read } of HOOK_CONNECTORS) {
+  for (const { connector, label, flag, read } of HOOK_CONNECTORS) {
     const path = await read();
     const dir = path ? await installDirOf(path) : null;
     if (!path || !dir || isSamePath(dir, own)) continue;
-    const flag = `--${connector}`;
     entries.push({ connector, path, flag });
-    let remedy = `Run: codemie proxy connect ${flag}`;
+    let remedy = `run: codemie proxy connect ${flag}`;
     if (connector === CLAUDE_CODE_OTLP_AGENT_NAME) {
       // A connect pins Claude Code's hooks to the first `codemie` on PATH.
       const active = await findActiveCli();
@@ -293,7 +154,7 @@ export async function collectClientNotices(state: DaemonState): Promise<ClientNo
   for (const config of CLIENT_CONFIGS) {
     const gateway = await config.read(state);
     if (!gateway) continue;
-    const run = `Run: codemie proxy connect ${config.flag}`;
+    const run = `run: codemie proxy connect ${config.flag}`;
     if (!config.portNamedElsewhere && gateway.port !== state.port) {
       clientPortMismatch.push({ client: config.client, configuredPort: gateway.port, flag: config.flag });
       portLines.push(chalk.yellow(

@@ -29,7 +29,7 @@ describe('coverage and resume notes', () => {
     const { adviceForReason } = await import('../analytics-hints.js');
     expect(adviceForReason(CLAUDE, 'hooks-not-installed', '/work/a')).toEqual({
       description: 'the Claude Code hooks are not installed',
-      command: 'codemie proxy connect --claude-code-otlp',
+      command: 'codemie proxy connect --claude-otlp',
     });
     expect(adviceForReason(CLI, 'hooks-not-installed', '/work/a')).toBeUndefined();
   });
@@ -44,29 +44,29 @@ describe('adviceForReason', () => {
     expect(adviceForReason('some-other-connector', 'disabled', '/work/a')).toBeUndefined();
   });
 
-  describe('Claude Code (no connector flag in the suggested commands)', () => {
+  describe('Claude Code (suggested analytics commands carry --claude-otlp)', () => {
     it('not-in-allowlist points at connect --scope project, not at include', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       const advice = adviceForReason(CLAUDE, 'not-in-allowlist', '/work/a');
       expect(advice?.description).toMatch(/Project-scope allowlist/);
-      expect(advice?.action).toContain('codemie proxy connect --claude-code-otlp --scope project');
+      expect(advice?.action).toContain('codemie proxy connect --claude-otlp --scope project');
       expect(advice?.command).toBeUndefined();
     });
 
-    it('disabled suggests enable without any connector flag', async () => {
+    it('disabled suggests enable for Claude alone: --claude-otlp, never the flagless fan-out over every connector', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
-      expect(adviceForReason(CLAUDE, 'disabled', '/work/a')?.command).toBe('codemie proxy analytics enable');
+      expect(adviceForReason(CLAUDE, 'disabled', '/work/a')?.command).toBe('codemie proxy analytics enable --claude-otlp');
     });
 
-    it('project-excluded suggests include with the path', async () => {
+    it('project-excluded suggests include with the path, for Claude alone', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
-      expect(adviceForReason(CLAUDE, 'project-excluded', '/work/a')?.command).toBe('codemie proxy analytics include /work/a');
+      expect(adviceForReason(CLAUDE, 'project-excluded', '/work/a')?.command).toBe('codemie proxy analytics include /work/a --claude-otlp');
     });
 
     it('quotes a path that contains spaces', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       expect(adviceForReason(CLAUDE, 'project-excluded', '/work/my project')?.command).toBe(
-        'codemie proxy analytics include "/work/my project"'
+        'codemie proxy analytics include "/work/my project" --claude-otlp'
       );
     });
 
@@ -77,31 +77,31 @@ describe('adviceForReason', () => {
   });
 
   describe.each([
-    [CLI, '--copilot-cli-otlp'],
-    [CHAT, '--copilot-chat-otlp'],
-  ])('%s (suggested commands carry the connector flag)', (id, flag) => {
+    [CLI],
+    [CHAT],
+  ])('%s (suggested commands carry the Copilot vendor flag)', (id) => {
     it('analytics-disabled suggests enable with the flag', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
-      expect(adviceForReason(id, 'analytics-disabled', '/work/a')?.command).toBe(`codemie proxy analytics enable ${flag}`);
+      expect(adviceForReason(id, 'analytics-disabled', '/work/a')?.command).toBe('codemie proxy analytics enable --copilot-otlp');
     });
 
     it('project-excluded suggests include with the path and the flag', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
-      expect(adviceForReason(id, 'project-excluded', '/work/a')?.command).toBe(`codemie proxy analytics include /work/a ${flag}`);
+      expect(adviceForReason(id, 'project-excluded', '/work/a')?.command).toBe('codemie proxy analytics include /work/a --copilot-otlp');
     });
 
     it('scope-untracked points at connect --scope project for that connector', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       const advice = adviceForReason(id, 'scope-untracked', '/work/a');
       expect(advice?.description).toMatch(/Project scope/);
-      expect(advice?.action).toContain(`codemie proxy connect ${flag} --scope project`);
+      expect(advice?.action).toContain('codemie proxy connect --copilot-otlp --scope project');
     });
 
     it('scope-disabled says the connector is not connected and suggests connect', async () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       const advice = adviceForReason(id, 'scope-disabled', '/work/a');
       expect(advice?.description).toMatch(/not connected/);
-      expect(advice?.command).toBe(`codemie proxy connect ${flag}`);
+      expect(advice?.command).toBe('codemie proxy connect --copilot-otlp');
     });
 
     it('scope-corrupt does not suggest a reconnect that would be refused', async () => {

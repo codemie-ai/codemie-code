@@ -216,17 +216,18 @@ describe('writeCodexDesktopConfig', () => {
     expect(workspace.readFile('config.toml')).toBe(malformed);
   });
 
-  it('refuses a foreign model_provider unless forced', async () => {
+  it('refuses a foreign model_provider unless --overwrite is given', async () => {
     const existing = 'model_provider = "someone-else"\n\n[model_providers.someone-else]\nbase_url = "http://x/v1"\n';
     const configPath = workspace.writeFile('config.toml', existing);
     const statePath = join(workspace.path, 'state.json');
     const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
 
     await expect(writeCodexDesktopConfig(opts(configPath, statePath))).rejects.toThrow(/someone-else/);
+    await expect(writeCodexDesktopConfig(opts(configPath, statePath))).rejects.toThrow(/--overwrite/);
     expect(workspace.readFile('config.toml')).toBe(existing);
 
     await expect(
-      writeCodexDesktopConfig(opts(configPath, statePath, { force: true }))
+      writeCodexDesktopConfig(opts(configPath, statePath, { overwrite: true }))
     ).resolves.toBeDefined();
   });
 
