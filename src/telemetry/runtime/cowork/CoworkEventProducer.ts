@@ -381,7 +381,8 @@ export class CoworkEventProducer {
       // The project may sit on the selected profile record itself, outside any workspace.
       return { project, projectSource: projectOrigin === 'none' ? 'profile' : projectOrigin };
     } catch {
-      return { project, projectSource: 'profile' };
+      // The origin is unknown: keep the project, but never guess a source that would later declare funding.
+      return { project, projectSource: 'none' };
     }
   }
 

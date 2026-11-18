@@ -1583,6 +1583,19 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
     expect(existsSync(spoolPath())).toBe(false);
   });
 
+  it('pins the project with source none, not a guessed profile, when the project origin cannot be resolved', async () => {
+    const { ConfigLoader } = await import('@/utils/config.js');
+    const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+    try {
+      await settle(newProducer(), FIRST);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'none' });
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+  });
+
   describe('funding (EPMCDME-17410), through the real forwarder with a stubbed fetch', () => {
     // The sender adds X-CodeMie-CLI and X-CodeMie-Client to every request; only the attribution headers are compared.
     const fundingHeaders = (headers: Record<string, string>) => Object.fromEntries(
