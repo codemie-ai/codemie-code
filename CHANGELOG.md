@@ -17,6 +17,8 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
 - `codemie proxy connect` and `codemie proxy disconnect` with no target print the target list and exit non-zero; `--scope`, `--yes`, `--insiders` or `--model` passed without a target they apply to print a note that the flag has no effect
 - `codemie proxy status` prints facts only — state, URL, port, profile, project, CLI version and uptime — and, when anything is wrong, one `Issues found — run: codemie proxy doctor` line; client, Claude Desktop, analytics delivery, Claude Code OTLP and PATH findings moved to `codemie proxy doctor`. The gateway key is masked (`****`) in the text, including the `Client keys` line, and in `--json` unless `--show-key` is given. `--json` now carries only `status`, `apiKey`, `url`, `port`, `profile`, `project`, `version` and `uptimeSec`
+- `codemie analytics --include-external [policy]` takes `windows`, `always` or `never` (the same values as `analytics sync install`); the bare flag still means `always` and prints a deprecation notice. A subcommand name (`otel`, `sync`) or any other value is an error
+- `codemie analytics` with an invalid `--from`, `--to` or `--last` now fails with exit code 1 and the accepted format instead of warning and ignoring the filter; a failed run sets the exit code instead of calling `process.exit`
 
 ### Deprecated
 
@@ -31,6 +33,7 @@ Each form below still works until its removal date and prints a one-line notice 
 | `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
 | `codemie proxy connect --force` | `codemie proxy connect --restart-daemon --overwrite` | 2026-12-31 |
 | `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
+| `codemie analytics --include-external` | `codemie analytics --include-external always` | 2026-12-31 |
 <!-- deprecation-table:end -->
 
 `--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. `--restart-daemon` now only replaces the proxy and `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
@@ -44,6 +47,9 @@ Each form below fails with a message naming its replacement and exits non-zero.
 | --- | --- | --- |
 | `codemie proxy connect desktop` | `codemie proxy connect --claude-desktop` | 2026-12-31 |
 | `codemie proxy connect vscode` | `codemie proxy connect --vscode` | 2026-12-31 |
+| `codemie analytics --report` | `codemie analytics --export` | 2026-12-31 |
+| `codemie analytics --report-format` | `codemie analytics --export <format>` | 2026-12-31 |
+| `codemie analytics --report-output` | `codemie analytics -o <path>` | 2026-12-31 |
 <!-- deprecation-table:end -->
 
 ## [0.16.10] - 2026-11-17

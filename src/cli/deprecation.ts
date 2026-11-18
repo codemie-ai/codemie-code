@@ -9,6 +9,8 @@ export interface DeprecationEntry {
   removeOn?: string;
   /** Date (YYYY-MM-DD) the removed stub is dropped. Defaults to DEPRECATION_REMOVE_ON. */
   dropOn?: string;
+  /** Old form is a flag that also takes a value: only its bare use (no value after it) is deprecated. */
+  bareOnly?: boolean;
 }
 
 /** One removal date for every form this release deprecates. */
@@ -20,6 +22,11 @@ function register(entry: DeprecationEntry): void {
   if (!registry.some((e) => e.kind === entry.kind && e.old === entry.old)) {
     registry.push(entry);
   }
+}
+
+/** Register an entry for a form whose option stays visible (so no deprecatedOption stub exists). */
+export function registerDeprecation(entry: DeprecationEntry): void {
+  register(entry);
 }
 
 export function listDeprecations(): readonly DeprecationEntry[] {

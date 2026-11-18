@@ -52,25 +52,33 @@ function findSub(cmd: Command, name: string): Command | undefined {
 }
 
 /** True when `tokens` (after `codemie`) start with the tokens of `old` (after `codemie`). */
-function matchesOld(tokens: string[], old: string): boolean {
+function matchesOld(tokens: string[], old: string, bareOnly = false): boolean {
   const oldTokens = tokenize(old);
   if (oldTokens[0] !== 'codemie') return false;
   const rest = oldTokens.slice(1);
-  return rest.length > 0 && rest.every((t, i) => tokens[i] === t);
+  return rest.length > 0 && rest.every((t, i) => tokens[i] === t) && (!bareOnly || isBareAt(tokens, rest.length - 1));
+}
+
+/** True when the flag at `index` has no value after it (end of line or another flag). */
+function isBareAt(tokens: string[], index: number): boolean {
+  const next = tokens[index + 1];
+  return next === undefined || next.startsWith('-');
 }
 
 function deprecatedMatch(tokens: string[], entries: readonly DeprecationEntry[]): DeprecationEntry | undefined {
-  return entries.find(e => matchesOld(tokens, e.old) || matchesOldAnywhere(tokens, e.old));
+  return entries.find(e => matchesOld(tokens, e.old, e.bareOnly) || matchesOldAnywhere(tokens, e.old, e.bareOnly));
 }
 
 /** Old form whose flag appears later in the line, e.g. `proxy status --json --deep`. */
-function matchesOldAnywhere(tokens: string[], old: string): boolean {
+function matchesOldAnywhere(tokens: string[], old: string, bareOnly = false): boolean {
   const rest = tokenize(old).slice(1);
   if (rest.length === 0) return false;
   const last = rest[rest.length - 1];
   if (!last.startsWith('-')) return false;
   const prefix = rest.slice(0, -1);
-  return prefix.every((t, i) => tokens[i] === t) && tokens.slice(prefix.length).includes(last);
+  if (!prefix.every((t, i) => tokens[i] === t)) return false;
+  const at = tokens.indexOf(last, prefix.length);
+  return at !== -1 && (!bareOnly || isBareAt(tokens, at));
 }
 
 export function validateCommandExample(

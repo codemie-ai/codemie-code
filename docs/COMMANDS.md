@@ -722,7 +722,7 @@ codemie analytics --last 7d                     # Last 7 days
 # Output options
 codemie analytics --verbose                     # Detailed session breakdown
 codemie analytics --export json                 # Write the costed report as JSON
-codemie analytics --include-external            # Also count agents run directly (plain claude, codex, …)
+codemie analytics --include-external always     # Also count agents run directly (plain claude, codex, …)
 
 # HTML dashboard (self-contained, no server)
 codemie analytics --export                      # Write codemie-analytics-YYYY-MM-DD.html

@@ -48,6 +48,22 @@ describe('validateCommandExample', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('rejects only the bare form of a bareOnly entry, not the same flag with a value', async () => {
+    const { validateCommandExample } = await import('../tips-validator.js');
+    const bare: DeprecationEntry = {
+      kind: 'deprecated',
+      old: 'codemie analytics --include-external',
+      replacement: 'codemie analytics --include-external always',
+      bareOnly: true,
+    };
+    const p = await program();
+    expect(validateCommandExample(p, 'codemie analytics --include-external', [bare]).ok).toBe(false);
+    expect(validateCommandExample(p, 'codemie analytics --include-external --last 7d', [bare]).ok).toBe(false);
+    expect(validateCommandExample(p, 'codemie analytics --open --include-external', [bare]).ok).toBe(false);
+    expect(validateCommandExample(p, 'codemie analytics --include-external always', [bare]).ok).toBe(true);
+    expect(validateCommandExample(p, 'codemie analytics --last 7d --include-external never', [bare]).ok).toBe(true);
+  });
+
   it('ignores examples that are not codemie commands', async () => {
     const { validateCommandExample } = await import('../tips-validator.js');
     expect(validateCommandExample(await program(), 'codemie-claude --status')).toEqual({ ok: true });

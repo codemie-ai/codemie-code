@@ -544,7 +544,7 @@ codemie-pi --resume <session-id>              # open a specific session
 | **Live model catalogue** | `models.json` is regenerated each run with providers `codemie-proxy` (OpenAI-compatible) and `codemie-anthropic` (Claude). Model/provider come from your active profile. |
 | **Required packages** | `pi-subagents`, `superpowers` — installed at setup. MCP uses Pi's built-in support (`mcp.json`, `/mcp`). Installs that still have the legacy `pi-mcp-adapter` keep built-in MCP disabled; remove it with `pi remove npm:pi-mcp-adapter` (and, for a project copy, `PI_CODING_AGENT_DIR=<project>/.pi/codemie/agent pi remove npm:pi-mcp-adapter`). |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
-| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
+| **Native sessions** | Bare `pi` runs (`~/.pi/agent/sessions`) are discovered by `codemie analytics --include-external always`. Oh-my-pi `omp` runs (`~/.omp/agent/sessions`) are discovered the same way but reported as a separate **Oh My Pi** agent (`--agent omp`). |
 
 Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
@@ -582,8 +582,8 @@ codemie self-update      # Update CodeMie CLI itself
 codemie profile          # Manage provider profiles
 codemie models list      # List models available for the current provider
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
-codemie analytics --report --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
-codemie analytics --report --report-format json  # Same priced report data as JSON (--report-format html | json | both)
+codemie analytics --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
+codemie analytics --export json  # Same priced report data as JSON (--export html | json | both)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie sdk <resource>   # Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users)
 codemie skill <cmd>      # Manage skills for CodeMie agents (list, validate, reload)
@@ -602,7 +602,7 @@ If a command such as `claude-work` stores sessions in a separate config director
 pass that same directory to analytics:
 
 ```bash
-CLAUDE_CONFIG_DIR="$HOME/.claude-work" codemie analytics --include-external --last 7d
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" codemie analytics --include-external always --last 7d
 ```
 
 Claude session discovery reads `<CLAUDE_CONFIG_DIR>/projects`. When the variable is unset
