@@ -1,5 +1,5 @@
 /**
- * Actions of `codemie proxy analytics connect-folder` / `disconnect-folder`: confirmation gate, Claude-only
+ * Actions of `codemie proxy analytics consent grant|revoke|list`: confirmation gate, Claude-only
  * guard, identity requirement and the effect on the real consent store.
  * @group unit
  */
@@ -23,7 +23,7 @@ vi.mock('inquirer', () => ({ default: { prompt: promptMock } }));
 
 const id = { api_identity: 'https://api.example.com', owner_hash: 'o'.repeat(64) };
 
-describe('connect-folder / disconnect-folder actions', () => {
+describe('consent grant / revoke / list actions', () => {
   let out: ReturnType<typeof vi.spyOn>;
   let err: ReturnType<typeof vi.spyOn>;
   let tty: boolean | undefined;
@@ -58,27 +58,27 @@ describe('connect-folder / disconnect-folder actions', () => {
   const said = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.flat().join(' ');
 
   it('--yes connects the folder for the signed-in owner', async () => {
-    await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
     expect((await store()).entries).toHaveLength(1);
     expect(process.exitCode).toBe(0);
   });
 
   it('a project name the raw header cannot carry is refused with an explanation before any consent is saved', async () => {
-    await run(['connect-folder', work, '--project', 'Проект', '--yes']);
+    await run(['consent', 'grant', work, '--project', 'Проект', '--yes']);
     expect(process.exitCode).toBe(1);
     expect(said(err)).toContain('Latin-1');
     expect((await store()).entries).toHaveLength(0);
   });
 
   it('a Latin-1 project name that already works is still connected', async () => {
-    await run(['connect-folder', work, '--project', 'Café', '--yes']);
+    await run(['consent', 'grant', work, '--project', 'Café', '--yes']);
     expect(process.exitCode).toBe(0);
     expect((await store()).entries).toHaveLength(1);
   });
 
   it('without --yes and without a TTY it refuses (exit 1) and the store is untouched', async () => {
     process.stdin.isTTY = false as never;
-    await run(['connect-folder', work, '--project', 'Proj-A']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A']);
     expect(process.exitCode).toBe(1);
     expect(said(err)).toContain('--yes');
     expect(promptMock).not.toHaveBeenCalled();
@@ -88,48 +88,72 @@ describe('connect-folder / disconnect-folder actions', () => {
   it('an interactive "no" changes nothing', async () => {
     process.stdin.isTTY = true as never;
     promptMock.mockResolvedValue({ ok: false });
-    await run(['connect-folder', work, '--project', 'Proj-A']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A']);
     expect(said(out)).toContain('Nothing changed');
     expect((await store()).entries).toHaveLength(0);
   });
 
   it('a Copilot connector is refused for both actions and nothing is written', async () => {
-    await run(['connect-folder', work, '--project', 'Proj-A', '--yes', '--copilot-cli-otlp']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes', '--copilot-cli-otlp']);
     expect(process.exitCode).toBe(1);
     expect((await store()).entries).toHaveLength(0);
     process.exitCode = 0;
-    await run(['disconnect-folder', work, '--copilot-chat-otlp']);
+    await run(['consent', 'revoke', work, '--copilot-chat-otlp']);
     expect(process.exitCode).toBe(1);
   });
 
   it('without a signed-in identity connect refuses and does not write', async () => {
     identityMock.mockResolvedValue(null);
-    await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
     expect(process.exitCode).toBe(1);
     expect(said(err)).toContain('Sign in');
     expect((await store()).entries).toHaveLength(0);
   });
 
   it('disconnect removes the entry', async () => {
-    await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);
-    await run(['disconnect-folder', work]);
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    await run(['consent', 'revoke', work]);
     expect((await store()).entries).toHaveLength(0);
     expect(said(out)).toContain('Disconnected');
   });
 
   it('disconnecting a subfolder of a connected parent names the covering parent and the exact command', async () => {
-    await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
     out.mockClear();
-    await run(['disconnect-folder', join(work, 'sub')]);
+    await run(['consent', 'revoke', join(work, 'sub')]);
     expect((await store()).entries).toHaveLength(1); // the parent entry is untouched
     expect(said(out)).not.toContain('is not connected');
     expect(said(out)).toContain('still covered');
-    expect(said(out)).toContain('disconnect-folder');
+    expect(said(out)).toContain('consent revoke');
     expect(said(out)).toContain('Proj-A');
   });
 
   it('an unconnected folder still reports nothing to change', async () => {
-    await run(['disconnect-folder', work]);
+    await run(['consent', 'revoke', work]);
     expect(said(out)).toContain('is not connected');
+  });
+
+  it('consent list prints every entry and says so when there are none', async () => {
+    await run(['consent', 'list']);
+    expect(said(out)).toContain('No work-consent folders');
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    out.mockClear();
+    await run(['consent', 'list']);
+    expect(said(out)).toContain('Proj-A');
+    expect(said(out)).toContain(work);
+    const { listConsents } = await import('@/agents/core/evidence/consent-store.js');
+    expect(await listConsents()).toHaveLength(1);
+  });
+
+  it('the deprecated connect-folder / disconnect-folder still work with one stderr notice each', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);
+    expect((await store()).entries).toHaveLength(1);
+    await run(['disconnect-folder', work]);
+    expect((await store()).entries).toHaveLength(0);
+    const notices = write.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('Deprecated:'));
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain('codemie proxy analytics consent grant');
+    expect(notices[1]).toContain('codemie proxy analytics consent revoke');
   });
 });

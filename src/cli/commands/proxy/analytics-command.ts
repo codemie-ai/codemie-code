@@ -36,7 +36,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import inquirer from 'inquirer';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
-import { connectFolder, coveringEntries, disconnectFolder } from '@/agents/core/evidence/consent-store.js';
+import { connectFolder, coveringEntries, disconnectFolder, listConsents } from '@/agents/core/evidence/consent-store.js';
 import { resolveSessionProject } from '@/agents/core/event-fields/identity-fields.js';
 import { adviceForReason, coverageNote, resumeNote } from './analytics-hints.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
@@ -49,6 +49,7 @@ import {
   listActiveAnalyticsConnectors,
   type AnalyticsConnector,
 } from './analytics-connectors.js';
+import { DEPRECATION_REMOVE_ON, deprecatedCommand } from '../../deprecation.js';
 import { printNext } from '../../related-commands.js';
 import { readDaemonStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
@@ -578,10 +579,49 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
     }
     // A connected parent still authorizes this folder: say so, with the exact command that withdraws it.
     for (const e of covering) {
-      console.log(chalk.yellow(`${canonical} is still covered by the connection ${e.folder} (project ${e.project}).`));
-      console.log(renderHint({ reason: 'To withdraw it', command: `codemie proxy analytics disconnect-folder "${e.folder}"` }));
+      console.log(
+        chalk.yellow(
+          renderHint({
+            reason: `${canonical} is still covered by the connection ${e.folder} (project ${e.project})`,
+            command: `codemie proxy analytics consent revoke "${e.folder}"`
+          })
+        )
+      );
     }
   });
+}
+
+async function listWorkConsents(): Promise<void> {
+  await withErrorHandling(async () => {
+    const entries = await listConsents();
+    if (entries.length === 0) {
+      console.log(chalk.dim('No work-consent folders are connected.'));
+      return;
+    }
+    for (const e of entries) {
+      const since = typeof e.connected_at === 'number' ? ` (since ${new Date(e.connected_at).toISOString().slice(0, 10)})` : '';
+      console.log(`${e.folder}  project ${e.project}  ${e.api_identity}${since}`);
+    }
+  });
+}
+
+const CONNECT_FOLDER_DEPRECATION = {
+  kind: 'deprecated',
+  old: 'codemie proxy analytics connect-folder',
+  replacement: 'codemie proxy analytics consent grant',
+  removeOn: DEPRECATION_REMOVE_ON
+} as const;
+const DISCONNECT_FOLDER_DEPRECATION = {
+  kind: 'deprecated',
+  old: 'codemie proxy analytics disconnect-folder',
+  replacement: 'codemie proxy analytics consent revoke',
+  removeOn: DEPRECATION_REMOVE_ON
+} as const;
+
+function addGrantOptions(command: Command): Command {
+  return withConnectorOptions(command)
+    .option('--project <name>', 'CodeMie project (default: the one the profile or workspace resolves)')
+    .option('--yes', 'Skip the confirmation prompt');
 }
 
 function withConnectorOptions(command: Command): Command {
@@ -617,18 +657,26 @@ export function createProxyAnalyticsCommand(): Command {
       .description('Track a project again: remove its exclusion and, in project scope, add it to the tracked list (default: the current project root)')
   ).action((path: string | undefined, opts: ConnectorOptions) => includeProject(path, opts));
 
+  const consent = new Command('consent').description('Manage work-project consent folders (Claude Code only)');
+  addGrantOptions(
+    consent.command('grant [path]').description('Authorize work-project analytics for a folder (default: the current project root); Claude Code only')
+  ).action((path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }) => connectWorkFolder(path, opts));
   withConnectorOptions(
-    analytics
-      .command('connect-folder [path]')
-      .description('Authorize work-project analytics for a folder (default: the current project root); Claude Code only')
-  )
-    .option('--project <name>', 'CodeMie project (default: the one the profile or workspace resolves)')
-    .option('--yes', 'Skip the confirmation prompt')
-    .action((path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }) => connectWorkFolder(path, opts));
-
-  withConnectorOptions(
-    analytics.command('disconnect-folder [path]').description('Withdraw work-project authorization for a folder (default: the current project root)')
+    consent.command('revoke [path]').description('Withdraw work-project authorization for a folder (default: the current project root)')
   ).action((path: string | undefined, opts: ConnectorOptions) => disconnectWorkFolder(path, opts));
+  consent.command('list').description('List every folder authorized for work-project analytics').action(() => listWorkConsents());
+  analytics.addCommand(consent);
+
+  analytics.addCommand(
+    addGrantOptions(deprecatedCommand(CONNECT_FOLDER_DEPRECATION, 'connect-folder').argument('[path]')).action(
+      (path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }) => connectWorkFolder(path, opts)
+    )
+  );
+  analytics.addCommand(
+    withConnectorOptions(deprecatedCommand(DISCONNECT_FOLDER_DEPRECATION, 'disconnect-folder').argument('[path]')).action(
+      (path: string | undefined, opts: ConnectorOptions) => disconnectWorkFolder(path, opts)
+    )
+  );
 
   withConnectorOptions(
     analytics.command('status').description('Show the effective analytics configuration for the connector')

@@ -199,6 +199,12 @@ export async function disconnectFolder(scope: Omit<ConsentScope, 'project'>, fol
   });
 }
 
+/** Every stored consent entry, whatever the owner or backend. An unreadable store lists nothing. */
+export async function listConsents(): Promise<ConsentEntry[]> {
+  const store = await load();
+  return store.kind === 'ok' ? store.entries : [];
+}
+
 /** Entries of this owner and backend that still cover the folder (the folder itself or an ancestor), whatever the project. */
 export async function coveringEntries(scope: Omit<ConsentScope, 'project'>, folder: string): Promise<ConsentEntry[]> {
   const store = await load();

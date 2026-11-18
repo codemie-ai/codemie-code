@@ -26,6 +26,8 @@ Each form below still works until its removal date and prints a one-line notice 
 | --- | --- | --- |
 | `codemie proxy status --deep` | `codemie proxy doctor` | 2026-12-31 |
 | `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
+| `codemie proxy analytics connect-folder` | `codemie proxy analytics consent grant` | 2026-12-31 |
+| `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
 <!-- deprecation-table:end -->
 
 ## [0.16.10] - 2026-11-17

@@ -468,7 +468,7 @@ describe('createProxyAnalyticsCommand', () => {
     const names = createProxyAnalyticsCommand()
       .commands.map((c) => c.name())
       .sort();
-    expect(names).toEqual(['connect-folder', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(names).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
   });
 
   it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {
@@ -533,7 +533,9 @@ describe('createProxyAnalyticsCommand', () => {
 
     it('registers the three connector options on every subcommand', async () => {
       const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
-      for (const sub of createProxyAnalyticsCommand().commands) {
+      // `consent list` takes no connector; `consent` is a group node whose leaves are checked instead.
+      const leaves = createProxyAnalyticsCommand().commands.flatMap((c) => (c.name() === 'consent' ? [...c.commands] : [c]));
+      for (const sub of leaves.filter((c) => c.name() !== 'list')) {
         const flags = sub.options.map((o) => o.long);
         expect(flags).toEqual(
           expect.arrayContaining(['--claude-code-otlp', '--copilot-cli-otlp', '--copilot-chat-otlp'])

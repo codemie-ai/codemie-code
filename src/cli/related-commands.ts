@@ -65,12 +65,24 @@ export const RELATED: Record<string, RelatedEntry> = {
     related: [{ path: 'codemie proxy analytics exclude', purpose: 'Exclude a project' }, A_STATUS],
     next: {},
   },
-  'proxy analytics connect-folder': {
-    related: [{ path: 'codemie proxy analytics disconnect-folder', purpose: 'Withdraw work-project authorization' }, A_STATUS],
+  'proxy analytics consent': {
+    related: [
+      { path: 'codemie proxy analytics consent grant', purpose: 'Authorize a work project' },
+      { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' },
+      A_STATUS
+    ],
     next: {},
   },
-  'proxy analytics disconnect-folder': {
-    related: [{ path: 'codemie proxy analytics connect-folder', purpose: 'Authorize a work project' }, A_STATUS],
+  'proxy analytics consent grant': {
+    related: [{ path: 'codemie proxy analytics consent revoke', purpose: 'Withdraw work-project authorization' }, { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' }, A_STATUS],
+    next: {},
+  },
+  'proxy analytics consent revoke': {
+    related: [{ path: 'codemie proxy analytics consent grant', purpose: 'Authorize a work project' }, { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' }, A_STATUS],
+    next: {},
+  },
+  'proxy analytics consent list': {
+    related: [{ path: 'codemie proxy analytics consent grant', purpose: 'Authorize a work project' }, { path: 'codemie proxy analytics consent revoke', purpose: 'Withdraw work-project authorization' }, A_STATUS],
     next: {},
   },
   analytics: {

@@ -1,6 +1,6 @@
 /**
  * EPMCDME-17142: native Claude publishes a Personal session, or an Unknown one with confirmed subscription funding, only
- * under explicit connect-folder consent. Real stampEvidence, consent store, record store, tick and forwarder over a temp
+ * under explicit consent grant. Real stampEvidence, consent store, record store, tick and forwarder over a temp
  * CODEMIE_HOME; only the network (fetch), the daemon state, credentials and config/git lookups are faked. The assertion is
  * on the analytics POSTs the real forwarder makes (policy GETs are allowed), never on a UI.
  * @group unit
@@ -149,7 +149,7 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect(reason).toBe('work_consent_required');
     const { stopNoticeText } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.notice.js');
     const notice = stopNoticeText(reason!);
-    expect(notice).toContain('codemie proxy analytics connect-folder');
+    expect(notice).toContain('codemie proxy analytics consent grant');
     expect(notice).toContain('start a new session');
     expect(notice).not.toMatch(/retry|backend/i);
     await drain(m, 's1');
@@ -188,7 +188,7 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect(posts().length).toBe(3);
   });
 
-  it('old queued boundary: a record without a funding claim that is Personal stays local, and a later connect-folder never grants it', async () => {
+  it('old queued boundary: a record without a funding claim that is Personal stays local, and a later consent grant never grants it', async () => {
     const m = await load();
     await stamp(m, 's1', 'Gmail Personal', undefined);
     await hook(m, 's1'); // queued under the old record shape
