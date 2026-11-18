@@ -28,18 +28,25 @@ const deniedResult = {
 
 function collect(
   toolOutcomes: ReadonlyMap<string, ToolOutcome>,
-  { messages = [deniedTaskCall, deniedResult], finalPass = false, lastEmittedIndex = 0 } = {}
+  {
+    messages = [deniedTaskCall, deniedResult],
+    finalPass = false,
+    lastEmittedIndex = 0,
+    lastProcessedMsgIndex = -1,
+    emittedGroupLines = [deniedTaskCall] as unknown[],
+  } = {}
 ) {
   return collectRunPromptsAndInvocations(messages, new Map(), {
     sessionId: 's',
     processedIds: new Set<string>(),
     attachedUserPrompts: new Set<string>(),
-    lastProcessedMsgIndex: -1,
+    lastProcessedMsgIndex,
     lastEmittedIndex,
     emittedDeltas: true,
     finalPass,
     namedOnly: true,
     toolOutcomes,
+    emittedGroupLines: emittedGroupLines as never,
   });
 }
 
@@ -53,7 +60,28 @@ describe('collectRunPromptsAndInvocations — failed and pending tool calls', ()
   });
 
   it('does not count a call still unresolved on the final pass, which nothing could correct later', () => {
-    const out = collect(new Map(), { messages: [deniedTaskCall], finalPass: true, lastEmittedIndex: -1 });
+    const out = collect(new Map(), {
+      messages: [deniedTaskCall],
+      finalPass: true,
+      lastEmittedIndex: -1,
+      emittedGroupLines: [],
+    });
+    expect(out.named.agentInvocations).toEqual({});
+  });
+
+  it('counts a call from a group this run emitted even when the group lies before the run slice', () => {
+    const laterGroup = { uuid: 'a2', type: 'assistant', message: { role: 'assistant', id: 'msg-a2', content: [{ type: 'text', text: 'done' }] } };
+    const out = collect(new Map([['tool-1', 'ok']]), {
+      messages: [deniedTaskCall, laterGroup, deniedResult],
+      lastProcessedMsgIndex: 1,
+      lastEmittedIndex: 1,
+      emittedGroupLines: [deniedTaskCall],
+    });
+    expect(out.named.agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('does not count a call whose group this run did not emit, even if its result succeeded and it lies in the slice', () => {
+    const out = collect(new Map([['tool-1', 'ok']]), { emittedGroupLines: [] });
     expect(out.named.agentInvocations).toEqual({});
   });
 });

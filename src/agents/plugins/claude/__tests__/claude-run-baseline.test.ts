@@ -232,6 +232,44 @@ describe('claude run baseline', () => {
       expect(sum('agentInvocations')).toEqual({ X: 1 });
     });
 
+    it('counts an Agent call whose group was held back while a later group was emitted, once its result arrives', async () => {
+      writeRecord();
+      const [held, heldResult] = toolTurn('a1', 'Task', { subagent_type: 'X' }, at(2));
+      const run1 = [userMsg('u1', 'one', at(1)), held, ...toolTurn('a2', 'Bash', { command: 'ls' }, at(3))];
+      await run(run1);
+      expect(sum('agentInvocations')).toEqual({});
+
+      await run([...run1, heldResult]);
+
+      expect(deltas().map(d => d.recordId)).toEqual(['a2', 'a1']);
+      expect(sum('agentInvocations')).toEqual({ X: 1 });
+    });
+
+    it('counts an Agent call once when its group is held back by another unresolved call in the same group', async () => {
+      writeRecord();
+      const group = {
+        type: 'assistant', uuid: 'g1', timestamp: at(2), sessionId: AGENT_SESSION_ID,
+        message: {
+          id: 'msg-g1', role: 'assistant', model: 'claude-sonnet-5',
+          content: [
+            { type: 'tool_use', id: 'tool-x', name: 'Task', input: { subagent_type: 'X' } },
+            { type: 'tool_use', id: 'tool-y', name: 'Bash', input: { command: 'ls' } }
+          ],
+          usage: { input_tokens: 10, output_tokens: 5 }
+        }
+      };
+      const result = (toolId: string, uuid: string) => ({
+        type: 'user', uuid, parentUuid: 'g1', timestamp: at(2), sessionId: AGENT_SESSION_ID,
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: 'ok' }] }
+      });
+      const run1 = [userMsg('u1', 'one', at(1)), group, result('tool-x', 'res-x'), ...toolTurn('a2', 'Bash', { command: 'pwd' }, at(3))];
+      await run(run1);
+      await run([...run1, result('tool-y', 'res-y')]);
+
+      expect(deltas().map(d => d.recordId)).toEqual(['a2', 'g1']);
+      expect(sum('agentInvocations')).toEqual({ X: 1 });
+    });
+
     it('counts a pending Skill invocation once, in the run that emits it', async () => {
       await runPendingThenResolved('Skill', { skill: 'S' });
 

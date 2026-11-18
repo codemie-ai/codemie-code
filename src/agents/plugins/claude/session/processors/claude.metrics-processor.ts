@@ -271,6 +271,7 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
     let lastEmittedIndex = -1;
+    const emittedGroupLines: any[] = [];
 
     // Helper function to process a message or group of messages into a delta
     const processDelta = (messages: any[], trackingId: string) => {
@@ -360,6 +361,7 @@ export class MetricsProcessor implements SessionProcessor {
       }
 
       deltas.push(delta);
+      emittedGroupLines.push(...messages);
       processedIds.add(trackingId);
       lastEmittedIndex = Math.max(lastEmittedIndex, groupLastIndex.get(trackingId)!);
     };
@@ -376,7 +378,7 @@ export class MetricsProcessor implements SessionProcessor {
     const { prompts, named, promptsDelta } = collectRunPromptsAndInvocations(messages, messagesByUuid, {
       sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex,
       emittedDeltas: deltas.length > 0, cutoffMs, finalPass, namedOnly,
-      toolOutcomes: collectToolOutcomes(messages)
+      toolOutcomes: collectToolOutcomes(messages), emittedGroupLines
     });
     if (promptsDelta) deltas.push(promptsDelta);
 
