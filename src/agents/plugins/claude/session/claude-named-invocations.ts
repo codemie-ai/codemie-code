@@ -8,7 +8,9 @@
  *
  * - Skills:   `tool_use` block with `name === 'Skill'` → `input.skill` (e.g. "codemie:msgraph")
  * - Agents:   `tool_use` block with `name === 'Agent'` (this CLI) or `'Task'` (standard Claude
- *             Code) → `input.subagent_type` (e.g. "Explore", "sdlc-factory:tech-analyst")
+ *             Code) → `input.subagent_type` (e.g. "Explore", "sdlc-factory:tech-analyst").
+ *             A call whose `tool_result` is an error (denied, rejected, failed) is skipped:
+ *             it never started an agent. See {@link collectFailedToolUseIds}.
  * - Commands: user message whose text carries the Claude CLI slash-command wrapper. A genuine
  *   invocation always includes a `<command-message>` sibling alongside `<command-name>`; we
  *   require it so documentation/prose that merely mentions `<command-name>` is not miscounted.
@@ -29,9 +31,13 @@ export interface OrderedNamedInvocations extends NamedInvocationCounts {
 
 interface RawBlock {
   type?: string;
+  id?: unknown;
   name?: string;
   input?: { skill?: unknown; subagent_type?: unknown };
   text?: unknown;
+  tool_use_id?: unknown;
+  is_error?: unknown;
+  isError?: unknown;
 }
 
 interface RawMessage {
@@ -66,12 +72,42 @@ function bump(map: Record<string, number>, key: string): void {
 }
 
 /**
+ * The `tool_use_id` of every `tool_result` whose `is_error`/`isError` flag is set, across the whole
+ * message list. Claude Code reports a denied (hook, permission prompt, classifier) or failed tool
+ * call this way, so a call in this set never ran. Build it from the FULL transcript: the result
+ * sits in a later message than its call, and callers that count a slice of messages would
+ * otherwise miss it.
+ */
+export function collectFailedToolUseIds(messages: readonly unknown[]): Set<string> {
+  const failed = new Set<string>();
+  for (const raw of messages) {
+    const content = (raw as RawMessage | null)?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const item of content as RawBlock[]) {
+      if (
+        item?.type === 'tool_result' &&
+        typeof item.tool_use_id === 'string' &&
+        (item.is_error === true || item.isError === true)
+      ) {
+        failed.add(item.tool_use_id);
+      }
+    }
+  }
+  return failed;
+}
+
+/**
  * Extract skill / agent / command name counts from a flat list of Claude messages.
  * Safe against missing or malformed fields — anything that isn't a recognized shape is skipped.
+ * An `Agent`/`Task` call whose id is in `failedToolUseIds` (see {@link collectFailedToolUseIds})
+ * is not counted: a denied launch started no agent.
  */
-export function extractNamedInvocations(messages: readonly unknown[]): NamedInvocationCounts {
+export function extractNamedInvocations(
+  messages: readonly unknown[],
+  failedToolUseIds?: ReadonlySet<string>
+): NamedInvocationCounts {
   const { skillInvocations, agentInvocations, commandInvocations } =
-    extractOrderedNamedInvocations(messages);
+    extractOrderedNamedInvocations(messages, undefined, failedToolUseIds);
   return { skillInvocations, agentInvocations, commandInvocations };
 }
 
@@ -81,7 +117,8 @@ export function extractNamedInvocations(messages: readonly unknown[]): NamedInvo
  */
 export function extractOrderedNamedInvocations(
   messages: readonly unknown[],
-  forkedSlashPromptIds?: ReadonlySet<string>
+  forkedSlashPromptIds?: ReadonlySet<string>,
+  failedToolUseIds?: ReadonlySet<string>
 ): OrderedNamedInvocations {
   const skillInvocations: Record<string, number> = {};
   const agentInvocations: Record<string, number> = {};
@@ -143,6 +180,9 @@ export function extractOrderedNamedInvocations(
           (item.name === 'Agent' || item.name === 'Task') &&
           typeof item.input?.subagent_type === 'string'
         ) {
+          // A denied/errored launch never started an agent. A call with no result yet (or no id)
+          // is not in the set and still counts.
+          if (typeof item.id === 'string' && failedToolUseIds?.has(item.id)) continue;
           const subtype = item.input.subagent_type.trim();
           if (subtype) bump(agentInvocations, subtype);
         }
