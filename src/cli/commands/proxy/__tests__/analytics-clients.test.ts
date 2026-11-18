@@ -120,7 +120,8 @@ beforeEach(async () => {
 afterEach(async () => {
   setPlatform(originalPlatform);
   vi.unstubAllEnvs();
-  await rm(root, { recursive: true, force: true });
+  // Windows can briefly hold a handle (the logger) on a file under the temp home.
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('collectAnalyticsClients', () => {

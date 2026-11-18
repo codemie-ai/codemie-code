@@ -243,7 +243,8 @@ describe('disconnectTargets — the analytics aggregates', () => {
       '../connectors/vscode-claude-code.js', '../connectors/claude-code-otlp.js',
     ]) vi.doUnmock(path);
     process.exitCode = 0;
-    await rm(home, { recursive: true, force: true });
+    // Windows can briefly hold a handle (the logger) on a file under the temp home.
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('--claude-otlp, every member found: the three removers as by the three flags', async () => {
