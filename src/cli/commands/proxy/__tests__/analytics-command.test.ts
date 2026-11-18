@@ -808,6 +808,30 @@ describe('createProxyAnalyticsCommand', () => {
       expect(all).toMatch(/Copilot Chat[^\n]*could not be read/);
     });
 
+    it('disable targets a connector that is not active but has a stored preference, and no other', async () => {
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      await writeFile(
+        getCopilotAnalyticsPreferencesPath(),
+        JSON.stringify({ version: 1, connectors: { 'copilot-cli-otlp': { enabled: true, excludedProjects: [] } } }),
+        'utf-8'
+      );
+      await runCommand(['disable']);
+      expect(await readCopilotPrefs('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-chat-otlp')).toBeUndefined();
+      const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+      await expect(readFile(getClaudeAnalyticsPreferencesPath(), 'utf-8')).rejects.toThrow();
+      expect(output()).toContain('Copilot CLI');
+      expect(output()).not.toContain('Copilot Chat');
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('disable with no preference record and nothing readable or active fails with the connect hint', async () => {
+      await runCommand(['disable']);
+      expect(process.exitCode).toBe(1);
+      expect(errors()).toContain('No analytics connector is connected');
+      expect(errors()).toContain('codemie proxy connect');
+    });
+
     it('disable acts on every connected connector and says which it changed', async () => {
       await connectClaude();
       await connectCopilot({ 'copilot-cli-otlp': { enabled: true, scope: 'user' } });

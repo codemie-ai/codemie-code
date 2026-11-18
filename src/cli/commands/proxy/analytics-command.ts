@@ -20,11 +20,13 @@ import {
 } from '@/agents/core/project-allowlist.js';
 import {
   getClaudeAnalyticsPreferencesPath,
+  DEFAULT_CLAUDE_ANALYTICS_PREFERENCES,
   readClaudeAnalyticsPreferences,
   updateClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import {
   getCopilotAnalyticsPreferencesPath,
+  DEFAULT_COPILOT_ANALYTICS_RECORD,
   readCopilotAnalyticsPreferences,
   updateCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
@@ -194,8 +196,27 @@ function hasConnectorFlag(opts: ConnectorOptions): boolean {
 
 const CONNECTOR_FLAGS = [CLAUDE_CODE_OTLP_AGENT_NAME, COPILOT_CLI_OTLP_AGENT_NAME, COPILOT_CHAT_OTLP_AGENT_NAME].map((id) => `--${id}`);
 
-/** Whether a connector's state cannot be read: its activity check throws or its stored scope is invalid. */
-async function connectorState(entry: AnalyticsConnector): Promise<{ active: boolean; unreadable: boolean }> {
+interface ConnectorState {
+  active: boolean;
+  /** A preferences record is stored for the connector. */
+  hasPreference: boolean;
+  /** Its activity check throws, its stored scope is invalid, or its preferences cannot be read. */
+  unreadable: boolean;
+}
+
+/** Reads whether the connector has a stored preferences record and whether that read failed. */
+async function readPreferenceState(connectorId: AnalyticsConnectorId): Promise<{ stored: boolean; unreadable: boolean }> {
+  const state =
+    connectorId === CLAUDE_CODE_OTLP_AGENT_NAME
+      ? await readClaudeAnalyticsPreferences()
+      : await readCopilotAnalyticsPreferences(connectorId);
+  if (state.kind !== 'ok') return { stored: false, unreadable: true };
+  // An absent record reads as the shared default constant; a stored one is always a fresh object.
+  const absent = state.value === DEFAULT_CLAUDE_ANALYTICS_PREFERENCES || state.value === DEFAULT_COPILOT_ANALYTICS_RECORD;
+  return { stored: !absent, unreadable: false };
+}
+
+async function connectorState(entry: AnalyticsConnector): Promise<ConnectorState> {
   let active = false;
   let unreadable = false;
   try {
@@ -207,13 +228,14 @@ async function connectorState(entry: AnalyticsConnector): Promise<{ active: bool
   if ('invalid' in (await entry.readScope())) {
     unreadable = true;
   }
-  return { active, unreadable };
+  const preference = await readPreferenceState(entry.id);
+  return { active, hasPreference: preference.stored, unreadable: unreadable || preference.unreadable };
 }
 
 /**
  * The connectors a `proxy analytics` write acts on. A connector flag picks exactly that connector.
  * Without one, `include`/`exclude` act on every connected connector, while `enable`/`disable` also act
- * on a connector whose state cannot be read, so a skipped connector can never keep collecting (the
+ * on a connector with a stored preference or whose state cannot be read, so a skipped connector can never keep collecting (the
  * Copilot gate checks the preference before the scope). Throws when nothing is left to act on.
  */
 export async function selectTargetConnectors(verb: AnalyticsVerb, opts: ConnectorOptions): Promise<TargetSelection> {
@@ -228,7 +250,7 @@ export async function selectTargetConnectors(verb: AnalyticsVerb, opts: Connecto
     targets = await listActiveAnalyticsConnectors();
   } else {
     const states = await Promise.all(ANALYTICS_CONNECTORS.map(connectorState));
-    targets = ANALYTICS_CONNECTORS.filter((_, index) => states[index].active || states[index].unreadable);
+    targets = ANALYTICS_CONNECTORS.filter((_, index) => states[index].active || states[index].hasPreference || states[index].unreadable);
     unreadable = ANALYTICS_CONNECTORS.filter((_, index) => states[index].unreadable);
   }
   if (targets.length === 0) {
