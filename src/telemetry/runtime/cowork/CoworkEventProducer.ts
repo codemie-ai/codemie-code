@@ -368,8 +368,7 @@ export class CoworkEventProducer {
     const pin: CoworkAttribution = bound && bound.toLowerCase() !== project.toLowerCase()
       ? { project: bound, projectSource: 'none' }
       : { project: bound ?? project, projectSource };
-    await saveCoworkAttribution(cliSessionId, pin);
-    return pin;
+    return saveCoworkAttribution(cliSessionId, pin);
   }
 
   /** The existing working-directory, config and profile-fallback rules, plus where the project came from. */

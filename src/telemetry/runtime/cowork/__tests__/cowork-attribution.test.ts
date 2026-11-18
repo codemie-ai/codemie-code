@@ -2,7 +2,7 @@
  * The Cowork attribution pin and the funding gate built on it, over a temp CODEMIE_HOME (real files, no mocks).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution } from '../cowork-attribution.js';
@@ -30,6 +30,24 @@ describe('the attribution pin', () => {
     await saveCoworkAttribution(ID, { project: 'p', projectSource: 'linked_folder' });
 
     expect(await loadCoworkAttribution(ID)).toEqual({ project: 'p', projectSource: 'linked_folder' });
+  });
+
+  it('is write-once: the first pin wins when two processings race, and no temp file is left behind', async () => {
+    const [first, second] = await Promise.all([
+      saveCoworkAttribution(ID, { project: 'first', projectSource: 'profile' }),
+      saveCoworkAttribution(ID, { project: 'second', projectSource: 'linked_folder' }),
+    ]);
+
+    expect(second).toEqual(first);
+    expect(await loadCoworkAttribution(ID)).toEqual(first);
+    expect(readdirSync(join(codemieHome, 'analytics', 'state')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('replaces an unreadable pin file', async () => {
+    writeFileSync(attributionFile(), '{nope');
+
+    expect(await saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' })).toEqual({ project: 'p', projectSource: 'profile' });
+    expect(await loadCoworkAttribution(ID)).toEqual({ project: 'p', projectSource: 'profile' });
   });
 
   it.each([
@@ -84,6 +102,7 @@ describe('the funding gate', () => {
     expect(await coworkFundingSource(ID, 'q')).toBeUndefined();
     expect(await coworkFundingSource(ID, '')).toBeUndefined();
 
+    rmSync(attributionFile());
     await saveCoworkAttribution(ID, { project: 'p', projectSource: 'none' });
     expect(await coworkFundingSource(ID, 'p')).toBeUndefined();
   });

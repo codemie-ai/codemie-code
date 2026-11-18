@@ -10,7 +10,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { coworkServedMarkPath } from './cowork-served-mark.js';
@@ -30,7 +31,10 @@ function attributionPath(cliSessionId: string): string {
   return getCodemiePath('analytics', 'state', `${cliSessionId}.cowork-attribution.json`);
 }
 
-/** The pin of a session; null when there is none or the file is unreadable (the caller then falls back, never re-resolves blindly). */
+/**
+ * The pin of a session; null when there is none or the file is unreadable. The caller then resolves again, but a project
+ * the spool already holds for the session is kept (see `pinAttribution`), so an unreadable pin cannot move a session.
+ */
 export async function loadCoworkAttribution(cliSessionId: string): Promise<CoworkAttribution | null> {
   try {
     const parsed = JSON.parse(await readFile(attributionPath(cliSessionId), 'utf-8')) as Partial<CoworkAttribution> | null;
@@ -41,12 +45,28 @@ export async function loadCoworkAttribution(cliSessionId: string): Promise<Cowor
   }
 }
 
-/** Writes the pin through a temp file and a rename, so a reader never sees half of it. */
-export async function saveCoworkAttribution(cliSessionId: string, attribution: CoworkAttribution): Promise<void> {
+/**
+ * Publishes the pin atomically and write-once: a unique temp file is hard-linked to the pin path, so a reader never sees
+ * half of it and, when two processings race, the first pin wins. Returns the pin in effect. An unreadable file at the
+ * path is replaced.
+ */
+export async function saveCoworkAttribution(cliSessionId: string, attribution: CoworkAttribution): Promise<CoworkAttribution> {
   const path = attributionPath(cliSessionId);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(`${path}.tmp`, JSON.stringify(attribution), 'utf-8');
-  await rename(`${path}.tmp`, path);
+  const temp = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temp, JSON.stringify(attribution), 'utf-8');
+  try {
+    await link(temp, path);
+    return attribution;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const existing = await loadCoworkAttribution(cliSessionId);
+    if (existing) return existing;
+    await rename(temp, path);
+    return attribution;
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
 
 /**

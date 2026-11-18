@@ -1559,6 +1559,25 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
     expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'none' });
   });
 
+  it('boundary: an unreadable pin cannot move a session whose project the spool already holds', async () => {
+    await settle(newProducer(), FIRST);
+    writeFileSync(attributionPath(), '{nope');
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    await producer2RunAtEnd();
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8')).project).toBe('synthetic-project');
+  });
+
+  async function producer2RunAtEnd(): Promise<void> {
+    const producer = newProducer();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+  }
+
   it('boundary: a session with a cursor and neither pin nor spool binding is pinned at its next processing', async () => {
     await settle(newProducer(), FIRST);
     rmSync(attributionPath());
