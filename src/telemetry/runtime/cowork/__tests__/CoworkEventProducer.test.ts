@@ -1583,19 +1583,6 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
     expect(existsSync(spoolPath())).toBe(false);
   });
 
-  it('pins the project with source none, not a guessed profile, when the project origin cannot be resolved', async () => {
-    const { ConfigLoader } = await import('@/utils/config.js');
-    const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
-    try {
-      await settle(newProducer(), FIRST);
-    } finally {
-      spy.mockRestore();
-    }
-
-    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'none' });
-    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
-  });
-
   describe('funding (EPMCDME-17410), through the real forwarder with a stubbed fetch', () => {
     // The sender adds X-CodeMie-CLI and X-CodeMie-Client to every request; only the attribution headers are compared.
     const fundingHeaders = (headers: Record<string, string>) => Object.fromEntries(
@@ -1646,6 +1633,52 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
       await forwardSession(CLI, true, credentials as never);
 
       for (const { headers } of sentRequests()) expect(fundingHeaders(headers)).toEqual({ 'X-CodeMie-Project': 'synthetic-project' });
+    });
+
+    it('a transient project-origin lookup failure appends and pins nothing, and the retry declares funding with the real source', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await settle(newProducer(), FIRST);
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(existsSync(spoolPath())).toBe(false);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Recovery: the same producer retries before any append.
+      const producer = newProducer();
+      await settle(producer, FIRST + 60_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) {
+        expect(fundingHeaders(headers)).toMatchObject({ 'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project': 'synthetic-project', 'X-CodeMie-Project-Source': 'profile' });
+      }
+    });
+
+    it('a failure for a session the spool already holds (no pin yet) appends nothing, and the retry pins the real source under the bound project', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(attributionPath()); // collected before pins existed: spool bound, no pin
+      const before = events().length;
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await producer2Run();
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(events()).toHaveLength(before);
+      } finally {
+        spy.mockRestore();
+      }
+
+      const producer = newProducer();
+      await producer.run(END + 60_000);
+      await producer.run(END + 70_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+      expect(events().length).toBeGreaterThan(before);
     });
 
     /** One more processing so the pin is rewritten for the bound session. */

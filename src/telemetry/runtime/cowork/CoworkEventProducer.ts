@@ -361,8 +361,10 @@ export class CoworkEventProducer {
   private async pinAttribution(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string): Promise<CoworkAttribution> {
     const known = await loadCoworkAttribution(cliSessionId);
     if (known) return known;
-    const { project, projectSource } = await this.resolveProject(discovered.workingDirectory);
     const bound = await withSessionLock(cliSessionId, () => readStatus(cliSessionId)).then((status) => status?.project);
+    // A lookup failure (not an answer) propagates before anything is appended or pinned: the session is resolved again at
+    // its next processing, so a transient failure never fixes an unknown origin for good.
+    const { project, projectSource } = await this.resolveProject(discovered.workingDirectory);
     const pin: CoworkAttribution = bound && bound.toLowerCase() !== project.toLowerCase()
       ? { project: bound, projectSource: 'none' }
       : { project: bound ?? project, projectSource };
@@ -376,14 +378,10 @@ export class CoworkEventProducer {
     const config = await ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined);
     const project = config.codeMieProject ?? '';
     if (!project) return { project, projectSource: 'none' };
-    try {
-      const { projectOrigin } = await ConfigLoader.resolveProfileIdentity(workingDirectory, config.name);
-      // The project may sit on the selected profile record itself, outside any workspace.
-      return { project, projectSource: projectOrigin === 'none' ? 'profile' : projectOrigin };
-    } catch {
-      // The origin is unknown: keep the project, but never guess a source that would later declare funding.
-      return { project, projectSource: 'none' };
-    }
+    // A failing lookup propagates: the caller retries it rather than pinning a guessed or unknown source for good.
+    const { projectOrigin } = await ConfigLoader.resolveProfileIdentity(workingDirectory, config.name);
+    // The project may sit on the selected profile record itself, outside any workspace.
+    return { project, projectSource: projectOrigin === 'none' ? 'profile' : projectOrigin };
   }
 
   private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor, project: string): Promise<CoworkEnvelope> {
