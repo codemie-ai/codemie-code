@@ -20,9 +20,6 @@ export const RESET_RERUN_HINT =
   'If the sign-ins come back, quit Claude Desktop, run this command again, then start Claude Desktop.';
 export const RESET_NEXT_STEPS = `${RESET_RESTART_STEPS}\n${RESET_RERUN_HINT}`;
 
-/** A user with hundreds of servers must not get hundreds of lines of names. */
-const MAX_NAMED_SERVERS = 20;
-
 /** Windows reports a rename blocked by an open Claude Desktop as one of these. */
 const WINDOWS_BLOCKED_WRITE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
 
@@ -60,9 +57,7 @@ function codeSuffix(code: string | undefined): string {
 
 /** Names go through JSON.stringify so one holding escape sequences cannot rewrite the lines after it. */
 function formatServerNames(servers: string[]): string {
-  const shown = servers.slice(0, MAX_NAMED_SERVERS).map((name) => JSON.stringify(name));
-  const hidden = servers.length - shown.length;
-  return hidden > 0 ? `${shown.join(', ')} and ${hidden} more` : shown.join(', ');
+  return servers.map((name) => JSON.stringify(name)).join(', ');
 }
 
 function printCleared(path: string, servers: string[]): void {
