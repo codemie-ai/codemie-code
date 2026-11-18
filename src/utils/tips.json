@@ -286,7 +286,7 @@
   {
     "id": "cmd-proxy-clients",
     "category": "Proxy & IDE",
-    "message": "What is connected to the proxy? `codemie proxy clients` lists every client and analytics connector, with its config location and scope.",
+    "message": "What is connected to the proxy? `codemie proxy clients` lists every client and analytics connector, with its config location and scope, and names `codemie proxy connect --claude-otlp` or `--copilot-otlp` for an analytics client that is not connected.",
     "command": "proxy",
     "commands": [
       "codemie proxy clients",

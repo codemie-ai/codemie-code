@@ -1,12 +1,21 @@
 /**
  * `codemie proxy clients`: every client and analytics connector of the client-target table, whether it is connected,
- * where its config lives and, for a connected analytics connector, its tracking scope. Tracked and excluded project
- * lists are left to `proxy analytics status`. Only reads.
+ * where its config lives and, for a connected analytics connector, its tracking scope. An analytics client that is
+ * not connected (Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat, Copilot CLI) carries
+ * the command that connects it — its vendor flag when the client is found on this machine, its own flag when not.
+ * Tracked and excluded project lists are left to `proxy analytics status`. Only reads.
  */
 import { Command } from 'commander';
 import chalk from 'chalk';
 
 import { printNext } from '../../related-commands.js';
+import { logger } from '@/utils/logger.js';
+import { readDaemonStatus } from './daemon-manager.js';
+import {
+  ANALYTICS_CLIENT_TARGET_IDS,
+  analyticsClientHint,
+  collectAnalyticsClients,
+} from './analytics-clients.js';
 import {
   describeConfigLocation,
   readClientTargetStates,
@@ -30,6 +39,36 @@ export interface ClientRow {
   scope?: ClientScope;
   /** The connected check failed. */
   error?: string;
+  /** An analytics client: whether its application is on this machine. */
+  found?: boolean;
+  /** An analytics client that is not connected: its state and the command that connects it. */
+  hint?: string;
+}
+
+interface AnalyticsClientInfo {
+  found: boolean;
+  /** The hint shown while the row is not connected. */
+  hint?: string;
+}
+
+/**
+ * The analytics clients by client-target id, read against the running daemon (none when it is stopped). A daemon of
+ * an older CLI names no command for a found client: its restart comes first. Never throws.
+ */
+async function readAnalyticsClientInfo(): Promise<Map<string, AnalyticsClientInfo>> {
+  try {
+    const { running, state } = await readDaemonStatus();
+    const daemon = running ? state : null;
+    const commands = daemon === null || Boolean(daemon.version);
+    const rows = await collectAnalyticsClients(daemon);
+    return new Map(rows.map((row) => [
+      ANALYTICS_CLIENT_TARGET_IDS[row.client],
+      { found: row.found, hint: analyticsClientHint({ ...row, connected: false }, commands) },
+    ]));
+  } catch (error) {
+    logger.debug('[proxy clients] analytics client lookup failed:', error);
+    return new Map();
+  }
 }
 
 async function scopeOf(state: ClientTargetState): Promise<ClientScope | undefined> {
@@ -45,9 +84,11 @@ async function scopeOf(state: ClientTargetState): Promise<ClientScope | undefine
 
 /** One row per target, in table order. Never throws. */
 export async function collectClientRows(): Promise<ClientRow[]> {
-  const states = await readClientTargetStates();
+  const [states, analytics] = await Promise.all([readClientTargetStates(), readAnalyticsClientInfo()]);
   return Promise.all(states.map(async (state): Promise<ClientRow> => {
     const scope = await scopeOf(state);
+    const info = analytics.get(state.target.id);
+    const hint = info && !state.connected && state.error === undefined ? info.hint : undefined;
     return {
       id: state.target.id,
       kind: state.target.readScope ? 'analytics-connector' : 'client',
@@ -58,6 +99,8 @@ export async function collectClientRows(): Promise<ClientRow[]> {
       analytics: state.target.carriesAnalytics,
       ...(scope && { scope }),
       ...(state.error !== undefined && { error: state.error }),
+      ...(info && { found: info.found || state.connected }),
+      ...(hint && { hint }),
     };
   }));
 }
@@ -70,7 +113,7 @@ const SCOPE_TEXT: Record<ClientScope, string> = {
 
 function stateText(row: ClientRow): string {
   if (row.error !== undefined) return chalk.yellow(`check failed: ${row.error}`);
-  if (!row.connected) return chalk.dim('not connected');
+  if (!row.connected) return chalk.dim(row.hint ?? 'not connected');
   return chalk.green('connected') + (row.scope ? `, ${SCOPE_TEXT[row.scope]}` : '');
 }
 
@@ -89,7 +132,7 @@ function formatRows(rows: ClientRow[]): string[] {
 
 export function createProxyClientsCommand(): Command {
   return new Command('clients')
-    .description('List the clients and analytics connectors the proxy can connect, and which are connected')
+    .description('List the clients and analytics connectors the proxy can connect, which are connected, and how to connect the rest')
     .option('--json', 'Emit the list as one JSON document')
     .action(async (opts: { json?: boolean }) => {
       const rows = await collectClientRows();

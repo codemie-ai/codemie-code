@@ -397,7 +397,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-    expect(printed).toEqual(['Nothing to disconnect. See: codemie proxy status']);
+    expect(printed).toEqual(['Nothing to disconnect. See: codemie proxy clients']);
     expect(process.exitCode).toBe(0);
   });
 

@@ -19,11 +19,8 @@ import { composeProxyDoctor } from './doctor/compose.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   ANALYTICS_AGGREGATES,
-  collectAnalyticsClients,
-  formatAnalyticsClientLines,
   type AggregateId,
   type AnalyticsAggregate,
-  type AnalyticsClientRow,
 } from './analytics-clients.js';
 import {
   DEFAULT_DAEMON_PORT,
@@ -210,16 +207,12 @@ export function createProxyCommand(): Command {
       if (opts.deep) {
         deprecate(STATUS_DEEP_DEPRECATION, { json: opts.json });
       }
-      const jsonRows = (rows: AnalyticsClientRow[]) =>
-        rows.map(({ client, found, connected, flag }) => ({ client, found, connected, flag }));
       const { running, state } = await readDaemonStatus();
       if (!running || !state) {
-        const rows = await collectAnalyticsClients(null);
         if (opts.json) {
-          console.log(JSON.stringify({ status: 'stopped', analyticsClients: jsonRows(rows) }, null, 2));
+          console.log(JSON.stringify({ status: 'stopped' }, null, 2));
         } else {
           console.log('Status: stopped');
-          for (const line of formatAnalyticsClientLines(rows, { commands: true })) console.log(line);
         }
         printNext('proxy status', 'stopped', { json: opts.json });
         return;
@@ -234,7 +227,6 @@ export function createProxyCommand(): Command {
       const healthy = !failed(['daemon']) && !(deep && failed(['auth', 'upstream']));
       const issues = report.sections.some((section) => section.status === 'warn' || section.status === 'error');
       const key = opts.showKey ? state.gatewayKey : MASKED_KEY;
-      const analyticsClients = await collectAnalyticsClients(state);
 
       if (opts.json) {
         const payload: Record<string, unknown> = {
@@ -246,7 +238,6 @@ export function createProxyCommand(): Command {
           ...(state.project && { project: state.project }),
           version: state.version ?? null,
           uptimeSec,
-          analyticsClients: jsonRows(analyticsClients),
         };
         console.log(JSON.stringify(payload, null, 2));
         return;
@@ -266,10 +257,6 @@ export function createProxyCommand(): Command {
       }
       console.log(`  Version: ${state.version ?? 'older CLI'}`);
       console.log(`  Uptime:  ${formatUptime(uptimeSec)}`);
-      // Under a daemon of an older CLI the rows name no command: the restart `proxy doctor` names comes first.
-      for (const line of formatAnalyticsClientLines(analyticsClients, { commands: Boolean(state.version) })) {
-        console.log(line);
-      }
       if (issues) {
         console.log(chalk.yellow(renderHint({ reason: 'Issues found', command: 'codemie proxy doctor' })));
       }

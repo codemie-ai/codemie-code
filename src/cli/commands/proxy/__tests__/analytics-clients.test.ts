@@ -57,7 +57,8 @@ const {
   aggregateFlags,
   collectAnalyticsClients,
   dropMembersNotFound,
-  formatAnalyticsClientLines,
+  analyticsClientHint,
+  ANALYTICS_CLIENT_TARGET_IDS,
   isMemberConfigured,
   isMemberFound,
   membersOf,
@@ -435,7 +436,7 @@ describe('isMemberFound', () => {
   });
 });
 
-describe('formatAnalyticsClientLines', () => {
+describe('analyticsClientHint', () => {
   const row = (client: string, label: string, found: boolean, connected: boolean, flag: string, otherGateway = false) =>
     ({ client, label, found, connected, flag, otherGateway }) as Awaited<ReturnType<typeof collectAnalyticsClients>>[number];
   const rows = [
@@ -446,38 +447,44 @@ describe('formatAnalyticsClientLines', () => {
     row('copilot-cli', 'Copilot CLI', false, false, '--copilot-cli-otlp'),
   ];
 
-  it('prints the block with commands', () => {
-    expect(formatAnalyticsClientLines(rows, { commands: true })).toEqual([
-      'Analytics clients:',
-      '  Claude Code:                    connected',
-      '  VS Code Claude Code extension:  connected',
-      '  Claude Desktop:                 not connected — run: codemie proxy connect --claude-otlp',
-      '  Copilot Chat:                   not connected — run: codemie proxy connect --copilot-otlp',
-      '  Copilot CLI:                    not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+  it('names the vendor flag for a found client, its own flag for one not found, nothing for a connected one', () => {
+    expect(rows.map((r) => analyticsClientHint(r, true))).toEqual([
+      undefined,
+      undefined,
+      'not connected — run: codemie proxy connect --claude-otlp',
+      'not connected — run: codemie proxy connect --copilot-otlp',
+      'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
     ]);
   });
 
-  it('names no command in a not connected row without commands', () => {
-    expect(formatAnalyticsClientLines(rows, { commands: false }).slice(3)).toEqual([
-      '  Claude Desktop:                 not connected',
-      '  Copilot Chat:                   not connected',
-      '  Copilot CLI:                    not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+  it('names no command for a found client without commands', () => {
+    expect(rows.slice(2).map((r) => analyticsClientHint(r, false))).toEqual([
+      'not connected',
+      'not connected',
+      'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
     ]);
   });
 
   it('names another local gateway for Desktop', () => {
-    expect(formatAnalyticsClientLines([row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp', true)], { commands: true })[1])
-      .toBe('  Claude Desktop:                 points at a local gateway with a key this proxy does not accept — ' +
+    expect(analyticsClientHint(row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp', true), true))
+      .toBe('points at a local gateway with a key this proxy does not accept — ' +
         'if it should use CodeMie, run: codemie proxy connect --claude-otlp');
   });
 
   it.each([
-    [false, '  Claude Desktop:                 not found — if it is installed, run: codemie proxy connect --claude-desktop'],
-    [true, '  Claude Desktop:                 points at a local gateway with a key this proxy does not accept — ' +
+    [false, 'not found — if it is installed, run: codemie proxy connect --claude-desktop'],
+    [true, 'points at a local gateway with a key this proxy does not accept — ' +
       'if it should use CodeMie, run: codemie proxy connect --claude-desktop'],
-  ])('a not found Desktop row on another local gateway, commands %s', (commands, line) => {
+  ])('a not found Desktop row on another local gateway, commands %s', (commands, hint) => {
     const desktop = row('claude-desktop', 'Claude Desktop', false, false, '--claude-desktop', true);
-    expect(formatAnalyticsClientLines([desktop], { commands })).toEqual(['Analytics clients:', line]);
+    expect(analyticsClientHint(desktop, commands)).toBe(hint);
+  });
+
+  it('maps every analytics client onto one client-target row', async () => {
+    const { CLIENT_TARGETS } = await import('../client-targets.js');
+    const ids = Object.values(ANALYTICS_CLIENT_TARGET_IDS);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(CLIENT_TARGETS.some((target) => target.id === id), id).toBe(true);
   });
 });
 

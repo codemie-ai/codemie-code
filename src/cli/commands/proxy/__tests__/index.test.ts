@@ -109,33 +109,6 @@ vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
 
-// The analytics clients block reads five fixed rows; its lookups are covered by analytics-clients.test.ts.
-vi.mock('../analytics-clients.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../analytics-clients.js')>()),
-  collectAnalyticsClients: vi.fn(async () => [
-    { client: 'claude-code', label: 'Claude Code', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
-    { client: 'vscode-claude-code', label: 'VS Code Claude Code extension', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
-    { client: 'claude-desktop', label: 'Claude Desktop', found: true, connected: false, flag: '--claude-otlp', otherGateway: false },
-    { client: 'copilot-chat', label: 'Copilot Chat', found: true, connected: false, flag: '--copilot-otlp', otherGateway: false },
-    { client: 'copilot-cli', label: 'Copilot CLI', found: false, connected: false, flag: '--copilot-cli-otlp', otherGateway: false },
-  ]),
-}));
-const ANALYTICS_CLIENT_LINES = [
-  'Analytics clients:',
-  '  Claude Code:                    connected',
-  '  VS Code Claude Code extension:  connected',
-  '  Claude Desktop:                 not connected — run: codemie proxy connect --claude-otlp',
-  '  Copilot Chat:                   not connected — run: codemie proxy connect --copilot-otlp',
-  '  Copilot CLI:                    not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
-];
-const ANALYTICS_CLIENTS_JSON = [
-  { client: 'claude-code', found: true, connected: true, flag: '--claude-otlp' },
-  { client: 'vscode-claude-code', found: true, connected: true, flag: '--claude-otlp' },
-  { client: 'claude-desktop', found: true, connected: false, flag: '--claude-otlp' },
-  { client: 'copilot-chat', found: true, connected: false, flag: '--copilot-otlp' },
-  { client: 'copilot-cli', found: false, connected: false, flag: '--copilot-cli-otlp' },
-];
-
 vi.mock('../inspect-desktop.js', () => ({
   printDesktopInspection: vi.fn(),
 }));
@@ -1653,7 +1626,6 @@ describe('proxy status', () => {
       '  Project: team-project',
       '  Version: 0.17.0',
       lines[8],
-      ...ANALYTICS_CLIENT_LINES,
     ]);
     expect(lines[8]).toMatch(/^ {2}Uptime: {2}\d+s$/);
     expect(lines.join('\n')).not.toContain('local-key');
@@ -1737,7 +1709,6 @@ describe('proxy status', () => {
       project: 'team-project',
       version: '0.17.0',
       uptimeSec: payload.uptimeSec,
-      analyticsClients: ANALYTICS_CLIENTS_JSON,
     });
     expect(typeof payload.uptimeSec).toBe('number');
     expect(printed.join('\n')).not.toContain('Issues found');
@@ -1764,7 +1735,7 @@ describe('proxy status', () => {
 
     for (const key of [
       'level', 'reason', 'lastRecordedIssue', 'otlpEndpointMismatch', 'desktop', 'analytics',
-      'clientPortMismatch', 'clientSharedKey', 'olderCliOnPath', 'hooksOfAnotherInstall',
+      'clientPortMismatch', 'clientSharedKey', 'olderCliOnPath', 'hooksOfAnotherInstall', 'analyticsClients',
     ]) {
       expect(payload).not.toHaveProperty(key);
     }
@@ -1782,33 +1753,9 @@ describe('proxy status', () => {
     await arrangeStatus(null);
     const { composeProxyDoctor } = await import('../doctor/compose.js');
 
-    expect(await runStatus(['status'])).toEqual(['Status: stopped', ...ANALYTICS_CLIENT_LINES]);
-    expect(await runStatus(['status', '--json'])).toEqual([
-      JSON.stringify({ status: 'stopped', analyticsClients: ANALYTICS_CLIENTS_JSON }, null, 2),
-    ]);
+    expect(await runStatus(['status'])).toEqual(['Status: stopped']);
+    expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
     expect(composeProxyDoctor).not.toHaveBeenCalled();
-    const { collectAnalyticsClients } = await import('../analytics-clients.js');
-    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(null);
-  });
-
-  it('ends with the analytics clients, read against the running daemon, before the Issues found line', async () => {
-    await arrangeStatus(runningState, [...OK_SECTIONS, { id: 'cli-path', status: 'warn', message: 'older CLI' }]);
-    const { collectAnalyticsClients } = await import('../analytics-clients.js');
-
-    const lines = await runStatus(['status']);
-
-    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(runningState);
-    expect(lines.slice(-ANALYTICS_CLIENT_LINES.length - 1, -1)).toEqual(ANALYTICS_CLIENT_LINES);
-    expect(lines.at(-1)).toBe(ISSUES_LINE);
-  });
-
-  it('names no command in a not connected analytics client row under a daemon of an older CLI', async () => {
-    await arrangeStatus({ ...runningState, version: undefined });
-
-    const lines = await runStatus(['status']);
-
-    expect(lines).toContain('  Claude Desktop:                 not connected');
-    expect(lines).toContain('  Copilot Chat:                   not connected');
   });
 
   describe('--deep (deprecated)', () => {

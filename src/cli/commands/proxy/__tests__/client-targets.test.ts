@@ -108,6 +108,20 @@ vi.mock('../connect-orchestrator.js', async (importOriginal) => ({
   findOlderCliOnPath: async () => null,
 }));
 
+// The analytics clients' lookups (PATH, application folders) are covered by analytics-clients.test.ts.
+const collectAnalyticsClients = vi.hoisted(() => vi.fn());
+vi.mock('../analytics-clients.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../analytics-clients.js')>()),
+  collectAnalyticsClients: (...args: unknown[]) => collectAnalyticsClients(...args),
+}));
+const ANALYTICS_ROWS = [
+  { client: 'claude-code', label: 'Claude Code', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
+  { client: 'vscode-claude-code', label: 'VS Code Claude Code extension', found: true, connected: false, flag: '--claude-otlp', otherGateway: false },
+  { client: 'claude-desktop', label: 'Claude Desktop', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
+  { client: 'copilot-chat', label: 'Copilot Chat', found: true, connected: false, flag: '--copilot-otlp', otherGateway: false },
+  { client: 'copilot-cli', label: 'Copilot CLI', found: false, connected: false, flag: '--copilot-cli-otlp', otherGateway: false },
+];
+
 const removers = vi.hoisted(() => ({
   disconnectClaudeCodeOtlp: vi.fn(async () => {}),
   disconnectClaudeDesktop: vi.fn(async () => {}),
@@ -131,6 +145,8 @@ interface ClientRow {
   configLocation: string;
   analytics: boolean;
   scope?: string;
+  found?: boolean;
+  hint?: string;
 }
 
 async function runClients(args: string[]): Promise<string> {
@@ -146,6 +162,7 @@ describe('client-target table', () => {
       logs.push(args.map(String).join(' '));
     });
     readDaemonStatus.mockResolvedValue({ running: true, state: STATE });
+    collectAnalyticsClients.mockResolvedValue(ANALYTICS_ROWS);
     originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -233,5 +250,47 @@ describe('client-target table', () => {
     expect(out).toMatch(/oh-my-pi\s+not connected/);
     expect(out).not.toContain(TRACKED_PROJECT);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('an analytics client that is not connected carries its hint, the vendor flag when found, its own when not', async () => {
+    const rows = (JSON.parse(await runClients(['--json'])) as { clients: ClientRow[] }).clients;
+    const byId = (id: string) => rows.find((row) => row.id === id);
+
+    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(STATE);
+    expect(byId('claude-code-otlp')).toMatchObject({ connected: true, found: true });
+    expect(byId('claude-code-otlp')?.hint).toBeUndefined();
+    expect(byId('claude-desktop')?.hint).toBeUndefined();
+    expect(byId('vscode-claude-code')).toMatchObject({
+      found: true, hint: 'not connected — run: codemie proxy connect --claude-otlp',
+    });
+    expect(byId('copilot-chat-otlp')).toMatchObject({
+      found: true, hint: 'not connected — run: codemie proxy connect --copilot-otlp',
+    });
+    expect(byId('copilot-cli-otlp')).toMatchObject({
+      found: false, hint: 'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+    });
+    for (const id of ['vscode-claude-code-insiders', 'codex-desktop', 'vscode', 'vscode-insiders', 'omp']) {
+      expect(byId(id), id).not.toHaveProperty('hint');
+      expect(byId(id), id).not.toHaveProperty('found');
+    }
+    expect(rows.map((row) => row.id)).toHaveLength(new Set(rows.map((row) => row.id)).size);
+  });
+
+  it('prints the hint on the not connected rows of the text output', async () => {
+    const out = stripVTControlCharacters(await runClients([]));
+    expect(out).toMatch(/Copilot Chat\s+not connected — run: codemie proxy connect --copilot-otlp/);
+    expect(out).toMatch(/Copilot CLI\s+not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp/);
+    expect(out).not.toContain('Analytics clients:');
+  });
+
+  it('reads the analytics clients with no daemon when it is stopped, and names no command under an older CLI', async () => {
+    readDaemonStatus.mockResolvedValue({ running: false, state: null });
+    await runClients(['--json']);
+    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(null);
+
+    logs = [];
+    readDaemonStatus.mockResolvedValue({ running: true, state: { ...STATE, version: undefined } });
+    const rows = (JSON.parse(await runClients(['--json'])) as { clients: ClientRow[] }).clients;
+    expect(rows.find((row) => row.id === 'copilot-chat-otlp')?.hint).toBe('not connected');
   });
 });

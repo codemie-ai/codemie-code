@@ -1635,7 +1635,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await connectTargets({ targets, aggregates, yes: true });
 
       expect(printed()).toEqual([
-        `Nothing was connected: no client of ${flags} was found on this machine. See: codemie proxy status`,
+        `Nothing was connected: no client of ${flags} was found on this machine. See: codemie proxy clients`,
       ]);
       expect(CodeMieSSO).not.toHaveBeenCalled();
       expect(checkStatus).not.toHaveBeenCalled();
@@ -2007,7 +2007,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       }
 
       expect(printed()).toEqual([
-        'Nothing was connected: no client of --claude-otlp was found on this machine. See: codemie proxy status',
+        'Nothing was connected: no client of --claude-otlp was found on this machine. See: codemie proxy clients',
       ]);
       for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(0);

@@ -252,7 +252,7 @@ export async function dropMembersOrReportNone(
   if (Object.values(active).some(Boolean)) return active;
   console.log(
     `Nothing was connected: no client of ${aggregateFlags(aggregates)} was found on this machine. ` +
-    'See: codemie proxy status'
+    'See: codemie proxy clients'
   );
   return null;
 }
@@ -392,8 +392,22 @@ export async function collectAnalyticsClients(state: DaemonState | null): Promis
   ];
 }
 
-function rowValue(row: AnalyticsClientRow, commands: boolean): string {
-  if (row.connected) return 'connected';
+/** The client-target row (`proxy clients`) each analytics client is shown on. */
+export const ANALYTICS_CLIENT_TARGET_IDS: Record<AnalyticsClientRow['client'], string> = {
+  'claude-code': CLAUDE_CODE_OTLP_AGENT_NAME,
+  'vscode-claude-code': 'vscode-claude-code',
+  'claude-desktop': 'claude-desktop',
+  'copilot-chat': COPILOT_CHAT_OTLP_AGENT_NAME,
+  'copilot-cli': COPILOT_CLI_OTLP_AGENT_NAME,
+};
+
+/**
+ * The one-line state of an analytics client that is not connected, with the command that connects it: its vendor
+ * flag when the client is found, its own flag when not. `commands` false (a daemon of an older CLI, whose restart
+ * comes first) names no command for a found client. Undefined for a connected client.
+ */
+export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean): string | undefined {
+  if (row.connected) return undefined;
   if (row.found && !commands) return 'not connected';
   const command = `codemie proxy connect ${row.flag}`;
   if (row.otherGateway && commands) {
@@ -404,12 +418,4 @@ function rowValue(row: AnalyticsClientRow, commands: boolean): string {
   }
   if (row.found) return renderHint({ reason: 'not connected', command });
   return renderHint({ reason: 'not found', action: `if it is installed, run: ${command}` });
-}
-
-/** The `Analytics clients:` block of `proxy status`; `commands` false names no command in a `not connected` row and prints no other-gateway line. */
-export function formatAnalyticsClientLines(rows: AnalyticsClientRow[], opts: { commands: boolean }): string[] {
-  return [
-    'Analytics clients:',
-    ...rows.map((r) => `  ${`${r.label}:`.padEnd(32)}${rowValue(r, opts.commands)}`),
-  ];
 }

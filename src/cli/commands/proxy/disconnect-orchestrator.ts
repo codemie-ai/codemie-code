@@ -308,7 +308,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<boolea
 
   const targets = await dropAggregateMembers(opts);
   if (!Object.values(targets).some(Boolean)) {
-    console.log('Nothing to disconnect. See: codemie proxy status');
+    console.log('Nothing to disconnect. See: codemie proxy clients');
     return true;
   }
 

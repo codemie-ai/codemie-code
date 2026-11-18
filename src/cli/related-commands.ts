@@ -19,7 +19,7 @@ const A_STATUS: RelatedCommand = { path: 'codemie proxy analytics status', purpo
 const A_ENABLE: RelatedCommand = { path: 'codemie proxy analytics enable', purpose: 'Resume analytics collection' };
 const A_DISABLE: RelatedCommand = { path: 'codemie proxy analytics disable', purpose: 'Stop analytics collection' };
 const DOCTOR: RelatedCommand = { path: 'codemie proxy doctor', purpose: 'Diagnose the proxy, clients and analytics delivery' };
-const CLIENTS: RelatedCommand = { path: 'codemie proxy clients', purpose: 'List clients and analytics connectors, and which are connected' };
+const CLIENTS: RelatedCommand = { path: 'codemie proxy clients', purpose: 'List clients and analytics connectors, which are connected, and how to connect the rest' };
 const SYNC_STATUS: RelatedCommand = { path: 'codemie analytics sync status', purpose: 'Show analytics sync status' };
 
 /**
