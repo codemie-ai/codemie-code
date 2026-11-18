@@ -30,6 +30,8 @@ import { findSubagentFiles, readForkedSkillMarker, readSubagentMeta } from '@/ag
 import { readNewLines } from '@/agents/plugins/claude-code-otlp/transcript/transcript-reader.js';
 import { hooksOnlyForwardAllowed } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
+import { withSessionLock } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-lock.js';
+import { readStatus } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
@@ -40,6 +42,7 @@ import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
 import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
+import { loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
 import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
@@ -323,7 +326,8 @@ export class CoworkEventProducer {
     next.fingerprints = fingerprints;
 
     progress.step = 'context';
-    const envelope = await this.envelope(discovered, cliSessionId, next);
+    const { project: pinned } = await this.pinAttribution(discovered, cliSessionId);
+    const envelope = await this.envelope(discovered, cliSessionId, next, pinned);
     const project = envelope.project ? [envelope.project] : undefined;
     if (end) {
       progress.step = 'session-end-pass';
@@ -349,12 +353,41 @@ export class CoworkEventProducer {
     return next;
   }
 
-  private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor): Promise<CoworkEnvelope> {
-    const workingDirectory = discovered.workingDirectory;
+  /**
+   * The session's project, fixed at its first processing (before any of its events is appended) from the working
+   * directory and profile known then, and kept for the whole session. A session the spool already bound to a project
+   * (collected before the pin existed) keeps that project: it is what the backend has already received.
+   */
+  private async pinAttribution(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string): Promise<CoworkAttribution> {
+    const known = await loadCoworkAttribution(cliSessionId);
+    if (known) return known;
+    const { project, projectSource } = await this.resolveProject(discovered.workingDirectory);
+    const bound = await withSessionLock(cliSessionId, () => readStatus(cliSessionId)).then((status) => status?.project);
+    const pin: CoworkAttribution = bound && bound.toLowerCase() !== project.toLowerCase()
+      ? { project: bound, projectSource: 'none' }
+      : { project: bound ?? project, projectSource };
+    await saveCoworkAttribution(cliSessionId, pin);
+    return pin;
+  }
+
+  /** The existing working-directory, config and profile-fallback rules, plus where the project came from. */
+  private async resolveProject(workingDirectory: string): Promise<CoworkAttribution> {
     const profile = this.options.profile;
-    const [project, repository, repoRemote, branch, cliVersion] = await Promise.all([
-      ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
-        .then((config) => config.codeMieProject ?? ''),
+    const config = await ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined);
+    const project = config.codeMieProject ?? '';
+    if (!project) return { project, projectSource: 'none' };
+    try {
+      const { projectOrigin } = await ConfigLoader.resolveProfileIdentity(workingDirectory, config.name);
+      // The project may sit on the selected profile record itself, outside any workspace.
+      return { project, projectSource: projectOrigin === 'none' ? 'profile' : projectOrigin };
+    } catch {
+      return { project, projectSource: 'profile' };
+    }
+  }
+
+  private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor, project: string): Promise<CoworkEnvelope> {
+    const workingDirectory = discovered.workingDirectory;
+    const [repository, repoRemote, branch, cliVersion] = await Promise.all([
       resolveRepositoryName(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
       detectGitBranch(workingDirectory),

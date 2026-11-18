@@ -12,6 +12,7 @@ import { stopIntentPending } from './stop-intent.js';
 import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import { publicationMode, type PublicationMode } from './publication-mode.js';
+import { coworkFundingSource } from '@/telemetry/runtime/cowork/cowork-attribution.js';
 
 /** Project the session is bound to; the backend gates analytics on it. */
 export const PROJECT_HEADER = 'X-CodeMie-Project';
@@ -91,6 +92,28 @@ export function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record
   });
   for (const name of built.omitted) logger.debug(`[otlp-evidence] ${name} omitted: not_latin1_header_value`);
   return built.headers;
+}
+
+/**
+ * Headers of a Cowork session the daemon served: the session is declared routed through CodeMie (so the backend stores
+ * `subscription_type: codemie`), with its pinned project and source so the backend keeps it in that project. No
+ * contract and no consent header, so nothing a native session needs consent for is asserted. `undefined` = the session
+ * may not claim it (no served mark, no pin for this project, or a project that cannot travel as a raw header): the
+ * caller then sends the legacy Project header alone.
+ */
+export async function coworkFundingHeaders(sessionId: string, project: string): Promise<Record<string, string> | undefined> {
+  const projectSource = await coworkFundingSource(sessionId, project);
+  if (!projectSource) return undefined;
+  const { headers } = buildAttributionHeaders({
+    destination: 'analytics',
+    sessionId,
+    routedViaCodemie: true,
+    subscriptionType: 'codemie',
+    routingUnproven: false,
+    project,
+    projectSource,
+  });
+  return headers[PROJECT_HEADER] ? headers : undefined;
 }
 
 /**

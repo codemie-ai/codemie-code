@@ -35,7 +35,7 @@ import { authHeadersFor, resolveAnalyticsEndpoint, sessionPolicyState, type Anal
 import { advertisesContract } from './policy-cache.js';
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { proveJsonRecord } from './otlp-json-reader.js';
-import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
+import { PROJECT_HEADER, coworkFundingHeaders, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { recordDestinationMarker } from './destination-intent.js';
@@ -172,8 +172,13 @@ interface SendRequest {
 /** A recorded session's key and frozen record: all  needs. */
 export interface RecordGuard { key: string; record: EvidenceRecord }
 
-function requestHeaders(req: SendRequest): Record<string, string> {
+async function requestHeaders(req: SendRequest): Promise<Record<string, string>> {
   if (req.evidence && req.evidence.wireMode !== 'legacy') return evidenceHeaders(req.sessionId, req.evidence);
+  // An unrecorded session the daemon served as Cowork declares its CodeMie funding; a recorded one answers to its record.
+  if (!req.evidence && !req.guard) {
+    const funded = await coworkFundingHeaders(req.sessionId, req.project);
+    if (funded) return funded;
+  }
   // Legacy request: no Session-Id or evidence header; no project = no Project header (AC8).
   const project = rawProjectHeader(req.project);
   return project ? { [PROJECT_HEADER]: project } : {};
@@ -200,7 +205,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     const guard = req.evidence ?? req.guard;
     if (!(await isSendAllowed(sessionId, stream, req.project, req.range)) || (guard && !(await sendGuard(guard.key, guard.record)))) return null;
     if (req.evidence?.newContract && !(await beginSend(req.evidence.key, sessionId))) return null;
-    return postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req));
+    return postToBackend(req.url, req.body, req.contentType, req.credentials, await requestHeaders(req));
   };
   const stopped = async (ctx: EvidenceContext, reason: Parameters<typeof writeStop>[1]): Promise<void> => {
     if ((await stopSession(ctx, reason)) === 'volatile') stopUnrecorded = true;
