@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { fetchTenantModelDescriptors, type TenantModelDescriptor } from './tenant-catalog.js';
@@ -123,7 +123,7 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
     const alternative = insiders
       ? 'Remove --insiders to configure stable VS Code.'
       : 'Use --insiders if only VS Code Insiders is installed.';
-    throw new ConfigurationError(
+    throw new ClientNotInstalledError(
       `${edition} user data directory was not found at ${productDir}.\n${alternative}`
     );
   }

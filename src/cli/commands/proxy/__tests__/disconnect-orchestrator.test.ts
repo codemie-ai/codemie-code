@@ -420,8 +420,8 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(printed.join('\n')).toContain('--claude-otlp');
     expect(printed.join('\n')).toContain('--copilot-otlp');
     const lines = printed.join('\n').split('\n');
-    expect(lines).toContain('  --claude-otlp          Every Claude client (analytics, and the proxy route of Claude Desktop and the extension)');
-    expect(lines).toContain('  --copilot-otlp         Every Copilot client (Copilot Chat and Copilot CLI analytics)');
+    expect(lines).toContain('  --claude-otlp         Every Claude client (analytics, and the Desktop/VS Code proxy route)');
+    expect(lines).toContain('  --copilot-otlp        Every Copilot client (Copilot Chat and Copilot CLI analytics)');
     expect(lines).toContain('  codemie proxy disconnect --claude-otlp');
   });
 });

@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 
 import { logger } from '@/utils/logger.js';
-import { CodeMieError } from '@/utils/errors.js';
+import { ClientNotInstalledError, CodeMieError } from '@/utils/errors.js';
 import { readDesktopGatewayConfig } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 import {
   CLAUDE_DESKTOP,
@@ -291,12 +291,15 @@ export async function listConnectedClientTargets(): Promise<ClientTarget[]> {
   return (await readClientTargetStates()).filter((state) => state.connected).map((state) => state.target);
 }
 
-/** The location of a target's config, or a note when it cannot be resolved on this platform. Never throws. */
+/**
+ * The location of a target's config, or why it has none: `not installed` when the application is not on this machine,
+ * `unavailable on this platform` when the location cannot be resolved on this OS at all. Never throws.
+ */
 export function describeConfigLocation(target: ClientTarget): string {
   try {
     return target.configLocation();
   } catch (error) {
     logger.debug(`[client-targets] ${target.id} config location unavailable:`, error);
-    return 'unavailable on this platform';
+    return error instanceof ClientNotInstalledError ? 'not installed' : 'unavailable on this platform';
   }
 }

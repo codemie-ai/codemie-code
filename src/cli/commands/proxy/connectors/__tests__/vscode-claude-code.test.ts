@@ -8,7 +8,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import {
   getVsCodeClaudeCodeSettingsPath,
   moveVsCodeClaudeCodeToNamedKey,
@@ -281,6 +281,7 @@ describe('getVsCodeClaudeCodeSettingsPath', () => {
     vi.spyOn(vscodeModule, 'getVsCodeProductDir').mockReturnValue(missingDir);
 
     expect(() => getVsCodeClaudeCodeSettingsPath(false)).toThrow(ConfigurationError);
+    expect(() => getVsCodeClaudeCodeSettingsPath(false)).toThrow(ClientNotInstalledError);
   });
 
   it('resolves to <productDir>/User/settings.json when the product directory exists', () => {

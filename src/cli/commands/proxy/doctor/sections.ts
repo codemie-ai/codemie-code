@@ -175,7 +175,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
 
 export async function cliPathSections(): Promise<Sections> {
   const older = await findOlderCliOnPath();
-  if (!older) return [];
+  if (!older) return [{ id: 'cli-path', status: 'ok', message: 'No older CodeMie CLI on PATH' }];
   return [{
     id: 'cli-path',
     status: 'warn',

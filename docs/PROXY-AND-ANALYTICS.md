@@ -51,7 +51,7 @@ codemie proxy doctor
 codemie proxy doctor --verbose
 ```
 
-`doctor` checks the daemon, each client's key and port, the connectors and the delivery queue, and prints the command that fixes each finding. `--json` gives the same for scripts.
+`doctor` prints one heading per section — Daemon, Authentication and upstream, Clients, Analytics connectors, Analytics delivery, Claude Desktop collection, Environment — each with at least one line (`ok` or `info` when there is nothing to report), the command that fixes each finding, and a closing count such as `2 warnings, 0 errors`. It exits 1 only on an error. `--json` carries every section for scripts.
 
 ### Exclude and re-include a project
 

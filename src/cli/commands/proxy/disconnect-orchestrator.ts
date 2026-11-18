@@ -22,12 +22,13 @@ import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import {
   ANALYTICS_AGGREGATES,
-  aggregateListLines,
+  aggregateListRows,
   isMemberConfigured,
   isMemberFound,
   membersOf,
   type AggregateId,
 } from './analytics-clients.js';
+import { formatFlagRows } from './flag-list.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
@@ -49,18 +50,21 @@ export interface DisconnectOptions {
   aggregates?: readonly AggregateId[];
 }
 
-const DISCONNECT_TARGET_LIST = [
+/** The bare `proxy disconnect` target list; every description starts at one column, computed from the longest flag. */
+export const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
-  '  --claude-desktop       Claude Desktop app (removes the gateway config and managed MCP servers)',
-  '  --vscode               VS Code BYOK (removes the CodeMie provider from chatLanguageModels.json)',
-  '  --vscode-claude-code   VS Code Claude Code extension (removes ANTHROPIC_* env vars from settings.json)',
-  '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
-  '  --omp                  oh-my-pi (removes the CodeMie model catalog extension)',
-  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
-  `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   Copilot Chat OTLP (removes the CodeMie hook file + settings entry)`,
-  `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Copilot CLI OTLP (removes the CodeMie hook file)`,
-  ...aggregateListLines((a) => [a.disconnectListLine]),
+  ...formatFlagRows([
+    ['--claude-desktop', 'Claude Desktop app (removes the gateway config and managed MCP servers)'],
+    ['--vscode', 'VS Code BYOK (removes the CodeMie provider)'],
+    ['--vscode-claude-code', 'VS Code Claude Code extension (removes the ANTHROPIC_* settings)'],
+    ['--codex-desktop', 'Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)'],
+    ['--omp', 'oh-my-pi (removes the CodeMie model catalog extension)'],
+    [`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Claude Code OTLP (removes hook/env entries)'],
+    [`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Copilot Chat OTLP (removes the CodeMie hook file + settings entry)'],
+    [`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Copilot CLI OTLP (removes the CodeMie hook file)'],
+    ...aggregateListRows((a) => a.disconnectListLine),
+  ]),
   '',
   'Example:',
   '  codemie proxy disconnect --claude-desktop --vscode-claude-code',

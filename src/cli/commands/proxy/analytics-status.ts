@@ -32,13 +32,23 @@ interface ConnectorSection {
   headline: { label: string; value: string };
   /** True when `connect` is the first thing to run (hooks missing / connector not connected). */
   needsConnect: boolean;
-  scope: string;
+  scope: ClaudeAnalyticsStatus['scope'] | CopilotAnalyticsStatus['scope'];
   trackedProjects: string[];
   enabled: boolean;
   excludedProjects: string[];
   preferencesCorrupt: boolean;
   preferencesPath: string;
 }
+
+/** The readable text of every scope value; `--json` keeps the raw values. */
+const SCOPE_TEXT: Record<ConnectorSection['scope'], string> = {
+  user: 'all projects (user scope)',
+  project: 'selected projects (project scope)',
+  invalid: 'unreadable (invalid tracked-project list)',
+  corrupt: 'unreadable (connector settings are corrupt)',
+  'not-configured': 'not set up',
+  'not-connected': 'not set up',
+};
 
 /** A project list as rows: one analytics project name per line, or `none` when the list is empty. */
 async function projectListRow(label: string, paths: string[]): Promise<ReportRow> {
@@ -58,7 +68,7 @@ async function renderConnectorSection(section: ConnectorSection): Promise<string
       message: `${section.headline.label}: ${section.headline.value}`,
       ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: `codemie proxy connect --${section.connectorId}` }) } : {}),
     },
-    { message: `Scope: ${section.scope}` },
+    { message: `Scope: ${SCOPE_TEXT[section.scope]}` },
   ];
   if (section.scope === 'project') {
     rows.push(await projectListRow('Tracked:', section.trackedProjects));

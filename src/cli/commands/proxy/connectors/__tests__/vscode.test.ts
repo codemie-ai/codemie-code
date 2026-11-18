@@ -15,7 +15,7 @@ import {
   readVsCodeByokGateway,
   writeVsCodeLanguageModelsConfigAtPath,
 } from '../vscode.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 
 const EXPECTED_MODEL_IDS = [
   'claude-sonnet-4-5-20250929',
@@ -527,6 +527,11 @@ describe('readVsCodeByokGateway', () => {
     vendor: 'customendpoint',
     models: urls.map((url, index) => ({ id: `m${index}`, url })),
   }]);
+
+  it('a missing product directory throws ClientNotInstalledError, still a ConfigurationError', () => {
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ClientNotInstalledError);
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ConfigurationError);
+  });
 
   it('reads back the port its writer wrote, with no key', async () => {
     await mkdir(getVsCodeProductDir(false), { recursive: true });

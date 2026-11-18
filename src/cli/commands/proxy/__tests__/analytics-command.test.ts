@@ -417,6 +417,14 @@ describe('createProxyAnalyticsCommand', () => {
     expect(names).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
   });
 
+  it('the group description names what the group does now: enable/disable, include/exclude, consent, status', async () => {
+    const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
+    const description = createProxyAnalyticsCommand().description();
+    expect(description).toBe(
+      'Control analytics collection: enable/disable, include/exclude projects, work-folder consent, and status'
+    );
+  });
+
   it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {
     const { getClaudeAnalyticsPreferencesPath } = await import(
       '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'

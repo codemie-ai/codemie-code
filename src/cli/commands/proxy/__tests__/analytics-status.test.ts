@@ -156,7 +156,7 @@ describe('analytics-status', () => {
       expect(await render(base)).toEqual([
         'Claude:',
         '  Hooks: installed',
-        '  Scope: user',
+        '  Scope: all projects (user scope)',
         '  Collection: enabled',
         '  Excluded: none',
         '',
@@ -180,7 +180,7 @@ describe('analytics-status', () => {
       expect(lines).toEqual([
         'Claude:',
         '  Hooks: installed',
-        '  Scope: project',
+        '  Scope: selected projects (project scope)',
         '  Tracked:',
         '    codemie-ai/codemie-code',
         '    unused/name',
@@ -202,6 +202,11 @@ describe('analytics-status', () => {
 
       expect(lines).toContain('    Repositories/codemie');
       expect(lines).toContain('    work/legacy-app');
+    });
+
+    it('reads an invalid tracked-project list as unreadable, never the raw enum', async () => {
+      const lines = await render({ ...base, scope: 'invalid' });
+      expect(lines).toContain('  Scope: unreadable (invalid tracked-project list)');
     });
 
     it('reads an empty Tracked list as none under project scope', async () => {
@@ -231,7 +236,7 @@ describe('analytics-status', () => {
         'Claude:',
         '  Hooks: not installed',
         '      Not connected — run: codemie proxy connect --claude-code-otlp',
-        '  Scope: not-configured',
+        '  Scope: not set up',
       ]);
       expect(lines.join('\n').match(/run:/g)).toHaveLength(1);
     });
@@ -271,7 +276,7 @@ describe('analytics-status', () => {
       expect(await render(base)).toEqual([
         'Copilot CLI:',
         '  Connected: yes',
-        '  Scope: user',
+        '  Scope: all projects (user scope)',
         '  Collection: enabled',
         '  Excluded: none',
         '',
@@ -292,7 +297,7 @@ describe('analytics-status', () => {
         'Copilot CLI:',
         '  Connected: no',
         '      Not connected — run: codemie proxy connect --copilot-cli-otlp',
-        '  Scope: not-connected',
+        '  Scope: not set up',
         '  Collection: disabled',
         '  Excluded: none',
         '',
@@ -312,6 +317,11 @@ describe('analytics-status', () => {
 
       expect(lines).toContain('  Preferences file is corrupt — collection is stopped');
       expect(lines).toContain('      Fix or delete /x/copilot-analytics.json.');
+    });
+
+    it('reads corrupt connector settings as unreadable, never the raw enum', async () => {
+      const lines = await render({ ...base, connected: false, scope: 'corrupt' });
+      expect(lines).toContain('  Scope: unreadable (connector settings are corrupt)');
     });
   });
 });

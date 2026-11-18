@@ -7,7 +7,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { HealthCheckFormatter } from '../../doctor/formatter.js';
 import { printNext } from '../../../related-commands.js';
-import { composeProxyDoctor, type ProxyDoctorVerbose } from './compose.js';
+import { composeProxyDoctor, type ProxyDoctorReport, type ProxyDoctorVerbose } from './compose.js';
+import { PROXY_DOCTOR_GROUPS } from './groups.js';
 
 interface ProxyDoctorCliOptions {
   verbose?: boolean;
@@ -42,6 +43,27 @@ function formatVerbose(verbose: ProxyDoctorVerbose): string[] {
   return lines;
 }
 
+/** One heading per display group that has sections, in the fixed group order. */
+function displaySections(report: ProxyDoctorReport): void {
+  const formatter = new HealthCheckFormatter();
+  for (const group of PROXY_DOCTOR_GROUPS) {
+    const details = report.sections.filter((section) => group.ids.includes(section.id));
+    if (details.length === 0) continue;
+    formatter.displayCheck({
+      name: group.title,
+      success: !details.some((section) => section.status === 'error'),
+      details: details.map(({ status, message, hint }) => ({ status, message, ...(hint !== undefined && { hint }) })),
+    });
+  }
+}
+
+/** The closing count line, e.g. `2 warnings, 0 errors`. */
+export function summaryLine(report: ProxyDoctorReport): string {
+  const count = (status: string): number => report.sections.filter((section) => section.status === status).length;
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  return `${plural(count('warn'), 'warning')}, ${plural(count('error'), 'error')}`;
+}
+
 export function createProxyDoctorCommand(): Command {
   const command = new Command('doctor');
   command
@@ -55,20 +77,13 @@ export function createProxyDoctorCommand(): Command {
       if (opts.json) {
         console.log(JSON.stringify(report, null, 2));
       } else {
-        const formatter = new HealthCheckFormatter();
-        formatter.displayCheck({
-          name: 'Proxy',
-          success: !hasError,
-          details: report.sections.map(({ status, message, hint }) => ({
-            status,
-            message,
-            ...(hint !== undefined && { hint }),
-          })),
-        });
+        displaySections(report);
         if (report.verbose) {
           for (const line of formatVerbose(report.verbose)) console.log(line);
           console.log();
         }
+        const summary = summaryLine(report);
+        console.log(hasError ? chalk.red(summary) : summary);
       }
 
       if (hasError) process.exitCode = 1;

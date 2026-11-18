@@ -46,6 +46,7 @@ import {
   type Sections,
 } from './sections.js';
 import { deliverySections } from './delivery-sections.js';
+import { PROXY_DOCTOR_GROUPS } from './groups.js';
 
 /**
  * Stable section ids. An id repeats when a section has several findings (one entry per finding).
@@ -327,6 +328,73 @@ function dropDuplicateSignIn(sections: Sections): Sections {
   return sections.filter((s) => s.id !== 'delivery');
 }
 
+interface FillContext {
+  /** The running daemon's state; null when it is stopped. */
+  state: DaemonState | null;
+  targets: ClientTargetState[] | null;
+  analyticsActive: boolean;
+  nothingConnected: boolean;
+}
+
+/**
+ * The line a display group shows when no check reported anything for it (story AC10: one verdict per section): `ok`
+ * or `info`, never a warning. While nothing is connected the daemon line alone names `codemie proxy connect` (AC14).
+ */
+function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: FillContext): ProxyDoctorSection | null {
+  const { state, nothingConnected } = ctx;
+  const connectHint = (reason: string, command: string): Pick<ProxyDoctorSection, 'hint'> =>
+    nothingConnected ? {} : { hint: renderHint({ reason, command }) };
+  switch (id) {
+    case 'auth':
+      return {
+        id,
+        status: 'info',
+        message: state ? 'Sign-in not checked: the proxy did not confirm it is running' : 'Sign-in not checked: the proxy is not running',
+      };
+    case 'clients': {
+      const connected = connectedTargets(ctx.targets);
+      return connected.length > 0
+        ? { id, status: 'ok', message: `Clients connected: ${connected.map((target) => target.label).join(', ')}` }
+        : { id, status: 'info', message: 'No clients connected', ...connectHint('nothing routes through the proxy', CONNECT_COMMAND) };
+    }
+    case 'connectors':
+      return {
+        id,
+        status: 'info',
+        message: 'None connected',
+        ...(nothingConnected ? {} : {
+          hint: renderHint({ reason: 'no analytics collected', action: `run: ${CONNECT_COMMAND} --claude-otlp (or --copilot-otlp)` }),
+        }),
+      };
+    case 'delivery':
+      if (!ctx.analyticsActive) return { id, status: 'info', message: 'Nothing to deliver: no analytics connector is connected' };
+      if (!state) return { id, status: 'info', message: 'Not checked: the proxy is not running' };
+      if (sections.some((s) => s.id === 'auth' && s.status === 'error')) {
+        return { id, status: 'info', message: 'Delivery resumes after the CodeMie sign-in above' };
+      }
+      return { id, status: 'info', message: 'Analytics delivery: not reported by this proxy' };
+    case 'desktop':
+      if (!state) return { id, status: 'info', message: 'Claude Desktop: not checked, the proxy is not running' };
+      if (!state.version) return { id, status: 'info', message: 'Claude Desktop: not checked, the proxy was started by an older CLI' };
+      return { id, status: 'info', message: 'Claude Desktop: not connected to the proxy' };
+    case 'cli-path':
+      return { id, status: 'ok', message: 'No older CodeMie CLI on PATH' };
+    default:
+      return null;
+  }
+}
+
+/** Adds one `ok`/`info` line to every display group no check reported on, so each group always renders. */
+function fillEmptyGroups(sections: Sections, ctx: FillContext): Sections {
+  const filled = [...sections];
+  for (const group of PROXY_DOCTOR_GROUPS) {
+    if (filled.some((s) => group.ids.includes(s.id))) continue;
+    const line = emptyGroupSection(group.ids[0], filled, ctx);
+    if (line) filled.push(line);
+  }
+  return filled;
+}
+
 /** Builds the proxy diagnosis. Never rejects. */
 export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<ProxyDoctorReport> {
   const sections: Sections = [];
@@ -361,6 +429,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
     !targets.some((entry) => entry.error !== undefined) &&
     !connectors.some((entry) => entry.error !== undefined);
   const claudeScope = connectors.find((entry) => entry.status && 'hooksInstalled' in entry.status)?.scope;
+  const analyticsActive = anyConnector || connectedTargets(targets).some((target) => target.carriesAnalytics);
 
   if (!state) {
     if (!sections.some((s) => s.id === 'daemon')) {
@@ -378,7 +447,6 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
       return [...result.sections, ...(await guarded('auth', 'Sign-in', () => authSections(live, result.reply, opts.authProbe)))];
     });
     sections.push(...contact);
-    const analyticsActive = anyConnector || connectedTargets(targets).some((target) => target.carriesAnalytics);
     const rest = await Promise.all([
       guarded('clients', 'Clients', () => clientSections(live, targets, connectors, nothingConnected)),
       analyticsActive ? guarded('delivery', 'Analytics delivery', () => deliverySections(live, verifiedReply)) : Promise.resolve([]),
@@ -396,6 +464,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
     report.verbose = detail.verbose;
     sections.push(...detail.sections);
   }
-  report.sections = scrubKey(dropDuplicateSignIn(sections), state?.gatewayKey);
+  const filled = fillEmptyGroups(dropDuplicateSignIn(sections), { state, targets, analyticsActive, nothingConnected });
+  report.sections = scrubKey(filled, state?.gatewayKey);
   return report;
 }

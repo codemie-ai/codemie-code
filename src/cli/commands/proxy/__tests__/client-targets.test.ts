@@ -178,6 +178,19 @@ describe('client-target table', () => {
     process.exitCode = undefined;
   });
 
+  it('a config location of a client that is not installed reads as not installed, not unavailable on this platform', async () => {
+    const { describeConfigLocation } = await import('../client-targets.js');
+    const { ClientNotInstalledError } = await import('@/utils/errors.js');
+    const target = (configLocation: () => string) => ({
+      id: 'x', flag: '--x', label: 'X', isConnected: async () => false, carriesAnalytics: false, configLocation,
+    });
+
+    expect(describeConfigLocation(target(() => { throw new ClientNotInstalledError('VS Code Insiders is not installed'); })))
+      .toBe('not installed');
+    expect(describeConfigLocation(target(() => { throw new Error('unsupported platform: aix'); })))
+      .toBe('unavailable on this platform');
+  });
+
   it('includes omp and every connect target, each id unique', async () => {
     const { CLIENT_TARGETS } = await import('../client-targets.js');
     const ids = CLIENT_TARGETS.map((target) => target.id);

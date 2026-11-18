@@ -18,6 +18,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { renderHint } from '@/utils/hint.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId } from './analytics-connectors.js';
 import { CLAUDE_CODE_OTLP_LABEL } from './claude-code-otlp-flow.js';
+import type { FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
@@ -45,8 +46,8 @@ export interface AnalyticsAggregate {
   members: readonly AnalyticsMember[];
   connectDescription: string;
   disconnectDescription: string;
-  /** The text of its line in the bare-connect target list, then the text of each continuation line. */
-  connectListLines: readonly string[];
+  /** The text of its row in the bare-connect target list: one short line. */
+  connectListLine: string;
   /** The text of its line in the bare-disconnect target list. */
   disconnectListLine: string;
 }
@@ -66,11 +67,8 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
     disconnectDescription:
       'Turn off analytics for every Claude client and remove the CodeMie proxy route of Claude Desktop and the ' +
       'VS Code Claude Code extension',
-    connectListLines: [
-      'Analytics for every Claude client found (Claude Code, VS Code extension, Claude Desktop)',
-      'Routes Claude Desktop and the extension through the CodeMie proxy; its disconnect removes that route',
-    ],
-    disconnectListLine: 'Every Claude client (analytics, and the proxy route of Claude Desktop and the extension)',
+    connectListLine: 'Analytics for every Claude client found: Claude Code, VS Code, Desktop',
+    disconnectListLine: 'Every Claude client (analytics, and the Desktop/VS Code proxy route)',
   },
   {
     id: 'copilot-otlp',
@@ -81,7 +79,7 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
       'Analytics for every Copilot client found on this machine — Copilot Chat, Copilot CLI ' +
       '(same as --copilot-chat-otlp --copilot-cli-otlp)',
     disconnectDescription: 'Turn off analytics for Copilot Chat and Copilot CLI',
-    connectListLines: ['Analytics for every Copilot client found (Copilot Chat, Copilot CLI)'],
+    connectListLine: 'Analytics for every Copilot client found: Copilot Chat, Copilot CLI',
     disconnectListLine: 'Every Copilot client (Copilot Chat and Copilot CLI analytics)',
   },
 ];
@@ -103,12 +101,9 @@ export function aggregateFlagOf(member: AnalyticsMember): string {
   return aggregate.flag;
 }
 
-/**
- * The lines of the aggregates in a bare-command target list: the flag padded to the list's description column, then
- * the text; a continuation line starts at that column.
- */
-export function aggregateListLines(text: (a: AnalyticsAggregate) => readonly string[]): string[] {
-  return ANALYTICS_AGGREGATES.flatMap((a) => text(a).map((line, i) => `  ${i === 0 ? a.flag.padEnd(23) : ' '.repeat(23)}${line}`));
+/** The rows of the aggregates in a bare-command target list: the flag and its one-line text. */
+export function aggregateListRows(text: (a: AnalyticsAggregate) => string): FlagRow[] {
+  return ANALYTICS_AGGREGATES.map((a) => [a.flag, text(a)] as const);
 }
 
 /** The aggregates' lines in the bare-connect examples. */

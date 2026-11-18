@@ -180,7 +180,10 @@ describe('composeProxyDoctor', () => {
     const report = await compose();
 
     expect(report.sections.filter((s) => s.id === 'auth' && s.status === 'error')).toHaveLength(1);
-    expect(report.sections.some((s) => s.id === 'delivery')).toBe(false);
+    const delivery = report.sections.filter((s) => s.id === 'delivery');
+    expect(delivery).toHaveLength(1);
+    expect(delivery[0].status).toBe('info');
+    expect(delivery[0].message).not.toContain('sign-in has expired');
   });
 
   it('keeps the delivery credentials_expired error when auth is not an error', async () => {
@@ -236,6 +239,49 @@ describe('composeProxyDoctor', () => {
     expect(hints).toHaveLength(1);
     expect(hints[0]).toContain('— run: codemie proxy connect');
     expect(signIn).not.toHaveBeenCalled();
+  });
+
+  describe('every section always renders', () => {
+    /** Section ids by display group: daemon, sign-in and upstream, clients, connectors, delivery, Desktop, environment. */
+    const GROUPS: string[][] = [['daemon'], ['auth', 'upstream'], ['clients'], ['connectors', 'claude-code-otlp'], ['delivery'], ['desktop'], ['cli-path']];
+    const missing = (report: Awaited<ReturnType<typeof compose>>): string[][] =>
+      GROUPS.filter((ids) => !report.sections.some((s) => ids.includes(s.id)));
+
+    it('a running daemon with only a gateway client still has a line in every group', async () => {
+      claudeCollect.mockResolvedValue(claudeStatus());
+
+      const report = await compose();
+
+      expect(missing(report)).toEqual([]);
+      const connectors = report.sections.find((s) => s.id === 'connectors');
+      expect(connectors?.status).toBe('info');
+      expect(connectors?.hint).toContain('codemie proxy connect --claude-otlp');
+      const delivery = report.sections.find((s) => s.id === 'delivery');
+      expect(delivery?.status).toBe('info');
+      expect(delivery?.message).toMatch(/no analytics connector/i);
+      expect(report.sections.find((s) => s.id === 'desktop')?.status).toBe('info');
+      expect(report.sections.find((s) => s.id === 'cli-path')).toMatchObject({ status: 'ok' });
+    });
+
+    it('a stopped daemon with nothing connected has a line in every group, no error and no warning', async () => {
+      readDaemonStatus.mockResolvedValue({ running: false, state: null });
+      clientConnected.mockResolvedValue(false);
+      claudeCollect.mockResolvedValue(claudeStatus());
+
+      const report = await compose();
+
+      expect(missing(report)).toEqual([]);
+      expect(report.sections.filter((s) => s.status === 'error' || s.status === 'warn')).toEqual([]);
+    });
+
+    it('a stopped daemon lists the connected clients under the clients group', async () => {
+      readDaemonStatus.mockResolvedValue({ running: false, state: null });
+
+      const report = await compose();
+
+      expect(missing(report)).toEqual([]);
+      expect(report.sections.find((s) => s.id === 'clients')?.message).toContain('VS Code Claude Code extension');
+    });
   });
 
   it('the Claude Code OTLP repair hint carries its current --scope, read through the connector readScope', async () => {

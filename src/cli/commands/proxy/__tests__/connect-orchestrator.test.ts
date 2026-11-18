@@ -373,11 +373,11 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('--claude-otlp'));
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('--copilot-otlp'));
     expect(console_.log()).toHaveBeenCalledWith(
-      expect.stringContaining('Routes Claude Desktop and the extension through the CodeMie proxy; its disconnect removes that route'),
+      expect.stringContaining('Analytics for every Claude client found: Claude Code, VS Code, Desktop'),
     );
     const lines = String(console_.log().mock.calls[0][0]).split('\n');
-    expect(lines).toContain('  --claude-otlp          Analytics for every Claude client found (Claude Code, VS Code extension, Claude Desktop)');
-    expect(lines).toContain('  --copilot-otlp         Analytics for every Copilot client found (Copilot Chat, Copilot CLI)');
+    expect(lines).toContain('  --claude-otlp         Analytics for every Claude client found: Claude Code, VS Code, Desktop');
+    expect(lines).toContain('  --copilot-otlp        Analytics for every Copilot client found: Copilot Chat, Copilot CLI');
     expect(lines).toContain('  codemie proxy connect --claude-otlp');
     expect(lines).toContain('  codemie proxy connect --copilot-otlp');
     expect(process.exitCode).toBe(1);

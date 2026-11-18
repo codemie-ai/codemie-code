@@ -63,7 +63,7 @@ import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js'
 import { CLIENT_CONFIGS, type ClientConfig } from './analytics-delivery-lines.js';
 import {
   aggregateConnectExamples,
-  aggregateListLines,
+  aggregateListRows,
   dropMembersOrReportNone,
   failAggregateInvalidProjectList,
   failDesktopWithoutCodeMieUrl,
@@ -72,6 +72,7 @@ import {
   withAggregateFlags,
   type AggregateId,
 } from './analytics-clients.js';
+import { formatFlagRows } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -342,18 +343,21 @@ export function printProxyError(error: unknown, label: string): never {
 
 // ── Unified connect orchestrator ─────────────────────────────────────────────
 
-const TARGET_LIST = [
+/** The bare `proxy connect` target list; every description starts at one column, computed from the longest flag. */
+export const CONNECT_TARGET_LIST = [
   'Select at least one target to configure:',
   '',
-  '  --claude-desktop       Claude Desktop app (MCP servers)',
-  '  --vscode               VS Code Copilot Chat models (BYOK)',
-  '  --vscode-claude-code   VS Code Claude Code extension',
-  '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --omp                  oh-my-pi (installs a live CodeMie model catalog extension)',
-  ...aggregateListLines((a) => a.connectListLines),
-  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
-  `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
-  `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
+  ...formatFlagRows([
+    ['--claude-desktop', 'Claude Desktop app (MCP servers)'],
+    ['--vscode', 'VS Code Copilot Chat models (BYOK)'],
+    ['--vscode-claude-code', 'VS Code Claude Code extension'],
+    ['--codex-desktop', 'Codex desktop app (writes ~/.codex/config.toml)'],
+    ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
+    ...aggregateListRows((a) => a.connectListLine),
+    [`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Claude Code (analytics hooks + OTel settings)'],
+    [`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'VS Code Copilot Chat (hooks-only analytics, no OTel)'],
+    [`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Native GitHub Copilot CLI (hooks-only analytics, no OTel)'],
+  ]),
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -926,7 +930,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const aggregates = opts.aggregates ?? [];
 
   if (!hasAnyTarget(targets)) {
-    console.log(TARGET_LIST);
+    console.log(CONNECT_TARGET_LIST);
     process.exitCode = 1;
     return;
   }

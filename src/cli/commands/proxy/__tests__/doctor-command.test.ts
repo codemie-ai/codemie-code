@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { stripVTControlCharacters } from 'node:util';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -102,6 +103,58 @@ describe('proxy doctor command', () => {
     expect(out).toContain('no events yet');
     expect(out).toContain('/c/settings.json');
     expect(out).toContain('/c/prefs.json');
+  });
+
+  it('prints each section under its own heading, in the fixed order', async () => {
+    composeProxyDoctor.mockResolvedValue(report([
+      { id: 'daemon', status: 'ok', message: 'running' },
+      { id: 'auth', status: 'ok', message: 'signed in' },
+      { id: 'cli-path', status: 'ok', message: 'no older CLI' },
+      { id: 'clients', status: 'warn', message: 'wrong port', hint: 'h — run: x' },
+      { id: 'connectors', status: 'info', message: 'none' },
+      { id: 'claude-code-otlp', status: 'ok', message: 'endpoint ok' },
+      { id: 'delivery', status: 'info', message: 'nothing to deliver' },
+      { id: 'desktop', status: 'info', message: 'desktop not connected' },
+    ]));
+    await run([]);
+    const headings = stripVTControlCharacters(out).split('\n').filter((line) => /^\S.*:$/.test(line));
+    expect(headings).toEqual([
+      'Daemon:',
+      'Authentication and upstream:',
+      'Clients:',
+      'Analytics connectors:',
+      'Analytics delivery:',
+      'Claude Desktop collection:',
+      'Environment:',
+    ]);
+    expect(out).not.toContain('Proxy:');
+    expect(out.indexOf('wrong port')).toBeGreaterThan(out.indexOf('Clients:'));
+    expect(out.indexOf('endpoint ok')).toBeGreaterThan(out.indexOf('Analytics connectors:'));
+  });
+
+  it('ends with a one-line warning and error count, exit code unchanged', async () => {
+    composeProxyDoctor.mockResolvedValue(report([
+      { id: 'daemon', status: 'warn', message: 'older', hint: 'h — run: x' },
+      { id: 'clients', status: 'warn', message: 'port', hint: 'h — run: y' },
+    ]));
+    await run([]);
+    expect(out).toContain('2 warnings, 0 errors');
+    expect(process.exitCode ?? 0).toBe(0);
+
+    out = '';
+    composeProxyDoctor.mockResolvedValue(report([
+      { id: 'daemon', status: 'error', message: 'down', hint: 'h — run: x' },
+      { id: 'clients', status: 'warn', message: 'port', hint: 'h — run: y' },
+    ]));
+    await run([]);
+    expect(out).toContain('1 warning, 1 error');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('--json carries no summary line, only the document', async () => {
+    composeProxyDoctor.mockResolvedValue(report([{ id: 'daemon', status: 'warn', message: 'older', hint: 'h' }]));
+    await run(['--json']);
+    expect(() => JSON.parse(out)).not.toThrow();
   });
 
   it('prints an info line when nothing is connected', async () => {

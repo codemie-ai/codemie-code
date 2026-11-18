@@ -270,6 +270,8 @@ After the config is written, quit and reopen Claude Desktop.
 
 **Collection follows Claude Desktop's config, not the way the daemon was started.** Every daemon collects Desktop sessions while Claude Desktop's applied config points at it — its port, with the gateway key or Desktop's own key — whichever of `proxy connect`, `proxy start`, `proxy restart` or a hook's cold start started it. A session active after Desktop was connected is collected, and one that began earlier is sent from that moment on. With Desktop disconnected or pointed at another port nothing new is discovered, and a session already being collected is still finalised. A daemon started anew asks for the port the clients were connected with; `proxy restart` of a running daemon keeps the port it holds. `proxy start` beside a running daemon of another profile or port stops with `A proxy is already running with different settings` and the command that stops it.
 
+**`codemie proxy doctor`** prints one heading per section, in this order: `Daemon`, `Authentication and upstream`, `Clients`, `Analytics connectors`, `Analytics delivery`, `Claude Desktop collection`, `Environment` (an older CodeMie CLI first on `PATH`). Every section shows at least one line; when there is nothing to report it is an `ok` or `info` line, e.g. `None connected` with `no analytics collected — run: codemie proxy connect --claude-otlp (or --copilot-otlp)` under `Analytics connectors`. With nothing connected and the daemon stopped, only the `Daemon` line names `codemie proxy connect` and nothing is an error. The report ends with one count line, e.g. `2 warnings, 0 errors`; the exit code is 1 only when a section is an error. `--json` carries every section with its `id`.
+
 **`codemie proxy doctor` with Claude Desktop connected** reports Claude Desktop collection:
 
 | Finding | Meaning |
@@ -290,6 +292,8 @@ The status option `--deep` is deprecated (removal on 2026-12-31): it still runs 
 #### `codemie proxy clients`
 
 Lists every client and analytics connector `codemie proxy connect` can set up — Claude Desktop, the VS Code Claude Code extension (stable and Insiders), Codex desktop, VS Code BYOK (stable and Insiders), oh-my-pi, and the Claude Code, Copilot CLI and Copilot Chat analytics connectors — one row each: connected or not, its config location and, for a connected analytics connector, its scope (`user` or `project`; the project list stays in `codemie proxy analytics status`).
+
+A config location that cannot be shown reads `not installed` when the application is not on this machine (for example VS Code Insiders) and `unavailable on this platform` only when the client cannot run on this operating system.
 
 A row of one of the five analytics clients (Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat, Copilot CLI) that is not connected names the command that connects it:
 
@@ -1957,7 +1961,7 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 
 ### Claude Code OTLP analytics — disable
 
-`codemie proxy analytics` turns collection off/on or excludes one project without touching the hooks, OTel environment, or allowlist that `connect`/`disconnect` manage. It stores its own state in a CodeMie-owned file (`~/.codemie/claude-analytics.json`), so it survives `connect`, `disconnect`, and scope switches: `disconnect` uninstalls the wiring, while `analytics disable`/`exclude` turn collection off and keep the hooks installed (re-enabling is instant, no reinstall).
+`codemie proxy analytics` controls analytics collection — enable/disable, include/exclude projects, work-folder consent, and status — without touching the hooks, OTel environment, or allowlist that `connect`/`disconnect` manage. It stores its own state in a CodeMie-owned file (`~/.codemie/claude-analytics.json`), so it survives `connect`, `disconnect`, and scope switches: `disconnect` uninstalls the wiring, while `analytics disable`/`exclude` turn collection off and keep the hooks installed (re-enabling is instant, no reinstall).
 
 | Command | Effect |
 |---|---|
@@ -1965,7 +1969,7 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics enable` | Resume collection (same connectors as `disable`). |
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root; without a connector flag, for every connected connector). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Track a project again (default: the current project root; without a connector flag, for every connected connector). In Project scope it first adds the project to the connector's own tracked list (the `settings.json` allowlist for Claude Code, `~/.codemie/copilot-connectors.json` for Copilot), then removes its exclusion, and confirms it is tracked only after both succeed; if the second step fails it names the step still owed, and a re-run is safe. A project excluded through a parent folder stays excluded: the command says so and names the `include` for the parent. `exclude` and `include` are exact inverses. |
-| `codemie proxy analytics status [--json]` | Shows the effective configuration, not delivery health. One `Claude`, `Copilot CLI` or `Copilot Chat` section per connected tool, or only the tool a connector flag selects (`Claude` when no tool is connected), separated by empty lines. Each shows hooks installed or connected, the effective scope, the tracked projects (one per line), whether collection is enabled and the excluded projects (one per line), each shown as its analytics project name (`owner/repo` from the git remote, otherwise `parent/folder`); an empty list reads `none`. Then a `Consented folders` row lists the work-consent folders of the signed-in account (`none` when there are none or nobody is signed in, `unknown` when the consent store cannot be read), followed by `Delivery health — run: codemie proxy doctor`: delivery (its verdict, `Unsent data`, `Next retry` with the error of a failing send, and `Last dropped`) is reported by `codemie proxy doctor`. With `--json` the output is a `delivery` key (the analytics delivery health, including `pendingBytes`, `heldBytes` when some is on hold and `sendFailure` with `nextAt` and `detail` when sending fails; `null` when the daemon is stopped or no connector is connected), a `connectors` array with one object per shown tool (each with its `connector` id and the status fields above) and `consentedFolders` (the signed-in account's folders with their projects; `null` when the consent store cannot be read). |
+| `codemie proxy analytics status [--json]` | Shows the effective configuration, not delivery health. One `Claude`, `Copilot CLI` or `Copilot Chat` section per connected tool, or only the tool a connector flag selects (`Claude` when no tool is connected), separated by empty lines. Each shows hooks installed or connected, the effective scope (`all projects (user scope)`, `selected projects (project scope)`, `not set up`, or `unreadable (...)` when its settings cannot be read; `--json` keeps the raw values `user`, `project`, `not-configured`, `not-connected`, `invalid`, `corrupt`), the tracked projects (one per line), whether collection is enabled and the excluded projects (one per line), each shown as its analytics project name (`owner/repo` from the git remote, otherwise `parent/folder`); an empty list reads `none`. Then a `Consented folders` row lists the work-consent folders of the signed-in account (`none` when there are none or nobody is signed in, `unknown` when the consent store cannot be read), followed by `Delivery health — run: codemie proxy doctor`: delivery (its verdict, `Unsent data`, `Next retry` with the error of a failing send, and `Last dropped`) is reported by `codemie proxy doctor`. With `--json` the output is a `delivery` key (the analytics delivery health, including `pendingBytes`, `heldBytes` when some is on hold and `sendFailure` with `nextAt` and `detail` when sending fails; `null` when the daemon is stopped or no connector is connected), a `connectors` array with one object per shown tool (each with its `connector` id and the status fields above) and `consentedFolders` (the signed-in account's folders with their projects; `null` when the consent store cannot be read). |
 
 Claude Desktop Cowork sessions follow `disable` / `enable` and `exclude` / `include` too (the session's folder is what is excluded), although no hook runs for them; the folder allowlist of `connect --claude-code-otlp` does not apply to them.
 
@@ -1987,7 +1991,7 @@ Example for Claude Code in project scope:
 ```text
 Claude:
   Hooks: installed
-  Scope: project
+  Scope: selected projects (project scope)
   Tracked:
     codemie-ai/codemie-code
     Repositories/codemie

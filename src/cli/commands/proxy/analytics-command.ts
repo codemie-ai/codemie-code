@@ -276,7 +276,7 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
 export function createProxyAnalyticsCommand(): Command {
   const analytics = new Command('analytics');
   analytics.description(
-    'Turn analytics collection off/on, or exclude a single project (every connected connector by default; pass a connector flag for one)'
+    'Control analytics collection: enable/disable, include/exclude projects, work-folder consent, and status'
   );
 
   withConnectorOptions(
