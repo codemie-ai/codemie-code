@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "branch": "fix/claude-bedrock-settings-conflict",
+  "head": "381e1f92a838a31f7f3a4a20a5e251d63eb87863",
+  "runner": "npm",
+  "started_at": "2026-11-18T06:23:19Z",
+  "completed_at": "2026-11-18T06:27:51Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1753,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4550,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5451,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10395,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 175133,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "4 failed / 11185 passed. All 4 are the known pre-existing failures on main: 3 in src/utils/__tests__/system-proxy-dispatcher.test.ts and the timing test in src/cli/commands/__tests__/hook.session-delivery.test.ts (reconcile lock held). No other failures."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 55426,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "351 passed, 10 skipped (test-level skips). agent project intentionally not run per machine constraint."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 502,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: output 'No staged changes to scan'. Scans staged changes only; nothing staged. CI runs the Gitleaks scan unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 543,
+      "command": "env -i HOME=$HOME PATH=$PATH TERM=dumb CI=true npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Verifies HEAD~1..HEAD only."
+    }
+  ],
+  "failures": {
+    "unit": "TypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:56659, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/4]\u23af\n\n FAIL   unit  src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:163:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/4]\u23af\n\n FAIL   unit  src/cli/commands/__tests__/hook.session-delivery.test.ts > one server id per run: the start metric's session_id > the hook aborted right after the start metric is accepted, the reconcile lock held: the start-id step returns at once, the id not stored, a warn logged\nAssertionError: expected 2800 to be less than 2000\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:3377:23\n    3375|     });\n    3376|\n    3377|     expect(elapsedMs).toBeLessThan(2 * SECOND);\n       |                       ^\n    3378|     expect(readRecord(session.sessionId).startMetricSessionId).toBeUnd\u2026\n    3379|     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(l\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/4]\u23af\n\n\n Test Files  2 failed | 613 passed (615)\n      Tests  4 failed | 11185 passed | 2 skipped (11191)\n   Start at  08:23:51\n   Duration  174.21s (transform 26.69s, setup 0ms, import 179.40s, tests 455.48s, environment 63ms)\n"
+  }
+}
