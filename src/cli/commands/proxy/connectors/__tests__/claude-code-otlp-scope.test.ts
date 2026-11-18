@@ -3,7 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,7 +20,8 @@ describe('claude-code-otlp scope', () => {
   let projects: string[];
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codemie-claude-scope-'));
+    // Canonical like the code's paths: on Windows tmpdir() may be the 8.3 short form (RUNNER~1).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'codemie-claude-scope-')));
     vi.stubEnv('CODEMIE_HOME', join(tempDir, '.codemie'));
     projects = await Promise.all(['a', 'b', 'c'].map(async (name) => {
       const dir = join(tempDir, name);

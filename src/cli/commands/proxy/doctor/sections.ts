@@ -88,12 +88,14 @@ export function connectedTargets(states: ClientTargetState[] | null): ClientTarg
 }
 
 /**
- * The `connect` flags that repeat a connector's current tracking scope, so a repair never resets a project list:
- * `--overwrite` for an invalid list, nothing when the scope is unknown.
+ * The `connect` flags added to a repair under a vendor flag, so it never changes a project list: `--overwrite` for an
+ * invalid list, `--scope user` for user scope, and nothing for project scope (a vendor flag with no `--scope` keeps
+ * the list; `--scope project` would add the current directory to it) or an unknown scope.
  */
 export function scopeFlags(scope: ConnectorScopeRead | undefined): string {
   if (!scope) return '';
-  return 'invalid' in scope ? ' --overwrite' : ` --scope ${scope.scope}`;
+  if ('invalid' in scope) return ' --overwrite';
+  return scope.scope === 'user' ? ' --scope user' : '';
 }
 
 /** The `connect` command that repairs a target; an analytics connector's repeats its current scope. */

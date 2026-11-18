@@ -4,7 +4,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,7 +29,8 @@ describe('consent grant / revoke / list actions', () => {
   let tty: boolean | undefined;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codemie-consent-cmd-'));
+    // Canonical like the code's paths: on Windows tmpdir() may be the 8.3 short form (RUNNER~1).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'codemie-consent-cmd-')));
     work = join(tempDir, 'repo');
     await mkdir(join(work, 'sub'), { recursive: true });
     identityMock.mockReset().mockResolvedValue(id);

@@ -3,7 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -33,8 +33,9 @@ describe('createProxyAnalyticsCommand', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-'));
-    projectRoot = await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-'));
+    // Canonical like the code's paths: on Windows tmpdir() may be the 8.3 short form (RUNNER~1).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-')));
+    projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-')));
     vi.stubEnv('CODEMIE_HOME', tempDir);
     vi.stubEnv('TZ', 'America/New_York'); // times print in the local zone; the fixtures are in November, after DST ended (EST, -05:00)
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -851,7 +852,7 @@ describe('createProxyAnalyticsCommand', () => {
       const { evaluateClaudeAnalyticsGate } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js');
       const { evaluateCopilotAnalyticsGate } = await import('@/agents/core/copilot-analytics-gate.js');
       const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-      const other = await mkdtemp(join(tmpdir(), 'codemie-analytics-other-'));
+      const other = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-other-')));
       const target = await canonicalizePath(projectRoot);
       await connectClaude([other]);
       await connectCopilot({ 'copilot-cli-otlp': { enabled: true, scope: 'project', paths: [other] } });
@@ -868,7 +869,7 @@ describe('createProxyAnalyticsCommand', () => {
       const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
       const { mkdir } = await import('node:fs/promises');
       const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-      const other = await mkdtemp(join(tmpdir(), 'codemie-analytics-other-'));
+      const other = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-other-')));
       const target = await canonicalizePath(projectRoot);
       await connectClaude([other]);
       await mkdir(getClaudeAnalyticsPreferencesPath(), { recursive: true }); // removing the exclusion will fail

@@ -4,7 +4,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -33,7 +33,8 @@ describe('analytics advice', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-advice-'));
+    // Canonical like the code's paths: on Windows tmpdir() may be the 8.3 short form (RUNNER~1).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-advice-')));
     vi.stubEnv('CODEMIE_HOME', tempDir);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -284,9 +284,13 @@ describe('composeProxyDoctor', () => {
     });
   });
 
-  it('the Claude Code OTLP repair hint carries its current --scope, read through the connector readScope', async () => {
+  it.each([
+    // A vendor flag with no --scope keeps a project list; --scope project would add the current directory to it.
+    ['project', { scope: 'project', paths: ['/a'] }, 'codemie proxy connect --claude-otlp'],
+    ['user', { scope: 'user', paths: [] }, 'codemie proxy connect --claude-otlp --scope user'],
+  ])('the Claude Code OTLP repair hint for %s scope, read through the connector readScope', async (_name, read, command) => {
     claudeCollect.mockResolvedValue(claudeStatus({ hooksInstalled: true, scope: 'user' }));
-    claudeReadScope.mockResolvedValue({ scope: 'project', paths: ['/a'] });
+    claudeReadScope.mockResolvedValue(read);
     checkClaudeCodeOtlpEndpoint.mockResolvedValue({
       configured: 'http://127.0.0.1:5000/v1/analytics/otlp',
       expected: 'http://127.0.0.1:4001/v1/analytics/otlp',
@@ -297,7 +301,7 @@ describe('composeProxyDoctor', () => {
 
     const otlp = report.sections.find((s) => s.id === 'claude-code-otlp');
     expect(otlp?.status).toBe('error');
-    expect(otlp?.hint).toContain('codemie proxy connect --claude-otlp --scope project');
+    expect(otlp?.hint?.endsWith(`— run: ${command}`)).toBe(true);
   });
 
   it('never includes the gateway key in the report', async () => {
@@ -413,7 +417,7 @@ describe('composeProxyDoctor', () => {
   });
 
   describe('fix hints', () => {
-    it('the hooks-of-another-install hint repeats the connector current --scope', async () => {
+    it('the hooks-of-another-install hint of a project-scope connector names no --scope, keeping its project list', async () => {
       claudeReadScope.mockResolvedValue({ scope: 'project', paths: ['/a'] });
       collectClientNotices.mockResolvedValue({
         clientPortMismatch: [],
@@ -425,7 +429,7 @@ describe('composeProxyDoctor', () => {
       const report = await compose();
 
       const hooks = report.sections.find((s) => s.message.includes('hooks run another install'));
-      expect(hooks?.hint).toContain('— run: codemie proxy connect --claude-otlp --scope project');
+      expect(hooks?.hint?.endsWith('— run: codemie proxy connect --claude-otlp')).toBe(true);
     });
 
     it('a failed client check carries a command hint', async () => {

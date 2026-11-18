@@ -76,7 +76,7 @@ import {
   withAggregateFlags,
   type AggregateId,
 } from './analytics-clients.js';
-import { formatFlagRows, vendorFlags } from './flag-list.js';
+import { CLAUDE_OTLP_FLAG, formatFlagRows, vendorFlags } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -359,6 +359,9 @@ export const CONNECT_TARGET_LIST = [
     ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
     ...aggregateListRows((a) => a.connectListLine),
   ]),
+  '',
+  `  Note: ${CLAUDE_OTLP_FLAG} also routes Claude Desktop and the VS Code extension through the proxy; ` +
+    `disconnect ${CLAUDE_OTLP_FLAG} removes that route.`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
