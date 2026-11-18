@@ -2,6 +2,7 @@
  * `proxy disconnect` orchestration.
  * @group unit
  */
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -314,14 +315,16 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(process.exitCode).toBe(0);
   });
 
-  it('the extension neither found nor configured: skipped with no line and no exit code', async () => {
+  it('the extension neither found nor configured: nothing to disconnect for it, no exit code', async () => {
     await machine(['desktop', 'claude']);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.vscode).not.toHaveBeenCalled();
-    expect(printed.some((line) => line.includes('VS Code Claude Code'))).toBe(false);
+    expect(printed.map(stripVTControlCharacters)).toContain('VS Code Claude Code extension: nothing to disconnect.');
+    expect(removers.desktop).toHaveBeenCalled();
+    expect(removers.claudeCode).toHaveBeenCalled();
     expect(process.exitCode).toBe(0);
   });
 
@@ -341,7 +344,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.desktop).not.toHaveBeenCalled();
-    expect(printed.some((line) => line.includes('Claude Desktop'))).toBe(false);
+    expect(printed.map(stripVTControlCharacters)).toContain('Claude Desktop: nothing to disconnect.');
     expect(process.exitCode).toBe(0);
   });
 
@@ -391,13 +394,17 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(removers.claudeCode).toHaveBeenCalledWith({ scope: 'project' });
   });
 
-  it('nothing left to disconnect: one line, no exit code', async () => {
+  it('nothing left to disconnect: one nothing-to-disconnect line per client of the vendor, no exit code', async () => {
     await machine([]);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-    expect(printed).toEqual(['Nothing to disconnect. See: codemie proxy clients']);
+    expect(printed.map(stripVTControlCharacters)).toEqual([
+      'Claude Desktop: nothing to disconnect.',
+      'VS Code Claude Code extension: nothing to disconnect.',
+      'Claude Code: nothing to disconnect.',
+    ]);
     expect(process.exitCode).toBe(0);
   });
 

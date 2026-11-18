@@ -56,7 +56,7 @@ const { writeVsCodeClaudeCodeConfigAtPath } = await import('../connectors/vscode
 const {
   aggregateFlags,
   collectAnalyticsClients,
-  dropMembersNotFound,
+  membersNotFound,
   analyticsClientHint,
   ANALYTICS_CLIENT_TARGET_IDS,
   isMemberConfigured,
@@ -146,15 +146,15 @@ describe('collectAnalyticsClients', () => {
     ]);
   });
 
-  it('names each member flag when nothing is found or connected', async () => {
+  it('names the vendor flags when nothing is found or connected', async () => {
     const rows = await collectAnalyticsClients(state);
 
     expect(rows.map(({ client, found, connected, flag, otherGateway }) => ({ client, found, connected, flag, otherGateway }))).toEqual([
-      { client: 'claude-code', found: false, connected: false, flag: '--claude-code-otlp', otherGateway: false },
-      { client: 'vscode-claude-code', found: false, connected: false, flag: '--vscode-claude-code', otherGateway: false },
-      { client: 'claude-desktop', found: false, connected: false, flag: '--claude-desktop', otherGateway: false },
-      { client: 'copilot-chat', found: false, connected: false, flag: '--copilot-chat-otlp', otherGateway: false },
-      { client: 'copilot-cli', found: false, connected: false, flag: '--copilot-cli-otlp', otherGateway: false },
+      { client: 'claude-code', found: false, connected: false, flag: '--claude-otlp', otherGateway: false },
+      { client: 'vscode-claude-code', found: false, connected: false, flag: '--claude-otlp', otherGateway: false },
+      { client: 'claude-desktop', found: false, connected: false, flag: '--claude-otlp', otherGateway: false },
+      { client: 'copilot-chat', found: false, connected: false, flag: '--copilot-otlp', otherGateway: false },
+      { client: 'copilot-cli', found: false, connected: false, flag: '--copilot-otlp', otherGateway: false },
     ]);
   });
 
@@ -180,7 +180,7 @@ describe('collectAnalyticsClients', () => {
     const rows = await collectAnalyticsClients(state);
 
     expect(pick(rows, 'vscode-claude-code')).toMatchObject({ found: true, flag: '--claude-otlp --insiders' });
-    expect(pick(rows, 'copilot-chat')).toMatchObject({ found: false, flag: '--copilot-chat-otlp' });
+    expect(pick(rows, 'copilot-chat')).toMatchObject({ found: false, flag: '--copilot-otlp' });
   });
 
   it('reads no gateway config and no Desktop connection with no daemon', async () => {
@@ -220,7 +220,7 @@ describe('collectAnalyticsClients', () => {
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
     expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
-      .toMatchObject({ found: false, connected: false, flag: '--vscode-claude-code' });
+      .toMatchObject({ found: false, connected: false, flag: '--claude-otlp' });
   });
 
   it('reads the extension with the Insiders directory alone and the hooks, no route in either edition, not connected', async () => {
@@ -444,16 +444,16 @@ describe('analyticsClientHint', () => {
     row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp'),
     row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp'),
     row('copilot-chat', 'Copilot Chat', true, false, '--copilot-otlp'),
-    row('copilot-cli', 'Copilot CLI', false, false, '--copilot-cli-otlp'),
+    row('copilot-cli', 'Copilot CLI', false, false, '--copilot-otlp'),
   ];
 
-  it('names the vendor flag for a found client, its own flag for one not found, nothing for a connected one', () => {
+  it('names the vendor flag for a found client and for one not found, nothing for a connected one', () => {
     expect(rows.map((r) => analyticsClientHint(r, true))).toEqual([
       undefined,
       undefined,
       'not connected — run: codemie proxy connect --claude-otlp',
       'not connected — run: codemie proxy connect --copilot-otlp',
-      'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+      'not found — run: codemie proxy connect --copilot-otlp',
     ]);
   });
 
@@ -461,7 +461,7 @@ describe('analyticsClientHint', () => {
     expect(rows.slice(2).map((r) => analyticsClientHint(r, false))).toEqual([
       'not connected',
       'not connected',
-      'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+      'not found — run: codemie proxy connect --copilot-otlp',
     ]);
   });
 
@@ -472,11 +472,11 @@ describe('analyticsClientHint', () => {
   });
 
   it.each([
-    [false, 'not found — if it is installed, run: codemie proxy connect --claude-desktop'],
+    [false, 'not found — run: codemie proxy connect --claude-otlp'],
     [true, 'points at a local gateway with a key this proxy does not accept — ' +
-      'if it should use CodeMie, run: codemie proxy connect --claude-desktop'],
+      'if it should use CodeMie, run: codemie proxy connect --claude-otlp'],
   ])('a not found Desktop row on another local gateway, commands %s', (commands, hint) => {
-    const desktop = row('claude-desktop', 'Claude Desktop', false, false, '--claude-desktop', true);
+    const desktop = row('claude-desktop', 'Claude Desktop', false, false, '--claude-otlp', true);
     expect(analyticsClientHint(desktop, commands)).toBe(hint);
   });
 
@@ -502,26 +502,23 @@ describe('membersOf / aggregateFlags', () => {
   });
 });
 
-describe('dropMembersNotFound', () => {
+describe('membersNotFound', () => {
   const targets = { claudeDesktop: true, vscodeClaudeCode: true, claudeCodeOtlp: true, omp: true };
 
-  it('gives an equal copy and runs no lookup with no aggregate', async () => {
+  it('is empty and runs no lookup with no aggregate', async () => {
     for (const lookup of [getClaudeDesktopAppCandidates, getCommandPath, getVsCodeProductDir]) vi.mocked(lookup).mockClear();
-    const result = await dropMembersNotFound(targets, [], { insiders: false });
 
-    expect(result).toEqual(targets);
-    expect(result).not.toBe(targets);
+    expect(await membersNotFound(targets, [], { insiders: false })).toEqual(new Set());
     expect(getClaudeDesktopAppCandidates).not.toHaveBeenCalled();
     expect(getCommandPath).not.toHaveBeenCalled();
     expect(getVsCodeProductDir).not.toHaveBeenCalled();
   });
 
-  it('sets a member not found to false and leaves a target outside the aggregate as given', async () => {
+  it('names each member of the aggregate that is set and not found; a target outside it is never named', async () => {
     await desktopApp();
 
-    expect(await dropMembersNotFound(targets, ['claude-otlp'], { insiders: false })).toEqual({
-      claudeDesktop: true, vscodeClaudeCode: false, claudeCodeOtlp: false, omp: true,
-    });
+    expect(await membersNotFound(targets, ['claude-otlp'], { insiders: false }))
+      .toEqual(new Set(['vscodeClaudeCode', 'claudeCodeOtlp']));
   });
 });
 

@@ -119,7 +119,7 @@ const ANALYTICS_ROWS = [
   { client: 'vscode-claude-code', label: 'VS Code Claude Code extension', found: true, connected: false, flag: '--claude-otlp', otherGateway: false },
   { client: 'claude-desktop', label: 'Claude Desktop', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
   { client: 'copilot-chat', label: 'Copilot Chat', found: true, connected: false, flag: '--copilot-otlp', otherGateway: false },
-  { client: 'copilot-cli', label: 'Copilot CLI', found: false, connected: false, flag: '--copilot-cli-otlp', otherGateway: false },
+  { client: 'copilot-cli', label: 'Copilot CLI', found: false, connected: false, flag: '--copilot-otlp', otherGateway: false },
 ];
 
 const removers = vi.hoisted(() => ({
@@ -265,7 +265,7 @@ describe('client-target table', () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it('an analytics client that is not connected carries its hint, the vendor flag when found, its own when not', async () => {
+  it('an analytics client that is not connected carries its hint, the vendor flag whether found or not', async () => {
     const rows = (JSON.parse(await runClients(['--json'])) as { clients: ClientRow[] }).clients;
     const byId = (id: string) => rows.find((row) => row.id === id);
 
@@ -280,7 +280,7 @@ describe('client-target table', () => {
       found: true, hint: 'not connected — run: codemie proxy connect --copilot-otlp',
     });
     expect(byId('copilot-cli-otlp')).toMatchObject({
-      found: false, hint: 'not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+      found: false, hint: 'not found — run: codemie proxy connect --copilot-otlp',
     });
     for (const id of ['vscode-claude-code-insiders', 'codex-desktop', 'vscode', 'vscode-insiders', 'omp']) {
       expect(byId(id), id).not.toHaveProperty('hint');
@@ -292,7 +292,7 @@ describe('client-target table', () => {
   it('prints the hint on the not connected rows of the text output', async () => {
     const out = stripVTControlCharacters(await runClients([]));
     expect(out).toMatch(/Copilot Chat\s+not connected — run: codemie proxy connect --copilot-otlp/);
-    expect(out).toMatch(/Copilot CLI\s+not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp/);
+    expect(out).toMatch(/Copilot CLI\s+not found — run: codemie proxy connect --copilot-otlp/);
     expect(out).not.toContain('Analytics clients:');
   });
 

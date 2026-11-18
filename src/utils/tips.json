@@ -276,7 +276,7 @@
   {
     "id": "cmd-proxy-analytics-copilot",
     "category": "Proxy & IDE",
-    "message": "GitHub Copilot CLI or VS Code Copilot Chat in your analytics? `codemie proxy connect --copilot-otlp` connects every Copilot client found.",
+    "message": "GitHub Copilot CLI or VS Code Copilot Chat in your analytics? `codemie proxy connect --copilot-otlp` connects every Copilot client, installed or not.",
     "command": "proxy",
     "commands": [
       "codemie proxy connect --copilot-otlp"

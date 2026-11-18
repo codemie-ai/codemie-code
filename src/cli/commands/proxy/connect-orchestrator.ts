@@ -64,11 +64,13 @@ import { CLIENT_CONFIGS, type ClientConfig } from './analytics-delivery-lines.js
 import {
   aggregateConnectExamples,
   aggregateListRows,
-  dropMembersOrReportNone,
   failAggregateInvalidProjectList,
   failDesktopWithoutCodeMieUrl,
   memberFlag,
+  membersNotFound,
   membersOf,
+  notInstalledLine,
+  type AnalyticsMember,
   withAggregateFlags,
   type AggregateId,
 } from './analytics-clients.js';
@@ -946,8 +948,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
   const scope: AllowlistScope = opts.scope ?? 'user';
 
-  const activeTargets = await dropMembersOrReportNone(targets, aggregates, { insiders });
-  if (!activeTargets) return;
+  // An aggregate wires every member, found or not; one whose application is not found is named after the run.
+  const activeTargets: ConnectTargets = { ...targets };
+  const notFound = await membersNotFound(targets, aggregates, { insiders });
   const members = membersOf(aggregates);
   // A member an aggregate set keeps its stored project list when --scope is omitted.
   const keptLists = new Set<AnalyticsTargetKey>(
@@ -1073,20 +1076,23 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   // The `proxy connect` flags of the client configs this run wrote, and whether each write succeeded.
   const targetOk = new Map<string, boolean>();
-  const runClient = async (flag: string, result: Promise<TargetResult>): Promise<void> => {
+  /** Whether each analytics member's writer succeeded, for the `configured (not installed yet)` lines. */
+  const memberOk = new Map<AnalyticsMember, boolean>();
+  const runClient = async (flag: string, result: Promise<TargetResult>, member?: AnalyticsMember): Promise<void> => {
     const r = await result;
     results.push(r);
     targetOk.set(flag, r.ok);
+    if (member) memberOk.set(member, r.ok);
   };
   const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    await runClient('--claude-desktop', runClaudeDesktop(state, verbose));
+    await runClient('--claude-desktop', runClaudeDesktop(state, verbose), 'claudeDesktop');
   }
   if (activeTargets.vscode) {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
-    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders));
+    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders), 'vscodeClaudeCode');
   }
   if (activeTargets.codexDesktop) {
     await runClient('--codex-desktop', runCodexDesktop(state, {
@@ -1104,7 +1110,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     copilotCliOtlp: () => runCopilotCliOtlp(writerScope('copilotCliOtlp')),
   };
   for (const target of ANALYTICS_TARGETS.filter((entry) => activeTargets[entry.key])) {
-    results.push(await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]));
+    const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
+    results.push(r);
+    memberOk.set(target.key, r.ok);
+  }
+  for (const member of notFound) {
+    if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));
   }
   if (activeTargets.omp) {
     await runClient('--omp', runOmp(Boolean(opts.overwrite)));

@@ -2,7 +2,7 @@
  * `codemie proxy clients`: every client and analytics connector of the client-target table, whether it is connected,
  * where its config lives and, for a connected analytics connector, its tracking scope. An analytics client that is
  * not connected (Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat, Copilot CLI) carries
- * the command that connects it — its vendor flag when the client is found on this machine, its own flag when not.
+ * the command that connects it — its vendor flag, whether or not the client is found on this machine.
  * Tracked and excluded project lists are left to `proxy analytics status`. Only reads.
  */
 import { Command } from 'commander';
