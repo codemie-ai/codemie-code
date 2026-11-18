@@ -2,7 +2,7 @@
  * The Cowork attribution pin and the funding gate built on it, over a temp CODEMIE_HOME (real files, no mocks).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution } from '../cowork-attribution.js';
@@ -48,6 +48,15 @@ describe('the attribution pin', () => {
 
     expect(await saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' })).toEqual({ project: 'p', projectSource: 'profile' });
     expect(await loadCoworkAttribution(ID)).toEqual({ project: 'p', projectSource: 'profile' });
+  });
+
+  it('does not replace state it cannot read (an I/O error is not a corrupt pin) and leaves no temp file', async () => {
+    mkdirSync(attributionFile()); // reading a directory fails with EISDIR, not ENOENT/parse
+
+    await expect(saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' })).rejects.toMatchObject({ code: 'EISDIR' });
+    expect(statSync(attributionFile()).isDirectory()).toBe(true);
+    expect(readdirSync(join(codemieHome, 'analytics', 'state')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(await loadCoworkAttribution(ID)).toBeNull();
   });
 
   it.each([

@@ -31,24 +31,43 @@ function attributionPath(cliSessionId: string): string {
   return getCodemiePath('analytics', 'state', `${cliSessionId}.cowork-attribution.json`);
 }
 
+/** Reads the pin file: the pin, 'corrupt' (not JSON or of another shape), or null when missing. Any other I/O error (permissions, a directory, ...) is thrown, never taken for "no pin". */
+async function readPin(cliSessionId: string): Promise<CoworkAttribution | 'corrupt' | null> {
+  let text: string;
+  try {
+    text = await readFile(attributionPath(cliSessionId), 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const parsed = JSON.parse(text) as Partial<CoworkAttribution> | null;
+    if (typeof parsed?.project !== 'string' || typeof parsed.projectSource !== 'string' || !SOURCES.includes(parsed.projectSource)) return 'corrupt';
+    return { project: parsed.project, projectSource: parsed.projectSource };
+  } catch {
+    return 'corrupt';
+  }
+}
+
 /**
- * The pin of a session; null when there is none or the file is unreadable. The caller then resolves again, but a project
- * the spool already holds for the session is kept (see `pinAttribution`), so an unreadable pin cannot move a session.
+ * The pin of a session; null when there is none, the file is corrupt or it cannot be read. The caller then resolves again,
+ * but a project the spool already holds for the session is kept (see `pinAttribution`), so an unreadable pin cannot move a session.
  */
 export async function loadCoworkAttribution(cliSessionId: string): Promise<CoworkAttribution | null> {
   try {
-    const parsed = JSON.parse(await readFile(attributionPath(cliSessionId), 'utf-8')) as Partial<CoworkAttribution> | null;
-    if (typeof parsed?.project !== 'string' || typeof parsed.projectSource !== 'string' || !SOURCES.includes(parsed.projectSource)) return null;
-    return { project: parsed.project, projectSource: parsed.projectSource };
+    const pin = await readPin(cliSessionId);
+    return pin === 'corrupt' ? null : pin;
   } catch {
     return null;
   }
 }
 
 /**
- * Publishes the pin atomically and write-once: a unique temp file is hard-linked to the pin path, so a reader never sees
- * half of it and, when two processings race, the first pin wins. Returns the pin in effect. An unreadable file at the
- * path is replaced.
+ * Publishes the pin atomically (a reader never sees half of it) and write-once: a unique temp file is hard-linked to the
+ * pin path, so an existing valid pin is never replaced and is the value returned. Only a corrupt file is replaced; a file
+ * that cannot be read for another reason (permissions, I/O) throws and is left alone, so the next processing retries.
+ * The only writer is the Cowork producer, which the runner serializes per session; no cross-process lock is claimed.
+ * Returns the pin now in effect.
  */
 export async function saveCoworkAttribution(cliSessionId: string, attribution: CoworkAttribution): Promise<CoworkAttribution> {
   const path = attributionPath(cliSessionId);
@@ -56,12 +75,14 @@ export async function saveCoworkAttribution(cliSessionId: string, attribution: C
   const temp = `${path}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(attribution), 'utf-8');
   try {
-    await link(temp, path);
-    return attribution;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const existing = await loadCoworkAttribution(cliSessionId);
-    if (existing) return existing;
+    try {
+      await link(temp, path);
+      return attribution;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    const existing = await readPin(cliSessionId);
+    if (existing && existing !== 'corrupt') return existing;
     await rename(temp, path);
     return attribution;
   } finally {
