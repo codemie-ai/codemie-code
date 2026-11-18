@@ -106,6 +106,14 @@ export async function readCopilotConnectorScope(
   return { kind: 'ok', value: record };
 }
 
+/** The scope a write that keeps the project list stores: an enabled project-scope record as it is, else scope `user`. */
+export async function readKeptCopilotConnectorScope(connectorId: string): Promise<CopilotConnectorScope> {
+  const existing = await readCopilotConnectorScope(connectorId);
+  return existing.kind === 'ok' && existing.value.enabled && existing.value.scope === 'project'
+    ? existing.value
+    : { enabled: true, scope: 'user' };
+}
+
 /**
  * Merge-writes one connector's scope record; other connectors' records are preserved.
  * Refuses to overwrite an existing file that is unreadable or corrupt, so another connector's

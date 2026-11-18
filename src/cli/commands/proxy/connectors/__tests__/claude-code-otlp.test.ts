@@ -643,6 +643,58 @@ describe('claude-code-otlp connector', () => {
       });
     });
 
+    describe('keepProjectList', () => {
+      const settingsPath = () => join(homeDir, '.claude', 'settings.json');
+      async function storeFilter(value: string): Promise<void> {
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(settingsPath(), JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: value } }));
+      }
+      async function storeTwoProjects(): Promise<string> {
+        const projects = [join(homeDir, 'project-a'), join(homeDir, 'project-b')];
+        await Promise.all(projects.map((path) => mkdir(path, { recursive: true })));
+        const stored = JSON.stringify(await Promise.all(projects.map((path) => realpath(path))));
+        await storeFilter(stored);
+        return stored;
+      }
+
+      it('writes a stored list of two projects back as it is with no scope', async () => {
+        const stored = await storeTwoProjects();
+
+        await writeClaudeCodeOtlpConfig({ keepProjectList: true });
+
+        expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(stored);
+      });
+
+      it('tracks all projects when nothing is stored', async () => {
+        const result = await writeClaudeCodeOtlpConfig({ keepProjectList: true });
+
+        expect(result.allowlist).toEqual([]);
+        expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
+      });
+
+      it('resets a stored list with scope user, as without the option', async () => {
+        await storeTwoProjects();
+
+        await writeClaudeCodeOtlpConfig({ keepProjectList: true, scope: 'user' });
+
+        expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
+      });
+
+      it('throws on an invalid stored list without --force', async () => {
+        await storeFilter('not-json');
+
+        await expect(writeClaudeCodeOtlpConfig({ keepProjectList: true })).rejects.toBeInstanceOf(ConfigurationError);
+      });
+
+      it('tracks all projects over an invalid stored list with --force', async () => {
+        await storeFilter('not-json');
+
+        await writeClaudeCodeOtlpConfig({ keepProjectList: true, force: true });
+
+        expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
+      });
+    });
+
     describe('regression: hook groups must never lose foreign commands', () => {
       it('preserves a user command that shares a group with the codemie command (codemie command first)', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
