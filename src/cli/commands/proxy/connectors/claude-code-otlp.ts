@@ -20,7 +20,7 @@ import {
   rewriteHooksCommandTree,
 } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
-import { isSymbolicLink, writeAtomically } from './vscode.js';
+import { isSymbolicLink, removeFileThroughLink, writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
   type AllowlistScope,
@@ -621,7 +621,7 @@ export async function writeClaudeCodeOtlpConfig(
         // (e.g. EPERM) must not fail the whole connect — just leaves a stale
         // backup for the next cycle to clean up.
         try {
-          await unlink(backupPathCandidate);
+          await removeFileThroughLink(backupPathCandidate);
         } catch (error) {
           logger.warn(
             '[proxy] Could not remove the now-unneeded stale backup file',
@@ -824,7 +824,7 @@ export async function removeClaudeCodeOtlpConfig(
     // Best-effort: settings.json is already correctly updated by this point,
     // so a failure here (e.g. EPERM) must not surface as "disconnect failed".
     try {
-      await unlink(backupPath);
+      await removeFileThroughLink(backupPath);
     } catch (error) {
       logger.warn(
         '[proxy] Disconnected successfully but could not remove the stale backup file',

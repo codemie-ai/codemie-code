@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VS_CODE_CAPABILITY_TABLE, type VsCodeApiType } from '../vscode-models.js';
@@ -13,6 +14,7 @@ import {
   getVsCodeLanguageModelsPath,
   getVsCodeProductDir,
   readVsCodeByokGateway,
+  removeFileThroughLink,
   writeAtomically,
   writeVsCodeLanguageModelsConfigAtPath,
 } from '../vscode.js';
@@ -691,5 +693,91 @@ describe('writeAtomically', () => {
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect(await tempFiles(dir)).toEqual([]);
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeFileThroughLink', () => {
+  let dir: string;
+  let targetDir: string;
+  let target: string;
+  let link: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'codemie-remove-through-link-'));
+    targetDir = join(dir, 'dotfiles');
+    target = join(targetDir, 'hooks.json');
+    link = join(dir, 'hooks.json');
+    await mkdir(targetDir);
+    await writeFile(target, 'hooks');
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('deletes a regular file', async () => {
+    await removeFileThroughLink(target);
+
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('deletes the target of a link and the link', async () => {
+    await symlink(target, link);
+
+    await removeFileThroughLink(link);
+
+    expect(existsSync(target)).toBe(false);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('deletes the final file of a chain of links and the path', async () => {
+    const middle = join(dir, 'middle.json');
+    await symlink(target, middle);
+    await symlink(middle, link);
+
+    await removeFileThroughLink(link);
+
+    expect(existsSync(target)).toBe(false);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning when its target cannot be deleted', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    await symlink(target, link);
+    await chmod(targetDir, 0o555);
+    try {
+      await removeFileThroughLink(link);
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(target, 'utf-8')).toBe('hooks');
+    } finally {
+      await chmod(targetDir, 0o755);
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning and keeps a target that is a FIFO', async () => {
+    const fifo = join(targetDir, 'hooks.fifo');
+    execFileSync('mkfifo', [fifo]);
+    await symlink(fifo, link);
+
+    await removeFileThroughLink(link);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await lstat(fifo)).isFIFO()).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning and keeps a target that is a directory', async () => {
+    await symlink(targetDir, link);
+
+    await removeFileThroughLink(link);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(target, 'utf-8')).toBe('hooks');
   });
 });

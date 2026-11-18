@@ -1046,7 +1046,7 @@ export async function removeDesktopConfig(
     // the target is emptied (a synced dotfile loses CodeMie's gateway too) and the link removed.
     if (await isSymbolicLink(configPath)) {
       try {
-        await writeFile(configPath, '{}', 'utf-8');
+        await writeFileAtomic(configPath, '{}');
       } catch (error) {
         logger.warn(
           '[proxy] Could not empty the target of the linked Claude Desktop config; removing the link',

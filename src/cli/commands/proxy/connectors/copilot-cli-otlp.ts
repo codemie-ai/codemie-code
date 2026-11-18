@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -26,7 +26,7 @@ import {
 import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import { getCopilotHome } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import { CLI_HOOK_EVENT_NAMES, COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { writeAtomically } from './vscode.js';
+import { removeFileThroughLink, writeAtomically } from './vscode.js';
 
 export const CLI_HOOK_TIMEOUT_SECONDS = 30;
 const CLI_HOOK_FILE_NAME = 'codemie-copilot-cli-hooks.json';
@@ -172,7 +172,7 @@ export async function removeCopilotCliOtlpConfig(
 
   const existed = existsSync(hookFilePath);
   if (existed) {
-    await unlink(hookFilePath);
+    await removeFileThroughLink(hookFilePath);
   }
   await writeCopilotConnectorScope(COPILOT_CLI_OTLP_AGENT_NAME, { enabled: false });
 

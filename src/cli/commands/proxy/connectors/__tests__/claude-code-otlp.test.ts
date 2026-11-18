@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
-import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, realpath, rm, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, realpath, rename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1147,6 +1147,34 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.removed).toBe(true);
         expect(existsSync(backupPath)).toBe(false);
+      });
+
+      it.skipIf(process.platform === 'win32')('restores from a linked backup and deletes its target and the link', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+        const target = join(homeDir, 'dotfiles', 'settings.json' + SETTINGS_BACKUP_SUFFIX);
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await mkdir(join(homeDir, 'dotfiles'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify(
+            { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.corp.example', OTEL_EXPORTER_OTLP_HEADERS: 'x-api-key=USER-SECRET' } },
+            null,
+            2
+          )
+        );
+        await writeClaudeCodeOtlpConfig({ force: true });
+        await rename(backupPath, target);
+        await symlink(target, backupPath);
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result.removed).toBe(true);
+        const final = await readJson(settingsPath);
+        expect(final.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('https://collector.corp.example');
+        expect(final.env.OTEL_EXPORTER_OTLP_HEADERS).toBe('x-api-key=USER-SECRET');
+        expect(existsSync(target)).toBe(false);
+        await expect(lstat(backupPath)).rejects.toMatchObject({ code: 'ENOENT' });
       });
     });
 

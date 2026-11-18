@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
@@ -328,6 +328,31 @@ export async function isSymbolicLink(configPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Delete a file only CodeMie uses, through a symbolic link: for a link, its final target is
+ * deleted first when it is a regular file, and then the link; a target that is not a regular file
+ * (a directory, a device, a FIFO, a socket) is left in place, and a target that is not a regular
+ * file or cannot be resolved or deleted is a warning, not an error. Any other path is deleted.
+ * A failure deleting the path itself is rethrown.
+ */
+export async function removeFileThroughLink(filePath: string): Promise<void> {
+  if (await isSymbolicLink(filePath)) {
+    try {
+      const target = await realpath(filePath);
+      if (!(await stat(target)).isFile()) {
+        throw new Error('the target is not a regular file');
+      }
+      await unlink(target);
+    } catch (error) {
+      logger.warn(
+        '[proxy] Could not delete the target of a linked file (or it is not a regular file); removing the link',
+        ...sanitizeLogArgs({ filePath, error: error instanceof Error ? error.message : String(error) })
+      );
+    }
+  }
+  await unlink(filePath);
 }
 
 async function replaceLink(configPath: string, content: string): Promise<void> {
