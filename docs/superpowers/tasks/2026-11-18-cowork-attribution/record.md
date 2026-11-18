@@ -3,7 +3,7 @@
 Branch `EPMCDME-17385_17410_cowork-attribution`, baseline `252233ba1658a506b6d38fbf6707ea8a8c0926fa` (origin/main).
 Code commit tested and described here: `1ffe202b` (`fix(analytics): pin the Cowork session project and declare CodeMie funding`).
 Status: see `final-review/` for the final review, security review and actual complexity (earlier review evidence is in
-`superseded-ee54d4da/`, superseded). The original design/verification sections below describe `1ffe202b`; later commits
+`superseded-ee54d4da/` and `superseded-ad8ba2f4/`, superseded and not final). The original design/verification sections below describe `1ffe202b`; later commits
 are listed in the PR.
 
 ## Requirements
@@ -147,10 +147,20 @@ real Claude Desktop UI; synthetic input.
   above), not with a real macOS Claude Desktop session or on `origin/main`'s backend build.
 - **Historical data (excluded from this task, stated as in the handoff):** rows already stored `unknown`, events already
   discarded, and sessions already conflicted or provisional are not repaired.
-- **Open gap, decomposed by trigger (not an approved exclusion; no waiver was given):**
+- **Accepted limitation (explicit user decision, 2026-11-18; narrow, recorded in PR #838's description; the Jira ticket
+  description is not changed):** a still-running Cowork task was already collected by the OLD CLI/daemon, its spool bound
+  to project P1; the daemon then starts running the NEW CLI while the task continues; no attribution pin exists yet and
+  the current folder/config now resolves a DIFFERENT project P2. The project stays P1, but the funding classification may
+  remain `unknown`, because the old data does not establish the project source. A new Cowork task started after the update
+  is the supported way to obtain fresh funding attribution. Installing an updated CLI while the old daemon keeps running is
+  not this transition, and if the project remains P1 the limitation does not apply. **Not covered by the decision:** fresh
+  tasks, transient origin-resolution failures (retried before any append), project drift or lost ends, arbitrary
+  unresolved projects, any blanket old-session exemption. No backend change is authorized or needed.
+- **Trigger decomposition of the funding gap:**
   - (a) *Fresh served task with a resolvable project:* covered (pinned before the first append, funding declared).
   - (b) *Active session the spool bound to P1 before pins existed, daemon-served, whose current resolution yields a
-    different project:* **open.** It is pinned with source `none` and keeps the legacy Project header, so its rows stay
+    different project:* **accepted limitation by explicit user decision (2026-11-18), this case only** (see "Accepted
+    limitation" below). It is pinned with source `none` and keeps the legacy Project header, so its rows stay
     `unknown`. If the current resolution still yields P1, the real source is pinned and it is funded. Backend facts
     (origin/main `9f19b3b3a3` read; the gate, binding and ingestor files are identical to the probed build `cdd8829db3`
     except two lines in `ports.py`): an existing binding keeps its stored `subscription_type`; an unbound session **with

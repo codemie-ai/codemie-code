@@ -1,35 +1,43 @@
-# Review facts for the final review of 252233ba...ad8ba2f4 (inputs, not conclusions)
+# Review facts for the final review of 252233ba...<final HEAD> (inputs, not conclusions)
 
-Round history: the round at c38b2fe4 (verdict `request-changes`: CR-001 security sign-off, CR-002 backend evidence mapping,
-CR-003 corrupt pin, CR-004 pin write race, CR-005 AC1 gap, CR-006 stale served mark) is superseded by this one. Since then,
-commit `ad8ba2f4` makes the pin write-once and race-safe (unique temp file + hard link, first pin wins, unreadable pin
-replaced) and adds tests, including that an unreadable pin cannot move a session whose project the spool already holds
-(the spool-bound project rule already preserved it; the finding's "moves the session" impact did not hold, its comment did
-mislead and was corrected). CR-006 (stale served mark): the mark is session-level proof that the daemon served the session
-and is pruned when the session leaves Desktop's list; a freshness age would drop the idle end/summary events of a served
-session, so none was added; judge this independently. CR-002: backend persistence evidence is `../record.md` (runs r4 and r6,
-synthetic input, real local backend), not in the diff.
+Evaluate independently; these are source-backed facts, not a verdict. Report real defects as findings.
 
-Evaluate independently; these are source-backed facts, not a verdict. Do not treat any limitation here as an accepted
-requirement reduction: no exclusion from EPMCDME-17410's acceptance criteria was approved. Historical stored-data repair
-was the only excluded scope. Report real gaps as findings.
+## Requirements and the one approved limitation
 
-- Spec: Jira snapshot (EPMCDME-17385, EPMCDME-17410) and `record.md`.
-- Earlier rounds (`superseded-ee54d4da/`, and the round at 16567370) are superseded, not final coverage.
-- Changes since the superseded review at ee54d4da: `b24c1773` (test-only: refusals of a non-header-safe project and of a
-  recorded/guarded session, each red when its guard is removed) and `c38b2fe4` (source): a failing project-origin lookup
-  (`resolveProfileIdentity`) no longer pins source `none`; it propagates before anything is appended or pinned and the next
-  processing retries, for a fresh session and for a session the spool already holds. Tests: transient failure then
-  recovery, with the real forwarder's funding headers; bound session with failure then retry. Real-local-backend probe r6
-  (synthetic input) repeats the persisted-classification assertions on this source with a one-time injected failure.
-- Security review (skill `security-review`, `final-review/security-review.md`): no source vulnerability. The guide's
-  security-review sign-off requirement is a process gate; policy rule 4 ("header injection lives in one layer") is raised
-  there as a judgment for the security owners.
-- Consumer facts: the CLI Analytics overview cards read `kpis.api_cost_usd`/`kpis.subscription_cost_usd` (met on the local
-  backend); the Cost view reads `kpis.total_cost_usd`; `/cost` `funding` buckets show Cowork `unknown` and no cli-analytics
-  UI component reads them (`codemie-ui` origin/main search only).
-- Known active-session gap (stated in `record.md`, not accepted): a session the spool bound before pins existed whose
-  current resolution yields a different project is pinned with source `none` and stays unfunded; closing it would need
-  backend adoption evidence or a fabricated Project-Source. Sessions that continue across the upgrade and keep their project
-  get the real source pinned. A fresh served session with no project sends no Project header (unchanged from baseline).
+- Spec: Jira snapshot (EPMCDME-17385, EPMCDME-17410) and `../record.md`.
+- **Explicit user decision (2026-11-18) accepting ONE narrow edge case only:** a still-running Cowork task already
+  collected by the OLD CLI/daemon, its spool bound to project P1; the daemon then runs the NEW CLI while the task
+  continues; no pin exists yet; the current folder/config now resolves a DIFFERENT project P2. The project stays P1 and the
+  funding classification may remain `unknown` (old data does not establish the project source). A new Cowork task after the
+  update is the supported way to get funding attribution. If the project remains P1 the limitation does not apply. Not
+  covered: fresh tasks, transient origin-resolution failures, project drift or lost ends, arbitrary unresolved projects,
+  any blanket old-session exemption. No backend change is authorized. Historical stored-data repair is also out of scope.
+  Judge every other case against the full acceptance criteria.
+
+## Round history (all earlier rounds are superseded, not final)
+
+- `superseded-ee54d4da/` (round at ee54d4da) and `superseded-ad8ba2f4/` (round at ad8ba2f4, `request-changes`: CR-001 security
+  sign-off, CR-002 AC1 partial, CR-003 hard-link failure, CR-004 unreadable-pin overwrite).
+- Since ad8ba2f4: `eee936ee` rewrote the pin save (valid pin never replaced and returned; only a corrupt file replaced;
+  other read errors throw and leave the file alone; only writer is the producer, serialized per session by the runner;
+  no cross-process lock claimed; hard-link-less filesystems not handled, reachability unproven) with a test for the I/O
+  failure case. Retry-before-append (`c38b2fe4`) regression tests are unchanged.
+
+## Consumer and backend facts
+
+- Real-local-backend runs r4 and r6 (synthetic Cowork input) in `../record.md`: fresh served session stored under the first
+  project, final, `codemie`, API spend > 0 with subscription spend 0, tokens equal to unique spooled usage; r6 adds a
+  transient identity failure that appended nothing, then recovered.
+- Probe r7: a funding request WITHOUT `Project-Source` adopts a legacy project only when the backend already holds legacy
+  rows; with none it was routed by `default_project`. So the accepted edge case cannot be closed by sending without
+  `Project-Source`; this change does not do that.
+- CLI Analytics overview cards read `api_cost_usd`/`subscription_cost_usd`; the Cost view reads `total_cost_usd`; `/cost`
+  `funding` buckets show Cowork `unknown` and no cli-analytics UI component reads them (`codemie-ui` origin/main search only).
+- Served mark: pruned only when the session is no longer listed and older than the backfill window; recreated by the next
+  served request. A project that cannot travel as a header is dropped at baseline too and never declares funding.
+
+## Security
+
+- Security-review skill ran twice (`security-review.md`): no source vulnerability. The guide's security-review sign-off by
+  the repository's security reviewers is an external merge gate, not an implementation defect, and is not claimed.
 - Backend scope: read-only; no backend change.
