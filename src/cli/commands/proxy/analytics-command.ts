@@ -53,8 +53,9 @@ import { DEPRECATION_REMOVE_ON, deprecatedCommand } from '../../deprecation.js';
 import { printNext } from '../../related-commands.js';
 import { readDaemonStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
-import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
+import { collectDeliveryHealth, type DeliveryHealth } from './delivery-health.js';
 import { renderHint } from '@/utils/hint.js';
+import { formatReportRows, type ReportRow } from './analytics-report.js';
 
 type AnalyticsConnectorId =
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
@@ -497,21 +498,25 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
     if (!connector) {
       throw new ConfigurationError(`Unknown analytics connector: ${connectorId}`);
     }
-    // Delivery is shared by every connector, so it is shown when any connector is connected, not
-    // only the selected one; leftover unsent data alone never makes it visible.
-    const anyConnectorActive = await hasActiveAnalyticsConnector();
-    const delivery = anyConnectorActive ? await collectStatusDelivery() : null;
     const shown = await selectStatusConnectors(opts, connector);
     const statuses = await Promise.all(shown.map(async (entry) => ({ entry, status: await entry.collect() })));
+    const consentedFolders = (await listConsents()).map(({ folder, project }) => ({ folder, project }));
     if (opts.json) {
-      // Mirrors the text report: the delivery first, then one object per shown connector.
+      // Delivery stays in the JSON for scripts (null unless a connector is connected and the daemon runs);
+      // the text report leaves it to `proxy doctor`.
+      const delivery = (await hasActiveAnalyticsConnector()) ? await collectStatusDelivery() : null;
       const connectors = statuses.map(({ entry, status }) => ({ ...status, connector: entry.id }));
-      console.log(JSON.stringify({ delivery, connectors }, null, 2));
+      console.log(JSON.stringify({ delivery, connectors, consentedFolders }, null, 2));
       return;
     }
     const sections = await Promise.all(statuses.map(({ entry, status }) => entry.format(status)));
-    const report = sections.join('\n\n');
-    console.log(anyConnectorActive ? [...formatDeliveryLines(delivery), '', report].join('\n') : report);
+    const consentRow: ReportRow =
+      consentedFolders.length === 0
+        ? { message: 'Consented folders: none' }
+        : { message: 'Consented folders:', items: consentedFolders.map((c) => `${c.folder} (${c.project})`) };
+    const hint = renderHint({ reason: 'Delivery health', command: 'codemie proxy doctor' });
+    console.log([...sections, [...formatReportRows([consentRow]), hint].join('\n')].join('\n\n'));
+    printNext('proxy analytics status');
   });
 }
 

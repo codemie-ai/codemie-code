@@ -182,7 +182,7 @@ describe('analytics advice', () => {
   });
 
   it('status text ends with a plain sentence naming the channels these settings do not control; --json carries no such text', async () => {
-    const lastLine = (): string => out().split('\n').at(-1) as string;
+    const lastLine = (): string => out().split('\n').find((l) => l.includes('These settings do not affect')) as string;
     await run(['status']);
     expect(lastLine()).toBe(
       '  These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
@@ -210,7 +210,7 @@ describe('analytics advice', () => {
     logSpy.mockClear();
     await run(['status']);
     expect(out()).toContain('      Not connected — run: codemie proxy connect --claude-code-otlp');
-    expect(out().match(/run:/g)).toHaveLength(1);
+    expect(out().match(/run:/g)).toHaveLength(2); // connect + the doctor pointer
     expect(out()).not.toContain('Hint:');
   });
 
@@ -266,11 +266,11 @@ describe('analytics advice', () => {
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
     expect(out()).not.toContain('Hint:');
-    expect(out()).not.toContain('run:');
+    expect(out().match(/run:/g)).toHaveLength(1); // only the doctor pointer
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
     expect(out()).toContain('      Not connected — run: codemie proxy connect --copilot-cli-otlp');
-    expect(out().match(/run:/g)).toHaveLength(1);
+    expect(out().match(/run:/g)).toHaveLength(2);
     expect(out()).not.toContain('Hint:');
   });
 });

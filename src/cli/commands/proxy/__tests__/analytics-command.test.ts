@@ -203,8 +203,9 @@ describe('createProxyAnalyticsCommand', () => {
     const output = logSpy.mock.calls.flat().join('\n');
     expect(output).toContain('Hooks:');
     expect(output).toContain('Excluded:');
-    // No connector is connected in this isolated home, so the shared Delivery section stays hidden.
     expect(output).not.toContain('Delivery:');
+    expect(output).toContain('Consented folders: none');
+    expect(output).toContain('Delivery health — run: codemie proxy doctor');
   });
 
   it('status --json prints parseable JSON through the real command wiring (CR-004)', async () => {
@@ -213,7 +214,7 @@ describe('createProxyAnalyticsCommand', () => {
     await runCommand(['status', '--json']);
     expect(logSpy).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-    expect(parsed).toMatchObject({ delivery: null });
+    expect(parsed).toMatchObject({ delivery: null, consentedFolders: [] });
     expect(parsed.connectors).toHaveLength(1);
     expect(parsed.connectors[0]).toMatchObject({ connector: 'claude-code-otlp', excludedProjects: [expect.any(String)] });
   });
@@ -277,22 +278,37 @@ describe('createProxyAnalyticsCommand', () => {
       return { checkProxyHealth, collectDeliveryHealth };
     }
 
-    it.each(connectors)('%j prints the delivery rows first, with no heading, and "proxy not running" when the daemon is stopped', async (flags, title) => {
+    it.each(connectors)('%j text shows the connector section, consented folders and the doctor hint, with no delivery lines', async (flags, title) => {
       await runCommand(['status', ...flags]);
       const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 3)).toEqual(['Delivery: proxy not running', '', title]);
-      expect(lines.filter((l) => l.includes('Delivery:'))).toHaveLength(1);
+      expect(lines[0]).toBe(title);
+      expect(lines.some((l) => l.includes('Collection:'))).toBe(true);
+      expect(lines.some((l) => l.includes('Excluded:'))).toBe(true);
+      expect(lines).toContain('Consented folders: none');
+      expect(lines[lines.length - 1]).toBe('Delivery health — run: codemie proxy doctor');
+      expect(plainOutput()).not.toContain('Delivery:');
+      expect(plainOutput()).not.toContain('Unsent data');
     });
 
-    it('reads the state of a dead daemon as stopped and leaves its file byte-identical', async () => {
-      const stateFile = join(tempDir, 'proxy-daemon.json');
-      const content = JSON.stringify({ ...daemonState, pid: 999999 });
-      await writeFile(stateFile, content, 'utf-8');
+    it('lists consented folders in text and in --json', async () => {
+      const { connectFolder } = await import('@/agents/core/evidence/consent-store.js');
+      const folder = await (await import('@/agents/core/project-allowlist.js')).canonicalizePath(projectRoot);
+      await connectFolder({ owner_hash: 'o', api_identity: 'a', project: 'proj-x' }, folder);
+      await runCommand(['status', '--claude-code-otlp']);
+      const out = plainOutput();
+      expect(out).toContain('Consented folders:');
+      expect(out).toContain(`${folder} (proj-x)`);
+      logSpy.mockClear();
+      await runCommand(['status', '--claude-code-otlp', '--json']);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.consentedFolders).toEqual([{ folder, project: 'proj-x' }]);
+    });
 
-      await runCommand(['status']);
-
-      expect(plainOutput().split('\n')[0]).toBe('Delivery: proxy not running');
-      expect(await readFile(stateFile, 'utf-8')).toBe(content);
+    it('does not read the daemon in text mode', async () => {
+      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({ status: 'healthy', pendingBytes: 0 });
+      await runCommand(['status', '--claude-code-otlp']);
+      expect(checkProxyHealth).not.toHaveBeenCalled();
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
     });
 
     it.each(connectors)('%j --json adds delivery: null when the daemon is stopped', async (flags) => {
@@ -348,75 +364,14 @@ describe('createProxyAnalyticsCommand', () => {
       expect(output).not.toContain('Claude:');
     });
 
-    it('lists every connected tool in --json, after the delivery', async () => {
+    it('lists every connected tool in --json, after the delivery, with consentedFolders last', async () => {
       mockActiveConnectors(['claude-code-otlp', 'copilot-chat-otlp']);
       await runCommand(['status', '--json']);
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-      expect(Object.keys(parsed)).toEqual(['delivery', 'connectors']);
+      expect(Object.keys(parsed)).toEqual(['delivery', 'connectors', 'consentedFolders']);
       expect(parsed.connectors.map((c: { connector: string }) => c.connector)).toEqual([
         'claude-code-otlp',
         'copilot-chat-otlp',
-      ]);
-    });
-
-    it.each(connectors)('%j shows the shared verdict from /health when the daemon is running', async (flags, title) => {
-      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
-        status: 'unhealthy',
-        reason: 'credentials_expired',
-        pendingBytes: 2048,
-      });
-      await runCommand(['status', ...flags]);
-
-      expect(checkProxyHealth).toHaveBeenCalledWith(expect.objectContaining({ port: 4001, expectedPid: 4242 }));
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(daemonState, { credentials: 'ok' });
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (CodeMie sign-in has expired)',
-        '    CodeMie sign-in has expired — run: codemie profile login',
-        'Unsent data: 2.00 KB (all sessions on this machine)',
-        '',
-        title,
-      ]);
-    });
-
-    it('shows the next retry and the error code of a failing send, with no Run line', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(Date.parse('2026-11-13T14:02:10.000Z')); // the retry time below is still ahead
-      mockRunningDaemon({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 3174,
-        sendFailure: { nextAt: Date.parse('2026-11-13T14:32:10.000Z'), detail: 'request_error' },
-      });
-      await runCommand(['status', '--claude-code-otlp']);
-
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (last send to CodeMie failed, retrying)',
-        'Unsent data: 3.10 KB (all sessions on this machine)',
-        'Next retry: 2026-11-13 09:32:10 -05:00',
-        'Error: backend unreachable',
-        '',
-      ]);
-      expect(lines.slice(0, 4).join('\n')).not.toContain('run:');
-    });
-
-    it('prints the Last dropped row and the project hint in the delivery rows', async () => {
-      mockRunningDaemon({
-        status: 'healthy',
-        pendingBytes: 0,
-        latestDrop: { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-11T10:00:00.000Z'), local: true },
-      });
-      await runCommand(['status', '--claude-code-otlp']);
-
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 6)).toEqual([
-        'Delivery: healthy',
-        'Unsent data: none',
-        'Last dropped: no_project (hooks, 2026-11-11 05:00:00 -05:00)',
-        '    Sessions without a project are not sent — set a CodeMie project for the folder (codemie setup)',
-        '',
-        'Claude:',
       ]);
     });
 
@@ -435,22 +390,6 @@ describe('createProxyAnalyticsCommand', () => {
       await runCommand(['status', ...flags, '--json']);
       const stopped = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect({ ...withDelivery, delivery: undefined }).toEqual({ ...stopped, delivery: undefined });
-    });
-
-    it.each(connectors)('%j hides the Analytics section when no connector is active, even with unsent data pending', async (flags, title) => {
-      mockConnectorActive(false);
-      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
-        status: 'healthy',
-        pendingBytes: 4096,
-      });
-      await runCommand(['status', ...flags]);
-
-      const output = plainOutput();
-      expect(output).not.toContain('Delivery:');
-      expect(output).not.toContain('Unsent data:');
-      expect(output.split('\n')[0]).toBe(title);
-      expect(checkProxyHealth).not.toHaveBeenCalled();
-      expect(collectDeliveryHealth).not.toHaveBeenCalled();
     });
 
     it.each(connectors)('%j --json has delivery: null when no connector is active, even with unsent data pending', async (flags) => {
