@@ -178,20 +178,13 @@ export async function applyProjectPolicyLocked(
       dirty ||= result.changed;
     }
   }
-  const noProjectLoss = policy.state === 'unbound' && hooksBytes + otelBytes > 0;
-  if (noProjectLoss) {
+  const discardedBytes = hooksBytes + otelBytes;
+  const lossReason = policy.state === 'unbound' ? 'no_project' : policy.state === 'conflict' ? 'project_conflict_discard' : undefined;
+  if (lossReason && discardedBytes > 0) {
     status.lastLoss = {
-      reason: 'no_project',
+      reason: lossReason,
       at: Date.now(),
-      bytes: hooksBytes + otelBytes,
-      stream: hooksBytes > 0 ? 'hooks' : otelStream,
-    };
-  }
-  if (policy.state === 'conflict' && hooksBytes + otelBytes > 0) {
-    status.lastLoss = {
-      reason: 'project_conflict_discard',
-      at: Date.now(),
-      bytes: hooksBytes + otelBytes,
+      bytes: discardedBytes,
       stream: hooksBytes > 0 ? 'hooks' : otelStream,
     };
   }
@@ -207,7 +200,7 @@ export async function applyProjectPolicyLocked(
     if (policy.state === 'conflict') {
       warnDiscardOnce(sessionId, { sessionId, reason: policy.reason ?? 'none', hooksBytes, otelBytes });
     }
-    if (noProjectLoss) {
+    if (policy.state === 'unbound') {
       warnNoProjectDiscardOnce(sessionId, { sessionId, hooksBytes, otelBytes });
     }
   }
