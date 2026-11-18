@@ -171,8 +171,46 @@ explicit instruction never to read another table from that file.
 | Surface | Why | What would close it |
 |---|---|---|
 | VS Code extension | the bundle carried no `chatSessions/*.jsonl` (Python read 145 such files on that machine) | one populated session file |
-| WSL | the WSL store lives inside the distro and was not bundled; Python attributed 25,350 calls to `Copilot CLI (WSL:Ubuntu)` | a `.copilot` home from a WSL distro |
-| `workspace.yaml` `client_name` | absent from the bundle; present in 179 of 181 session dirs on the machine | one `workspace.yaml` per surface |
+| WSL | the WSL store lives inside the distro and was not bundled; Python attributed 25,350 calls to `Copilot CLI (WSL:Ubuntu)` | run `scripts/collect-copilot-wsl.mjs` (below) |
+| `workspace.yaml` `client_name` | absent from the bundle; present in 179 of 181 session dirs on the machine | the WSL collector reports these too |
+
+### Collecting the WSL data — `scripts/collect-copilot-wsl.mjs`
+
+Run **on Windows** (not inside WSL), with any Node ≥ 18. Zero dependencies, single file, so it
+can be copied to the machine on its own:
+
+```
+node scripts/collect-copilot-wsl.mjs                  # safe default
+node scripts/collect-copilot-wsl.mjs --days 30        # recent sessions only
+node scripts/collect-copilot-wsl.mjs --raw            # verbatim, prompts included
+```
+
+Discovery deliberately goes through `wsl.exe --list --running --quiet` and the
+`\\wsl.localhost\<distro>` share — the same path `wsl-reader.ts` takes — so the script doubles
+as a field probe of that reader. If it finds a distro's homes, the reader will; if not, the
+manifest records why. Stopped distros are listed but never touched, since enumerating them over
+the 9P share would start them as a side effect.
+
+The default collects only what the scanners read, leaving message text behind: the allowlisted
+`assistant_usage_events` columns plus `sessions.id/cwd/repository/branch/host_type` exported by
+`sqlite3` inside the distro (`turns` and `sessions.summary` are never queried); from each
+transcript only `session.start` / `usage_record` / `usage_checkpoint` / `shutdown` lines, with
+`session.start` trimmed to its `data.context`; and from each `workspace.yaml` only the
+`client_name` line. `data.db` is **not** read at all — it holds a GitHub access token — only its
+presence and size are recorded.
+
+Measured on the 127 real transcripts from the Windows bundle:
+
+| Check | Result |
+|---|---|
+| Lines kept | 10,495 of 119,497 (8.8%) |
+| Size | 418.5 MB → 44.5 MB (10.6%) |
+| Content-bearing event types surviving (`assistant.message`, `user.message`, `reasoning`, `summary_text`, tool and hook events) | **0** |
+| Events reader output from filtered vs raw input | **identical** across rows, sessions, input/output/cache tokens, nano-AIU, premium requests, branch and repository counts |
+
+That last row is the point: the filtered export is lossless for the scanners, so verification
+never needs the prompt text. `--raw` remains for the case where it is not enough, and labels its
+own output as sensitive.
 
 ---
 
