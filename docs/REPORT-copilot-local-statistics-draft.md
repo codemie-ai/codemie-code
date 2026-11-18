@@ -1,6 +1,6 @@
 # Report: GitHub Copilot Local Statistics — Draft Handoff
 
-**Status:** Draft, ready for verification and finalization by another team
+**Status:** Draft, verified against a real Windows collector bundle (2026-11-18); ready for finalization
 **Branch:** `feature/Ievgen_Kyvgyla-github-copilot-local-statistics`
 **Spec:** [SPEC-copilot-local-statistics.md](SPEC-copilot-local-statistics.md)
 **Ports from:** `sl-ai-sdlc-cost-tracking` (`src/parsers/`, Python, Windows-only)
@@ -92,6 +92,7 @@ a money formula drift silently into two different dollar figures for the same se
 | `events-reader.ts` | 322 | `events.jsonl`: per-call records, rollup fallback, substring prefilter |
 | `vscode-sessions-reader.ts` | 382 | Append-log replay (both `k` forms), chat-mode attribution |
 | `wsl-reader.ts` | 173 | Running distros only, per-home isolation |
+| `desktop-sessions.ts` | 108 | Desktop-session set from the desktop app's own `data.db` (single-query, allowlisted) |
 | `copilot-local-loader.ts` | 336 | Dedupe → group → price → pipeline inputs |
 | `index.ts` | 23 | Barrel |
 
@@ -119,6 +120,59 @@ codemie analytics copilot --scan-days 365      # a year of history
 codemie analytics copilot --no-wsl --no-vscode # CLI + Desktop only
 CODEMIE_DEBUG=true codemie analytics copilot   # per-scanner health lines
 ```
+
+---
+
+## Verification against real Windows data
+
+A collector bundle from a Windows machine (`collector_debug_bundle_2026-11-18_15-04-45.zip`)
+provided a real `~/.copilot` home — `session-store.db` (9,834 usage rows, 96 sessions, schema
+v10), 127 `events.jsonl` transcripts, the desktop app's `data.db` — plus the Python tool's own
+report JSON for the same machine, which served as ground truth.
+
+### Reconciliation against the Python tool
+
+| Measure | Python tool | This implementation | Verdict |
+|---|---|---|---|
+| Store rows read | 9,351 | 9,353 at the same instant | match (2-row boundary/dedup difference) |
+| Rows at scan time | — | 9,834 | the 483-row gap is data written between their 06:57:15Z run and the 15:04 collection |
+| Sessions covered by `events.jsonl` fallback | 6 | 6 | **exact** |
+| Desktop sessions | 12 | 12 | **exact** |
+| Desktop turns | 54 | 54 | **exact** |
+| Desktop cost | $23.76 | $23.87 | 0.5% — different pricing tables |
+| Request categories | `chat/agent`, `chat/tool-loop`, `chat/sub-agent`, `feature/compaction` | identical taxonomy | match |
+
+Scanner health on the real data: store 9,834 rows / 0 skipped / 0 errors; events 127 files →
+9,558 rows / 0 skipped / 0 errors. Pricing resolved 11 of 12 models; only `mai-code-1.1-flash`
+(143K tokens, 0.01% of volume) is unpriced.
+
+### Defects found and fixed
+
+| # | Defect | Evidence | Fix |
+|---|---|---|---|
+| 1 | `KNOWN_SCHEMA_VERSIONS = {8}` — real stores are **v10** | every real machine reported `schema_drift` | accept 8 and 10 |
+| 2 | `sessions.repository` / `sessions.branch` never read; `session.start.data.context` never read | branch and repository were **0 of 9,834** store rows and 0 of 9,558 events rows, so `--branch` could never match | join both columns; read the transcript's `context` block |
+| 3 | `request_multiplier` not carried | **15** on 7,342 of 9,834 rows — a premium-request total assuming 1/call is off by more than an order of magnitude | carried as `requestMultiplier`; `usage.cost` carried as `premiumRequestCost`; `totalPremiumRequests()` added |
+| 4 | `status` hardcoded `'success'` | `finish_reason` and `content_filter_triggered` exist on every row | derived from the content filter |
+| 5 | `requestId` used the store's autoincrement `id` | Copilot's own `event_id` is present on 9,515 of 9,834 rows and is what the OTLP pipeline dedups on | prefer `event_id` |
+| 6 | Doc claimed `session.usage_checkpoint` was handled; it was not read | — | marker list and docstring corrected; checkpoint deliberately skipped, as its running totals would double-count the per-call records |
+| 7 | Desktop attribution depended entirely on per-session `workspace.yaml` | the bundle had **no** `workspace.yaml` at all, so every Desktop session read as CLI | new `desktop-sessions.ts` reads the desktop app's own `data.db` — one `SELECT id FROM sessions` yields a store-wide Desktop set, no per-session file needed |
+
+Finding 7 is beyond parity with the Python tool, which reads `data.db` only as a cross-check
+(`desktop_db_check`) and still depends on `workspace.yaml` for attribution. Both paths now
+work: `data.db` takes precedence, `client_name` remains the fallback.
+
+**Privacy note on `data.db`:** it also holds the user's GitHub `access_token`, chat titles and
+review threads. The module issues exactly one query, `SELECT id FROM sessions`, and carries an
+explicit instruction never to read another table from that file.
+
+### Still unverified against real data
+
+| Surface | Why | What would close it |
+|---|---|---|
+| VS Code extension | the bundle carried no `chatSessions/*.jsonl` (Python read 145 such files on that machine) | one populated session file |
+| WSL | the WSL store lives inside the distro and was not bundled; Python attributed 25,350 calls to `Copilot CLI (WSL:Ubuntu)` | a `.copilot` home from a WSL distro |
+| `workspace.yaml` `client_name` | absent from the bundle; present in 179 of 181 session dirs on the machine | one `workspace.yaml` per surface |
 
 ---
 
@@ -182,15 +236,22 @@ explicit request.
    written, proven ineffective, and removed rather than left as dead code). Working fixes:
    `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (Node ≥ 21.3, verified), the same flag
    at the `bin/` entry, or raising `engines.node` once `node:sqlite` is stable.
-3. **Confirm the field assumptions** against real artifacts, in priority order: a
-   `session-store.db` with real CLI usage; a Desktop `events.jsonl`; a populated
-   `chatSessions/*.jsonl`; one `workspace.yaml` per surface.
+3. **Remaining artifacts to confirm** — the store, events and Desktop paths are now verified
+   against a real machine (see above). Still needed: one populated `chatSessions/*.jsonl` for
+   VS Code, a `.copilot` home from a WSL distro, and one `workspace.yaml` per surface.
 4. **Decide the default-report merge.** Whether to fold this source into `SessionsSource` and,
    if so, how to dedup against the existing `copilot-cli` discovery in `native-loader.ts`.
-5. **Premium requests are carried, not surfaced.** `billedNanoAiu` and `reportedCredits` ride
-   on every row and `totalBilledNanoAiu()` sums them, but no report surface displays them yet.
-   Since a Copilot subscription bills premium requests rather than tokens, these are the only
-   figures that reconcile against an invoice — worth a report column.
+5. **Premium requests are carried, not surfaced.** `billedNanoAiu`, `requestMultiplier`,
+   `premiumRequestCost` and `reportedCredits` ride on every row, and `totalPremiumRequests()` /
+   `totalBilledNanoAiu()` sum them — the real machine accounts for ~112,667 premium requests and
+   51,381 AI units — but no report surface displays any of it. Since a Copilot seat bills
+   premium requests rather than tokens, this is the only figure that reconciles against an
+   invoice, and it is the highest-value follow-up.
+7. **`data.db` as a usage source, not just a discriminator.** Its `sessions` table also carries
+   `total_input_tokens`, `total_output_tokens`, `total_cached_tokens`, `total_nano_aiu` per
+   Desktop session — and 7 of the 13 Desktop sessions on the real machine had no rows in the
+   shared store at all. Reading those totals would extend coverage, but needs a double-count
+   policy against the store and events rows first.
 6. **Session-id collisions across surfaces** are assumed impossible (all UUIDs) and not
    guarded. If a VS Code session id ever collides with a CLI one, their rows would merge into
    one session.
