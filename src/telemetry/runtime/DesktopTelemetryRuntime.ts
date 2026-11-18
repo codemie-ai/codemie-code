@@ -138,8 +138,9 @@ export class DesktopTelemetryRuntime {
 
   /**
    * One poll. Only while Desktop's applied config points at this daemon (its port and key) does it discover and
-   * collect sessions, run the Cowork producer and the re-delivery; otherwise it reads that config and finalizes the
-   * sessions already tracked on inactivity, nothing else.
+   * collect sessions and run the re-delivery; otherwise it reads that config, runs the Cowork producer for the sessions
+   * it is already collecting, so they get their end and final summary, and finalizes the sessions already tracked on
+   * inactivity: no new session is taken and the session pipeline discovers nothing.
    */
   private async poll(): Promise<void> {
     if (this.isPolling) {
@@ -154,6 +155,7 @@ export class DesktopTelemetryRuntime {
     try {
       const connected = await this.checkDesktopConnected(now);
       if (!connected) {
+        if (!this.stopped) this.cowork?.startIfIdle(now, false);
         await this.finalizeInactive(now);
         return;
       }

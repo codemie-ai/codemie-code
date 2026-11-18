@@ -248,7 +248,8 @@ try {
   config.port = actualPort;
   config.pinnedPort = true;
 
-  // Collects Desktop's sessions only while Desktop's applied config points at this daemon's port and key.
+  // Takes Desktop's sessions only while Desktop's applied config points at this daemon's port and key; one being
+  // collected is finished either way.
   const runtime = new DesktopTelemetryRuntime(
     new ClaudeDesktopTelemetryAdapter(),
     {
