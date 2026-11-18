@@ -453,6 +453,15 @@ export async function removeVsCodeLanguageModelsConfigAtPath(configPath: string)
   return { removed: true };
 }
 
+/**
+ * Removes the CodeMie provider from VS Code BYOK's `chatLanguageModels.json` (stable VS Code, or VS Code Insiders with
+ * `insiders`): the `CodeMie`/`customendpoint` provider whose model URLs are all loopback; the user's own providers and
+ * models stay. See {@link removeVsCodeLanguageModelsConfigAtPath}.
+ *
+ * @returns `{ removed: true }` when the provider was removed; `{ removed: false }` when there was nothing to remove,
+ *   including when the VS Code product directory does not exist (nothing is written then).
+ * @throws ConfigurationError when the file cannot be written (via `removeVsCodeLanguageModelsConfigAtPath`).
+ */
 export async function removeVsCodeLanguageModelsConfig(opts: { insiders: boolean }): Promise<{ removed: boolean }> {
   if (!existsSync(getVsCodeProductDir(opts.insiders))) return { removed: false };
   return removeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(opts.insiders));
