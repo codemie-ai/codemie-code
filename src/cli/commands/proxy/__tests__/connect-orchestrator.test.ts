@@ -1606,21 +1606,57 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(process.exitCode).toBe(0);
     });
 
-    it('the VS Code directory not found: the extension writer still runs; failing without VS Code it fails alone', async () => {
+    it('no VS Code: under --claude-otlp the extension is skipped with its line, the others configured, exit 0', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'claude');
       const w = await writers();
       const { ClientNotInstalledError } = await import('@/utils/errors.js');
       vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(
         new ClientNotInstalledError('VS Code user data directory was not found at /x/Code.'));
+      const { writeConnectionRecord } = await import('../daemon-manager.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
-      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
-      expect(printed().some((line) => line.startsWith('✗ VS Code Claude Code extension — VS Code user data directory was not found'))).toBe(true);
+      expect(printed()).toContain(
+        'VS Code Claude Code extension: skipped — VS Code not installed; re-run `codemie proxy connect --claude-otlp` after installing');
+      expect(printed().some((line) => line.startsWith('✗ VS Code Claude Code extension'))).toBe(false);
+      expect(printed().some((line) => line.includes('Could not configure the VS Code Claude Code extension'))).toBe(false);
+      expect(printed().some((line) => line.startsWith('VS Code Claude Code extension: configured'))).toBe(false);
       expect(w.writeDesktopConfig).toHaveBeenCalled();
       expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+      expect(writeConnectionRecord).toHaveBeenCalled();
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('no VS Code Insiders under --claude-otlp --insiders: the skip line names VS Code Insiders', async () => {
+      await withFreshDaemon();
+      await onMachine('desktop', 'claude');
+      const w = await writers();
+      const { ClientNotInstalledError } = await import('@/utils/errors.js');
+      vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(new ClientNotInstalledError('not found'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true, yes: true });
+
+      expect(printed()).toContain(
+        'VS Code Claude Code extension: skipped — VS Code Insiders not installed; ' +
+        're-run `codemie proxy connect --claude-otlp --insiders` after installing');
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('--vscode-claude-code by its own flag with no VS Code: still a failure, exit 1', async () => {
+      await withFreshDaemon();
+      const w = await writers();
+      const { ClientNotInstalledError } = await import('@/utils/errors.js');
+      vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(
+        new ClientNotInstalledError('VS Code user data directory was not found at /x/Code.'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { vscodeClaudeCode: true } });
+
+      expect(printed()).toContain('✗ VS Code Claude Code extension — VS Code user data directory was not found at /x/Code.');
+      expect(printed().some((line) => line.includes('skipped'))).toBe(false);
       expect(process.exitCode).toBe(1);
     });
 

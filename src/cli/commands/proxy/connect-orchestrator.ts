@@ -11,6 +11,7 @@ import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
+  ClientNotInstalledError,
   ConfigurationError,
   createErrorContext,
   formatErrorForUser,
@@ -63,6 +64,7 @@ import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js'
 import { CLIENT_CONFIGS, type ClientConfig } from './analytics-delivery-lines.js';
 import {
   aggregateConnectExamples,
+  aggregateFlagOf,
   aggregateListRows,
   failAggregateInvalidProjectList,
   failDesktopWithoutCodeMieUrl,
@@ -550,11 +552,26 @@ export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
+  /**
+   * Set under a vendor flag when the client's host application is not installed at all, so its writer could not run
+   * (`ClientNotInstalledError`): the client was skipped with its own line, which neither fails the run nor counts as
+   * configured.
+   */
+  skipped?: true;
+}
+
+/**
+ * The outcome of a vendor-flag member whose writer threw `ClientNotInstalledError`: one `skipped` line naming the host
+ * application and the command to re-run once it is installed.
+ */
+function skippedResult(label: string, host: string, rerun: string): TargetResult {
+  console.log(chalk.yellow(`${label}: skipped — ${host} not installed; re-run \`${rerun}\` after installing`));
+  return { label, ok: false, skipped: true };
 }
 
 function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (!r.ok) {
+    if (!r.ok && !r.skipped) {
       console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
@@ -685,13 +702,21 @@ async function runVscodeByok(
   }
 }
 
-async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promise<TargetResult> {
+/**
+ * `skipRerun`, given when a vendor flag set the extension, is the command to re-run: a missing VS Code then skips the
+ * extension instead of failing it. Under `--vscode-claude-code` itself a missing VS Code stays a failure.
+ */
+async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRerun?: string): Promise<TargetResult> {
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
+    if (skipRerun && error instanceof ClientNotInstalledError) {
+      logger.debug('[proxy] VS Code Claude Code extension skipped: VS Code is not installed', ...sanitizeLogArgs({ insiders }));
+      return skippedResult('VS Code Claude Code extension', insiders ? 'VS Code Insiders' : 'VS Code', skipRerun);
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(
       '[proxy] Failed to configure VS Code Claude Code extension',
@@ -1092,7 +1117,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
-    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders), 'vscodeClaudeCode');
+    const skipRerun = members.has('vscodeClaudeCode')
+      ? `codemie proxy connect ${editionFlag(aggregateFlagOf('vscodeClaudeCode'))}`
+      : undefined;
+    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders, skipRerun), 'vscodeClaudeCode');
   }
   if (activeTargets.codexDesktop) {
     await runClient('--codex-desktop', runCodexDesktop(state, {
@@ -1121,7 +1149,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     await runClient('--omp', runOmp(Boolean(opts.overwrite)));
   }
 
-  const anyFailed = results.some((r) => !r.ok);
+  const anyFailed = results.some((r) => !r.ok && !r.skipped);
   const allFailed = results.every((r) => !r.ok);
 
   // Record the connection only once something was actually wired, so a connect that
