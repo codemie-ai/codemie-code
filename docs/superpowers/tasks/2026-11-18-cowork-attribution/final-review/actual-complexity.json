@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Attribution headers are security-critical (funding declared as codemie, evidence-send path with stop/consent guards); write-once race-safe pin via temp file + hard link, corrupt vs unreadable pin handling, no exact precedent; enumerated edge cases are covered by new tests, verified against a real backend." },
+    { "dimension": "component_scope", "reason": "Three components across two subsystems: new cowork-attribution module (pin and funding decision), CoworkEventProducer (pin before first append), and OTLP spool forwarder/evidence-send (funding headers)." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to XL: attribution/funding headers are security-sensitive (CRITICAL in repo security guide) and the pin is irreversible-once-written per session"
+  ],
+  "split_recommendation": null
+}
