@@ -2,6 +2,8 @@
 
 `codemie analytics --export` generates a **self-contained HTML dashboard** from your local AI session history. No server required — open the file in any browser and explore your data offline. Cost is always computed, whether or not you pass `--export`.
 
+Command groups and deprecated forms: [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ---
 
 ## Quick Start
@@ -26,10 +28,10 @@ codemie analytics --export -o ~/reports/weekly.html
 codemie analytics --export both
 
 # Include ALL local agent usage — also the sessions you ran outside CodeMie
-codemie analytics --open --include-external
+codemie analytics --open --include-external always
 ```
 
-> **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
+> **If your question is "what did AI actually cost us?", you probably want `--include-external always`.**
 > By default the report counts only sessions CodeMie launched. Any time you ran `claude`,
 > `codex`, `gemini`, `pi`, `omp` (oh-my-pi), or `copilot` directly, that spend is discovered but withheld.
 > See [Session provenance](#session-provenance) for why, and for the trade-off.
@@ -324,7 +326,7 @@ The default exists so that a report titled "CodeMie usage" measures CodeMie usag
 That default is the right one for adoption reporting and the **wrong** one for consumption reporting. If you want total local AI spend across every agent on the machine, ask for it:
 
 ```bash
-codemie analytics --open --include-external
+codemie analytics --open --include-external always
 ```
 
 **This is the flag that shows all of your local agent usage.** GitHub Copilot CLI sessions are included in the gate, so they too are absent from the default report.
@@ -373,7 +375,7 @@ Filter flags:
   --session <id>            Filter to a single session
 
 Source flags:
-  --include-external        Also count local sessions CodeMie did not launch
+  --include-external [policy]  Also count local sessions CodeMie did not launch: windows, always, or never
                             (see "Session provenance")
 
 Other flags:

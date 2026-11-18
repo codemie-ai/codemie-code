@@ -8,15 +8,67 @@ All notable changes to this project are documented in this file, following [Keep
 
 - One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
 - `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
-- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client found on the machine (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route
-- `codemie proxy status` ends with an `Analytics clients:` block of the five analytics clients, each `connected`, `not connected` with the command to run, or `not found`, with the daemon stopped too; `--json` carries it as `analyticsClients`
+- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route. Both take `--scope`, `--yes`, `--overwrite`, `--insiders` and `--profile` as the per-client flags do; without `--scope`, a connector limited to named projects keeps its list. The per-client flags keep working
+- `codemie proxy clients` shows, for each of the five analytics clients (Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat, Copilot CLI) that is not connected, `not connected` or `not found`, each with the command that connects it (`--claude-otlp` / `--copilot-otlp`); `--json` carries `found` and `hint` on those entries
 
 ### Changed
 
+- `codemie proxy connect --claude-otlp` and `--copilot-otlp` no longer skip clients whose application is not found: every client of the vendor is configured as under its own flag, and one that is not installed reads `<client>: configured (not installed yet — takes effect once installed)` without failing the command. The `Nothing was connected` line is gone. A client whose host application is not installed at all, so its writer cannot run (the VS Code Claude Code extension with no VS Code user-data directory), is skipped with `<client>: skipped — VS Code not installed; re-run \`codemie proxy connect --claude-otlp\` after installing` and does not fail the run; real write errors still exit 1, and `--vscode-claude-code` alone still fails without VS Code. `codemie proxy disconnect` with a vendor flag removes CodeMie config wherever it exists and prints `<client>: nothing to disconnect.` for a client with nothing to remove; `--claude-otlp` covers the VS Code Claude Code extension in both editions, stable and Insiders (`--insiders` for Insiders alone)
 - Clients set up by an older CLI move to their own keys at `codemie proxy start` (also `codemie proxy connect` and `codemie proxy restart`); restart the applications the command names afterwards
 - A proxy started by an older CLI is replaced on its port by `codemie proxy connect`, `codemie proxy start`, `codemie proxy restart` and a Claude Code hook
 - The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
+- `codemie proxy connect` and `codemie proxy disconnect` with no target print the target list and exit non-zero; `--scope`, `--yes`, `--insiders` or `--model` passed without a target they apply to print a note that the flag has no effect
+- `codemie proxy status` prints facts only — state, URL, port, profile, project, CLI version and uptime — and, when anything is wrong, one `Issues found — run: codemie proxy doctor` line; client, Claude Desktop, analytics delivery, Claude Code OTLP and PATH findings moved to `codemie proxy doctor`. The gateway key is masked (`****`) in the text, including the `Client keys` line, and in `--json` unless `--show-key` is given. `--json` now carries only `status`, `apiKey`, `url`, `port`, `profile`, `project`, `version` and `uptimeSec`
+- `codemie analytics --include-external [policy]` takes `windows`, `always` or `never` (the same values as `analytics sync install`); the bare flag still means `always` and prints a deprecation notice. A subcommand name (`otel`, `sync`) or any other value is an error
+- `codemie analytics` with an invalid `--from`, `--to` or `--last` now fails with exit code 1 and the accepted format instead of warning and ignoring the filter; a failed run sets the exit code instead of calling `process.exit`
+
+### Deprecated
+
+Each form below still works until its removal date and prints a one-line notice to stderr naming its replacement.
+
+<!-- deprecation-table:start -->
+| Old | New | Removal |
+| --- | --- | --- |
+| `codemie proxy status --deep` | `codemie proxy doctor` | 2026-12-31 |
+| `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
+| `codemie proxy analytics connect-folder` | `codemie proxy analytics consent grant` | 2026-12-31 |
+| `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
+| `codemie proxy connect --force` | `codemie proxy connect --overwrite` / `codemie proxy restart` | 2026-12-31 |
+| `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
+| `codemie analytics --include-external` | `codemie analytics --include-external always` | 2026-12-31 |
+| `codemie proxy connect --claude-code-otlp` | `codemie proxy connect --claude-otlp` (also connects Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
+| `codemie proxy connect --copilot-chat-otlp` | `codemie proxy connect --copilot-otlp` (connects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy connect --copilot-cli-otlp` | `codemie proxy connect --copilot-otlp` (connects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy disconnect --claude-code-otlp` | `codemie proxy disconnect --claude-otlp` (also removes the proxy route of Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
+| `codemie proxy disconnect --copilot-chat-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy disconnect --copilot-cli-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy analytics --claude-code-otlp` | `codemie proxy analytics --claude-otlp` | 2026-12-31 |
+| `codemie proxy analytics --copilot-chat-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
+| `codemie proxy analytics --copilot-cli-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
+<!-- deprecation-table:end -->
+
+The per-client analytics flags of `codemie proxy connect` and `codemie proxy disconnect` are replaced by the vendor flags, which are not one-to-one: `--claude-otlp` also connects (or disconnects) Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot clients. Every fix hint the CLI prints now names the vendor flag. `codemie proxy analytics` takes the vendor flags as connector filters too: `--claude-otlp` for Claude Code, `--copilot-otlp` for both Copilot connectors (together, or neither for every connected connector); its single-connector filters are deprecated the same way.
+
+`--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. To replace the proxy use `codemie proxy restart` (`--profile <name>` for another profile); `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
+
+### Removed
+
+Each form below fails with a message naming its replacement and exits non-zero.
+
+<!-- deprecation-table:start -->
+| Old | New | Removal |
+| --- | --- | --- |
+| `codemie proxy connect desktop` | `codemie proxy connect --claude-desktop` | 2026-12-31 |
+| `codemie proxy connect vscode` | `codemie proxy connect --vscode` | 2026-12-31 |
+| `codemie analytics --report` | `codemie analytics --export` | 2026-12-31 |
+| `codemie analytics --report-format` | `codemie analytics --export <format>` | 2026-12-31 |
+| `codemie analytics --report-output` | `codemie analytics -o <path>` | 2026-12-31 |
+<!-- deprecation-table:end -->
+
+The removal of the deprecated forms and the dropping of the removed-form stubs on 2026-12-31 is tracked in the pull request removal checklist, which lists each form and the date; the release owner tracks it from there.
+
+The same tables, with worked use cases, are in [docs/PROXY-AND-ANALYTICS.md](docs/PROXY-AND-ANALYTICS.md).
 
 ### Fixed
 

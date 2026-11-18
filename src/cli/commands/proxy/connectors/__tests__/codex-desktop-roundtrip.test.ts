@@ -42,12 +42,12 @@ let originalCodexHome: string | undefined;
 // State path is kept inside the CODEX_HOME temp (rather than the default
 // CODEMIE_HOME-derived path) so we never touch — nor delete out from under the
 // file logger — the shared test CODEMIE_HOME.
-function connect(force = false): Promise<unknown> {
+function connect(overwrite = false): Promise<unknown> {
   return writeCodexDesktopConfig({
     configPath: getCodexDesktopConfigPath(),
     statePath,
     ...DAEMON,
-    force,
+    overwrite,
   });
 }
 
@@ -98,7 +98,7 @@ describe('codex-desktop connect/disconnect round-trip (CODEX_HOME)', () => {
 
   it('preserves a pre-existing user config on connect and restores it on disconnect', async () => {
     const configPath = getCodexDesktopConfigPath();
-    // A benign user config with no model_provider (so no --force needed).
+    // A benign user config with no model_provider (so no --overwrite needed).
     writeFileSync(configPath, '[tui]\ntheme = "dark"\n', 'utf-8');
 
     await connect();

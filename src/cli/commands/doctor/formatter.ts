@@ -51,6 +51,14 @@ export class HealthCheckFormatter {
     this.currentSpinner = ora(message).start();
   }
 
+  /** One detail line, with its rendered hint (see `renderHint`) indented under it. */
+  private printDetail(detail: HealthCheckDetail, icon: string, colorFn: (text: string) => string): void {
+    console.log(`  ${icon} ${colorFn(detail.message)}`);
+    if (detail.hint) {
+      console.log(`      ${chalk.white(detail.hint)}`);
+    }
+  }
+
   /**
    * Display a single item result
    */
@@ -63,11 +71,7 @@ export class HealthCheckFormatter {
     const icon = this.getIcon(detail.status);
     const colorFn = this.getColorFunction(detail.status);
 
-    console.log(`  ${icon} ${colorFn(detail.message)}`);
-
-    if (detail.hint) {
-      console.log(`      ${chalk.white(detail.hint)}`);
-    }
+    this.printDetail(detail, icon, colorFn);
   }
 
   /**
@@ -86,11 +90,7 @@ export class HealthCheckFormatter {
       const icon = this.getIcon(detail.status);
       const colorFn = this.getColorFunction(detail.status);
 
-      console.log(`  ${icon} ${colorFn(detail.message)}`);
-
-      if (detail.hint) {
-        console.log(`      ${chalk.white(detail.hint)}`);
-      }
+      this.printDetail(detail, icon, colorFn);
     }
 
     console.log();
@@ -112,11 +112,7 @@ export class HealthCheckFormatter {
       const icon = this.getIcon(detail.status);
       const colorFn = this.getColorFunction(detail.status);
 
-      console.log(`  ${icon} ${colorFn(detail.message)}`);
-
-      if (detail.hint) {
-        console.log(`      ${chalk.white(detail.hint)}`);
-      }
+      this.printDetail(detail, icon, colorFn);
     }
 
     console.log();

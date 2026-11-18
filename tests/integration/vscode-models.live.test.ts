@@ -6,7 +6,7 @@
  *   CODEMIE_VSCODE_MODELS=<model-id|model-a,model-b|all>
  *
  * Authentication:
- *   Either start a VS Code proxy with `codemie proxy connect vscode`, or set:
+ *   Either start a VS Code proxy with `codemie proxy connect --vscode`, or set:
  *   CODEMIE_VSCODE_LIVE_URL=http://127.0.0.1:4001
  *   CODEMIE_VSCODE_LIVE_API_KEY=<local proxy key or gateway token>
  *
@@ -329,7 +329,7 @@ async function resolveLiveConfiguration(): Promise<LiveConfiguration> {
   const state = await readState();
   if (!state || !isProcessAlive(state.pid)) {
     throw new Error(
-      'Start `codemie proxy connect vscode`, or set CODEMIE_VSCODE_LIVE_URL and ' +
+      'Start `codemie proxy connect --vscode`, or set CODEMIE_VSCODE_LIVE_URL and ' +
       'CODEMIE_VSCODE_LIVE_API_KEY.'
     );
   }
