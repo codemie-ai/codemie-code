@@ -4,6 +4,8 @@
 **Date**: 2026-09-10
 **Status**: Production
 
+Command usage, worked use cases and deprecated forms: [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ---
 
 ## Table of Contents

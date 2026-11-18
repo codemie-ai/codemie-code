@@ -52,6 +52,10 @@ Each form below fails with a message naming its replacement and exits non-zero.
 | `codemie analytics --report-output` | `codemie analytics -o <path>` | 2026-12-31 |
 <!-- deprecation-table:end -->
 
+The removal ticket (EPM-CDME) is owed: it is created at handoff, and the removal of the deprecated forms and the dropping of the removed-form stubs on 2026-12-31 is tracked there. Until it exists, the pull request checklist carries the item.
+
+The same tables, with worked use cases, are in [docs/PROXY-AND-ANALYTICS.md](docs/PROXY-AND-ANALYTICS.md).
+
 ## [0.16.10] - 2026-11-17
 
 ### Added

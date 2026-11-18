@@ -82,6 +82,8 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 
 ## Proxy Commands
 
+For the command groups, worked use cases and the table of deprecated forms, see [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon

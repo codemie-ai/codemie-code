@@ -233,6 +233,77 @@
     ]
   },
   {
+    "id": "cmd-proxy-analytics-toggle",
+    "category": "Proxy & IDE",
+    "message": "Pause or resume analytics collection without touching hooks: `codemie proxy analytics disable` stops it everywhere, `codemie proxy analytics enable` turns it back on.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy analytics disable",
+      "codemie proxy analytics enable"
+    ]
+  },
+  {
+    "id": "cmd-proxy-analytics-project",
+    "category": "Proxy & IDE",
+    "message": "Keep one project out of analytics with `codemie proxy analytics exclude`; `codemie proxy analytics include` brings it back.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy analytics exclude",
+      "codemie proxy analytics include"
+    ]
+  },
+  {
+    "id": "cmd-proxy-analytics-consent",
+    "category": "Proxy & IDE",
+    "message": "Work folders outside a CodeMie project need consent first: `codemie proxy analytics consent grant`, `consent revoke` to withdraw, `consent list` to review.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy analytics consent grant",
+      "codemie proxy analytics consent revoke",
+      "codemie proxy analytics consent list"
+    ]
+  },
+  {
+    "id": "cmd-proxy-analytics-claude-code",
+    "category": "Proxy & IDE",
+    "message": "Want Claude Code usage in analytics? `codemie proxy connect --claude-code-otlp` installs its hooks; add `--scope project` to limit it to the current repository.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --claude-code-otlp",
+      "codemie proxy connect --claude-code-otlp --scope project"
+    ]
+  },
+  {
+    "id": "cmd-proxy-analytics-copilot",
+    "category": "Proxy & IDE",
+    "message": "GitHub Copilot CLI or VS Code Copilot Chat in your analytics? `codemie proxy connect --copilot-cli-otlp` and `--copilot-chat-otlp` connect them.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --copilot-cli-otlp",
+      "codemie proxy connect --copilot-chat-otlp"
+    ]
+  },
+  {
+    "id": "cmd-proxy-clients",
+    "category": "Proxy & IDE",
+    "message": "What is connected to the proxy? `codemie proxy clients` lists every client and analytics connector, with its config location and scope.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy clients",
+      "codemie proxy clients --json"
+    ]
+  },
+  {
+    "id": "cmd-proxy-doctor",
+    "category": "Proxy & IDE",
+    "message": "Analytics not arriving? `codemie proxy doctor` names what is wrong and the command that fixes it.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy doctor",
+      "codemie proxy doctor --json"
+    ]
+  },
+  {
     "id": "cmd-proxy-status",
     "category": "Proxy & IDE",
     "message": "Is the local gateway even alive? `codemie proxy status` tells you the facts (key masked, `--show-key` reveals it, `--json` for scripts) — and points to `codemie proxy doctor` when something is wrong.",
@@ -678,6 +749,16 @@
     "commands": [
       "codemie analytics",
       "codemie analytics --include-external always"
+    ]
+  },
+  {
+    "id": "cmd-analytics-sync",
+    "category": "Insights",
+    "message": "Share usage with your team: `codemie analytics sync bootstrap` sets up a daily one-way report delivery to a webhook or a git repository; `codemie analytics sync status` checks it.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics sync bootstrap",
+      "codemie analytics sync status"
     ]
   },
   {

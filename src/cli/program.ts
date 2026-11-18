@@ -75,6 +75,10 @@ VS Code BYOK:
   codemie proxy connect --vscode              Configure stable VS Code through CodeMie proxy
   codemie proxy connect --vscode --insiders   Configure VS Code Insiders through CodeMie proxy
 
+Analytics not arriving?
+  codemie proxy doctor                        Diagnose the proxy, clients and analytics delivery
+  codemie proxy clients                       List connected clients and analytics connectors
+
 Profile selection:
   Uses the active CodeMie profile by default.
   Override for one run with: codemie proxy connect <--claude-desktop|--vscode> --profile <name>

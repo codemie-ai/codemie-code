@@ -2,6 +2,8 @@
 
 `codemie analytics --export` generates a **self-contained HTML dashboard** from your local AI session history. No server required — open the file in any browser and explore your data offline. Cost is always computed, whether or not you pass `--export`.
 
+Command groups and deprecated forms: [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ---
 
 ## Quick Start
