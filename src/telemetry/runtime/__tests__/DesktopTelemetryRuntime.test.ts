@@ -122,7 +122,7 @@ const config: DesktopTelemetryRuntimeConfig = {
   // Desktop connected to this daemon on every poll
   port: 4001,
   gatewayKey: 'codemie-proxy',
-  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
+  readDesktopGateway: async () => ({ gateway: { port: 4001, apiKey: 'codemie-proxy' }, namesGateway: true })
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -2534,7 +2534,7 @@ describe('DesktopTelemetryRuntime', () => {
         ...collecting,
         readDesktopGateway: async () => {
           if (read === 'throw') throw new Error('EACCES');
-          return read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' };
+          return read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true };
         }
       });
       vi.setSystemTime(T0 + 5_000);
@@ -2555,7 +2555,7 @@ describe('DesktopTelemetryRuntime', () => {
       const adapter = createAdapter();
       const runtime = await startDaemon(adapter, {
         ...collecting,
-        readDesktopGateway: async () => (read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' })
+        readDesktopGateway: async () => (read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true })
       });
 
       for (const next of ['none', 'connected', 'none'] as const) {
@@ -2688,6 +2688,65 @@ describe('DesktopTelemetryRuntime', () => {
         await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START + 1);
         expect(recordFiles()).toEqual(chats.map(chat => `completed_${sessionIdFor(chat)}.json`).sort());
+      });
+
+      it('edge: more than RECONCILE_PER_START remembered records whose END keeps failing: the second by-id pass is given the id the first did not take', async () => {
+        const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
+        const { runtime } = await trackedThenDisconnected(chats);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const oldest = sessionIdFor('ext-1')!;
+
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls[0][0]).not.toContain(oldest);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0]).toContain(oldest);
+      });
+
+      it('edge: a remembered record whose reconcile lock another process holds during a by-id pass stays remembered and is delivered by the next interval', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+
+        const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await held.release();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: a record only a listing pass of a connected poll handled, its END failing at that pass, is re-delivered by id once Desktop is disconnected', async () => {
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId).toHaveBeenCalledWith([sessionId]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
       });
 
       it('edge: nothing remembered: an interval of not-connected polls runs no re-delivery by id', async () => {
