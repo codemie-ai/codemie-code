@@ -614,7 +614,7 @@ an alias or function in your interactive shell does not configure the scheduler.
 
 ### Claude Code OTLP analytics
 
-To turn analytics on for every Claude client — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The per-client flags `--claude-code-otlp`, `--copilot-chat-otlp` and `--copilot-cli-otlp` of `connect` and `disconnect` are deprecated for these two (removal on 2026-12-31); they keep working until then and print a notice.
+To turn analytics on for every Claude client — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The earlier per-client analytics flags are deprecated for these two (removal on 2026-12-31; see the deprecation table in [docs/PROXY-AND-ANALYTICS.md](docs/PROXY-AND-ANALYTICS.md#deprecated-and-removed-forms)); they keep working until then and print a notice.
 
 Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
 
@@ -679,13 +679,13 @@ codemie proxy doctor
 
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
 
-Without a connector flag these controls act on every connected connector (Claude Code, Copilot CLI, Copilot Chat); add one connector flag to limit them to that connector:
+Without a connector filter these controls act on every connected connector (Claude Code, Copilot CLI, Copilot Chat); `--claude-otlp` limits them to Claude Code and `--copilot-otlp` to the two Copilot connectors (both may be given):
 
 ```bash
-# Copilot CLI or VS Code Copilot Chat
-codemie proxy analytics disable --copilot-cli-otlp
-codemie proxy analytics exclude --copilot-chat-otlp
-codemie proxy analytics status --copilot-chat-otlp
+# Copilot CLI and VS Code Copilot Chat
+codemie proxy analytics disable --copilot-otlp
+codemie proxy analytics exclude --copilot-otlp
+codemie proxy analytics status --copilot-otlp
 ```
 
 Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
@@ -719,7 +719,7 @@ codemie proxy connect --copilot-otlp                         # analytics for eve
 
 Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets (it exits non-zero). Shared options: `--profile <name>`, `--overwrite` (replace client config CodeMie did not write), `--yes` (skip confirmation prompts), `--verbose`, and `--insiders` (VS Code targets only). A flag passed without a target it applies to prints a note that it has no effect. To replace a running proxy, use `codemie proxy restart` (`--profile <name>` for another profile).
 
-`--claude-otlp` and `--copilot-otlp` turn CodeMie analytics on for every client of a vendor. `--claude-otlp` covers Claude Code, the VS Code Claude Code extension and Claude Desktop: it does what `--claude-desktop --vscode-claude-code --claude-code-otlp` do in one connect, so it also routes Claude Desktop and the extension through the CodeMie proxy, and `codemie proxy disconnect --claude-otlp` removes that route together with the analytics. `--copilot-otlp` covers Copilot Chat and Copilot CLI, as `--copilot-chat-otlp --copilot-cli-otlp` do. A client whose application is not found is configured all the same and reads `<client>: configured (not installed yet — takes effect once installed)`, which does not fail the command; the VS Code Claude Code extension, whose writer needs the VS Code user-data directory, is skipped when VS Code is not installed (`skipped — VS Code not installed; re-run … after installing`), which does not fail the command either. Without `--scope`, a client already limited to named projects keeps its project list. Details: [docs/COMMANDS.md](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor).
+`--claude-otlp` and `--copilot-otlp` turn CodeMie analytics on for every client of a vendor. `--claude-otlp` covers Claude Code, the VS Code Claude Code extension and Claude Desktop: it does what `--claude-desktop` and `--vscode-claude-code` do plus Claude Code analytics, in one connect, so it also routes Claude Desktop and the extension through the CodeMie proxy, and `codemie proxy disconnect --claude-otlp` removes that route together with the analytics. `--copilot-otlp` covers Copilot Chat and Copilot CLI. A client whose application is not found is configured all the same and reads `<client>: configured (not installed yet — takes effect once installed)`, which does not fail the command; the VS Code Claude Code extension, whose writer needs the VS Code user-data directory, is skipped when VS Code is not installed (`skipped — VS Code not installed; re-run … after installing`), which does not fail the command either. Without `--scope`, a client already limited to named projects keeps its project list. Details: [docs/COMMANDS.md](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor).
 
 One daemon serves every connected client at the same time. `proxy connect` gives each client a key of its own — `codemie-proxy.<client>`, for example `codemie-proxy.claude-desktop` — and a request is labelled and handled as the client its key names. A client set up by an older CLI holds the shared key `codemie-proxy` and keeps working; `codemie proxy connect`, `codemie proxy start` and `codemie proxy restart` move such clients to their own keys and print which application to restart. After a reboot, start the daemon with `codemie proxy start`. After a downgrade to an older CLI — or while an older install stands beside this one and its hooks start its own daemon — a client that holds its own key gets an authentication error (`Invalid API key`), because an older daemon accepts the shared key only: run `codemie proxy connect` again with the CLI whose daemon runs.
 

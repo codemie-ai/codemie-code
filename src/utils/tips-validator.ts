@@ -194,6 +194,60 @@ export function scanDocs(paths: string[], entries: readonly DeprecationEntry[] =
   return findings;
 }
 
+/** Every long flag a visible (not hidden) option of any command in the tree offers. */
+function offeredFlags(cmd: Command, out = new Set<string>()): Set<string> {
+  for (const opt of cmd.options) {
+    if (opt.long && !(opt as unknown as { hidden?: boolean }).hidden) out.add(opt.long);
+  }
+  for (const sub of cmd.commands) offeredFlags(sub, out);
+  return out;
+}
+
+/**
+ * The flags of deprecated or removed forms that no command offers any more (e.g. `--claude-code-otlp`): such a flag
+ * names nothing current, so docs must not mention it outside a marked deprecation table. A flag still offered by
+ * another command (`--force` of `codemie setup`) is left to the command-line scan.
+ */
+export function retiredFlags(
+  program: Command,
+  entries: readonly DeprecationEntry[] = listDeprecations(),
+  /** Flags offered outside the `codemie` tree, e.g. by the agent wrappers (`codemie-claude --silent`). */
+  alsoOffered: readonly string[] = []
+): string[] {
+  const offered = offeredFlags(program, new Set(alsoOffered));
+  const flags = new Set<string>();
+  for (const entry of entries) {
+    for (const token of tokenize(entry.old)) {
+      if (token.startsWith('--') && !offered.has(token)) flags.add(token);
+    }
+  }
+  return [...flags].sort();
+}
+
+/**
+ * Lines naming a retired flag as a flag (`--claude-code-otlp`, not the adapter id `claude-code-otlp`), anywhere in the
+ * file — prose, code spans and fences — outside marked deprecation tables.
+ */
+export function scanRetiredFlags(paths: string[], flags: readonly string[]): Finding[] {
+  if (flags.length === 0) return [];
+  const escaped = flags.map((flag) => flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(?<![\\w-])(${escaped.join('|')})(?![\\w-])`);
+  const findings: Finding[] = [];
+  for (const file of paths) {
+    if (!existsSync(file)) continue;
+    const lines = readFileSync(file, 'utf-8').split('\n');
+    const skip = isBlockedByTable(lines);
+    lines.forEach((text, i) => {
+      if (skip[i]) return;
+      const match = pattern.exec(text);
+      if (match) {
+        findings.push({ file, line: i + 1, text: text.trim(), reason: `names the retired flag ${match[1]}; name its replacement` });
+      }
+    });
+  }
+  return findings;
+}
+
 function stripCode(cell: string): string {
   return cell.trim().replace(/^`+|`+$/g, '').trim();
 }

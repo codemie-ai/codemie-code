@@ -30,7 +30,8 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { ANALYTICS_CONNECTORS, listActiveAnalyticsConnectors, type AnalyticsConnector } from './analytics-connectors.js';
-import { vendorFlags } from './flag-list.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlags } from './flag-list.js';
+import { DEPRECATION_REMOVE_ON, deprecate, deprecatedOption, type DeprecationEntry } from '../../deprecation.js';
 
 export type AnalyticsConnectorId =
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
@@ -38,9 +39,36 @@ export type AnalyticsConnectorId =
   | typeof COPILOT_CHAT_OTLP_AGENT_NAME;
 
 export interface ConnectorOptions {
+  /** `--claude-otlp`: the Claude Code connector. */
+  claudeOtlp?: boolean;
+  /** `--copilot-otlp`: both Copilot connectors, Chat and CLI. */
+  copilotOtlp?: boolean;
+  /** Deprecated single-connector filters (removal on 2026-12-31). */
   claudeCodeOtlp?: boolean;
   copilotCliOtlp?: boolean;
   copilotChatOtlp?: boolean;
+}
+
+const COPILOT_CONNECTORS: readonly AnalyticsConnectorId[] = [COPILOT_CLI_OTLP_AGENT_NAME, COPILOT_CHAT_OTLP_AGENT_NAME];
+
+/**
+ * The connectors the filters select, in table order; empty with no filter. `--claude-otlp` and `--copilot-otlp`
+ * combine freely. The deprecated single-connector filters keep their meaning, one at a time: two of them throw.
+ */
+export function resolveAnalyticsConnectors(opts: ConnectorOptions): AnalyticsConnectorId[] {
+  const deprecated: AnalyticsConnectorId[] = [];
+  if (opts.claudeCodeOtlp) deprecated.push(CLAUDE_CODE_OTLP_AGENT_NAME);
+  if (opts.copilotCliOtlp) deprecated.push(COPILOT_CLI_OTLP_AGENT_NAME);
+  if (opts.copilotChatOtlp) deprecated.push(COPILOT_CHAT_OTLP_AGENT_NAME);
+  if (deprecated.length > 1) {
+    throw new ConfigurationError(
+      `Choose one connector at a time; got: ${deprecated.map((s) => `--${s}`).join(', ')}.`
+    );
+  }
+  const selected = new Set<AnalyticsConnectorId>(deprecated);
+  if (opts.claudeOtlp) selected.add(CLAUDE_CODE_OTLP_AGENT_NAME);
+  if (opts.copilotOtlp) for (const id of COPILOT_CONNECTORS) selected.add(id);
+  return ANALYTICS_CONNECTORS.map((entry) => entry.id).filter((id) => selected.has(id));
 }
 
 interface AnalyticsPrefs {
@@ -57,18 +85,9 @@ export interface AnalyticsStore {
   update(mutate: (current: AnalyticsPrefs) => AnalyticsPrefs | Promise<AnalyticsPrefs>): Promise<void>;
 }
 
-/** Picks the connector from the flags; none means Claude Code (the pre-existing behavior). */
+/** The first connector the filters select; none means Claude Code (the pre-existing behavior). */
 export function resolveAnalyticsConnector(opts: ConnectorOptions): AnalyticsConnectorId {
-  const selected: AnalyticsConnectorId[] = [];
-  if (opts.claudeCodeOtlp) selected.push(CLAUDE_CODE_OTLP_AGENT_NAME);
-  if (opts.copilotCliOtlp) selected.push(COPILOT_CLI_OTLP_AGENT_NAME);
-  if (opts.copilotChatOtlp) selected.push(COPILOT_CHAT_OTLP_AGENT_NAME);
-  if (selected.length > 1) {
-    throw new ConfigurationError(
-      `Choose one connector at a time; got: ${selected.map((s) => `--${s}`).join(', ')}.`
-    );
-  }
-  return selected[0] ?? CLAUDE_CODE_OTLP_AGENT_NAME;
+  return resolveAnalyticsConnectors(opts)[0] ?? CLAUDE_CODE_OTLP_AGENT_NAME;
 }
 
 export function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsStore {
@@ -167,8 +186,8 @@ export interface TargetSelection {
   unreadable: AnalyticsConnector[];
 }
 
-function hasConnectorFlag(opts: ConnectorOptions): boolean {
-  return Boolean(opts.claudeCodeOtlp || opts.copilotCliOtlp || opts.copilotChatOtlp);
+export function hasConnectorFlag(opts: ConnectorOptions): boolean {
+  return Boolean(opts.claudeOtlp || opts.copilotOtlp || opts.claudeCodeOtlp || opts.copilotCliOtlp || opts.copilotChatOtlp);
 }
 
 const CONNECTOR_FLAGS = [CLAUDE_CODE_OTLP_AGENT_NAME, COPILOT_CLI_OTLP_AGENT_NAME, COPILOT_CHAT_OTLP_AGENT_NAME].map((id) => `--${id}`);
@@ -217,9 +236,8 @@ async function connectorState(entry: AnalyticsConnector): Promise<ConnectorState
  */
 export async function selectTargetConnectors(verb: AnalyticsVerb, opts: ConnectorOptions): Promise<TargetSelection> {
   if (hasConnectorFlag(opts)) {
-    const id = resolveAnalyticsConnector(opts);
-    const selected = ANALYTICS_CONNECTORS.filter((entry) => entry.id === id);
-    return { targets: selected, unreadable: [] };
+    const ids = resolveAnalyticsConnectors(opts);
+    return { targets: ANALYTICS_CONNECTORS.filter((entry) => ids.includes(entry.id)), unreadable: [] };
   }
   let targets: AnalyticsConnector[];
   let unreadable: AnalyticsConnector[] = [];
@@ -260,7 +278,8 @@ export async function forEachTarget(
     process.exitCode = 1;
     return false;
   }
-  const fanOut = !hasConnectorFlag(opts);
+  // Each connector gets its heading whenever more than one can be acted on.
+  const fanOut = !hasConnectorFlag(opts) || selection.targets.length > 1;
   let allSucceeded = true;
   for (const connector of selection.targets) {
     const label = storeForConnector(connector.id).label;
@@ -279,10 +298,33 @@ export async function forEachTarget(
   return allSucceeded;
 }
 
-/** The connector flags every `proxy analytics` command takes. */
+const COPILOT_REPLACEMENT = `codemie proxy analytics ${COPILOT_OTLP_FLAG} (it covers both Copilot connectors, Chat and CLI)`;
+
+/** The single-connector filters of `proxy analytics`, deprecated for the vendor flags. */
+const DEPRECATED_FILTERS: ReadonlyArray<{ option: keyof ConnectorOptions; flag: string; entry: DeprecationEntry; description: string }> = [
+  { option: 'claudeCodeOtlp', id: CLAUDE_CODE_OTLP_AGENT_NAME, replacement: `codemie proxy analytics ${CLAUDE_OTLP_FLAG}`, description: 'Target Claude Code only' },
+  { option: 'copilotCliOtlp', id: COPILOT_CLI_OTLP_AGENT_NAME, replacement: COPILOT_REPLACEMENT, description: 'Target Copilot CLI only' },
+  { option: 'copilotChatOtlp', id: COPILOT_CHAT_OTLP_AGENT_NAME, replacement: COPILOT_REPLACEMENT, description: 'Target Copilot Chat (VS Code) only' },
+].map(({ option, id, replacement, description }) => ({
+  option: option as keyof ConnectorOptions,
+  flag: `--${id}`,
+  entry: { kind: 'deprecated', old: `codemie proxy analytics --${id}`, replacement, removeOn: DEPRECATION_REMOVE_ON },
+  description,
+}));
+
+/**
+ * The connector filters every `proxy analytics` command takes: `--claude-otlp` and `--copilot-otlp`, combinable, and
+ * the deprecated single-connector filters, hidden from help, each printing one notice when typed.
+ */
 export function withConnectorOptions(command: Command): Command {
-  return command
-    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Target Claude Code only')
-    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Target Copilot CLI only')
-    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Target Copilot Chat (VS Code) only');
+  command
+    .option(CLAUDE_OTLP_FLAG, 'Target the Claude Code connector only')
+    .option(COPILOT_OTLP_FLAG, 'Target the Copilot connectors only (Chat and CLI)');
+  for (const { flag, entry, description } of DEPRECATED_FILTERS) command.addOption(deprecatedOption(entry, flag, description));
+  return command.hook('preAction', (_parent, action) => {
+    const json = Boolean(action.opts<{ json?: boolean }>().json);
+    for (const { option, entry } of DEPRECATED_FILTERS) {
+      if (action.getOptionValueSource(option) === 'cli') deprecate(entry, { json });
+    }
+  });
 }

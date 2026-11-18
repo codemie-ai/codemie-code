@@ -397,7 +397,7 @@ describe('composeProxyDoctor', () => {
       const paused = connectorSections(await compose()).find((s) => s.message.includes('paused'));
 
       expect(paused?.status).toBe('info');
-      expect(paused?.hint).toContain('— run: codemie proxy analytics enable --claude-code-otlp');
+      expect(paused?.hint).toContain('— run: codemie proxy analytics enable --claude-otlp');
     });
 
     it('a failed connector check is an error with a command hint', async () => {

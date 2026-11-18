@@ -287,7 +287,7 @@ Prints facts only: `Status` (`running, healthy`, `running but UNHEALTHY` or `sto
 
 `--json` prints `status` (`healthy` or `unhealthy`), `apiKey` (masked unless `--show-key`), `url`, `port`, `profile`, `project` (when set), `version` (`null` for a daemon of an older CLI) and `uptimeSec`; a stopped daemon prints `{"status":"stopped"}`. It never prints the `Issues found` line.
 
-The status option `--deep` is deprecated (removal on 2026-12-31): it still runs the authenticated upstream check and prints a notice to stderr; use `codemie proxy doctor`. The `inspect desktop` subcommand is deprecated the same way; use `codemie proxy doctor --verbose`, which shows Claude Desktop's storage directories, its recent sessions and whether each was ingested. See the Deprecated section of the CHANGELOG.
+The earlier deep-check option of `proxy status` is deprecated (removal on 2026-12-31): it still runs the authenticated upstream check and prints a notice to stderr; use `codemie proxy doctor`. The `inspect desktop` subcommand is deprecated the same way; use `codemie proxy doctor --verbose`, which shows Claude Desktop's storage directories, its recent sessions and whether each was ingested. See the Deprecated section of the CHANGELOG.
 
 #### `codemie proxy clients`
 
@@ -1871,26 +1871,26 @@ codemie version
 
 ### Analytics for every client of a vendor
 
-`codemie proxy connect --claude-otlp` turns CodeMie analytics on for every Claude client, whether or not its application is found: it does what `--claude-desktop --vscode-claude-code --claude-code-otlp` do in one connect, each exactly as under its own flag, through one daemon. It therefore routes Claude Desktop and the VS Code Claude Code extension through the CodeMie proxy, and `codemie proxy disconnect --claude-otlp` removes that route together with the Claude Code hooks. `codemie proxy connect --copilot-otlp` does what `--copilot-chat-otlp --copilot-cli-otlp` do. The per-client flags keep working as before.
+`codemie proxy connect --claude-otlp` turns CodeMie analytics on for every Claude client, whether or not its application is found: it connects Claude Code analytics, Claude Desktop and the VS Code Claude Code extension in one connect (the last two exactly as under `--claude-desktop` and `--vscode-claude-code`), through one daemon. It therefore routes Claude Desktop and the VS Code Claude Code extension through the CodeMie proxy, and `codemie proxy disconnect --claude-otlp` removes that route together with the Claude Code hooks. `codemie proxy connect --copilot-otlp` connects Copilot Chat and Copilot CLI.
 
 | Flag | Clients | Same as |
 |---|---|---|
-| `--claude-otlp` | Claude Code, VS Code Claude Code extension, Claude Desktop | `--claude-desktop --vscode-claude-code --claude-code-otlp` |
-| `--copilot-otlp` | Copilot Chat, Copilot CLI | `--copilot-chat-otlp --copilot-cli-otlp` |
+| `--claude-otlp` | Claude Code, VS Code Claude Code extension, Claude Desktop | Claude Code analytics, plus `--claude-desktop` and `--vscode-claude-code` |
+| `--copilot-otlp` | Copilot Chat, Copilot CLI | Copilot Chat analytics and Copilot CLI analytics |
 
 - Every client of the vendor is configured, whether or not its application is found. A connect looks for the application alone — the `claude` or `copilot` binary, the VS Code user-data directory, the Claude Desktop application — and a client configured without it prints `<client>: configured (not installed yet — takes effect once installed)` after its writer succeeds; that is not a failure. A client whose host application is not installed at all, so its writer cannot run — the VS Code Claude Code extension with no VS Code (or, with `--insiders`, VS Code Insiders) user-data directory — is skipped: it prints `VS Code Claude Code extension: skipped — VS Code not installed; re-run \`codemie proxy connect --claude-otlp\` after installing` and does not fail the command. Real write errors (permissions, a corrupt file, a conflict that needs `--overwrite`) still print a failure line and set exit code 1. Under `--vscode-claude-code` itself a missing VS Code is still an error.
 - The Claude Code settings, which Claude Code and the extension share, are always written. The extension is written to stable VS Code, or to Insiders with `--insiders`.
-- A client that is found and fails for another reason prints its failure line and sets exit code 1; the clients that succeeded stay configured. A profile with no CodeMie URL fails Claude Desktop this way (`✗ Claude Desktop — Selected profile is missing CodeMie URL. Set it up again — run: codemie setup or codemie profile login`) and the other clients are configured; under `--claude-desktop` alone it stops the command, as before. An invalid stored project list fails Claude Code's analytics the same way (`✗ Claude Code Analytics — Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. Fix it manually or re-run with --overwrite to discard it.`) and Claude Desktop and the extension are configured; under `--claude-code-otlp` alone it stops the command, as before.
+- A client that is found and fails for another reason prints its failure line and sets exit code 1; the clients that succeeded stay configured. A profile with no CodeMie URL fails Claude Desktop this way (`✗ Claude Desktop — Selected profile is missing CodeMie URL. Set it up again — run: codemie setup or codemie profile login`) and the other clients are configured; under `--claude-desktop` alone it stops the command, as before. An invalid stored project list fails Claude Code's analytics the same way (`✗ Claude Code Analytics — Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. Fix it manually or re-run with --overwrite to discard it.`) and Claude Desktop and the extension are configured.
 - `--scope`, `--yes`, `--overwrite`, `--insiders` and `--profile` reach each client as under its own flag, and a flag given together with one of its clients' own flags behaves as the flag alone. Without a terminal, `--claude-otlp` needs `--yes`, since it always writes the Claude Code settings.
 - Without `--scope`, a client already limited to named projects keeps its project list; `--scope user` resets it and `--scope project` adds the current project, as under the client's own flag. A client with no configuration is connected for all projects.
 - Installing a client later needs no new connect: its config is already in place.
 - `codemie proxy disconnect --claude-otlp` and `--copilot-otlp` do what the clients' own disconnect flags do together. CodeMie config is removed wherever it exists; a client with nothing to remove (neither found nor connected to this proxy) prints `<client>: nothing to disconnect.` and does not fail the command. With `--scope project` only the clients that have a project scope are changed: Claude Desktop and the extension stay connected.
-- `codemie proxy analytics` still takes one connector flag at a time (`--claude-code-otlp`, `--copilot-cli-otlp`, `--copilot-chat-otlp`), or none to act on every connected connector; it takes no vendor flag.
-- On `connect` and `disconnect` the per-client flags `--claude-code-otlp`, `--copilot-chat-otlp` and `--copilot-cli-otlp` are deprecated for the vendor flags (removal on 2026-12-31). They keep working exactly as before until then, are hidden from `--help`, and print one stderr notice naming the vendor flag; the replacement is not one-to-one: `--claude-otlp` also connects Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` connects both Copilot clients. Every fix hint the CLI prints names the vendor flag, except the `not found` hint of `codemie proxy clients`, which names the client's own flag because the vendor flag skips a client whose application is not found.
+- `codemie proxy analytics` takes the same vendor flags as connector filters: `--claude-otlp` for Claude Code, `--copilot-otlp` for both Copilot connectors, both together, or none to act on every connected connector.
+- The earlier per-client analytics flags of `connect`, `disconnect` and `proxy analytics` are deprecated for the vendor flags (removal on 2026-12-31; see [docs/PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#deprecated-and-removed-forms)). They keep working exactly as before until then, are hidden from `--help`, and print one stderr notice naming the vendor flag; the replacement is not one-to-one: `--claude-otlp` also connects Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot connectors. Every fix hint the CLI prints names the vendor flag.
 
 ### Claude Code OTLP analytics
 
-For every Claude client at once, use `codemie proxy connect --claude-otlp` ([above](#analytics-for-every-client-of-a-vendor)); it runs the Claude Code setup below together with Claude Desktop's and the VS Code extension's, with the same options. This section describes the Claude Code part, which the deprecated `--claude-code-otlp` sets up alone.
+For every Claude client at once, use `codemie proxy connect --claude-otlp` ([above](#analytics-for-every-client-of-a-vendor)); it runs the Claude Code setup below together with Claude Desktop's and the VS Code extension's, with the same options. This section describes the Claude Code part.
 
 `codemie proxy connect --claude-otlp` writes the Claude Code hooks and OTel environment variables into the user-level `~/.claude/settings.json`, plus `CODEMIE_ANALYTICS_PROJECT_FILTER`: a JSON array (stored as a string) of absolute project paths that are tracked.
 
@@ -1939,13 +1939,13 @@ When the `preview` profile has `baseUrl: "https://codemie-preview.lab.epam.com/c
 | `disconnect --claude-otlp --scope project`            | removes the current project root; when the list becomes empty everything is disconnected |
 | `disconnect --claude-otlp`                            | removes hooks, OTel variables and the allowlist, and the proxy route of Claude Desktop and the extension |
 
-`--scope user` selects Global: the allowlist becomes `[]` and every project is tracked; if the existing allowlist lists projects, Global replaces it and expands tracking to all projects. `--scope project` is an explicit opt-in: it adds the current project and keeps the other entries. If the existing allowlist is `[]` (Global), it becomes the current project only. An omitted `--scope` keeps an existing list of projects, and the Copilot connectors under `--copilot-otlp` keep a project scope the same way. (The deprecated `--claude-code-otlp` treats an omitted `--scope` as `--scope user` until its removal.)
+`--scope user` selects Global: the allowlist becomes `[]` and every project is tracked; if the existing allowlist lists projects, Global replaces it and expands tracking to all projects. `--scope project` is an explicit opt-in: it adds the current project and keeps the other entries. If the existing allowlist is `[]` (Global), it becomes the current project only. An omitted `--scope` keeps an existing list of projects, and the Copilot connectors under `--copilot-otlp` keep a project scope the same way. (The deprecated per-client flag treats an omitted `--scope` as `--scope user` until its removal.)
 
 The allowlist in `~/.claude/settings.json` is the only source of truth. An empty allowlist means Global, a non-empty one means Project, and a missing key means Claude Code analytics has never been configured. Nothing is stored in CodeMie profiles, project config, or setup state, and the scope is not remembered between commands.
 
 **Confirmation.** Before the proxy starts or `~/.claude/settings.json` is changed, `connect --claude-otlp` asks once for the Claude Code settings. The prompt shows the profile and the CodeMie URL when configured and, for `--scope project`, a `Repository:` line with the current repository's analytics name (`owner/repo` from the git remote, or `parent/folder` without the drive letter), and then offers **Confirm** or **Decline** in the same list style as `codemie setup`. **Decline** or Ctrl+C stop the command: the proxy is not started, `settings.json` is not written, and the existing allowlist is left untouched (a cancelled prompt is never treated as Global). An already running proxy keeps running.
 
-**`--yes` and non-interactive use.** `--yes` (a flag of `proxy connect` that applies to `--claude-otlp` and `--copilot-otlp`) skips the prompt and prints its `CodeMie URL:` line and, for project scope, its `Repository:` line right after `Using profile:`. Without `--scope` it writes Global and replaces existing project entries without asking; `--scope project --yes` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-code-otlp` without `--yes` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--yes` for unattended runs. An invalid allowlist still stops `connect` unless `--overwrite` is passed, with or without `--yes`.
+**`--yes` and non-interactive use.** `--yes` (a flag of `proxy connect` that applies to `--claude-otlp` and `--copilot-otlp`) skips the prompt and prints its `CodeMie URL:` line and, for project scope, its `Repository:` line right after `Using profile:`. Without `--scope` it keeps existing project entries (Global when there are none); `--scope project --yes` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-otlp` without `--yes` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--yes` for unattended runs. An invalid allowlist still stops `connect` unless `--overwrite` is passed, with or without `--yes`.
 
 A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--overwrite` to discard it. `--overwrite` never edits a valid list.
 
@@ -2018,28 +2018,28 @@ Delivery health — run: codemie proxy doctor
 
 ### Copilot CLI and Copilot Chat analytics — disable
 
-The same `codemie proxy analytics` commands control the two Copilot analytics connectors. Without a connector flag they act on Claude Code (see above); add **exactly one** of these flags to target a Copilot connector:
+The same `codemie proxy analytics` commands control the two Copilot analytics connectors (Copilot CLI and VS Code Copilot Chat, connected with `codemie proxy connect --copilot-otlp`). The connector filters are the vendor flags:
 
-| Flag | Connector |
+| Filter | Connectors |
 |---|---|
-| `--copilot-cli-otlp` | Native GitHub Copilot CLI (connected with `codemie proxy connect --copilot-otlp`) |
-| `--copilot-chat-otlp` | VS Code Copilot Chat (connected with `codemie proxy connect --copilot-otlp`) |
+| `--claude-otlp` | Claude Code |
+| `--copilot-otlp` | Copilot CLI and Copilot Chat |
 
-Without a connector flag, `disable`/`enable`/`exclude`/`include` act on every connected connector, report each one, continue past a connector that fails and exit 1 if any failed; with none connected they exit 1 and name `codemie proxy connect` with the vendor flags (`--claude-otlp | --copilot-otlp`). `--claude-code-otlp` limits a command to Claude Code. Passing more than one connector flag exits with an error and writes nothing.
+Without a filter, `disable`/`enable`/`exclude`/`include` act on every connected connector, report each one, continue past a connector that fails and exit 1 if any failed; with none connected they exit 1 and name `codemie proxy connect` with the vendor flags (`--claude-otlp | --copilot-otlp`). The two filters may be given together; with more than one connector selected each gets its own heading. `consent grant` and `consent revoke` are Claude Code only: `--copilot-otlp` there exits with an error and writes nothing.
 
 ```bash
-# Stop analytics collection for Copilot CLI; hooks stay installed
-codemie proxy analytics disable --copilot-cli-otlp
+# Stop analytics collection for Copilot; hooks stay installed
+codemie proxy analytics disable --copilot-otlp
 
-# Exclude the current project from Copilot Chat analytics
-codemie proxy analytics exclude --copilot-chat-otlp
+# Exclude the current project from Copilot analytics
+codemie proxy analytics exclude --copilot-otlp
 
 # Remove an exclusion / resume collection
-codemie proxy analytics include /path/to/project --copilot-chat-otlp
-codemie proxy analytics enable --copilot-cli-otlp
+codemie proxy analytics include /path/to/project --copilot-otlp
+codemie proxy analytics enable --copilot-otlp
 
-# Effective state for one connector (add --json for machine-readable output)
-codemie proxy analytics status --copilot-chat-otlp
+# Effective state of the Copilot connectors (add --json for machine-readable output)
+codemie proxy analytics status --copilot-otlp
 ```
 
 **Where state lives.** `~/.codemie/copilot-analytics.json` holds one `{ "enabled": ..., "excludedProjects": [...] }` record per connector. It is deliberately separate from `copilot-connectors.json` (the connector scope written by `connect`/`disconnect`), so reconnecting, switching `--scope`, or disconnecting never resets your exclusions. A connector with no record is fully enabled with nothing excluded.

@@ -1,5 +1,5 @@
 /**
- * Claude Code analytics (`--claude-code-otlp`) steps of `codemie proxy connect`:
+ * Claude Code analytics (connected with `--claude-otlp`) steps of `codemie proxy connect`:
  * the consent gate that runs before anything is started or written, and the
  * settings writer that runs once the shared daemon is up. Kept apart from
  * `connect-orchestrator.ts`, which owns the multi-target daemon lifecycle.

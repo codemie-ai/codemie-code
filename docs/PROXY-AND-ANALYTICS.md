@@ -39,7 +39,7 @@ codemie proxy connect --copilot-otlp    # Copilot Chat and Copilot CLI
 codemie proxy clients                   # each client connected, not connected or not found, with the command to run
 ```
 
-`--claude-otlp` does what `--claude-desktop --vscode-claude-code --claude-code-otlp` do, so it also routes Claude Desktop and the extension through the proxy; `--copilot-otlp` does what `--copilot-chat-otlp --copilot-cli-otlp` do. A client whose application is not found is configured all the same and reads `configured (not installed yet — takes effect once installed)`; it works once installed. Without `--scope`, a connector already limited to named projects keeps its list, and no confirmation is asked. `codemie proxy disconnect --claude-otlp` / `--copilot-otlp` reverse them. The per-client flags `--claude-code-otlp`, `--copilot-chat-otlp` and `--copilot-cli-otlp` are deprecated (removal on 2026-12-31): they keep working until then, are hidden from `--help` and print a notice naming the vendor flag. `codemie proxy analytics` keeps them as connector filters.
+`--claude-otlp` connects Claude Code analytics, Claude Desktop and the VS Code Claude Code extension (as `--claude-desktop` and `--vscode-claude-code` do), so it also routes Claude Desktop and the extension through the proxy; `--copilot-otlp` connects Copilot Chat and Copilot CLI. A client whose application is not found is configured all the same and reads `configured (not installed yet — takes effect once installed)`; it works once installed. Without `--scope`, a connector already limited to named projects keeps its list, and no confirmation is asked. `codemie proxy disconnect --claude-otlp` / `--copilot-otlp` reverse them. The earlier per-client analytics flags are deprecated (removal on 2026-12-31, listed under [Deprecated and removed forms](#deprecated-and-removed-forms)): they keep working until then, are hidden from `--help` and print a notice naming the vendor flag.
 
 Targets combine in one run (`codemie proxy connect --claude-desktop --vscode`). Run `codemie proxy connect` with no target to list them. Restart the application the command names afterwards.
 
@@ -121,6 +121,9 @@ Deprecated forms still work until the removal date and print one notice line on 
 | `codemie proxy disconnect --claude-code-otlp` | `codemie proxy disconnect --claude-otlp` (also removes the proxy route of Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
 | `codemie proxy disconnect --copilot-chat-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
 | `codemie proxy disconnect --copilot-cli-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy analytics --claude-code-otlp` | `codemie proxy analytics --claude-otlp` | 2026-12-31 |
+| `codemie proxy analytics --copilot-chat-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
+| `codemie proxy analytics --copilot-cli-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
 <!-- deprecation-table:end -->
 
 ### Removed

@@ -163,7 +163,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
         id: 'connectors',
         status: 'info',
         message: `${label} analytics: collection is paused`,
-        hint: renderHint({ reason: 'collection paused', command: `codemie proxy analytics enable ${flag}` }),
+        hint: renderHint({ reason: 'collection paused', command: `codemie proxy analytics enable ${connectFlag}` }),
       });
     }
   }

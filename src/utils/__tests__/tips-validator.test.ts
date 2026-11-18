@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DeprecationEntry } from '../../cli/deprecation.js';
@@ -84,10 +84,21 @@ describe('validateCommandExample', () => {
   });
 });
 
+/** Flags the agent wrappers (`codemie-claude`, …, built by AgentCLI outside the `codemie` tree) still offer. */
+const AGENT_WRAPPER_FLAGS = ['--silent'];
+
+/** README.md, AGENTS.md and every top-level docs/*.md; run artifacts (docs/superpowers, docs/stories, …) are not docs. */
+function shippedDocs(): string[] {
+  const docs = readdirSync(join(ROOT, 'docs')).filter((name) => name.endsWith('.md')).map((name) => join('docs', name));
+  return ['README.md', 'AGENTS.md', ...docs].map((p) => join(ROOT, p));
+}
+
 describe('scanDocs', () => {
   it('finds nothing in the shipped docs and root help for the current registry', async () => {
     const { scanDocs, scanText } = await import('../tips-validator.js');
-    const paths = ['README.md', 'docs/COMMANDS.md', 'docs/ARCHITECTURE-PROXY.md', 'docs/ANALYTICS-REPORT.md', 'docs/ANALYTICS-SYNC.md'].map(p => join(ROOT, p));
+    await program();
+    const paths = shippedDocs();
+    expect(paths).toEqual(expect.arrayContaining([join(ROOT, 'AGENTS.md'), join(ROOT, 'docs', 'HOOKS.md')]));
     expect(scanDocs(paths)).toEqual([]);
     const p = await program();
     let help = '';
@@ -110,6 +121,40 @@ describe('scanDocs', () => {
     ].join('\n'));
     const findings = scanDocs([file], [OLD]);
     expect(findings.map(f => f.line)).toEqual([1, 3]);
+  });
+});
+
+describe('retired flags', () => {
+  it('a flag no command still offers is retired; one still offered elsewhere is not', async () => {
+    const { retiredFlags } = await import('../tips-validator.js');
+    const { listDeprecations } = await import('../../cli/deprecation.js');
+    const retired = retiredFlags(await program(), listDeprecations());
+    expect(retired).toEqual(expect.arrayContaining(['--claude-code-otlp', '--copilot-cli-otlp', '--copilot-chat-otlp']));
+    expect(retired).not.toContain('--force');
+    expect(retired).not.toContain('--overwrite');
+    expect(retiredFlags(await program(), listDeprecations(), AGENT_WRAPPER_FLAGS)).not.toContain('--silent');
+  });
+
+  it('flags a retired flag anywhere outside a marked table, never an adapter id that is not a flag', async () => {
+    const { scanRetiredFlags } = await import('../tips-validator.js');
+    const file = tmpFile('r.md', [
+      'Run `codemie proxy connect --claude-code-otlp`.',
+      'Prose: connect/disconnect --claude-code-otlp --scope user.',
+      'Adapter: `codemie hook --agent claude-code-otlp`, dir `claude-code-otlp/`, bin codemie-claude-code-otlp.',
+      '<!-- deprecation-table:start -->',
+      '| `codemie proxy connect --claude-code-otlp` | `codemie proxy connect --claude-otlp` | 2026-12-31 |',
+      '<!-- deprecation-table:end -->',
+    ].join('\n'));
+    const findings = scanRetiredFlags([file], ['--claude-code-otlp']);
+    expect(findings.map((f) => f.line)).toEqual([1, 2]);
+    expect(findings[0].reason).toContain('--claude-code-otlp');
+  });
+
+  it('no shipped doc names a retired flag outside a marked deprecation table', async () => {
+    const { retiredFlags, scanRetiredFlags } = await import('../tips-validator.js');
+    const { listDeprecations } = await import('../../cli/deprecation.js');
+    const retired = retiredFlags(await program(), listDeprecations(), AGENT_WRAPPER_FLAGS);
+    expect(scanRetiredFlags(shippedDocs(), retired)).toEqual([]);
   });
 });
 

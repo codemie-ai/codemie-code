@@ -105,6 +105,20 @@ describe('consent grant / revoke / list actions', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it('--copilot-otlp is refused for both actions, nothing is written; --claude-otlp is accepted', async () => {
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes', '--copilot-otlp']);
+    expect(process.exitCode).toBe(1);
+    expect(said(err)).toContain('only available for Claude Code');
+    expect((await store()).entries).toHaveLength(0);
+    process.exitCode = 0;
+    await run(['consent', 'revoke', work, '--copilot-otlp']);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes', '--claude-otlp']);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect((await store()).entries).toHaveLength(1);
+  });
+
   it('without a signed-in identity connect refuses and does not write', async () => {
     identityMock.mockResolvedValue(null);
     await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);

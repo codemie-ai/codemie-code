@@ -1445,6 +1445,17 @@ describe('claude-code-otlp connector', () => {
         expect(result.reason).toBe('CODEMIE_ANALYTICS_PROJECT_FILTER is not set');
       });
 
+      it('project scope over an empty (all projects) list names the Claude-only exclude', async () => {
+        await seedSettings(JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' }, hooks: { Stop: [codemieHookGroup()] } }));
+
+        const result = await removeClaudeCodeOtlpConfig({ scope: 'project' });
+
+        expect(result.removed).toBe(false);
+        expect(result.reason).toBe(
+          'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude --claude-otlp'
+        );
+      });
+
       it('returns removed:true when only codemie env keys are present (no hooks)', async () => {
         const settingsPath = await seedSettings(
           JSON.stringify({ theme: 'dark', env: { FOO: 'bar', OTEL_LOGS_EXPORTER: 'otlp' } })

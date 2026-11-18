@@ -43,9 +43,12 @@ Each form below still works until its removal date and prints a one-line notice 
 | `codemie proxy disconnect --claude-code-otlp` | `codemie proxy disconnect --claude-otlp` (also removes the proxy route of Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
 | `codemie proxy disconnect --copilot-chat-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
 | `codemie proxy disconnect --copilot-cli-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy analytics --claude-code-otlp` | `codemie proxy analytics --claude-otlp` | 2026-12-31 |
+| `codemie proxy analytics --copilot-chat-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
+| `codemie proxy analytics --copilot-cli-otlp` | `codemie proxy analytics --copilot-otlp` (covers both Copilot connectors) | 2026-12-31 |
 <!-- deprecation-table:end -->
 
-The per-client analytics flags of `codemie proxy connect` and `codemie proxy disconnect` are replaced by the vendor flags, which are not one-to-one: `--claude-otlp` also connects (or disconnects) Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot clients. Every fix hint the CLI prints now names the vendor flag. `codemie proxy analytics` keeps `--claude-code-otlp`, `--copilot-cli-otlp` and `--copilot-chat-otlp` as connector filters.
+The per-client analytics flags of `codemie proxy connect` and `codemie proxy disconnect` are replaced by the vendor flags, which are not one-to-one: `--claude-otlp` also connects (or disconnects) Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot clients. Every fix hint the CLI prints now names the vendor flag. `codemie proxy analytics` takes the vendor flags as connector filters too: `--claude-otlp` for Claude Code, `--copilot-otlp` for both Copilot connectors (together, or neither for every connected connector); its single-connector filters are deprecated the same way.
 
 `--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. To replace the proxy use `codemie proxy restart` (`--profile <name>` for another profile); `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
 

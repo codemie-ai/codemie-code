@@ -33,7 +33,9 @@ import {
   forEachTarget,
   printSaved,
   reportEffectiveState,
+  hasConnectorFlag,
   resolveAnalyticsConnector,
+  resolveAnalyticsConnectors,
   storeForConnector,
   withConnectorOptions,
   withErrorHandling,
@@ -41,6 +43,7 @@ import {
   type ConnectorOptions,
 } from './analytics-targets.js';
 import { addConsentCommands } from './analytics-consent-command.js';
+import { vendorFlag } from './flag-list.js';
 
 export { resolveAnalyticsConnector, selectTargetConnectors, type TargetSelection } from './analytics-targets.js';
 
@@ -182,14 +185,14 @@ async function includeFor(connector: AnalyticsConnector, path: string | undefine
     if (!added) throw error;
     throw new ConfigurationError(
       `${canonical} was added to the ${store.label} tracked projects, but removing its exclusion failed: ${errorMessage(error)} ` +
-        `Still owed: remove the exclusion. A re-run is safe: codemie proxy analytics include "${canonical}" --${connectorId}`
+        `Still owed: remove the exclusion. A re-run is safe: codemie proxy analytics include "${canonical}" ${vendorFlag(`--${connectorId}`)}`
     );
   }
   if (coveringParent) {
     console.log(chalk.yellow(`${canonical} is not tracked: it is still excluded via ${coveringParent}.`));
     console.log(
       chalk.yellow(
-        `  ${renderHint({ reason: 'To remove that exclusion', command: `codemie proxy analytics include "${coveringParent}" --${connectorId}` })}`
+        `  ${renderHint({ reason: 'To remove that exclusion', command: `codemie proxy analytics include "${coveringParent}" ${vendorFlag(`--${connectorId}`)}` })}`
       )
     );
     return false;
@@ -222,13 +225,16 @@ async function collectStatusDelivery(): Promise<DeliveryHealth | null> {
 }
 
 /**
- * The connectors the status reports on: the one the flag selects, or without a flag every connected
+ * The connectors the status reports on: the ones the filters select, or without a filter every connected
  * connector. When none is connected the default connector reports it is not connected.
  */
-async function selectStatusConnectors(opts: ConnectorOptions, selected: AnalyticsConnector): Promise<AnalyticsConnector[]> {
-  const flagGiven = Boolean(opts.claudeCodeOtlp || opts.copilotCliOtlp || opts.copilotChatOtlp);
-  const connected = flagGiven ? [] : await listActiveAnalyticsConnectors();
-  return connected.length > 0 ? connected : [selected];
+async function selectStatusConnectors(opts: ConnectorOptions, fallback: AnalyticsConnector): Promise<AnalyticsConnector[]> {
+  if (hasConnectorFlag(opts)) {
+    const ids = resolveAnalyticsConnectors(opts);
+    return ANALYTICS_CONNECTORS.filter((entry) => ids.includes(entry.id));
+  }
+  const connected = await listActiveAnalyticsConnectors();
+  return connected.length > 0 ? connected : [fallback];
 }
 
 /**

@@ -10,7 +10,7 @@
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { CLAUDE_OTLP_FLAG, vendorFlag } from './flag-list.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag } from './flag-list.js';
 
 export interface NotTrackedAdvice {
   /** Why the project is not collected, as a clause ("it is excluded"). */
@@ -28,9 +28,10 @@ function quotePath(path: string): string {
 function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefined {
   switch (reason) {
     case 'disabled':
-      return { description: 'analytics collection is disabled', command: 'codemie proxy analytics enable' };
+      // Scoped to Claude: the flagless form acts on every connected connector, the Copilot ones included.
+      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${CLAUDE_OTLP_FLAG}` };
     case 'project-excluded':
-      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${CLAUDE_OTLP_FLAG}` };
     case 'not-in-allowlist':
       return {
         description: 'it is not in the Project-scope allowlist',
@@ -55,9 +56,10 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
   const flag = `--${connectorId}`;
   switch (reason) {
     case 'analytics-disabled':
-      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${flag}` };
+      // The analytics filter is the vendor flag, which covers both Copilot connectors.
+      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${COPILOT_OTLP_FLAG}` };
     case 'project-excluded':
-      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${flag}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${COPILOT_OTLP_FLAG}` };
     case 'scope-untracked':
       return {
         description: "it is outside this connector's Project scope",
