@@ -38,7 +38,7 @@ export interface ProxyHealthOptions {
 }
 
 export const SHALLOW_TIMEOUT_MS = 1500;
-const DEEP_TIMEOUT_MS = 6000;
+export const DEEP_TIMEOUT_MS = 6000;
 
 async function fetchWithTimeout(
   url: string,
