@@ -70,9 +70,9 @@ export function desktopGatewayOfEntry(config: unknown): DesktopGateway | null {
 export interface DesktopGatewayState {
   gateway: DesktopGateway | null;
   /**
-   * The applied entry's inference provider is a gateway, whatever its URL; false with no `_meta.json`, no usable
-   * `appliedId`, no applied entry file or another provider; true when the config could not be read otherwise (what
-   * cannot be read is not taken for "no gateway").
+   * The applied entry's inference provider is a gateway, whatever its URL; false with no `_meta.json`, no
+   * `appliedId`, no applied entry file or another provider; true when the config could not be read otherwise, an
+   * `appliedId` that is not a safe file name included (what cannot be read is not taken for "no gateway").
    */
   namesGateway: boolean;
 }
@@ -86,7 +86,8 @@ export async function readDesktopGatewayState(baseDir?: string): Promise<Desktop
     const libDir = join(baseDir ?? getClaudeDesktopBaseDir(), 'configLibrary');
     const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
     const appliedId = appliedConfigId(meta);
-    if (!appliedId) return { gateway: null, namesGateway: false };
+    // An `appliedId` that cannot be used as a file name names an entry this reader cannot open: unreadable, not absent
+    if (!appliedId) return { gateway: null, namesGateway: isRecord(meta) && meta.appliedId !== undefined };
     const entry: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
     return { gateway: desktopGatewayOfEntry(entry), namesGateway: isRecord(entry) && entry.inferenceProvider === 'gateway' };
   } catch (error) {

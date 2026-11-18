@@ -152,7 +152,7 @@ export class DesktopTelemetryRuntime {
         if (!this.stopped) this.cowork?.startIfIdle(now, false);
         await this.followTracked();
         await this.finalizeInactive(now);
-        this.redelivery.startByIdIfDue(now);
+        if (!this.stopped) this.redelivery.startByIdIfDue(now);
         return;
       }
       // The first connected poll after the start builds the index, then finalizes and delivers what a previous daemon

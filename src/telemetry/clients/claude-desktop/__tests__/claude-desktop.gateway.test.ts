@@ -122,6 +122,14 @@ describe('readDesktopGatewayState', () => {
     await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: false });
   });
 
+  it.each([
+    ['not a string', 7],
+    ['not a safe file name', '../a'],
+  ])('takes an appliedId that is %s for a gateway', async (_case, appliedId) => {
+    await writeLibrary({ appliedId });
+    await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: true });
+  });
+
   it('takes an unparsable _meta.json for a gateway, never throwing', async () => {
     await writeFile(join(baseDir, 'configLibrary', '_meta.json'), '{not json');
     await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: true });
