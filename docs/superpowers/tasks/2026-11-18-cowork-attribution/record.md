@@ -91,23 +91,53 @@ ingest, gate or reader. **Not macOS Claude Desktop UI acceptance.**
   appended and forwarded; session ended and forwarded. A native control (spool session with no served mark, project P1) was
   forwarded too.
 
-| Observation (public API) | Result |
+**Final outcome: PASS.** Run `r4` (fresh projects `zz17385-r4-p1/p2`, fresh random session ids), command
+`PROBE_RUN=r4 PROBE_OUT=<evidence>/result-r4.json npx vitest run <local probe file>`, exit status `0`, `Tests 1 passed`. The
+probe is a local file outside the repo (its credentials are read in-process from the harness's existing local file; never
+in argv, logs or the result). Earlier runs r1-r3 were diagnostic: r1/r2 used unpriced model names (cost 0), r3 had a wrong
+list-row mapping (it read `session_id`; the list endpoint keys rows by `trace_id`), so its final assertion failed. r4 fixes the
+mapping and turns every acceptance value into an executable assertion (all ten true):
+
+| Assertion (real response fields) | Result |
 |---|---|
-| `GET /sessions/<id>` | `summary_state=final`, `subscription_type=codemie`, `project_origin=profile`, 3 tool calls |
-| Sessions list filtered by P1 / by P2 | the session is listed under P1, P2 list is empty |
-| Native control | `subscription_type=unknown`, `project_origin=none`, `summary_state=none` (unchanged legacy behavior) |
-| Overview (the spend endpoint the UI uses), P1 | `total_cost_usd = api_cost_usd = 0.002998`, `subscription_cost_usd = 0`, 1 session, `subscription_types=[codemie]` |
-| Same, filter `subscription_type=codemie` | identical to P1; filter `unknown` returns 0 sessions; P2 returns 0 |
-| Tokens vs spooled events | stored 120 input / 126 output / 250 cache creation / 3500 cache read equal the sums of the 19 unique spooled event ids (no double counting) |
+| all HTTP calls return 200 | true |
+| `GET /sessions/<id>`: `summary_state=final`, `subscription_type=codemie`, `project_origin=profile` | true |
+| sessions list for P1 (rows keyed `trace_id`) contains the session as `codemie`/`final`; P2 list does not | true / true |
+| overview P1 `kpis`: `api_cost_usd > 0`, `subscription_cost_usd = 0`, `api_cost_usd = total_cost_usd`, 1 session | true |
+| overview with `subscription_type=codemie` equals P1; `subscription_type=unknown` has 0 sessions | true |
+| session `cost_usd` = overview `api_cost_usd` | true |
+| detail input/output/cache-read/cache-creation tokens equal the sums over the unique spooled usage events | true |
+| native control (spool session, no served mark): `subscription_type=unknown`, `project_origin=none` | true |
+| two further forwards of the same spool leave overview cost/tokens/sessions and the session's tokens/cost/state unchanged | true |
 
-The synthetic model name is `gpt-4.1` only because the local price catalog prices it (earlier unpriced runs stored the same
-classification with cost 0). A final assertion in the local probe that mapped list rows to event ids failed because list rows
-carry no `session_id`; it is a probe-side mapping error, the values above come from the same run's recorded responses.
+Values (r3, same behavior): P1 1 session, 120 input / 126 output / 250 cache creation / 3500 cache read tokens, cost
+`0.002998` all API, subscription `0`. The synthetic model name `gpt-4.1` is used only because this backend's catalog prices it.
 
-Limits of this probe: the backend image is a 17339 branch build, not `origin/main` `a01605f354` (the ingest, gate,
-classification and scope files are identical to `origin/main`; 27 unrelated reader/handler files differ). The `/cost`
-funding buckets still show Cowork as `unknown` (a separate publication-contract axis, out of scope). The probe created
-test projects and sessions in that backend's shared test DB (data only). Windows host, no real Claude Desktop.
+Evidence files (outside the tracked tree, in `C:/codemie-dev/_local/epmcdme-17385-17410/evidence-live/`): `result-r4.json`
+(compact; session/project ids, statuses and the ten check results; no credentials, cookies, tokens or payload text; a
+case-insensitive search for cookie/password/token/bearer finds nothing), `probe-r4.log` (vitest output), `exit-r4.txt`,
+and the probe `probe-src/zz-live-backend-probe.local.test.ts`, moved out of `src/` after the run so the Stop hook lints only
+tracked code. Its ESLint warnings (unused imports, `require()` inside `vi.hoisted`) were confined to that untracked file;
+after the file move `npm run check:pre-commit` exits `0` (`exit-precommit.txt`).
+
+**Which acceptance axis is proven.** The UI's overview spend cards (`overviewMetrics.ts` on `codemie-ui` `origin/main`) read
+`kpis.api_cost_usd` and `kpis.subscription_cost_usd`; that is the axis asserted above: the Cowork session is API (CodeMie)
+spend, not subscription spend. The separate `/cost` endpoint's `funding` buckets (api_based / subscription / unknown) were
+**not** verified as CodeMie and show this session as `unknown`. They are derived from the publication-contract/funding
+route, which this change deliberately does not send (no consent or contract header for Cowork). `/cost` `kpis` still lists
+`subscription_types=[codemie]`. Do not read this record as proof of every cost path.
+
+**Backend revision vs current main.** The probed backend is `cdd8829db3` (17339 branch build). Current `origin/main` is
+`6460ae3523` (not the earlier `a01605f354` used for the source trace). Ingest, evidence gate, classification and scope files
+match `origin/main`. The overview/spend reader and handler files DO overlap the verified path and differ
+(`cli_analytics_handler.py`, `reader.py`, `grouped_cost_sql.py`, `session_money.py`, `funding_buckets.py`,
+`cost_key_sql.py`). Inspection of those diffs shows pricing-completeness changes (`cost_priced`, per-session
+`unpriced_models`, EPMCDME-17152) and not the `api_cost_usd`/`subscription_cost_usd` class split (the `kpis` assembly lines
+are unchanged), but this was not run against current main, so the result is evidence for `cdd8829db3` plus a diff
+inspection for `6460ae3523`.
+
+Other limits: the probe created test projects and sessions in that backend's shared test DB (data only). Windows host, no
+real Claude Desktop UI; synthetic input.
 
 ## Limitations and unverified items
 
