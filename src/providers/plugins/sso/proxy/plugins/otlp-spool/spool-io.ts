@@ -143,7 +143,8 @@ export function clearHold(status: SessionStatus, scope: HoldScope): void {
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
  * it demands and persists the status once when anything changed. A discard for want of a project is
- * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is warned only.
+ * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is recorded as
+ * `lastLoss` (`project_conflict_discard`) and also warned once per session.
  */
 export async function applyProjectPolicyLocked(
   sessionId: string,
@@ -181,6 +182,14 @@ export async function applyProjectPolicyLocked(
   if (noProjectLoss) {
     status.lastLoss = {
       reason: 'no_project',
+      at: Date.now(),
+      bytes: hooksBytes + otelBytes,
+      stream: hooksBytes > 0 ? 'hooks' : otelStream,
+    };
+  }
+  if (policy.state === 'conflict' && hooksBytes + otelBytes > 0) {
+    status.lastLoss = {
+      reason: 'project_conflict_discard',
       at: Date.now(),
       bytes: hooksBytes + otelBytes,
       stream: hooksBytes > 0 ? 'hooks' : otelStream,
