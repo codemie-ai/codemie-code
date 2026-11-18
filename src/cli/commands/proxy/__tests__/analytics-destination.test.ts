@@ -16,7 +16,10 @@ vi.mock('../daemon-manager.js', async (orig) => ({
   spawnDaemon: async (opts: Record<string, unknown>) => (daemon.state = { ...opts }),
   readState: async () => daemon.state,
 }));
-vi.mock('../connect-orchestrator.js', () => ({ verifySsoCredentials: async () => undefined }));
+vi.mock('../connect-orchestrator.js', async (orig) => ({
+  ...(await orig<typeof import('../connect-orchestrator.js')>()),
+  verifySsoCredentials: async () => undefined,
+}));
 vi.mock('../../skills/setup/sync.js', () => ({ syncRegisteredSkills: async () => undefined }));
 vi.mock('../../skills/setup/sync-plugin.js', () => ({ syncPluginSkills: async () => undefined }));
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));

@@ -57,6 +57,23 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     ]);
   });
 
+  it.skipIf(process.platform === 'win32')('writes a settings file that is a symbolic link through the link', async () => {
+    const target = join(testDir, 'dotfiles-settings.json');
+    await writeFile(target, JSON.stringify({ 'editor.fontSize': 14 }, null, 2));
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await symlink(target, configPath);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key-abc123');
+
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    const settings = JSON.parse(await readFile(target, 'utf-8')) as Record<string, unknown>;
+    expect(settings['editor.fontSize']).toBe(14);
+    expect(settings['claudeCode.environmentVariables']).toEqual([
+      { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
+    ]);
+  });
+
   it('preserves unrelated existing top-level keys and env var entries', async () => {
     await mkdir(join(productDir, 'User'), { recursive: true });
     await writeFile(
@@ -461,15 +478,16 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
     expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
   });
 
-  it('leaves a settings file that is a symbolic link, the link and its target', async () => {
+  it('moves a settings file that is a symbolic link through the link, and a second move leaves it', async () => {
     const target = join(home, 'dotfiles-settings.json');
     await writeFile(target, olderConnectSettings('codemie-proxy'));
     await mkdir(join(vscodeModule.getVsCodeProductDir(false), 'User'), { recursive: true });
     await symlink(target, settingsPath());
 
-    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('left');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('moved');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
 
     expect((await lstat(settingsPath())).isSymbolicLink()).toBe(true);
-    expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy'));
+    expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy.vscode-claude-code'));
   });
 });

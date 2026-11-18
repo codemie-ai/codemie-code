@@ -1,7 +1,7 @@
 // src/cli/commands/proxy/connectors/__tests__/copilot-cli-otlp.test.ts
 
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
@@ -165,6 +165,25 @@ describe('copilot-cli-otlp connector (temp COPILOT_HOME / CODEMIE_HOME)', () => 
     expect(result).toMatchObject({ removed: true, mode: 'full' });
     expect(existsSync(hookFilePath)).toBe(false);
     expect(await readScopeRecord()).toEqual({ enabled: false });
+  });
+
+  it.skipIf(process.platform === 'win32')('full disconnect through a linked hook file deletes its target and the link', async () => {
+    const hookFilePath = getCopilotCliHookFilePath();
+    const target = join(testDir, 'dotfiles', 'codemie-copilot-cli-hooks.json');
+    await mkdir(join(testDir, 'copilot-home', 'hooks'), { recursive: true });
+    await mkdir(join(testDir, 'dotfiles'));
+    await writeFile(target, '{}');
+    await symlink(target, hookFilePath);
+    await writeCopilotCliOtlpConfig();
+    expect(JSON.parse(await readFile(target, 'utf-8'))).toEqual(buildHookFileContent());
+    expect((await lstat(hookFilePath)).isSymbolicLink()).toBe(true);
+
+    const result = await removeCopilotCliOtlpConfig();
+
+    expect(result).toMatchObject({ removed: true, mode: 'full' });
+    expect(existsSync(target)).toBe(false);
+    await expect(lstat(hookFilePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await removeCopilotCliOtlpConfig()).toMatchObject({ removed: false, mode: 'noop' });
   });
 
   it('disconnect with no hook file is a noop', async () => {

@@ -5,8 +5,24 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { homedir, tmpdir } from 'os';
 import { isAbsolute, join } from 'path';
-import { writeFile, readFile, mkdir, rm, lstat, readdir, symlink } from 'fs/promises';
+import { writeFile, readFile, mkdir, rm, lstat, readdir, symlink, chmod } from 'fs/promises';
 import { existsSync } from 'fs';
+
+// A path whose file is deleted on its next lstat, before the call goes through.
+const lstatRemoves = vi.hoisted(() => ({ path: undefined as string | undefined }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    lstat: async (p: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
+      if (lstatRemoves.path !== undefined && String(p) === lstatRemoves.path) {
+        lstatRemoves.path = undefined;
+        await actual.rm(String(p), { force: true });
+      }
+      return (actual.lstat as (...a: unknown[]) => unknown)(p, ...rest);
+    },
+  };
+});
 
 import { logger } from '@/utils/logger.js';
 import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
@@ -1404,6 +1420,85 @@ describe('removeDesktopConfig', () => {
     expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
   });
 
+  it('removes an emptied applied entry whose file is gone before the link check', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    lstatRemoves.path = join(libDir, 'a.json');
+
+    let result: Awaited<ReturnType<typeof removeDesktopConfig>>;
+    try {
+      result = await removeDesktopConfig(baseDir, statePath);
+    } finally {
+      lstatRemoves.path = undefined;
+    }
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+  });
+
+  it.skipIf(process.platform === 'win32')('empties the target of a linked applied entry, removes the link, and the next connect writes a new file', async () => {
+    const target = join(baseDir, 'dotfiles-desktop.json');
+    await writeFile(target, LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await symlink(target, join(libDir, 'a.json'));
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(await readdir(libDir)).toEqual(['_meta.json']);
+    expect(JSON.parse(await readFile(target, 'utf-8'))).toEqual({});
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+      json: async () => MODEL_LIST_RESPONSE,
+    }) as unknown as typeof globalThis.fetch;
+    let written: string;
+    try {
+      written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(written).not.toBe(join(libDir, 'a.json'));
+    expect((await lstat(written)).isSymbolicLink()).toBe(false);
+    expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    expect(JSON.parse(await readFile(target, 'utf-8'))).toEqual({});
+  });
+
+  it.skipIf(process.platform === 'win32')('removes a linked applied entry whose target cannot be written, with one warning', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    const targetDir = join(baseDir, 'read-only-dotfiles');
+    const target = join(targetDir, 'desktop.json');
+    await mkdir(targetDir);
+    await writeFile(target, LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    await chmod(target, 0o444);
+    await chmod(targetDir, 0o555);
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await symlink(target, join(libDir, 'a.json'));
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    let result: Awaited<ReturnType<typeof removeDesktopConfig>>;
+    let warnings: number;
+    try {
+      result = await removeDesktopConfig(baseDir, statePath);
+      warnings = warn.mock.calls.length;
+    } finally {
+      await chmod(targetDir, 0o755);
+      await chmod(target, 0o644);
+      warn.mockRestore();
+    }
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(await readFile(target, 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+    expect(warnings).toBe(1);
+  });
+
   it('drops the sign-in keys with the gateway, so a config holding nothing else is deleted', async () => {
     await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, 'a.json'), JSON.stringify({
@@ -1922,17 +2017,17 @@ describe('moveDesktopToNamedKey', () => {
     expect((await readdir(lib)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
-  it.skipIf(process.platform === 'win32')('leaves an applied entry that is a symbolic link, the link and its target', async () => {
+  it.skipIf(process.platform === 'win32')('moves an applied entry that is a symbolic link through the link, and a second move leaves it', async () => {
     const target = join(baseDir, 'dotfiles-desktop.json');
-    const bytes = JSON.stringify(olderEntry('codemie-proxy'), null, 2);
-    await writeFile(target, bytes);
+    await writeFile(target, JSON.stringify(olderEntry('codemie-proxy'), null, 2));
     await writeFile(join(lib, '_meta.json'), META);
     await symlink(target, join(lib, 'a.json'));
 
-    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('left');
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
 
     expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
-    expect(await readFile(target, 'utf-8')).toBe(bytes);
+    expect(JSON.parse(await readFile(target, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
   });
 
   it.skipIf(process.platform === 'win32')('changes nothing for an applied entry that is a link to nothing, and creates nothing at its target', async () => {

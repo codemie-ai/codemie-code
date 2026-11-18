@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
-import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, realpath, rename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1004,6 +1004,63 @@ describe('claude-code-otlp connector', () => {
         expect(existsSync(settingsPath)).toBe(false);
       });
 
+      it.skipIf(process.platform === 'win32')('writes {} through a linked settings file left fully empty and keeps the link', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        const target = join(homeDir, 'dotfiles', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await mkdir(join(homeDir, 'dotfiles'), { recursive: true });
+        await writeFile(
+          target,
+          JSON.stringify(
+            {
+              env: buildExpectedEnv(mockState),
+              hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }] }] },
+            },
+            null,
+            2
+          )
+        );
+        await symlink(target, settingsPath);
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ mode: 'full', removed: true, path: settingsPath });
+        expect((await lstat(settingsPath)).isSymbolicLink()).toBe(true);
+        expect(await readJson(target)).toEqual({});
+      });
+
+      it.skipIf(process.platform === 'win32')('removes a linked settings file left fully empty whose target cannot be written, with one warning', async () => {
+        if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        const targetDir = join(homeDir, 'read-only-dotfiles');
+        const target = join(targetDir, 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await mkdir(targetDir, { recursive: true });
+        const bytes = JSON.stringify(
+          {
+            env: buildExpectedEnv(mockState),
+            hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }] }] },
+          },
+          null,
+          2
+        );
+        await writeFile(target, bytes);
+        await symlink(target, settingsPath);
+
+        await chmod(targetDir, 0o555);
+        let result: Awaited<ReturnType<typeof removeClaudeCodeOtlpConfig>>;
+        try {
+          result = await removeClaudeCodeOtlpConfig();
+        } finally {
+          await chmod(targetDir, 0o755);
+        }
+
+        expect(result).toEqual({ mode: 'full', removed: true, path: settingsPath });
+        expect(existsSync(settingsPath)).toBe(false);
+        expect(await readRaw(target)).toBe(bytes);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+      });
+
       it('logs a sanitized info message describing the removal', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
@@ -1090,6 +1147,34 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.removed).toBe(true);
         expect(existsSync(backupPath)).toBe(false);
+      });
+
+      it.skipIf(process.platform === 'win32')('restores from a linked backup and deletes its target and the link', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+        const target = join(homeDir, 'dotfiles', 'settings.json' + SETTINGS_BACKUP_SUFFIX);
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await mkdir(join(homeDir, 'dotfiles'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify(
+            { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.corp.example', OTEL_EXPORTER_OTLP_HEADERS: 'x-api-key=USER-SECRET' } },
+            null,
+            2
+          )
+        );
+        await writeClaudeCodeOtlpConfig({ force: true });
+        await rename(backupPath, target);
+        await symlink(target, backupPath);
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result.removed).toBe(true);
+        const final = await readJson(settingsPath);
+        expect(final.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('https://collector.corp.example');
+        expect(final.env.OTEL_EXPORTER_OTLP_HEADERS).toBe('x-api-key=USER-SECRET');
+        expect(existsSync(target)).toBe(false);
+        await expect(lstat(backupPath)).rejects.toMatchObject({ code: 'ENOENT' });
       });
     });
 

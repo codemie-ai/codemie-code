@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import {
@@ -37,7 +37,7 @@ import {
 import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import { CHAT_HOOK_EVENT_NAMES } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.types.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import { getVsCodeProductDir, writeAtomically } from './vscode.js';
+import { getVsCodeProductDir, removeFileThroughLink, writeAtomically } from './vscode.js';
 
 const HOOK_FILE_LOCATIONS_KEY = 'chat.hookFilesLocations';
 const USE_HOOKS_KEY = 'chat.useHooks';
@@ -367,7 +367,7 @@ export async function removeCopilotChatOtlpConfig(
   await writeAtomically(settingsPath, nextText);
 
   if (existsSync(hookFilePath)) {
-    await unlink(hookFilePath);
+    await removeFileThroughLink(hookFilePath);
   }
   await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
 
