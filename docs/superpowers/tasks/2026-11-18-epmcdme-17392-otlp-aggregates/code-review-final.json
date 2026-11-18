@@ -1,0 +1,302 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "The owner approved the final review (approve, no findings) and asked to commit its record."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "The owner approved the final review (approve, no findings) and asked to commit its record."
+    }
+  ],
+  "reviewed_head": "749a74cd8ce25a093f50ff410aae54a8ed03825b",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "All four lenses and the standards audit ran with parseable output; every story AC and spec decision passes, with D11's real-machine check pending Stage 7. All 17 lens candidates were dismissed after reading the source: they are already handled (readVsCodeClaudeCodeGateway never throws, the corrupt connector file is refused on write), are behaviour the spec sanctions (D5 lookup rules, AC9/AC10 status and JSON output), or are reachable only through hand-edited state. Nothing was deferred.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: --claude-otlp configures Claude Code, VS Code extension, Claude Desktop in one connect",
+      "status": "pass",
+      "notes": "aggregate implies the three members; same runners, one daemon lifecycle"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: --copilot-otlp configures Copilot Chat and Copilot CLI",
+      "status": "pass",
+      "notes": "ANALYTICS_AGGREGATES copilot-otlp members reuse member runners"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: not-found member skipped before any check, prompt or sign-in",
+      "status": "pass",
+      "notes": "dropMembersOrReportNone runs before TTY refusal, profile, SSO, confirmation"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: no member found: no daemon, one line to proxy status, exit 0",
+      "status": "pass",
+      "notes": "'Nothing was connected' line; returns before daemon"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: found member failing otherwise prints failure, exit 1, others configured",
+      "status": "pass",
+      "notes": "failDesktopWithoutCodeMieUrl / failAggregateInvalidProjectList record results"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: every existing flag alone behaves as today",
+      "status": "pass",
+      "notes": "no aggregate -> no lookup; member-flag errors still thrown"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: --scope/--silent/--force/--insiders/--profile reach members; TTY refusal only when Claude Code found",
+      "status": "pass",
+      "notes": "options forwarded; TTY refusal reads activeTargets"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: disconnect aggregates; silent skip; --scope project leaves Desktop and extension",
+      "status": "pass",
+      "notes": "dropAggregateMembers in disconnect-orchestrator"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: running-daemon status ends with five-row Analytics clients block; --json analyticsClients",
+      "status": "pass",
+      "notes": "collectAnalyticsClients row order/labels; commands keyed on state.version"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: stopped daemon prints same block; Desktop not connected",
+      "status": "pass",
+      "notes": "collectAnalyticsClients(null) on stopped branch"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: rerun configures new client, keeps named-project lists unless --scope",
+      "status": "pass",
+      "notes": "keepProjectList + readKeptCopilotConnectorScope"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: help, bare connect, README, command reference, changelog name both flags",
+      "status": "pass",
+      "notes": "connectDescription/connectListLines, README, COMMANDS.md, CHANGELOG Added"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: Insiders alone without --insiders skips extension; status names --claude-otlp --insiders",
+      "status": "pass",
+      "notes": "findVsCodeDir(run.insiders); aggregateFlag with --insiders"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: VS Code without Claude Code binary: shared settings written, extension connected",
+      "status": "pass",
+      "notes": "isMemberFound claudeCodeOtlp = binary || vscode dir"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: running a not-connected row's command makes it read connected",
+      "status": "pass",
+      "notes": "status found rules match or are a subset of connect lookups"
+    },
+    {
+      "kind": "spec",
+      "item": "NG1: no change to connector writes, daemon, Desktop telemetry, backend",
+      "status": "pass",
+      "notes": "writers change only under keepProjectList"
+    },
+    {
+      "kind": "spec",
+      "item": "NG2: per-client flags not deprecated or removed",
+      "status": "pass",
+      "notes": "member options kept"
+    },
+    {
+      "kind": "spec",
+      "item": "NG3: proxy analytics and existing Desktop:/Analytics: status lines unchanged",
+      "status": "pass",
+      "notes": "block appended after existing lines"
+    },
+    {
+      "kind": "spec",
+      "item": "NG4: no Cowork send-only-under-new-flag",
+      "status": "pass",
+      "notes": "no Cowork producer code in diff"
+    },
+    {
+      "kind": "spec",
+      "item": "NG5: no Cowork vs Claude Code distinction on CLI Analytics tab",
+      "status": "pass",
+      "notes": "not touched"
+    },
+    {
+      "kind": "spec",
+      "item": "NG6: no aggregates for other vendors",
+      "status": "pass",
+      "notes": "only claude-otlp and copilot-otlp"
+    },
+    {
+      "kind": "spec",
+      "item": "D1: aggregates and nothing more",
+      "status": "pass",
+      "notes": "aggregate implies member options; member runners reused"
+    },
+    {
+      "kind": "spec",
+      "item": "D2: existing commands and flags unchanged; new flags only add",
+      "status": "pass",
+      "notes": "no-aggregate path unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "D3: not-found member skipped silently only under an aggregate",
+      "status": "pass",
+      "notes": "dropMembersNotFound applies to membersOf(aggregates)"
+    },
+    {
+      "kind": "spec",
+      "item": "D4: status always shows five-client block, running or stopped",
+      "status": "pass",
+      "notes": "both branches print block"
+    },
+    {
+      "kind": "spec",
+      "item": "D5: found rules per client; unknown lookup platform counts as found",
+      "status": "pass",
+      "notes": "isMemberFound switch; lookup() failure counts as found"
+    },
+    {
+      "kind": "spec",
+      "item": "D6: connected rules per client",
+      "status": "pass",
+      "notes": "hooks, extension route, Desktop gateway, connector scope"
+    },
+    {
+      "kind": "spec",
+      "item": "D7: proxy disconnect gets both aggregates with same silent skip",
+      "status": "pass",
+      "notes": "addAggregateOptions on disconnect"
+    },
+    {
+      "kind": "spec",
+      "item": "D8: no member found: one line, exit 0, no daemon",
+      "status": "pass",
+      "notes": "see AC4"
+    },
+    {
+      "kind": "spec",
+      "item": "D9: aggregate declared once; every target list reads it",
+      "status": "pass",
+      "notes": "ANALYTICS_AGGREGATES feeds options, lists, help, status"
+    },
+    {
+      "kind": "spec",
+      "item": "D10: CLI-only; aggregates write nothing member flags do not",
+      "status": "pass",
+      "notes": "existing writers reused"
+    },
+    {
+      "kind": "spec",
+      "item": "D11: unit tests plus real-machine check at the end",
+      "status": "pending-stage-7",
+      "notes": "unit tests present; real-machine run is Stage 7 evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "D12: not-found member dropped before no-TTY refusal, confirmation, sign-in",
+      "status": "pass",
+      "notes": "drop precedes TTY check and confirmation"
+    },
+    {
+      "kind": "spec",
+      "item": "D13: help and docs describe Claude routing and its removal by disconnect",
+      "status": "pass",
+      "notes": "descriptions, README, COMMANDS.md"
+    },
+    {
+      "kind": "spec",
+      "item": "D14: rerun changes nothing the user set; explicit --scope acts as member flag",
+      "status": "pass",
+      "notes": "keepProjectList branches"
+    },
+    {
+      "kind": "spec",
+      "item": "D15: connected shows connected whatever the lookup; not-found names own flag",
+      "status": "pass",
+      "notes": "row(): found = lookedUp || connected"
+    },
+    {
+      "kind": "spec",
+      "item": "D16: aggregate disconnect --scope project leaves Desktop and extension",
+      "status": "pass",
+      "notes": "dropAggregateMembers drops both under scope project"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: CLI-only, released independently of backend",
+      "status": "pass",
+      "notes": "only CLI source and docs"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: aggregates send nothing new",
+      "status": "pass",
+      "notes": "no telemetry, header or forwarder change"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: every vendor client covered",
+      "status": "pass",
+      "notes": "ANALYTICS_AGGREGATES members"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "1 subject in range, feat(proxy): add --claude-otlp and --copilot-otlp, one analytics flag per vendor, uses allowed type feat and allowed scope proxy, imperative, under the 100-char subject-max-length"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "new src/cli/commands/proxy/analytics-clients.ts is 494 lines (under the 500-line file guideline), kebab-case, .js/node: imports, explicit return types and JSDoc on every export; connect-orchestrator.ts stays over 500 lines but was already larger at base and this change shrinks it (+69/-110); console.log calls are user-facing CLI output in the existing chalk pattern, not debug output; processes.ts getCommandPath adds a documented options param with explicit Promise<string | null> return"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "added non-test source lines touch no X-CodeMie attribution header, Responses user field or JWT override, log no credentials, and add no file reads/writes from user-supplied paths; getCommandPath keeps exec with an argv array (no shell) and the $PATH: where.exe guard"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and the standards audit ran with parseable output; every story AC and spec decision passes, with D11's real-machine check pending Stage 7. All 17 lens candidates were dismissed after reading the source: they are already handled (readVsCodeClaudeCodeGateway never throws, the corrupt connector file is refused on write), are behaviour the spec sanctions (D5 lookup rules, AC9/AC10 status and JSON output), or are reachable only through hand-edited state. Nothing was deferred.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}
