@@ -279,7 +279,7 @@ After the config is written, quit and reopen Claude Desktop.
 | `Claude Desktop: collecting` | Claude Desktop's applied config points at this daemon. |
 | `Claude Desktop: not collecting — Claude Desktop points at port <a>, the proxy listens on <b>` | The port Claude Desktop points at was taken; the hint's command (`codemie proxy connect --claude-desktop`) re-writes Claude Desktop's config, then restart Claude Desktop. |
 
-`codemie proxy doctor` shows, in its analytics delivery section, a `Last dropped: <reason> (<stream>, <time>)` line (the time in the local time zone, `YYYY-MM-DD HH:mm:ss +HH:MM`) naming the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project).
+`codemie proxy doctor` shows, in its analytics delivery section, a `Last dropped: <reason> (<stream>, <time>)` line (the time in the local time zone, `YYYY-MM-DD HH:mm:ss +HH:MM`) naming the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project, or `project_conflict_discard`, when a session's folders belong to different CodeMie projects).
 
 #### `codemie proxy status`
 

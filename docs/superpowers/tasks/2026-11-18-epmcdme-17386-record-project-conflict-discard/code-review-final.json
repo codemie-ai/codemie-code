@@ -1,0 +1,14 @@
+{
+  "decision": "approve",
+  "rationale": "Edge-case lens ran; acceptance did not (no spec), so confidence is low. The new project_conflict_discard loss is recorded only for conflict with unsent bytes, is registered in LOSS_REASONS so it survives reload, and the no_project branch is untouched. 2 candidates dismissed (single-slot lastLoss overwrite is an accepted trade-off; older-reader unknown-reason drop is a downgrade-only edge); 0 deferred.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not part of this review profile." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not part of this review profile." },
+    { "kind": "security", "status": "na", "notes": "Standards audit not part of this review profile." }
+  ],
+  "findings": [],
+  "deferred": []
+}

@@ -75,7 +75,8 @@ export interface SessionStatus {
   holds?: Partial<Record<HoldScope, Hold>>;
   /**
    * The latest recorded local loss: a hold that reached the retention bound and dropped its backlog, or
-   * the backlog of a session without a project (`no_project`, with the stream it names).
+   * the backlog of a session without a project (`no_project`) or of a conflicted one
+   * (`project_conflict_discard`), each with the stream it names.
    */
   lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string; stream?: SpoolStream };
   /**

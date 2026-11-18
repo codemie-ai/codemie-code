@@ -45,15 +45,24 @@ function describeError(detail: string): string {
   return detail === 'request_error' ? 'backend unreachable' : detail;
 }
 
+function dropHint(reason: string): string | undefined {
+  if (reason === 'no_project') {
+    return renderHint({ reason: 'sessions without a CodeMie project are not sent; set one for the folder', command: 'codemie setup' });
+  }
+  if (reason === 'project_conflict_discard') {
+    return renderHint({ reason: 'the session used folders that belong to different CodeMie projects; part of its data was not sent' });
+  }
+  return undefined;
+}
+
 function dropSection(drop: LatestDrop): Sections[number] {
   const where = drop.stream ? `${drop.stream}, ` : '';
+  const hint = dropHint(drop.reason);
   return {
     id: 'delivery',
     status: 'info',
     message: `Last dropped: ${drop.reason} (${where}${formatTime(drop.at)})`,
-    ...(drop.reason === 'no_project' && {
-      hint: renderHint({ reason: 'sessions without a CodeMie project are not sent; set one for the folder', command: 'codemie setup' }),
-    }),
+    ...(hint !== undefined && { hint }),
   };
 }
 
