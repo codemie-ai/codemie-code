@@ -26,7 +26,7 @@ export function collectRunPromptsAndInvocations(
   // any[]: the final-pass delta reads `gitBranch`, which is not on ClaudeMessage.
   messages: any[],
   messagesByUuid: Map<string, ClaudeMessage>,
-  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly }: {
+  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly, failedToolUseIds }: {
     sessionId: string;
     processedIds: Set<string>;
     attachedUserPrompts: Set<string>;
@@ -36,6 +36,8 @@ export function collectRunPromptsAndInvocations(
     cutoffMs?: number;
     finalPass: boolean;
     namedOnly: boolean;
+    /** `tool_use_id`s of denied/errored calls, from the FULL session: a call's result is usually outside this run's slice. */
+    failedToolUseIds: ReadonlySet<string>;
   }
 ): RunPromptsResult {
   let promptsDelta: PendingDelta | undefined;
@@ -44,7 +46,7 @@ export function collectRunPromptsAndInvocations(
   const ownLine = (line: ClaudeMessage) => !isStampedBefore(line, cutoffMs);
   const runLines = messages.slice(runStart, trailingStart).filter(ownLine);
   const trailingLines = finalPass ? messages.slice(trailingStart).filter(ownLine) : [];
-  const named = extractNamedInvocations([...runLines, ...trailingLines]);
+  const named = extractNamedInvocations([...runLines, ...trailingLines], failedToolUseIds);
 
   const prompts: Array<{ count: number; text: string }> = [];
   if (attachedUserPrompts.size === 0) {

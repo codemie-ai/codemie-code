@@ -162,6 +162,32 @@ describe('MetricsProcessor — named invocation extraction', () => {
     expect(delta.agentInvocations).toEqual({ 'Explore': 1 });
   });
 
+  it('does not count a denied Task call (EPMCDME-15557)', async () => {
+    const msgs = [
+      makeUserMsg('u6', 'run an agent'),
+      makeToolUseMsg('t6', 'Task', { subagent_type: 'Explore' }),
+      makeToolResultMsg('t6', true),
+    ];
+    const deltas = await runProcessor(msgs);
+    expect(deltas.length).toBeGreaterThan(0);
+    const delta = deltas[0] as Record<string, unknown>;
+    expect(delta.agentInvocations).toBeUndefined();
+  });
+
+  it('counts the same subtype once when one Task is denied and one allowed (EPMCDME-15557)', async () => {
+    const msgs = [
+      makeUserMsg('u7', 'run two agents'),
+      makeToolUseMsg('t7', 'Task', { subagent_type: 'Explore' }),
+      makeToolResultMsg('t7', true),
+      makeToolUseMsg('t8', 'Task', { subagent_type: 'Explore' }),
+      makeToolResultMsg('t8'),
+    ];
+    const deltas = await runProcessor(msgs);
+    expect(deltas.length).toBeGreaterThan(0);
+    const delta = deltas[0] as Record<string, unknown>;
+    expect(delta.agentInvocations).toEqual({ 'Explore': 1 });
+  });
+
   it('extracts slash command from a genuine CLI command wrapper in a user message', async () => {
     const msgs = [
       makeUserMsg('u3', '<command-name>/tech-lead</command-name>\n<command-message>tech-lead</command-message>\n<command-args>go</command-args>'),

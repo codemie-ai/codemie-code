@@ -377,4 +377,33 @@ describe('ClaudeSessionAdapter', () => {
       });
     });
   });
+
+  describe('extractMetrics — denied Agent/Task calls (EPMCDME-15557)', () => {
+    const call = (id: string, name: string, subagentType: string) => ({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input: { subagent_type: subagentType } }] },
+    });
+    const result = (id: string, isError: boolean) => ({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'QA-15557 deny', is_error: isError }] },
+    });
+    const extract = (messages: unknown[]) => adapter.extractMetrics(messages as ClaudeMessage[]);
+
+    it('omits agentInvocations for a denied Task call', () => {
+      const metrics = extract([call('tool-1', 'Task', 'Explore'), result('tool-1', true)]);
+
+      expect(metrics.agentInvocations).toBeUndefined();
+    });
+
+    it('counts only the allowed call when a denied and an allowed Agent run together', () => {
+      const metrics = extract([
+        call('tool-1', 'Agent', 'Explore'),
+        result('tool-1', true),
+        call('tool-2', 'Agent', 'Plan'),
+        result('tool-2', false),
+      ]);
+
+      expect(metrics.agentInvocations).toEqual({ Plan: 1 });
+    });
+  });
 });
