@@ -31,6 +31,7 @@ import {
   type DeliveryHealth,
 } from './delivery-health.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
+import { renderHint } from '@/utils/hint.js';
 
 /**
  * Analytics delivery health for `proxy status`, or null when no connector is connected (a connected
@@ -48,7 +49,7 @@ export async function collectVisibleDeliveryHealth(
 }
 
 /**
- * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip only when the user can act,
+ * The `Analytics:` headline for `proxy status`, with an indented run tip only when the user can act,
  * then the `Last dropped:` detail when the spool records a drop.
  */
 export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
@@ -63,7 +64,7 @@ function analyticsHeadline(delivery: DeliveryHealth): string[] {
     const entry = delivery.reason ? DELIVERY_REASONS[delivery.reason] : undefined;
     return [
       `Analytics: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? [`  Run: ${entry.run}`] : []),
+      ...(entry?.command ? [`  ${renderHint({ reason: entry.label, command: entry.command })}`] : []),
     ];
   }
   return [`Analytics: ${chalk.dim(`unknown (${unknownHint(delivery)})`)}`];
@@ -265,7 +266,7 @@ async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnother
     if (!path || !dir || isSamePath(dir, own)) continue;
     const flag = `--${connector}`;
     entries.push({ connector, path, flag });
-    let remedy = `Run: codemie proxy connect ${flag}`;
+    let remedy = `run: codemie proxy connect ${flag}`;
     if (connector === CLAUDE_CODE_OTLP_AGENT_NAME) {
       // A connect pins Claude Code's hooks to the first `codemie` on PATH.
       const active = await findActiveCli();
@@ -293,7 +294,7 @@ export async function collectClientNotices(state: DaemonState): Promise<ClientNo
   for (const config of CLIENT_CONFIGS) {
     const gateway = await config.read(state);
     if (!gateway) continue;
-    const run = `Run: codemie proxy connect ${config.flag}`;
+    const run = `run: codemie proxy connect ${config.flag}`;
     if (!config.portNamedElsewhere && gateway.port !== state.port) {
       clientPortMismatch.push({ client: config.client, configuredPort: gateway.port, flag: config.flag });
       portLines.push(chalk.yellow(

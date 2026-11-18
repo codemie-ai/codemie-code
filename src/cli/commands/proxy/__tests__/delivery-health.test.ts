@@ -503,12 +503,12 @@ describe('DELIVERY_REASONS', () => {
     for (const code of codes) {
       expect(DELIVERY_REASONS[code].label.length).toBeGreaterThan(0);
     }
-    expect(DELIVERY_REASONS.credentials_expired.run).toBe('codemie profile login');
-    expect(DELIVERY_REASONS.auth_rejected.run).toBe('codemie profile login');
-    expect(DELIVERY_REASONS.identity_mismatch.run).toBe('codemie proxy restart');
-    expect(DELIVERY_REASONS.send_failed.run).toBeUndefined();
-    expect(DELIVERY_REASONS.classification_unreachable.run).toBeUndefined();
-    expect(DELIVERY_REASONS.classification_unsupported.run).toBeUndefined();
+    expect(DELIVERY_REASONS.credentials_expired.command).toBe('codemie profile login');
+    expect(DELIVERY_REASONS.auth_rejected.command).toBe('codemie profile login');
+    expect(DELIVERY_REASONS.identity_mismatch.command).toBe('codemie proxy restart');
+    expect(DELIVERY_REASONS.send_failed.command).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unreachable.command).toBeUndefined();
+    expect(DELIVERY_REASONS.classification_unsupported.command).toBeUndefined();
   });
 });
 
@@ -563,7 +563,7 @@ describe('formatDeliveryLines', () => {
     );
     expect(lines).toEqual([
       `Delivery: unhealthy (${DELIVERY_REASONS.credentials_expired.label})`,
-      '    Run: codemie profile login',
+      `    ${DELIVERY_REASONS.credentials_expired.label} — run: codemie profile login`,
       'Unsent data: 512 B (all sessions on this machine)',
     ]);
   });
@@ -676,7 +676,7 @@ describe('formatDeliveryLines', () => {
       'Delivery: healthy',
       'Unsent data: none',
       'Last dropped: no_project (hooks, 2026-11-13 04:15:00 -05:00)',
-      '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
+      '    Sessions without a project are not sent — set a CodeMie project for the folder (codemie setup)',
     ]);
   });
 

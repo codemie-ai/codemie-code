@@ -22,6 +22,7 @@ import {
   readCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import { renderHint } from '@/utils/hint.js';
 
 interface ConnectorSection {
   connectorId: string;
@@ -49,13 +50,13 @@ async function projectListRow(label: string, paths: string[]): Promise<ReportRow
 
 /**
  * One layout for every connector: a headline, scope, tracked and excluded projects, the collection flag,
- * at most one `Run:` hint (connecting), then the channels these settings do not control.
+ * at most one run hint (connecting), then the channels these settings do not control.
  */
 async function renderConnectorSection(section: ConnectorSection): Promise<string> {
   const rows: ReportRow[] = [
     {
       message: `${section.headline.label}: ${section.headline.value}`,
-      ...(section.needsConnect ? { hint: `Run: codemie proxy connect --${section.connectorId}` } : {}),
+      ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: `codemie proxy connect --${section.connectorId}` }) } : {}),
     },
     { message: `Scope: ${section.scope}` },
   ];

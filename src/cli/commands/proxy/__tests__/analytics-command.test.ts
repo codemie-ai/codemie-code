@@ -372,7 +372,7 @@ describe('createProxyAnalyticsCommand', () => {
       const lines = plainOutput().split('\n');
       expect(lines.slice(0, 5)).toEqual([
         'Delivery: unhealthy (CodeMie sign-in has expired)',
-        '    Run: codemie profile login',
+        '    CodeMie sign-in has expired — run: codemie profile login',
         'Unsent data: 2.00 KB (all sessions on this machine)',
         '',
         title,
@@ -398,7 +398,7 @@ describe('createProxyAnalyticsCommand', () => {
         'Error: backend unreachable',
         '',
       ]);
-      expect(lines.slice(0, 4).join('\n')).not.toContain('Run:');
+      expect(lines.slice(0, 4).join('\n')).not.toContain('run:');
     });
 
     it('prints the Last dropped row and the project hint in the delivery rows', async () => {
@@ -414,7 +414,7 @@ describe('createProxyAnalyticsCommand', () => {
         'Delivery: healthy',
         'Unsent data: none',
         'Last dropped: no_project (hooks, 2026-11-11 05:00:00 -05:00)',
-        '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
+        '    Sessions without a project are not sent — set a CodeMie project for the folder (codemie setup)',
         '',
         'Claude:',
       ]);

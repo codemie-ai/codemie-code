@@ -342,7 +342,7 @@ describe('proxy connect desktop', () => {
       expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
   });
 
@@ -376,7 +376,7 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie-preview.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie-preview.lab.epam.com'
     );
     expect(getStoredCredentials).toHaveBeenNthCalledWith(
       1,
@@ -413,7 +413,7 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
   });
 
@@ -870,7 +870,7 @@ describe('proxy start', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://custom.example.com'
+      '  Sign in first — run: codemie profile login --url https://custom.example.com'
     );
   });
 
@@ -1882,7 +1882,7 @@ describe('proxy status', () => {
 
       const index = lines.indexOf(`Analytics: ${chalk.yellow(`unhealthy (${label})`)}`);
       expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]).toBe(`  Run: ${run}`);
+      expect(lines[index + 1]).toBe(`  ${label} — run: ${run}`);
     });
 
     it('prints a yellow unhealthy line and no Run tip for send_failed, which the user cannot act on', async () => {
@@ -2079,7 +2079,7 @@ describe('proxy status', () => {
         consoleLogSpy.mockClear();
         const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
 
-        expect(lines).toContain(chalk.yellow('  Version: older CLI — Run: codemie proxy restart'));
+        expect(lines).toContain(chalk.yellow('  Version: older CLI — run: codemie proxy restart'));
         expect(lines.some((line) => line.includes('Desktop:'))).toBe(false);
         expect(payload.version).toBeNull();
         expect(payload).not.toHaveProperty('desktop');
@@ -2241,7 +2241,7 @@ describe('proxy status', () => {
       await codexConfig(managedCodex('http://127.0.0.1:52311/v1', 'Bearer codemie-proxy.codex-desktop'));
 
       expect(await status()).toContain(yellow(
-        '  Codex desktop: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect --codex-desktop'
+        '  Codex desktop: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect --codex-desktop'
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'codex-desktop', configuredPort: 52311, flag: '--codex-desktop' },
@@ -2252,7 +2252,7 @@ describe('proxy status', () => {
       await extensionSettings(false, 'http://127.0.0.1:60122', 'codemie-proxy');
 
       expect(await status()).toContain(yellow(
-        '  VS Code Claude Code extension: uses the shared key — Run: codemie proxy connect --vscode-claude-code'
+        '  VS Code Claude Code extension: uses the shared key — run: codemie proxy connect --vscode-claude-code'
       ));
       expect((await statusJson()).clientSharedKey).toEqual([{ client: 'vscode-claude-code', flag: '--vscode-claude-code' }]);
 
@@ -2282,7 +2282,7 @@ describe('proxy status', () => {
 
         const lines = await status();
 
-        expect(lines).toContain(yellow('  Version: older CLI — Run: codemie proxy restart'));
+        expect(lines).toContain(yellow('  Version: older CLI — run: codemie proxy restart'));
         expect(lines.some((line) => line.includes('uses the shared key'))).toBe(false);
         expect(await statusJson()).not.toHaveProperty('clientSharedKey');
       });
@@ -2306,7 +2306,7 @@ describe('proxy status', () => {
 
         expect(await status()).toContain(yellow(
           '  VS Code Claude Code extension: points at port 4001, the proxy listens on 60122 — ' +
-          'Run: codemie proxy connect --vscode-claude-code'
+          'run: codemie proxy connect --vscode-claude-code'
         ));
         expect((await statusJson()).clientPortMismatch).toEqual([
           { client: 'vscode-claude-code', configuredPort: 4001, flag: '--vscode-claude-code' },
@@ -2321,11 +2321,11 @@ describe('proxy status', () => {
       const lines = await status();
       expect(lines).toContain(yellow(
         '  VS Code Claude Code extension: points at port 4001, the proxy listens on 60122 — ' +
-        'Run: codemie proxy connect --vscode-claude-code'
+        'run: codemie proxy connect --vscode-claude-code'
       ));
       expect(lines).toContain(yellow(
         '  VS Code Insiders Claude Code extension: points at port 4002, the proxy listens on 60122 — ' +
-        'Run: codemie proxy connect --vscode-claude-code --insiders'
+        'run: codemie proxy connect --vscode-claude-code --insiders'
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'vscode-claude-code', configuredPort: 4001, flag: '--vscode-claude-code' },
@@ -2386,7 +2386,7 @@ describe('proxy status', () => {
       }));
 
       expect(await status()).toContain(yellow(
-        '  Claude Desktop: uses the shared key — Run: codemie proxy connect --claude-desktop'
+        '  Claude Desktop: uses the shared key — run: codemie proxy connect --claude-desktop'
       ));
       expect((await statusJson()).clientSharedKey).toEqual([{ client: 'claude-desktop', flag: '--claude-desktop' }]);
     });
@@ -2501,7 +2501,7 @@ describe('proxy status', () => {
       }]));
 
       expect(await status()).toContain(yellow(
-        `  ${label}: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect ${flag}`
+        `  ${label}: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect ${flag}`
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'vscode-byok', configuredPort: 52311, flag },
@@ -2529,7 +2529,7 @@ describe('proxy status', () => {
       await copilotCliHooks(script);
 
       expect(await status()).toContain(yellow(
-        `  Copilot CLI hooks: run another install (${script}) — Run: codemie proxy connect --copilot-cli-otlp`
+        `  Copilot CLI hooks: run another install (${script}) — run: codemie proxy connect --copilot-cli-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
         { connector: 'copilot-cli-otlp', path: script, flag: '--copilot-cli-otlp' },
@@ -2561,7 +2561,7 @@ describe('proxy status', () => {
       }));
 
       expect(await status()).toContain(yellow(
-        `  Copilot Chat hooks: run another install (${script}) — Run: codemie proxy connect --copilot-chat-otlp`
+        `  Copilot Chat hooks: run another install (${script}) — run: codemie proxy connect --copilot-chat-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
         { connector: 'copilot-chat-otlp', path: script, flag: '--copilot-chat-otlp' },
@@ -2589,10 +2589,10 @@ describe('proxy status', () => {
 
       const lines = await printed;
       expect(lines).toContain(yellow(
-        '  Codex desktop: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect --codex-desktop'
+        '  Codex desktop: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect --codex-desktop'
       ));
       expect(lines).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — Run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-code-otlp`
       ));
     });
 
@@ -2601,7 +2601,7 @@ describe('proxy status', () => {
       await claudeCodeHooks(`${hookPath(shim)} hook --agent claude-code-otlp`);
 
       expect(await status()).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — Run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-code-otlp`
       ));
     });
 

@@ -218,7 +218,7 @@ describe('analytics-status', () => {
 
     it('has no Run line when nothing needs fixing and no icons', async () => {
       const out = (await render(base)).join('\n');
-      expect(out).not.toContain('Run:');
+      expect(out).not.toContain('run:');
       for (const glyph of ['✓', '○', '⚠', '✗']) {
         expect(out).not.toContain(glyph);
       }
@@ -230,10 +230,10 @@ describe('analytics-status', () => {
       expect(lines.slice(0, 4)).toEqual([
         'Claude:',
         '  Hooks: not installed',
-        '      Run: codemie proxy connect --claude-code-otlp',
+        '      Not connected — run: codemie proxy connect --claude-code-otlp',
         '  Scope: not-configured',
       ]);
-      expect(lines.join('\n').match(/Run:/g)).toHaveLength(1);
+      expect(lines.join('\n').match(/run:/g)).toHaveLength(1);
     });
 
     it('reports a corrupt preferences file as a row with its hint, only when corrupt', async () => {
@@ -246,7 +246,7 @@ describe('analytics-status', () => {
         '  Preferences file is corrupt — collection is stopped',
         '      Fix or delete /x/claude-analytics.json.',
       ]);
-      expect(lines.join('\n')).not.toContain('Run:');
+      expect(lines.join('\n')).not.toContain('run:');
     });
   });
 
@@ -291,7 +291,7 @@ describe('analytics-status', () => {
       expect(lines).toEqual([
         'Copilot CLI:',
         '  Connected: no',
-        '      Run: codemie proxy connect --copilot-cli-otlp',
+        '      Not connected — run: codemie proxy connect --copilot-cli-otlp',
         '  Scope: not-connected',
         '  Collection: disabled',
         '  Excluded: none',

@@ -332,7 +332,7 @@ describe('AIConfigCheck', () => {
     expect(result.name).toBe('Active Profile');
     expect(result.success).toBe(false);
     expect(result.details).toEqual([
-      { status: 'error', message: 'No configuration found', hint: 'Run: codemie setup' },
+      { status: 'error', message: 'No configuration found', hint: 'Not configured — run: codemie setup' },
     ]);
   });
 

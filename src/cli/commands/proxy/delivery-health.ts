@@ -10,6 +10,7 @@ import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
 import { formatReportRows, type ReportRow } from './analytics-report.js';
+import { renderHint } from '@/utils/hint.js';
 
 export type DeliveryReason =
   | 'credentials_expired'
@@ -48,12 +49,12 @@ export interface DeliveryHealth {
  * docstring) — a session still pending from a profile the user has since switched away from is
  * judged by the wrong capability until it drains or is lost to retention.
  */
-export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
-  credentials_expired: { label: 'CodeMie sign-in has expired', run: 'codemie profile login' },
-  auth_rejected: { label: 'CodeMie asked you to sign in again', run: 'codemie profile login' },
+export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; command?: string }> = {
+  credentials_expired: { label: 'CodeMie sign-in has expired', command: 'codemie profile login' },
+  auth_rejected: { label: 'CodeMie asked you to sign in again', command: 'codemie profile login' },
   identity_mismatch: {
     label: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-    run: 'codemie proxy restart',
+    command: 'codemie proxy restart',
   },
   send_failed: { label: 'last send to CodeMie failed, retrying' },
   classification_unreachable: { label: 'waiting for CodeMie to respond' },
@@ -181,7 +182,7 @@ export function describeDrop(drop: LatestDrop | undefined): ReportRow | undefine
   return {
     message: `Last dropped: ${drop.reason} (${where}${formatTime(drop.at)})`,
     ...(drop.reason === 'no_project'
-      ? { hint: 'Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent' }
+      ? { hint: renderHint({ reason: 'Sessions without a project are not sent', action: 'set a CodeMie project for the folder (codemie setup)' }) }
       : {}),
   };
 }
@@ -201,7 +202,7 @@ function deliveryRow(health: DeliveryHealth): ReportRow {
     const entry = health.reason ? DELIVERY_REASONS[health.reason] : undefined;
     return {
       message: `Delivery: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? { hint: `Run: ${entry.run}` } : {}),
+      ...(entry?.command ? { hint: renderHint({ reason: entry.label, command: entry.command }) } : {}),
     };
   }
   return { message: `Delivery: ${chalk.yellow(`unknown (${unknownHint(health)})`)}` };

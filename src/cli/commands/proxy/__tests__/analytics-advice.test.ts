@@ -209,8 +209,8 @@ describe('analytics advice', () => {
     expect(parsed.connectors[0]).not.toHaveProperty('current');
     logSpy.mockClear();
     await run(['status']);
-    expect(out()).toContain('      Run: codemie proxy connect --claude-code-otlp');
-    expect(out().match(/Run:/g)).toHaveLength(1);
+    expect(out()).toContain('      Not connected — run: codemie proxy connect --claude-code-otlp');
+    expect(out().match(/run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });
 
@@ -265,11 +265,11 @@ describe('analytics advice', () => {
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
     expect(out()).not.toContain('Hint:');
-    expect(out()).not.toContain('Run:');
+    expect(out()).not.toContain('run:');
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
-    expect(out()).toContain('      Run: codemie proxy connect --copilot-cli-otlp');
-    expect(out().match(/Run:/g)).toHaveLength(1);
+    expect(out()).toContain('      Not connected — run: codemie proxy connect --copilot-cli-otlp');
+    expect(out().match(/run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });
 });

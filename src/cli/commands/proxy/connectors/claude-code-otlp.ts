@@ -30,6 +30,7 @@ import {
   parseAllowlist,
   removeProjectPath,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
@@ -490,7 +491,7 @@ export async function writeClaudeCodeOtlpConfig(
 ): Promise<WriteClaudeCodeOtlpResult> {
   const state = await readState();
   if (!state) {
-    throw new ConfigurationError('No live proxy daemon. Run: codemie proxy start');
+    throw new ConfigurationError(renderHint({ reason: 'No live proxy daemon', command: 'codemie proxy start' }));
   }
 
   // Always user-level: the allowlist (not the settings location) decides which projects are tracked.

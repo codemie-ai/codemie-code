@@ -4,6 +4,7 @@ import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import { readConnectionRecord, spawnDaemon, type DaemonState, type SpawnOptions } from './daemon-manager.js';
 import { verifySsoCredentials } from './connect-orchestrator.js';
+import { renderHint } from '@/utils/hint.js';
 
 export type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
 
@@ -17,7 +18,7 @@ export type LaunchableConfig = LoadedConfig & { baseUrl: string };
  */
 export async function prepareDaemonLaunch(config: LoadedConfig, profile: string): Promise<LaunchableConfig> {
   if (!config.baseUrl) {
-    throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
+    throw new ConfigurationError(`No API URL configured for this profile.\n${renderHint({ reason: 'Set it up', command: 'codemie setup' })}`);
   }
 
   await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);

@@ -76,6 +76,7 @@ import {
   CLAUDE_DESKTOP,
   VSCODE_BYOK,
 } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { renderHint } from '@/utils/hint.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -203,12 +204,11 @@ export async function resolveSsoProxyConfig(
       const available = await listCodeMieProfiles();
       const details = available.length > 0
         ? `Profiles to try:\n- ${available.join('\n- ')}`
-        : 'No SSO-backed CodeMie profiles were found. Run: codemie setup';
+        : renderHint({ reason: 'No SSO-backed CodeMie profiles were found', command: 'codemie setup' });
 
       throw new ConfigurationError(
         `Profile "${profileName}" cannot be used for ${clientLabel} proxy because it is not SSO-backed.\n\n` +
-        `Next step:\n` +
-        `  ${commandExample} --profile <name>\n\n` +
+        `${renderHint({ reason: 'Use an SSO-backed profile', command: `${commandExample} --profile <name>` })}\n\n` +
         `${details}`
       );
     }
@@ -235,15 +235,12 @@ export async function resolveSsoProxyConfig(
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
-    ? `Next step:\n` +
-    `  codemie profile switch <codemie-profile>\n` +
-    `  ${commandExample}\n\n` +
+    ? `${renderHint({ reason: 'Switch to an SSO-backed profile', command: `codemie profile switch <codemie-profile> && ${commandExample}` })}\n\n` +
     `Or run once with a specific profile:\n` +
     `  ${commandExample} --profile <codemie-profile>\n\n` +
     `Profiles to try:\n- ${available.join('\n- ')}`
     : `No SSO-backed CodeMie profiles were found.\n\n` +
-    `Next step:\n` +
-    `  codemie setup`;
+    renderHint({ reason: 'Set up a profile', command: 'codemie setup' });
 
   throw new ConfigurationError(
     `${clientLabel} proxy needs an SSO-backed CodeMie profile.\n` +
@@ -275,7 +272,7 @@ export async function assertSsoCredentials(
   if (loginUrl !== null) {
     throw new ConfigurationError(
       `No SSO credentials found for profile '${profileName}'.\n` +
-      `  Run: codemie profile login --url ${loginUrl}`
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
     );
   }
 }
@@ -828,8 +825,7 @@ async function moveOtherClientsToNamedKeys(state: DaemonState, targetFlags: Read
         console.log(chalk.green(`✓ ${config.label} moved to its own key — ${config.moveToNamedKey.hint}`));
       } else if (outcome === 'left') {
         console.log(chalk.yellow(
-          `  ${config.label} left on the shared key: its config is a symbolic link — ` +
-          `Run: codemie proxy connect ${config.flag}`
+          `  ${renderHint({ reason: `${config.label} left on the shared key: its config is a symbolic link`, command: `codemie proxy connect ${config.flag}` })}`
         ));
       }
     } catch (error) {
@@ -930,13 +926,13 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const resolved = await resolveSsoProxyConfig(opts.profile, label, commandExample);
     config = resolved.config;
     if (!config.baseUrl) {
-      throw new ConfigurationError('No API URL configured. Run: codemie setup');
+      throw new ConfigurationError(renderHint({ reason: 'No API URL configured', command: 'codemie setup' }));
     }
     // The Claude Desktop target fetches org-managed MCP servers via codeMieUrl.
     if (targets.claudeDesktop && !config.codeMieUrl) {
       throw new ConfigurationError(
         'Selected profile is missing CodeMie URL.\n' +
-        'Run: codemie setup or codemie profile login'
+        renderHint({ reason: 'Set it up again', action: 'run: codemie setup or codemie profile login' })
       );
     }
 

@@ -1742,7 +1742,7 @@ describe('connectTargets — the other clients moved off the shared key', () => 
 
     expect(await readFile(target, 'utf-8')).toBe(codexConfig('Bearer gk'));
     expect(printed()).toContain(
-      '  Codex desktop left on the shared key: its config is a symbolic link — Run: codemie proxy connect --codex-desktop'
+      '  Codex desktop left on the shared key: its config is a symbolic link — run: codemie proxy connect --codex-desktop'
     );
   });
 
@@ -3087,7 +3087,7 @@ describe('assertSsoCredentials', () => {
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect((thrown as Error).message).toBe(
-      "No SSO credentials found for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
+      "No SSO credentials found for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(lookup).toHaveBeenCalledWith({

@@ -49,6 +49,7 @@ import { printNext } from '../../related-commands.js';
 import { readDaemonStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
 import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
+import { renderHint } from '@/utils/hint.js';
 
 type AnalyticsConnectorId =
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
@@ -147,7 +148,7 @@ async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: s
     console.log(chalk.yellow(`Note: ${target} is NOT tracked${advice ? ` — ${advice.description}` : ` (${reason})`}.`));
     const nextStep = advice?.command ?? advice?.action;
     if (nextStep) {
-      console.log(chalk.yellow(`  Next step: ${nextStep}`));
+      console.log(chalk.yellow(`  ${renderHint({ reason: 'To change this', ...(advice?.command ? { command: advice.command } : { action: advice?.action }) })}`));
     }
   } catch (error) {
     logger.debug(
@@ -380,7 +381,7 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
     // A connected parent still authorizes this folder: say so, with the exact command that withdraws it.
     for (const e of covering) {
       console.log(chalk.yellow(`${canonical} is still covered by the connection ${e.folder} (project ${e.project}).`));
-      console.log(`To withdraw it, run: codemie proxy analytics disconnect-folder "${e.folder}"`);
+      console.log(renderHint({ reason: 'To withdraw it', command: `codemie proxy analytics disconnect-folder "${e.folder}"` }));
     }
   });
 }

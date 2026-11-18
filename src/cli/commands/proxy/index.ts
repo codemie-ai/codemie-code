@@ -33,6 +33,7 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import { renderHint } from '@/utils/hint.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
@@ -253,7 +254,7 @@ export function createProxyCommand(): Command {
       }
       console.log(state.version
         ? `  Version: ${state.version}`
-        : chalk.yellow('  Version: older CLI — Run: codemie proxy restart'));
+        : chalk.yellow(`  Version: ${renderHint({ reason: 'older CLI', command: 'codemie proxy restart' })}`));
       console.log(`  Uptime:  ${uptime}`);
 
       if (desktop) {
@@ -281,7 +282,7 @@ export function createProxyCommand(): Command {
             : `  Warning: Claude Code OTLP endpoint ${otlpMismatch.configured} does not match this daemon (${otlpMismatch.expected}); native OTel is not reaching it.`
         ));
         console.log(chalk.yellow(
-          '           Repair: run `codemie proxy connect --claude-code-otlp` (same --scope as before; a tracked Claude Code ' +
+          '           To repair, run: codemie proxy connect --claude-code-otlp (same --scope as before; a tracked Claude Code ' +
           'hook also re-points it), then start a NEW Claude Code session - running sessions keep the old setting.'
         ));
       }
