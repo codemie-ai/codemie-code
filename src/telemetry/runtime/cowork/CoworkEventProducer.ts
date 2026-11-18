@@ -88,7 +88,10 @@ export class CoworkEventProducer {
   private readonly previousRun = new Map<string, string>();
   /** Per session, the fingerprints of its last completed processing in this process and that cursor's line and end times. */
   private readonly processed = new Map<string, { key: string; lastLineAt: string; lastEndedAt: string }>();
-  /** Per session, the fingerprints at which a run while Desktop is not connected left it unread. */
+  /**
+   * Per session, the fingerprints at which a run while Desktop is not connected left it unread. Keyed by the session's
+   * files alone: this producer is the only writer of a cursor, so a cursor does not change while they stay the same.
+   */
   private readonly leftWhileNotConnected = new Map<string, string>();
   /** The last failure warned about per session: the same failure again is not repeated at every run. */
   private readonly lastFailure = new Map<string, string>();

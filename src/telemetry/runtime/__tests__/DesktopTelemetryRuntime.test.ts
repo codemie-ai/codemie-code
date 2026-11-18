@@ -2481,6 +2481,22 @@ describe('DesktopTelemetryRuntime', () => {
       expect(adapter.discoverSessions).not.toHaveBeenCalled();
     });
 
+    it('edge: stop() while not connected starts no Cowork run', async () => {
+      desktopPointsAt(null);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      expect(run.mock.calls).toEqual([[T0, false]]);
+      run.mockClear();
+
+      await runtime.stop();
+
+      expect(run).not.toHaveBeenCalled();
+    });
+
     it('edge: the config flips while a session is being finalized: the finalization completes, the next poll discovers nothing', async () => {
       openDesktopChat('ext-1', 1, T0);
       const adapter = createAdapter();
