@@ -6,7 +6,9 @@ import { logger } from '@/utils/logger.js';
 /**
  * The runtime's re-delivery of the records it could not send: one pass at a time, every
  * {@link DESKTOP_REDELIVERY_INTERVAL_MS}, a listing pass on a connected poll and a pass over the remembered ids on a
- * not-connected one.
+ * not-connected one. The first pass by id over a memory that was empty runs one interval after its first id was
+ * remembered, so that id is not re-sent in the poll whose send just failed; an id remembered beside others waits for
+ * the next pass.
  */
 export class DesktopRedelivery {
   /** The pass running, if any. */
@@ -18,14 +20,17 @@ export class DesktopRedelivery {
    */
   private readonly undeliveredIds = new Map<string, number>();
   private rememberedCount = 0;
+  /** When the memory last went from empty to holding an id. */
+  private filledAt = 0;
 
   constructor(
     private readonly delivery: DesktopSessionDelivery,
     private lastPassAt: number
   ) {}
 
-  /** Remembers the ids as the most recently left undelivered. */
+  /** Remembers the ids as the most recently left undelivered; into an empty memory, at the current time. */
   remember(sessionIds: readonly string[]): void {
+    if (this.undeliveredIds.size === 0 && sessionIds.length > 0) this.filledAt = Date.now();
     for (const sessionId of sessionIds) {
       this.undeliveredIds.delete(sessionId);
       this.undeliveredIds.set(sessionId, ++this.rememberedCount);
@@ -46,10 +51,11 @@ export class DesktopRedelivery {
    * A not-connected poll's re-delivery of the remembered ids: at most {@link RECONCILE_PER_START} ids a pass, the most
    * recently remembered first, so its sends stay bounded as a listing pass's are. The ids it delivered or found no
    * longer undelivered leave the memory; the ones still undelivered become the least recently remembered, so the next
-   * pass takes other ids first, unless remembered again during the pass.
+   * pass takes other ids first, unless remembered again during the pass. The first pass over a memory that was empty
+   * runs no earlier than one interval after its first id was remembered.
    */
   startByIdIfDue(now: number): void {
-    if (this.undeliveredIds.size === 0) return;
+    if (this.undeliveredIds.size === 0 || now - this.filledAt < DESKTOP_REDELIVERY_INTERVAL_MS) return;
     this.startIfDue(now, '[desktop-telemetry] Re-delivery by id failed:', async () => {
       const taken = [...this.undeliveredIds].reverse().slice(0, RECONCILE_PER_START);
       const stillUndelivered = await this.delivery.redeliverById(taken.map(([sessionId]) => sessionId));

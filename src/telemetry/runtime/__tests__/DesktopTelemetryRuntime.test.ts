@@ -2587,33 +2587,160 @@ describe('DesktopTelemetryRuntime', () => {
     }
 
     describe('a send that failed while not connected', () => {
-      it('is re-delivered by id at the re-delivery interval from the daemon\'s start, with no listing, and once only', async () => {
+      /** The first poll at which a chat last active at T0 is past the inactivity timeout: there its END fails. */
+      const FAILED_AT = T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS;
+
+      it('is re-delivered by id one re-delivery interval after its END failed, with no listing, and once only', async () => {
         const { runtime } = await trackedThenDisconnected();
         const sessionId = sessionIdFor('ext-1')!;
         const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
         const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         const failedSends = mockSendSessionEnd.mock.calls.length;
 
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(failedSends);
 
         mockSendSessionEnd.mockResolvedValue(undefined);
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
         expect(readRecord(sessionId)!.endMetricSentAt).toEqual(expect.any(Number));
         const deliveredSends = mockSendSessionEnd.mock.calls.length;
 
         // Delivered, the id left the memory: the next interval re-delivers nothing
         byId.mockClear();
-        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(byId).not.toHaveBeenCalled();
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(deliveredSends);
         expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it('a session finalized on inactivity long after the daemon\'s start, its END failing, waits one interval for its re-delivery by id', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // The first poll after the disconnect ones: more than one interval since the start, no pass started since
+        const failedAt = T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+
+        await pollAt(runtime, failedAt);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: an id remembered while an earlier one is still remembered: the pass one interval after the earlier is given both', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+        await pollAt(runtime, T0 + 700_000);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second, first]]]);
+      });
+
+      it('edge: an id remembered more than one interval after a by-id pass that delivered everything waits one interval from its remembering', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1 and past the pass that delivers it
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[first]]]);
+        expect(recordFiles()).toEqual([`completed_${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+
+        byId.mockClear();
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        const rememberedAt = FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+        await pollAt(runtime, rememberedAt);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second]]]);
+      });
+
+      it('edge: an id remembered again during the by-id pass that took it stays remembered though the pass delivered it', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        (runtime as any).redelivery.remember([sessionId]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+      });
+
+      it('edge: the less recently remembered of two ids, remembered again during the by-id pass that left both undelivered, leads the next batch', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const older = sessionIdFor('ext-1')!;
+        const newer = sessionIdFor('ext-2')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [older, newer];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[newer, older]]]);
+        (runtime as any).redelivery.remember([older]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0][0]).toBe(older);
       });
 
       it('edge: an END that failed while connected, Desktop disconnected before the next listing pass, is delivered by a not-connected poll', async () => {
@@ -2621,14 +2748,14 @@ describe('DesktopTelemetryRuntime', () => {
         const runtime = await startDaemon(createAdapter(), collecting);
         const sessionId = sessionIdFor('ext-1')!;
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
 
         desktopPointsAt(null);
         const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
         await pollTicks(runtime, 2);
         mockSendSessionEnd.mockResolvedValue(undefined);
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
 
         expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
         expect(reconcile).not.toHaveBeenCalled();
@@ -2673,19 +2800,19 @@ describe('DesktopTelemetryRuntime', () => {
         const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
         const { runtime } = await trackedThenDisconnected(chats);
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         expect(recordFiles().filter(name => name.startsWith('completed_'))).toEqual([]);
 
         mockSendSessionEnd.mockReset();
         mockSendSessionEnd.mockResolvedValue(undefined);
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
         // ext-1 is the first tracked, so the first finalized and remembered
         expect(recordFiles()).toEqual(chats.map(chat => (
           chat === 'ext-1' ? `${sessionIdFor(chat)}.json` : `completed_${sessionIdFor(chat)}.json`
         )).sort());
 
-        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START + 1);
         expect(recordFiles()).toEqual(chats.map(chat => `completed_${sessionIdFor(chat)}.json`).sort());
       });
@@ -2695,13 +2822,13 @@ describe('DesktopTelemetryRuntime', () => {
         const { runtime } = await trackedThenDisconnected(chats);
         const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         // ext-1 is the first tracked, so the first finalized and remembered
         const oldest = sessionIdFor('ext-1')!;
 
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(byId.mock.calls[0][0]).not.toContain(oldest);
-        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
 
         expect(byId.mock.calls[1][0]).toContain(oldest);
       });
@@ -2711,17 +2838,17 @@ describe('DesktopTelemetryRuntime', () => {
         const sessionId = sessionIdFor('ext-1')!;
         const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         mockSendSessionEnd.mockResolvedValue(undefined);
 
         const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
         await held.release();
         expect(byId.mock.calls).toEqual([[[sessionId]]]);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
 
-        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
         expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
         expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
       });
@@ -2765,12 +2892,12 @@ describe('DesktopTelemetryRuntime', () => {
         const { runtime } = await trackedThenDisconnected();
         const sessionId = sessionIdFor('ext-1')!;
         mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
-        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT);
         await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', config.targetApiUrl);
         mockSendSessionEnd.mockResolvedValue(undefined);
         const sends = mockSendSessionEnd.mock.calls.length;
 
-        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
 
         expect(mockSendSessionEnd).toHaveBeenCalledTimes(sends);
         expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
