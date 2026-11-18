@@ -69,6 +69,8 @@ vi.mock('../connectors/claude-code-otlp-endpoint.js', () => ({
 
 vi.mock('../analytics-connectors.js', () => ({
   hasActiveAnalyticsConnector: vi.fn().mockResolvedValue(false),
+  // No connector holds a project list, so connect's scope confirmation asks nothing.
+  ANALYTICS_CONNECTORS: [],
 }));
 
 vi.mock('../delivery-health.js', async (importOriginal) => ({

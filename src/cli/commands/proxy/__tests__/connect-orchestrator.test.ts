@@ -126,7 +126,26 @@ vi.mock('@/utils/project-root.js', () => ({
 vi.mock('../prompts/analytics-confirmation.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../prompts/analytics-confirmation.js')>()),
   promptAnalyticsConfirmation: vi.fn().mockResolvedValue('enable'),
+  promptScopeDropConfirmation: vi.fn().mockResolvedValue('confirm'),
 }));
+// Each analytics connector's tracking scope, as its readScope reads it; every test starts in user scope.
+const scopeReads = vi.hoisted(() => ({
+  values: {} as Record<string, Array<{ scope: 'user' | 'project'; paths: string[] } | { invalid: string }>>,
+}));
+vi.mock('../analytics-connectors.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../analytics-connectors.js')>();
+  return {
+    ...actual,
+    ANALYTICS_CONNECTORS: actual.ANALYTICS_CONNECTORS.map((entry) => ({
+      ...entry,
+      readScope: vi.fn(async () => {
+        const queue = scopeReads.values[entry.id];
+        if (!queue || queue.length === 0) return { scope: 'user' as const, paths: [] };
+        return queue.length > 1 ? queue.shift()! : queue[0];
+      }),
+    })),
+  };
+});
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
 }));
@@ -3352,5 +3371,199 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
     const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
     expect(spawned.port).toBe(4001);
     expectNoIdentity(spawned as unknown as Record<string, unknown>);
+  });
+});
+
+describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+    scopeReads.values = {};
+    await setupHappyMocks();
+    const { checkStatus, readState, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(readState).mockResolvedValue(null);
+    vi.mocked(spawnDaemon).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof spawnDaemon>>);
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+    scopeReads.values = {};
+  });
+
+  function printedLines(): string[] {
+    return console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
+  }
+
+  const connectors = [
+    { id: 'claude-code-otlp', target: 'claudeCodeOtlp', label: 'Claude Code' },
+    { id: 'copilot-cli-otlp', target: 'copilotCliOtlp', label: 'Copilot CLI' },
+    { id: 'copilot-chat-otlp', target: 'copilotChatOtlp', label: 'Copilot Chat' },
+  ] as const;
+
+  async function writerFor(id: string): Promise<ReturnType<typeof vi.fn>> {
+    const write = vi.fn().mockResolvedValue({
+      hookEvents: 1, hookFilePath: '/h', settingsPath: '/s', allowlist: [],
+      written: true, path: '/s', backupPath: null, envVars: 1,
+    });
+    if (id === 'claude-code-otlp') {
+      const mod = await import('../connectors/claude-code-otlp.js');
+      vi.mocked(mod.writeClaudeCodeOtlpConfig).mockImplementation(write);
+    } else if (id === 'copilot-cli-otlp') {
+      vi.doMock('../connectors/copilot-cli-otlp.js', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../connectors/copilot-cli-otlp.js')>()),
+        writeCopilotCliOtlpConfig: write,
+      }));
+    } else {
+      vi.doMock('../connectors/copilot-chat-otlp.js', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../connectors/copilot-chat-otlp.js')>()),
+        writeCopilotChatOtlpConfig: write,
+      }));
+    }
+    return write;
+  }
+
+  afterEach(() => {
+    vi.doUnmock('../connectors/copilot-cli-otlp.js');
+    vi.doUnmock('../connectors/copilot-chat-otlp.js');
+  });
+
+  for (const c of connectors) {
+    for (const scope of [undefined, 'user'] as const) {
+      it(`${c.label}: lists the projects to drop and a decline changes nothing for it (scope: ${scope ?? 'omitted'})`, async () => {
+        scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a', '/repo/b'] }];
+        const write = await writerFor(c.id);
+        const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+        vi.mocked(promptScopeDropConfirmation).mockResolvedValueOnce('cancel');
+        const { spawnDaemon } = await import('../daemon-manager.js');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: { [c.target]: true }, scope });
+
+        expect(promptScopeDropConfirmation).toHaveBeenCalledWith(
+          expect.objectContaining({ paths: ['/repo/a', '/repo/b'] })
+        );
+        expect(write).not.toHaveBeenCalled();
+        expect(spawnDaemon).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(0);
+      });
+    }
+
+    it(`${c.label}: a confirmed drop writes the user scope`, async () => {
+      scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a'] }];
+      const write = await writerFor(c.id);
+      const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { [c.target]: true } });
+
+      expect(promptScopeDropConfirmation).toHaveBeenCalledTimes(1);
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({ scope: 'user' }));
+      expect(process.exitCode).toBe(0);
+    });
+
+    it(`${c.label}: non-interactive without --yes exits 1 naming --yes before SSO or the daemon`, async () => {
+      scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a'] }];
+      const write = await writerFor(c.id);
+      const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
+      vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
+      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      try {
+        await connectTargets({ targets: { [c.target]: true }, scope: 'user' });
+      } finally {
+        vi.mocked(isNonInteractiveEnvironment).mockReturnValue(false);
+      }
+
+      expect(process.exitCode).toBe(1);
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--yes'));
+      expect(CodeMieSSO).not.toHaveBeenCalled();
+      expect(checkStatus).not.toHaveBeenCalled();
+      expect(spawnDaemon).not.toHaveBeenCalled();
+      expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it(`${c.label}: a list changed after confirmation skips the writer with a message`, async () => {
+      scopeReads.values[c.id] = [
+        { scope: 'project', paths: ['/repo/a'] },
+        { scope: 'project', paths: ['/repo/a', '/repo/new'] },
+      ];
+      const write = await writerFor(c.id);
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { [c.target]: true }, yes: true });
+
+      expect(write).not.toHaveBeenCalled();
+      expect(printedLines().some((line) => line.includes('changed after confirmation'))).toBe(true);
+      expect(process.exitCode).toBe(1);
+    });
+  }
+
+  it('--yes skips the scope prompt, works non-interactively and lists what is dropped', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
+    vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    try {
+      await connectTargets({ targets: { copilotCliOtlp: true }, yes: true });
+    } finally {
+      vi.mocked(isNonInteractiveEnvironment).mockReturnValue(false);
+    }
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'user' });
+    expect(printedLines().some((line) => line.includes('/repo/a'))).toBe(true);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('--scope project asks nothing about dropping projects', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true }, scope: 'project' });
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'project' });
+  });
+
+  it('an invalid project list needs no scope confirmation', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ invalid: 'corrupt' }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true } });
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'user' });
+  });
+
+  it('a decline for one connector still connects the others', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const cli = await writerFor('copilot-cli-otlp');
+    const chat = await writerFor('copilot-chat-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    vi.mocked(promptScopeDropConfirmation).mockResolvedValueOnce('cancel');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true, copilotChatOtlp: true } });
+
+    expect(cli).not.toHaveBeenCalled();
+    expect(chat).toHaveBeenCalledWith({ scope: 'user' });
+    expect(process.exitCode).toBe(0);
   });
 });
