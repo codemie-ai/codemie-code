@@ -27,6 +27,7 @@ vi.mock('../daemon-manager.js', async (importOriginal) => ({
   readConnectionRecord: vi.fn(),
   writeConnectionRecord: vi.fn(),
   seedConnectionRecord: vi.fn(),
+  hasLegacyClientIdentity: vi.fn(() => false),
 }));
 vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),
