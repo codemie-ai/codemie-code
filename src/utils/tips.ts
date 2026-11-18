@@ -48,7 +48,7 @@ export interface Tip {
   /**
    * Optional top-level command name used for validation and display,
    * e.g. 'skill' or 'proxy'. When the referenced command is retired,
-   * `codemie tips` drops/flags this tip automatically.
+   * `codemie tips` flags this tip as stale automatically.
    */
   command?: string;
   /** Concrete invocation variations taught by this tip. */
