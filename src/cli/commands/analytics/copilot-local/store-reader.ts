@@ -48,6 +48,11 @@ const USAGE_COLUMNS = [
   'duration_ms',
   'initiator',
   'created_at',
+  // Copilot's own stable id for the usage event, and the one the hook-based `copilot-cli-otlp`
+  // pipeline dedups on. Preferred over the autoincrement `id`, which is local to this store.
+  'event_id',
+  'content_filter_triggered',
+  'finish_reason',
 ] as const;
 
 /** Columns without which a row cannot be priced or placed in time. */
@@ -59,8 +64,13 @@ const REQUIRED_COLUMNS = [
   'created_at',
 ] as const;
 
-/** Schema versions this reader was written against; anything else is reported as drift. */
-const KNOWN_SCHEMA_VERSIONS = new Set([8]);
+/**
+ * Schema versions this reader was written against; anything else is reported as drift.
+ *
+ * 10 is what current Copilot writes (verified against a real store, 2026-11-18); 8 is kept for
+ * older installs. Listing only 8 made every current machine report drift.
+ */
+const KNOWN_SCHEMA_VERSIONS = new Set([8, 10]);
 
 /** Minimal shape of the `node:sqlite` surface used here, so the guarded import stays typed. */
 interface SqliteStatement {
@@ -172,6 +182,22 @@ function parseCreatedAt(value: unknown): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+/**
+ * A row's status from what the store records about how the call ended.
+ *
+ * `finish_reason` is `tool_calls` or `stop` on a real store — both successful completions — so
+ * the only failure signal available is the content filter. A filtered response is reported as
+ * cancelled rather than error, matching how the VS Code reader treats `responseIsFiltered`.
+ */
+function statusOf(record: Record<string, unknown>): CopilotUsageRow['status'] {
+  return toInt(record.content_filter_triggered) > 0 ? 'cancelled' : 'success';
+}
+
+/** `{ [field]: value }` when the column holds non-empty text, else nothing to spread. */
+function textField<K extends string>(value: unknown, field: K): Partial<Record<K, string>> {
+  return typeof value === 'string' && value ? ({ [field]: value } as Record<K, string>) : {};
+}
+
 /** How far back to scan, as an epoch-ms floor. */
 function cutoffMs(maxAgeDays: number | undefined): number {
   return maxAgeDays === undefined ? 0 : Date.now() - maxAgeDays * 86_400_000;
@@ -183,6 +209,8 @@ export interface StoreScanOptions {
   maxAgeDays?: number;
   /** Set when the home lives inside a WSL distro; forces a `(WSL:<distro>)` surface. */
   wslDistro?: string;
+  /** Sessions the desktop app owns, from its own `data.db`. */
+  desktopSessionIds?: ReadonlySet<string>;
 }
 
 /**
@@ -254,10 +282,16 @@ export async function scanSessionStore(opts: StoreScanOptions): Promise<CopilotS
     // Only the allowlisted columns that this store actually has, so one added or removed
     // column cannot fail the whole query.
     const selected = USAGE_COLUMNS.filter((c) => available.has(c));
+    // `sessions` carries where the work happened. Reading only `cwd` left `--branch` unable to
+    // match anything and `gitBranch` absent from every delta, even though both columns are
+    // populated on a real store (52/96 sessions carry a branch).
     const sessionColumns = columnsOf(connection, 'sessions');
-    const joinSessions = sessionColumns.has('id') && sessionColumns.has('cwd');
+    const joined = (['cwd', 'repository', 'branch'] as const).filter((c) => sessionColumns.has(c));
+    const joinSessions = sessionColumns.has('id') && joined.length > 0;
     const sql = joinSessions
-      ? `SELECT ${selected.map((c) => `e.${c}`).join(', ')}, s.cwd AS session_cwd
+      ? `SELECT ${selected.map((c) => `e.${c}`).join(', ')}, ${joined
+          .map((c) => `s.${c} AS session_${c}`)
+          .join(', ')}
          FROM assistant_usage_events e LEFT JOIN sessions s ON s.id = e.session_id`
       : `SELECT ${selected.join(', ')} FROM assistant_usage_events`;
 
@@ -280,13 +314,23 @@ export async function scanSessionStore(opts: StoreScanOptions): Promise<CopilotS
       if (!clientNames.has(sessionId)) {
         clientNames.set(sessionId, await readClientName(opts.home, sessionId, opts.wslDistro));
       }
-      const { agentName, surface } = resolveSurface(clientNames.get(sessionId), opts.wslDistro);
+      const { agentName, surface } = resolveSurface(
+        clientNames.get(sessionId),
+        opts.wslDistro,
+        opts.desktopSessionIds?.has(sessionId)
+      );
       const initiator = record.initiator;
       const nanoAiu = record.total_nano_aiu;
+      const multiplier = record.request_multiplier;
+      // Copilot's own event id when present (319 of 9,834 rows on a real store carry none),
+      // else the local autoincrement id, else the turn ordinal.
+      const rowKey = typeof record.event_id === 'string' && record.event_id
+        ? record.event_id
+        : String(record.id ?? `${sessionId}:${toInt(record.turn_index)}`);
 
       rows.push({
         sessionId,
-        requestId: `store:${String(record.id ?? `${sessionId}:${toInt(record.turn_index)}`)}`,
+        requestId: `store:${rowKey}`,
         tsMs,
         agentName,
         surface,
@@ -294,7 +338,7 @@ export async function scanSessionStore(opts: StoreScanOptions): Promise<CopilotS
         model: typeof record.model === 'string' && record.model ? record.model : 'unknown',
         modelConfidence: 'exact',
         category: categoryOf(initiator),
-        status: 'success',
+        status: statusOf(record),
         isUserTurn: initiator === 'user',
         usage: {
           inputTokens: toCount(record.input_tokens),
@@ -305,10 +349,13 @@ export async function scanSessionStore(opts: StoreScanOptions): Promise<CopilotS
         },
         durationMs: toCount(record.duration_ms),
         apiCalls: 1,
-        ...(typeof record.session_cwd === 'string' && record.session_cwd
-          ? { workingDirectory: record.session_cwd }
-          : {}),
+        ...textField(record.session_cwd, 'workingDirectory'),
+        ...textField(record.session_repository, 'repository'),
+        ...textField(record.session_branch, 'branch'),
         ...(typeof nanoAiu === 'number' && Number.isFinite(nanoAiu) ? { billedNanoAiu: nanoAiu } : {}),
+        ...(typeof multiplier === 'number' && Number.isFinite(multiplier)
+          ? { requestMultiplier: multiplier }
+          : {}),
       });
       health.rowsRead += 1;
       coveredSessionIds.add(sessionId);

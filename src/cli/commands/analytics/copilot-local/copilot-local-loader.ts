@@ -31,6 +31,7 @@ import type {
 } from '../cost/types.js';
 import { localCopilotHome } from './copilot-local-paths.js';
 import { scanSessionStore } from './store-reader.js';
+import { readDesktopSessionIds } from './desktop-sessions.js';
 import { scanSessionEvents } from './events-reader.js';
 import { scanVsCodeSessions } from './vscode-sessions-reader.js';
 import { scanWslHomes } from './wsl-reader.js';
@@ -67,7 +68,14 @@ async function collectRows(
   const home = opts.copilotHome ? { path: opts.copilotHome } : localCopilotHome(opts.env);
 
   if (home) {
-    const store = await scanSessionStore({ home: home.path, maxAgeDays: opts.maxAgeDays });
+    // Resolved once per home: one query against the desktop app's database labels every
+    // Desktop session in the shared store, without a per-session file read.
+    const desktopSessionIds = await readDesktopSessionIds(home.path);
+    const store = await scanSessionStore({
+      home: home.path,
+      maxAgeDays: opts.maxAgeDays,
+      desktopSessionIds,
+    });
     health.push(store.health);
     rows.push(...store.rows);
 
@@ -77,6 +85,7 @@ async function collectRows(
       home: home.path,
       maxAgeDays: opts.maxAgeDays,
       excludeSessionIds: store.coveredSessionIds,
+      desktopSessionIds,
     });
     health.push(events.health);
     rows.push(...events.rows);
@@ -333,4 +342,25 @@ export async function loadCopilotLocalSessions(
 export function totalBilledNanoAiu(rows: readonly CopilotUsageRow[]): number | undefined {
   const reported = rows.filter((row) => row.billedNanoAiu !== undefined);
   return reported.length > 0 ? reported.reduce((sum, row) => sum + (row.billedNanoAiu ?? 0), 0) : undefined;
+}
+
+/** Nano-AIU per whole AI unit — the unit `billedNanoAiu` is expressed in. */
+export const NANO_AIU_PER_UNIT = 1_000_000_000;
+
+/**
+ * Premium requests a scan's rows account for, as Copilot bills them.
+ *
+ * This is the figure that reconciles against a Copilot invoice; token cost does not, because a
+ * Copilot seat is sold in premium requests. `premiumRequestCost` is what the transcript says
+ * the call was charged; a store row has no such field, so its `requestMultiplier` stands in.
+ * Rows carrying neither contribute nothing rather than a guessed 1.
+ */
+export function totalPremiumRequests(rows: readonly CopilotUsageRow[]): number | undefined {
+  const charged = rows.filter(
+    (row) => row.premiumRequestCost !== undefined || row.requestMultiplier !== undefined
+  );
+  if (charged.length === 0) {
+    return undefined;
+  }
+  return charged.reduce((sum, row) => sum + (row.premiumRequestCost ?? row.requestMultiplier ?? 0), 0);
 }
