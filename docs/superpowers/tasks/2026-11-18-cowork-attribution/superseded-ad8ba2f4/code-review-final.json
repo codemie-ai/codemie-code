@@ -1,0 +1,73 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two decision_needed items (missing CRITICAL security sign-off for attribution headers; EPMCDME-17410 AC1 only partial since legacy, spool-bound and no-mark sessions never get codemie funding) plus two major pin-write robustness defects in saveCoworkAttribution (reachability confirmed by reading the code, not by execution). All four lenses ran; 10 candidates dismissed as noise or low-probability (stale pin cleanup, TOCTOU on spool read, unproven test-mock vacuity, others); 0 deferred; 2.3 pass was bounded to the pin save and funding paths.",
+  "confidence": "low",
+  "risk_flags": ["security", "public-api", "breaking-change"],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC1: later folder add keeps first project, no conflict discard", "status": "pass", "notes": "pinAttribution fixes project once; tests cover end and final summary." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC2: project unchanged across folder/metadata change or daemon restart", "status": "pass", "notes": "Write-once pin file plus spool-bound fallback." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC3: task whose folder never changes behaves unchanged", "status": "pass", "notes": "Same resolveProject rules." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC4: native Claude Code sessions unchanged", "status": "pass", "notes": "Changes confined to Cowork producer; control test." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 tests: unit and spool/forwarder integration", "status": "pending-stage-7", "notes": "Backend stored project/final state needs live evidence." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC1: Cowork session sent -> subscription_type codemie", "status": "partial", "notes": "Only with served mark and pin source != none; others stored unknown. See CR-002." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC2: cost counted as CodeMie spend", "status": "pending-stage-7", "notes": "Depends on backend honouring headers." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC3: Cowork still needs no folder consent", "status": "pass", "notes": "No contract or consent header sent." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC4: native Claude Code sessions unchanged", "status": "pass", "notes": "Recorded sessions bypass Cowork branch." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 tests: header unit tests and stored-row integration", "status": "pending-stage-7", "notes": "Stored row and spend need backend evidence." }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "10 subjects in range match <type>(analytics): <subject>, all under 100 chars" },
+    { "kind": "code-quality", "status": "pass", "notes": "forwarder.ts is over the 500-line guideline but this change adds only 11 net lines." },
+    { "kind": "security", "status": "partial", "notes": "No concrete vulnerability seen, but attribution-header change is CRITICAL and requires security-review sign-off, which record.md says is not obtained." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.ts",
+      "title": "Attribution-header change lacks required security sign-off",
+      "problem": "security-practices.md and the git-workflow review checklist mark any add/rewrite of X-CodeMie-Project and related attribution headers, or a new derivation source for them, as CRITICAL requiring explicit security-reviewer sign-off. This change adds a Cowork project pin and a CodeMie-funded declaration (Project, Project-Source, subscription_type codemie) via coworkFundingHeaders / requestHeaders / cowork-attribution.ts; record.md states sign-off is not obtained.",
+      "impact": "Project and billing attribution changes could merge without the documented review gate.",
+      "recommendation": "Obtain and record the security reviewers' sign-off on the PR, marked CRITICAL in the description, before merge; record the outcome via fix_evidence decision."
+    },
+    {
+      "id": "CR-002",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts",
+      "line": 175,
+      "title": "EPMCDME-17410 AC1 only partially met for legacy sessions",
+      "problem": "Funding headers are sent only when a served mark exists and the pin source is linked_folder or profile (cowork-attribution.ts coworkFundingSource). Sessions with no mark (collected before marks existed or mark pruned mid-session), pin source none (spool-bound before the pin, or bound differing from resolved project) and non-ASCII projects fall back to the legacy Project header and are stored unknown. A pruned mark also makes later requests of the same session drop funding.",
+      "impact": "The ticket requires every sent Cowork session to be codemie; these sessions remain unknown and are not counted as CodeMie spend.",
+      "recommendation": "Decide whether the gap is accepted (and amend AC1/record) or add a mechanism for these sessions, e.g. keep funding once a funded request was sent, and cover the cases explicitly."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/cowork-attribution.ts",
+      "line": 59,
+      "title": "Hard-link failure other than EEXIST blocks session processing",
+      "problem": "saveCoworkAttribution rethrows any link() error that is not EEXIST (EPERM/ENOTSUP/EXDEV/ENOSYS on filesystems without hard links). The error propagates out of pinAttribution, which runs before any event is appended. Reachability of such a filesystem for the analytics state dir was not confirmed.",
+      "impact": "On such a filesystem the pin is never written, pinAttribution throws every tick and the session's analytics are never appended.",
+      "recommendation": "On EPERM/ENOTSUP/EXDEV/ENOSYS fall back to a non-overwriting publish (e.g. writeFile with flag 'wx' then reload), then return the pin in effect; rethrow only unknown errors."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/cowork-attribution.ts",
+      "line": 65,
+      "title": "Unreadable-pin recovery can overwrite a valid pin",
+      "problem": "On EEXIST with an unreadable file, saveCoworkAttribution does rename(temp, path), overwriting unconditionally. Two racers that both see the corrupt file both rename, and a valid pin written between the load and the rename is overwritten, so the write-once guarantee does not hold and the racers return different pins. Reachability unconfirmed (needs a corrupt pin file).",
+      "impact": "Events can be stamped with a project the pin file no longer holds, moving a session between projects.",
+      "recommendation": "Remove the corrupt file then retry link (looping once), or reload after the rename and return the loaded pin so every racer agrees."
+    }
+  ],
+  "deferred": []
+}

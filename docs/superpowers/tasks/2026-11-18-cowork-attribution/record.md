@@ -2,7 +2,9 @@
 
 Branch `EPMCDME-17385_17410_cowork-attribution`, baseline `252233ba1658a506b6d38fbf6707ea8a8c0926fa` (origin/main).
 Code commit tested and described here: `1ffe202b` (`fix(analytics): pin the Cowork session project and declare CodeMie funding`).
-Status: implementation done and scoped-checked; **not yet independently reviewed, not approved, no PR**.
+Status: see `final-review/` for the final review, security review and actual complexity (earlier review evidence is in
+`superseded-ee54d4da/`, superseded). The original design/verification sections below describe `1ffe202b`; later commits
+are listed in the PR.
 
 ## Requirements
 
@@ -19,7 +21,7 @@ Status: implementation done and scoped-checked; **not yet independently reviewed
 | Piece | Change |
 |---|---|
 | `cowork/cowork-attribution.ts` (new) | Write-once per-session pin `<id>.cowork-attribution.json` = `{project, projectSource}`; `coworkFundingSource()` allows a funding claim only with a daemon-written served mark **and** a pin for the project being sent, with a real source. |
-| `CoworkEventProducer.ts` | `pinAttribution()` before the first append of a processing; every pass, end pass and own event is stamped with the pinned project (repository, branch, cwd stay per pass as before). A session with no pin but a spool binding keeps the spool's project; a session with neither is pinned at its next processing. A failed config load writes no pin. |
+| `CoworkEventProducer.ts` | `pinAttribution()` before the first append of a processing; every pass, end pass and own event is stamped with the pinned project (repository, branch, cwd stay per pass as before). A session with no pin but a spool binding keeps the spool's project; a session with neither is pinned at its next processing. A failed config load, or a failed project-origin lookup (`resolveProfileIdentity`), appends and pins nothing in that processing and is retried at the next one, so a transient failure never fixes an unknown origin for good (`c38b2fe4`). |
 | `evidence-send.ts` / `forwarder.ts` | For an unrecorded session (no evidence context, no guard) that passes the funding gate, `requestHeaders` sends the canonical `buildAttributionHeaders({destination:'analytics', routedViaCodemie:true, subscriptionType:'codemie', project, projectSource})`: Session-Id, Routed-Via-CodeMie, Subscription-Type, Project, Project-Source. No publication-contract, funding-route or consent header. Otherwise the legacy Project header alone, as before. |
 
 ### Backend consumer trace (read-only, `C:/codemie-dev/codemie` `origin/main` a01605f354; no backend change needed)
@@ -143,20 +145,52 @@ real Claude Desktop UI; synthetic input.
 
 - **Live acceptance is synthetic input.** Persistence, projection and CodeMie spend were observed on a local backend (see
   above), not with a real macOS Claude Desktop session or on `origin/main`'s backend build.
-- Sessions collected before this change: a bound session with a pin-less cursor keeps its spool project (no re-resolution),
-  and declares funding only if its current resolution agrees with it; if not, it is pinned with source `none` and stays
-  on the legacy Project header (no codemie claim). A session with a cursor but **no served mark** (collected before marks
-  existed) never claims funding. Rows already stored `unknown`, events already discarded and sessions already conflicted
-  or provisional are **not repaired** (out of scope); an already-conflicted session stays conflicted.
+- **Historical data (excluded from this task, stated as in the handoff):** rows already stored `unknown`, events already
+  discarded, and sessions already conflicted or provisional are not repaired.
+- **Open gap, decomposed by trigger (not an approved exclusion; no waiver was given):**
+  - (a) *Fresh served task with a resolvable project:* covered (pinned before the first append, funding declared).
+  - (b) *Active session the spool bound to P1 before pins existed, daemon-served, whose current resolution yields a
+    different project:* **open.** It is pinned with source `none` and keeps the legacy Project header, so its rows stay
+    `unknown`. If the current resolution still yields P1, the real source is pinned and it is funded. Backend facts
+    (origin/main `9f19b3b3a3` read; the gate, binding and ingestor files are identical to the probed build `cdd8829db3`
+    except two lines in `ports.py`): an existing binding keeps its stored `subscription_type`; an unbound session **with
+    legacy rows** adopts that project and takes the request's classification; an unbound session **without** legacy rows is
+    routed anew. Probe `r7` (real forwarder, real local backend, only `coworkFundingSource` forced to send no
+    `Project-Source`; `evidence-live/adopt-r7.json`): session with acknowledged legacy rows then a funding request without
+    Project-Source -> stored `codemie`, origin `legacy_project`; **negative control** (spool bound to P1 but legacy delivery
+    never reached the backend) -> stored `codemie` with origin `default_project`, i.e. routed by the backend's default,
+    not by the spool's project. So sending funding without `Project-Source` is correct only when the backend already holds
+    legacy rows for the session. What the CLI can prove locally is not enough: the hooks cursor advances on both `ok` and
+    `discarded` answers (`forwarder.ts` `acknowledged`), and a pre-upgrade delivery left no record of whether it was
+    stored. Exact missing capability: a way for the client to declare funding for an *existing* session without risking
+    default-project routing (e.g. a require-existing-binding signal), or durable proof of stored legacy rows. Not
+    implemented; nothing is fabricated.
+  - (c) *No served mark / no new routed request:* no funding by design (no proof of the current route). A mark is
+    recreated by the next served request and pruned only when the session is no longer listed and older than the backfill
+    window (`CoworkEventProducer` prune), so a listed session does not lose it mid-session.
+  - (d) *Project that cannot travel as a header (non-Latin-1):* the same project is also dropped from the legacy Project
+    header at baseline; funding is not declared on a missing header (unchanged baseline behavior, tested).
+- A fresh served session with no project at all sends no Project header (unchanged from baseline), so it is not stored
+  as funded or unfunded.
 - The first project is the one resolved from the working directory known at first processing; discovery caches that for one
   inactivity timeout, so a folder added within that window before the first processing counts as "at the start".
 - Evidence-style requests route like native evidence: if the pinned project is not usable by the user, the backend
   falls back to the registered-repository/default project with a route note instead of the legacy `context_required`
   discard. This is the existing native evidence behavior, not new.
 - Repository/branch/cwd stamps are still recomputed per pass (only the project is fixed, as specified).
-- Attribution-header change: **CRITICAL under the repo security guide; security-review sign-off required before merge.**
+- Attribution-header change: **CRITICAL under the repo security guide.** The source-backed security review is persisted in
+  `final-review/security-review.md` (no source vulnerability found). The guide's explicit security-review sign-off by the
+  repository's security reviewers is a process gate for merge and is not claimed here.
 
-## Next gates (after user approval)
+### Which acceptance criterion each consumer shows (EPMCDME-17410)
 
-`sdlc-factory:code-review` on `252233ba...HEAD`, fix confirmed findings, `sdlc-factory:complexity-scoring` (actual), shareable
-review/complexity artifacts in the PR, then `sdlc-factory:mr-creator` for the single PR referencing both tickets.
+- AC1 (row `subscription_type: codemie`): met on the local backend (session detail and list, `codemie`).
+- AC2 (cost as CodeMie spend on the CLI Analytics tab): the overview cards read `kpis.api_cost_usd` and
+  `kpis.subscription_cost_usd` (`overviewMetrics.ts`); asserted: API spend > 0, subscription 0. The Cost view reads
+  `kpis.total_cost_usd` (`CostView.tsx`), which is populated; it does not split funding. The `/cost` response's separate
+  `funding` buckets (derived from the publication-contract funding route that Cowork does not send) show this session as
+  `unknown`; a search of `codemie-ui` `origin/main` (`b92af56aa0`) finds no cli-analytics component reading them, but this
+  was not checked against any other consumer, so no claim is made that all cost paths are verified.
+- Run `r6` repeats the real-local-backend probe on the current source with a one-time injected project-origin lookup failure
+  (nothing appended after the failure, then recovery): the same ten assertions plus `transient_failure_appended_nothing`
+  all true, exit 0 (`evidence-live/result-r6.json`, `probe-r6.log`, `exit-r6.txt`).
