@@ -36,6 +36,8 @@ interface WriteClaudeCodeOtlpOptions {
   /** Replace conflicting settings and an invalid project list (`--overwrite`). */
   overwrite?: boolean;
   scope?: AllowlistScope;
+  /** With no `scope`: a stored list of named projects is written back as it is, anything else is all projects. */
+  keepProjectList?: boolean;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -562,7 +564,9 @@ export async function writeClaudeCodeOtlpConfig(
 
   const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (scope === 'project') {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    allowlist = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
+  } else if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }

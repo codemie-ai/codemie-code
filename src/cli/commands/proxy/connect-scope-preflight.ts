@@ -11,12 +11,17 @@ import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-co
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId, type ConnectorScopeRead } from './analytics-connectors.js';
+import { ANALYTICS_AGGREGATES } from './analytics-clients.js';
 import { buildScopeDropLines, promptScopeDropConfirmation } from './prompts/analytics-confirmation.js';
 import type { ConnectTargets, TargetResult } from './connect-orchestrator.js';
 
 /** The targets `--scope` and `--yes` apply to, as named in their ignored-flag notes. */
-const ANALYTICS_TARGET_FLAGS =
-  `--${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}`;
+const ANALYTICS_TARGET_FLAGS = [
+  ...ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag),
+  `--${CLAUDE_CODE_OTLP_AGENT_NAME}`,
+  `--${COPILOT_CHAT_OTLP_AGENT_NAME}`,
+  `--${COPILOT_CLI_OTLP_AGENT_NAME}`,
+].join(' / ');
 
 /** `--scope` and `--yes` apply only to analytics connector targets: say so when neither is selected. */
 export function warnIgnoredAnalyticsFlags(targets: ConnectTargets, scope: AllowlistScope | undefined, yes: boolean): void {
@@ -68,19 +73,22 @@ function sameScopeRead(a: ConnectorScopeRead, b: ConnectorScopeRead): boolean {
  * analytics connector in project scope with tracked projects lists them and asks first; `--yes` skips the prompt
  * and is the only non-interactive path. Runs before SSO, the daemon or any config is touched. A decline clears
  * that connector from `activeTargets`. Returns the baselines the writers check later, or `null` when the run must
- * stop (the non-interactive failure already set the exit code). An unreadable list needs no confirmation.
+ * stop (the non-interactive failure already set the exit code). An unreadable list needs no confirmation, and
+ * neither does a connector in `keptLists` (set by `--claude-otlp` / `--copilot-otlp` with no `--scope`), whose
+ * writer keeps its project list.
  */
 export async function confirmScopeDrops(
   activeTargets: ConnectTargets,
   scope: AllowlistScope | undefined,
   yes: boolean,
+  keptLists: ReadonlySet<AnalyticsTargetKey> = new Set(),
 ): Promise<ScopeBaselines | null> {
   const baselines: ScopeBaselines = new Map();
   if (scope === 'project') return baselines;
 
   const drops: Array<{ target: AnalyticsTarget; paths: string[] }> = [];
   for (const target of ANALYTICS_TARGETS) {
-    if (!activeTargets[target.key]) continue;
+    if (!activeTargets[target.key] || keptLists.has(target.key)) continue;
     const read = await readConnectorScope(target.id);
     baselines.set(target.id, read);
     if (!('invalid' in read) && read.scope === 'project' && read.paths.length > 0) {

@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getCopilotConnectorsConfigPath,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   addCopilotConnectorProject,
   isCopilotProjectTracked,
@@ -93,6 +94,28 @@ describe('copilot-connector-scope', () => {
       );
       const result = await readCopilotConnectorScope(CONNECTOR_ID);
       expect(result).toEqual({ kind: 'ok', value: { enabled: true, scope: 'project', paths: ['/repo-a'] } });
+    });
+  });
+
+  describe('readKeptCopilotConnectorScope', () => {
+    it('returns a stored project record as it is', async () => {
+      const project: CopilotConnectorScope = { enabled: true, scope: 'project', paths: ['/work/a'] };
+      await writeCopilotConnectorScope(CONNECTOR_ID, project);
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'project', paths: ['/work/a'] });
+    });
+
+    it('returns scope user when nothing is stored', async () => {
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('returns a stored user record as it is', async () => {
+      await writeCopilotConnectorScope(CONNECTOR_ID, { enabled: true, scope: 'user' });
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('returns scope user over a corrupt config file', async () => {
+      await writeRaw('{ not json');
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
     });
   });
 

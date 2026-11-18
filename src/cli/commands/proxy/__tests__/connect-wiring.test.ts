@@ -340,6 +340,7 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: undefined,
       insiders: false,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: true,
@@ -362,6 +363,7 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'project',
       insiders: false,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: false,
@@ -405,6 +407,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: undefined,
       insiders: false,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: false,
@@ -438,6 +441,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: undefined,
       insiders: false,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: false,
@@ -460,6 +464,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: undefined,
       insiders: false,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: false,
@@ -482,6 +487,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: undefined,
       insiders: true,
+      aggregates: [],
       targets: {
         claudeCodeOtlp: false,
         copilotChatOtlp: false,
@@ -599,5 +605,167 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+});
+
+describe('proxy connect / disconnect --claude-otlp and --copilot-otlp', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  const CLAUDE_MEMBERS = {
+    claudeDesktop: true,
+    vscodeClaudeCode: true,
+    claudeCodeOtlp: true,
+    copilotChatOtlp: false,
+    copilotCliOtlp: false,
+    vscode: false,
+    codexDesktop: false,
+    omp: false,
+  };
+
+  async function connectWith(args: string[]): Promise<unknown> {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+    await createProxyCommand().parseAsync(['connect', ...args], { from: 'user' });
+    return vi.mocked(connectTargets).mock.calls[0][0];
+  }
+
+  it('connect --claude-otlp sets the three Claude members, names the aggregate and hands no scope', async () => {
+    const call = await connectWith(['--claude-otlp']);
+
+    expect(call).toEqual(expect.objectContaining({ targets: CLAUDE_MEMBERS, aggregates: ['claude-otlp'] }));
+    expect(call).toHaveProperty('scope', undefined);
+  });
+
+  it('connect --copilot-otlp sets the two Copilot members', async () => {
+    const call = await connectWith(['--copilot-otlp']);
+
+    expect(call).toEqual(expect.objectContaining({
+      targets: {
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        claudeCodeOtlp: false,
+        copilotChatOtlp: true,
+        copilotCliOtlp: true,
+        vscode: false,
+        codexDesktop: false,
+        omp: false,
+      },
+      aggregates: ['copilot-otlp'],
+    }));
+  });
+
+  it('connect --copilot-otlp --claude-otlp sets the five members, the aggregates in their declared order', async () => {
+    const call = await connectWith(['--copilot-otlp', '--claude-otlp']);
+
+    expect(call).toEqual(expect.objectContaining({
+      targets: { ...CLAUDE_MEMBERS, copilotChatOtlp: true, copilotCliOtlp: true },
+      aggregates: ['claude-otlp', 'copilot-otlp'],
+    }));
+  });
+
+  it('connect --claude-otlp --claude-desktop is the same call as connect --claude-otlp', async () => {
+    const alone = await connectWith(['--claude-otlp']);
+    vi.clearAllMocks();
+
+    expect(await connectWith(['--claude-otlp', '--claude-desktop'])).toEqual(alone);
+  });
+
+  it.each([['user'], ['project']])('connect --claude-otlp --scope %s hands the typed scope', async (scope) => {
+    const call = await connectWith(['--claude-otlp', '--scope', scope]);
+
+    expect(call).toEqual(expect.objectContaining({ scope, aggregates: ['claude-otlp'] }));
+  });
+
+  it('connect --claude-otlp hands an omitted scope as undefined, for the orchestrator to keep project lists', async () => {
+    const call = await connectWith(['--claude-otlp']);
+
+    expect(call).toEqual(expect.objectContaining({ aggregates: ['claude-otlp'], scope: undefined }));
+  });
+
+  it('connect --claude-code-otlp hands no aggregate and an omitted scope as undefined', async () => {
+    const call = await connectWith(['--claude-code-otlp']);
+
+    expect(call).toEqual(expect.objectContaining({ aggregates: [], scope: undefined }));
+  });
+
+  it('connect --claude-otlp forwards --yes, --overwrite, --restart-daemon, --insiders and --profile', async () => {
+    const call = await connectWith(['--claude-otlp', '--yes', '--overwrite', '--restart-daemon', '--insiders', '--profile', 'work']);
+
+    expect(call).toEqual(expect.objectContaining({
+      yes: true, overwrite: true, restartDaemon: true, insiders: true, profile: 'work',
+    }));
+  });
+
+  it('connect --claude-otlp takes the deprecated --silent and --force with their old meanings', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const call = await connectWith(['--claude-otlp', '--silent', '--force']);
+
+      expect(call).toEqual(expect.objectContaining({ yes: true, overwrite: true, restartDaemon: true }));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('disconnect --claude-otlp sets the three Claude members', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--claude-otlp'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: undefined,
+      insiders: false,
+      aggregates: ['claude-otlp'],
+      targets: {
+        claudeDesktop: true,
+        vscodeClaudeCode: true,
+        claudeCodeOtlp: true,
+        copilotChatOtlp: false,
+        copilotCliOtlp: false,
+        vscode: false,
+        codexDesktop: false,
+        omp: false,
+      },
+    });
+  });
+
+  it('disconnect --copilot-otlp --scope project sets the two Copilot members with scope project', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--copilot-otlp', '--scope', 'project'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: 'project',
+      insiders: false,
+      aggregates: ['copilot-otlp'],
+      targets: {
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        claudeCodeOtlp: false,
+        copilotChatOtlp: true,
+        copilotCliOtlp: true,
+        vscode: false,
+        codexDesktop: false,
+        omp: false,
+      },
+    });
+  });
+
+  it('both commands expose the two aggregates with their descriptions', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const option = (command: string, long: string) =>
+      proxy.commands.find((c) => c.name() === command)?.options.find((o) => o.long === long);
+
+    for (const command of ['connect', 'disconnect']) {
+      expect(option(command, '--claude-otlp')).toBeDefined();
+      expect(option(command, '--copilot-otlp')).toBeDefined();
+    }
+    expect(option('connect', '--claude-otlp')?.description).toContain('through the CodeMie proxy');
+    expect(option('connect', '--claude-otlp')?.description).toContain('codemie proxy disconnect --claude-otlp removes that route');
+    expect(option('disconnect', '--claude-otlp')?.description).toContain('remove the CodeMie proxy route');
+    expect(option('connect', '--scope')?.description).toContain('an existing project list is kept');
   });
 });

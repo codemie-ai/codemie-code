@@ -614,9 +614,14 @@ an alias or function in your interactive shell does not configure the scheduler.
 
 ### Claude Code OTLP analytics
 
+To turn analytics on for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The flag below sets up Claude Code alone; `--claude-otlp` takes the same options.
+
 Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
 
 ```bash
+# Every Claude client found on this machine (Claude Code, the VS Code extension, Claude Desktop)
+codemie proxy connect --claude-otlp
+
 # Track every project (the default; same as --scope user). Asks for confirmation first.
 codemie proxy connect --claude-code-otlp
 
@@ -639,7 +644,7 @@ codemie proxy connect --claude-code-otlp --scope project --profile preview
 | `--overwrite` | Discard an invalid project allowlist so setup can continue, and replace conflicting Claude Code settings; valid allowlists are not changed. |
 | `--verbose` | Show detailed command output. |
 
-Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--yes` writes the Global scope and replaces any listed projects; with `--scope project --yes` the current project is added and existing entries are kept.
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--yes` writes the Global scope and replaces any listed projects; with `--scope project --yes` the current project is added and existing entries are kept. Under `--claude-otlp` an omitted `--scope` keeps the listed projects instead.
 
 Disconnect a project or remove the integration entirely:
 
@@ -707,9 +712,13 @@ codemie proxy connect --omp                                  # oh-my-pi: live Co
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
+codemie proxy connect --claude-otlp                          # analytics for every Claude client found on this machine
+codemie proxy connect --copilot-otlp                         # analytics for every Copilot client found on this machine
 ```
 
 Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets (it exits non-zero). Shared options: `--profile <name>`, `--restart-daemon` (replace a running proxy even when it looks healthy), `--overwrite` (replace client config CodeMie did not write), `--yes` (skip confirmation prompts), `--verbose`, and `--insiders` (VS Code targets only). A flag passed without a target it applies to prints a note that it has no effect.
+
+`--claude-otlp` and `--copilot-otlp` turn CodeMie analytics on for every client of a vendor found on the machine. `--claude-otlp` covers Claude Code, the VS Code Claude Code extension and Claude Desktop: it does what `--claude-desktop --vscode-claude-code --claude-code-otlp` do in one connect, so it also routes Claude Desktop and the extension through the CodeMie proxy, and `codemie proxy disconnect --claude-otlp` removes that route together with the analytics. `--copilot-otlp` covers Copilot Chat and Copilot CLI, as `--copilot-chat-otlp --copilot-cli-otlp` do. A client whose application is not found is skipped with no line and no failing exit code — `codemie proxy status` lists it as `not found` — and when no client is found, no daemon is started. Run the same command again after installing a client. Without `--scope`, a client already limited to named projects keeps its project list. Details: [docs/COMMANDS.md](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor).
 
 One daemon serves every connected client at the same time. `proxy connect` gives each client a key of its own — `codemie-proxy.<client>`, for example `codemie-proxy.claude-desktop` — and a request is labelled and handled as the client its key names. A client set up by an older CLI holds the shared key `codemie-proxy` and keeps working; `codemie proxy connect`, `codemie proxy start` and `codemie proxy restart` move such clients to their own keys and print which application to restart. After a reboot, start the daemon with `codemie proxy start`. After a downgrade to an older CLI — or while an older install stands beside this one and its hooks start its own daemon — a client that holds its own key gets an authentication error (`Invalid API key`), because an older daemon accepts the shared key only: run `codemie proxy connect` again with the CLI whose daemon runs.
 
@@ -721,9 +730,13 @@ codemie proxy disconnect --codex-desktop
 codemie proxy disconnect --omp
 codemie proxy disconnect --vscode          # VS Code BYOK: removes the CodeMie provider, keeps your own models
 codemie proxy disconnect --all             # everything `codemie proxy clients` shows as connected
+codemie proxy disconnect --claude-otlp
+codemie proxy disconnect --copilot-otlp
 ```
 
 `--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. `--all` disconnects every connected target, continues past a failing one, reports each and exits non-zero if any failed; add `--stop` to stop the daemon afterwards. Quit and reopen the app afterwards.
+
+`--claude-otlp` and `--copilot-otlp` disconnect every client of the vendor, as the clients' own flags do together: `--claude-otlp` removes the Claude Code analytics and the CodeMie proxy route of Claude Desktop and the extension. A client that is neither found nor connected is skipped. With `--scope project` only the current project leaves the analytics project list — Claude Desktop and the extension stay connected.
 
 > **Removed:** the old subcommand aliases for Claude Desktop and VS Code now fail; use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode`.
 
@@ -784,7 +797,7 @@ codemie proxy restart [--profile <name>]   # restart, keeping port and key
 codemie proxy stop
 ```
 
-`codemie proxy status` prints facts only: state, URL, port, profile, project, the CLI version the daemon was started by and uptime, with the gateway key masked (`--show-key` shows it). When anything is wrong it adds one line, `Issues found — run: codemie proxy doctor`. `codemie proxy doctor` names what is wrong — a client that points at another port or still holds the shared key, Claude Desktop not collecting, analytics data that was not stored — with the command that fixes it; `--verbose` adds Claude Desktop's directories and recent sessions. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
+`codemie proxy status` prints facts only: state, URL, port, profile, project, the CLI version the daemon was started by and uptime, with the gateway key masked (`--show-key` shows it). It ends with an `Analytics clients:` block — Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat and Copilot CLI, each `connected`, `not connected` with the command to run, or `not found` — and prints that block with the daemon stopped too. When anything is wrong it adds one line, `Issues found — run: codemie proxy doctor`. `codemie proxy doctor` names what is wrong — a client that points at another port or still holds the shared key, Claude Desktop not collecting, analytics data that was not stored — with the command that fixes it; `--verbose` adds Claude Desktop's directories and recent sessions. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
 

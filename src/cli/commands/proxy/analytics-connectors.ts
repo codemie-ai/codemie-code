@@ -83,7 +83,7 @@ export const ANALYTICS_CONNECTORS: readonly AnalyticsConnector[] = [
     id: CLAUDE_CODE_OTLP_AGENT_NAME,
     collect: collectClaudeAnalyticsStatus,
     format: formatClaudeAnalyticsStatus,
-    isActive: hasClaudeCodeOtlpHooks,
+    isActive: () => hasClaudeCodeOtlpHooks(),
     readScope: readClaudeCodeOtlpScope,
     addProject: addClaudeCodeOtlpProject,
   }),

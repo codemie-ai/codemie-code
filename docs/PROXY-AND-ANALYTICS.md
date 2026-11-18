@@ -6,9 +6,9 @@ How the `codemie proxy` and `codemie analytics` commands fit together, which one
 
 | Group | Commands | Purpose |
 | --- | --- | --- |
-| Daemon | `codemie proxy start`, `stop`, `restart`, `status` | Run the one local proxy every client shares. `status` prints facts only (state, URL, port, profile, version); it adds one `Issues found` line when something is wrong. |
+| Daemon | `codemie proxy start`, `stop`, `restart`, `status` | Run the one local proxy every client shares. `status` prints facts only (state, URL, port, profile, version) and the `Analytics clients:` block (each vendor client connected, not connected or not found, with the command that connects it); it adds one `Issues found` line when something is wrong. |
 | Diagnosis | `codemie proxy doctor [--verbose] [--json]`, `codemie proxy clients [--json]` | `doctor` names what is wrong and the command that fixes it. `clients` lists every client and analytics connector: connected or not, config location, scope. |
-| Clients | `codemie proxy connect --<target>`, `codemie proxy disconnect --<target>\|--all` | Point an application at the proxy (`--claude-desktop`, `--vscode`, `--vscode-claude-code`, `--codex-desktop`, `--omp`) or install an analytics connector (`--claude-code-otlp`, `--copilot-cli-otlp`, `--copilot-chat-otlp`). |
+| Clients | `codemie proxy connect --<target>`, `codemie proxy disconnect --<target>\|--all` | Point an application at the proxy (`--claude-desktop`, `--vscode`, `--vscode-claude-code`, `--codex-desktop`, `--omp`) or install an analytics connector (`--claude-code-otlp`, `--copilot-cli-otlp`, `--copilot-chat-otlp`); `--claude-otlp` and `--copilot-otlp` turn analytics on for every client of that vendor found on the machine. |
 | Collection controls | `codemie proxy analytics enable`, `disable`, `include`, `exclude`, `status` | Turn collection on or off everywhere (`enable`/`disable`) or for the current project (`include`/`exclude`) while the hooks stay installed. |
 | Consent | `codemie proxy analytics consent grant`, `revoke`, `list` | Allow or stop collection from work folders that are not part of a CodeMie project. |
 | Reports | `codemie analytics [--export] [-o] [--open] [--include-external <windows\|always\|never>]` | Read your own usage: sessions, tokens, cost, tools. |
@@ -31,6 +31,16 @@ codemie proxy connect --copilot-cli-otlp        # Copilot CLI usage in analytics
 codemie proxy connect --copilot-chat-otlp       # VS Code Copilot Chat usage in analytics
 codemie proxy clients                           # confirm what is connected
 ```
+
+To turn analytics on for every client of a vendor in one run, use the vendor flags:
+
+```bash
+codemie proxy connect --claude-otlp     # Claude Code, the VS Code Claude Code extension and Claude Desktop
+codemie proxy connect --copilot-otlp    # Copilot Chat and Copilot CLI
+codemie proxy status                    # the Analytics clients block: connected, not connected or not found
+```
+
+`--claude-otlp` does what `--claude-desktop --vscode-claude-code --claude-code-otlp` do, so it also routes Claude Desktop and the extension through the proxy; `--copilot-otlp` does what `--copilot-chat-otlp --copilot-cli-otlp` do. A client whose application is not found is skipped. Without `--scope`, a connector already limited to named projects keeps its list, and no confirmation is asked. `codemie proxy disconnect --claude-otlp` / `--copilot-otlp` reverse them. The per-client flags keep working.
 
 Targets combine in one run (`codemie proxy connect --claude-desktop --vscode`). Run `codemie proxy connect` with no target to list them. Restart the application the command names afterwards.
 

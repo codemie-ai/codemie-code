@@ -30,6 +30,7 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
@@ -44,6 +45,8 @@ export const CHAT_HOOK_TIMEOUT_SECONDS = 30;
 
 export interface WriteCopilotChatOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotChatOtlpResult {
@@ -226,7 +229,10 @@ function resolveAbsoluteHookCommand(): string {
   return `${JSON.stringify(process.execPath)} ${JSON.stringify(cliEntry)} hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`;
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotChatOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }

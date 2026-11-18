@@ -22,10 +22,14 @@ export interface ClaudeCodeOtlpDisplay {
   codeMieUrl?: string;
 }
 
+/** The label of the Claude Code analytics target in the connect summary. */
+export const CLAUDE_CODE_OTLP_LABEL = 'Claude Code Analytics';
+
 /** Inputs for {@link runClaudeCodeOtlp}. */
 export interface ClaudeCodeOtlpRunOptions {
   overwrite?: boolean;
   scope?: AllowlistScope;
+  keepProjectList?: boolean;
 }
 
 /**
@@ -34,9 +38,13 @@ export interface ClaudeCodeOtlpRunOptions {
  * target does not stop the others.
  */
 export async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<TargetResult> {
-  const label = 'Claude Code Analytics';
+  const label = CLAUDE_CODE_OTLP_LABEL;
   try {
-    await writeClaudeCodeOtlpConfig({ overwrite: options.overwrite, scope: options.scope });
+    await writeClaudeCodeOtlpConfig({
+      overwrite: options.overwrite,
+      scope: options.scope,
+      keepProjectList: options.keepProjectList,
+    });
     console.log(chalk.green(`✓ Claude Code Analytics configured successfully`));
     return { label, ok: true };
   } catch (error) {
