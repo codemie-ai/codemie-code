@@ -235,6 +235,9 @@ describe('disconnectTargets — the analytics aggregates', () => {
   });
 
   afterEach(async () => {
+    // The orchestrator's logger (fresh per vi.resetModules) opens its log file under CODEMIE_HOME/logs; release it
+    // before the rm below (Windows ENOTEMPTY).
+    await (await import('@/utils/logger.js')).logger.close();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     for (const path of [
@@ -243,7 +246,6 @@ describe('disconnectTargets — the analytics aggregates', () => {
       '../connectors/vscode-claude-code.js', '../connectors/claude-code-otlp.js',
     ]) vi.doUnmock(path);
     process.exitCode = 0;
-    // Windows can briefly hold a handle (the logger) on a file under the temp home.
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
