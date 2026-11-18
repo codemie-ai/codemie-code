@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessAlive, spawnDetached } from '../../src/utils/processes.js';
+import { logger } from '../../src/utils/logger.js';
 import { appendSpool, snapshotPendingBytes } from '../../src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { isolatedEnv, realDir, runIsolatedCli, expectExit, describeRun } from '../helpers/isolated-cli.js';
 
@@ -301,7 +302,10 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       discardedBefore = Date.now();
     }, 30_000);
 
-    afterAll(() => {
+    afterAll(async () => {
+      // The spool's discard warning opens this process's debug log under the daemon's home; an open handle
+      // keeps that directory from being removed on Windows.
+      await logger.close();
       if (previousHome === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previousHome;
       writeSettings({});
