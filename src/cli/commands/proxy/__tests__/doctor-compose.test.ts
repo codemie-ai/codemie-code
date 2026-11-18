@@ -44,10 +44,12 @@ vi.mock('../connectors/claude-code-otlp-endpoint.js', () => ({
 
 const claudeCollect = vi.fn();
 const copilotCollect = vi.fn();
+const claudeReadScope = vi.fn();
+const copilotReadScope = vi.fn();
 vi.mock('../analytics-connectors.js', () => ({
   ANALYTICS_CONNECTORS: [
-    { id: 'claude-code-otlp', collect: () => claudeCollect() },
-    { id: 'copilot-cli-otlp', collect: () => copilotCollect() },
+    { id: 'claude-code-otlp', collect: () => claudeCollect(), readScope: () => claudeReadScope() },
+    { id: 'copilot-cli-otlp', collect: () => copilotCollect(), readScope: () => copilotReadScope() },
   ],
 }));
 
@@ -120,6 +122,8 @@ describe('composeProxyDoctor', () => {
     checkClaudeCodeOtlpEndpoint.mockResolvedValue(null);
     claudeCollect.mockResolvedValue(claudeStatus({ hooksInstalled: true, scope: 'user' }));
     copilotCollect.mockResolvedValue(copilotStatus());
+    claudeReadScope.mockResolvedValue({ scope: 'user', paths: [] });
+    copilotReadScope.mockResolvedValue({ scope: 'user', paths: [] });
   });
 
   afterEach(() => {
@@ -202,8 +206,9 @@ describe('composeProxyDoctor', () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
-  it('the Claude Code OTLP repair hint carries its current --scope', async () => {
-    claudeCollect.mockResolvedValue(claudeStatus({ hooksInstalled: true, scope: 'project', trackedProjects: ['/a'] }));
+  it('the Claude Code OTLP repair hint carries its current --scope, read through the connector readScope', async () => {
+    claudeCollect.mockResolvedValue(claudeStatus({ hooksInstalled: true, scope: 'user' }));
+    claudeReadScope.mockResolvedValue({ scope: 'project', paths: ['/a'] });
     checkClaudeCodeOtlpEndpoint.mockResolvedValue({
       configured: 'http://127.0.0.1:5000/v1/analytics/otlp',
       expected: 'http://127.0.0.1:4001/v1/analytics/otlp',

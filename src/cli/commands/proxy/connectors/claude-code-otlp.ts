@@ -30,6 +30,7 @@ import {
   parseAllowlist,
   removeProjectPath,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import type { ConnectorScopeRead } from '@/agents/core/project-allowlist.js';
 import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
@@ -813,6 +814,46 @@ export async function removeClaudeCodeOtlpConfig(
     ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
   );
   return { removed: true, path: settingsPath, mode: 'full' };
+}
+
+/**
+ * Claude Code's tracking scope, from the project list in `~/.claude/settings.json` env: absent or empty
+ * means every project (`user`), a non-empty list means `project`. Never throws.
+ */
+export async function readClaudeCodeOtlpScope(): Promise<ConnectorScopeRead> {
+  const settingsPath = getClaudeSettingsPath();
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(settingsPath);
+  } catch (error) {
+    return { invalid: error instanceof Error ? error.message : String(error) };
+  }
+  const allowlist = parseAllowlist(existing.env?.[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]);
+  if (allowlist.kind === 'invalid') {
+    return { invalid: `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} in ${settingsPath} is not a JSON array of absolute paths` };
+  }
+  if (allowlist.kind === 'absent' || allowlist.paths.length === 0) {
+    return { scope: 'user', paths: [] };
+  }
+  return { scope: 'project', paths: allowlist.paths };
+}
+
+/**
+ * Adds `projectPath` to Claude Code's project list. Only valid in project scope: an empty or absent list
+ * already tracks every project, and writing one entry would narrow it. A no-op when already listed.
+ */
+export async function addClaudeCodeOtlpProject(projectPath: string): Promise<void> {
+  const settingsPath = getClaudeSettingsPath();
+  const existing = await readSettingsFile(settingsPath);
+  const allowlist = parseAllowlist(existing.env?.[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]);
+  if (allowlist.kind !== 'valid' || allowlist.paths.length === 0) {
+    throw new ConfigurationError(`Claude Code does not track a project list in ${settingsPath}, so nothing was added.`);
+  }
+  const paths = await addProjectPath(allowlist.paths, projectPath);
+  if (paths.length === allowlist.paths.length) return;
+  const env = { ...(existing.env ?? {}), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(paths) };
+  await writeAtomically(settingsPath, JSON.stringify({ ...existing, env }, null, 2) + '\n');
+  logger.info('[proxy] Added project to Claude Code analytics allowlist', ...sanitizeLogArgs({ settingsPath, paths }));
 }
 
 /** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */

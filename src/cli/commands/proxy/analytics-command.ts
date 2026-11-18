@@ -1,6 +1,6 @@
 /**
  * `codemie proxy analytics` — turns analytics collection off/on or excludes a single project for
- * one OTLP connector (Claude Code by default; Copilot CLI / Copilot Chat via a connector flag),
+ * the OTLP connectors (every connected connector by default; one connector via a connector flag),
  * without uninstalling the hooks `connect` already wrote. Deliberately nested under `proxy`, not
  * a new top-level command, so it is never confused with the unrelated reporting command at
  * `codemie analytics` (`src/cli/commands/analytics/`).
@@ -20,10 +20,12 @@ import {
 } from '@/agents/core/project-allowlist.js';
 import {
   getClaudeAnalyticsPreferencesPath,
+  readClaudeAnalyticsPreferences,
   updateClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import {
   getCopilotAnalyticsPreferencesPath,
+  readCopilotAnalyticsPreferences,
   updateCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
 import { evaluateClaudeAnalyticsGate } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js';
@@ -71,6 +73,8 @@ interface AnalyticsStore {
   /** Human label used in the success message, e.g. "Claude Code". */
   label: string;
   path(): string;
+  /** The current preferences, or null when they cannot be read. */
+  read(): Promise<AnalyticsPrefs | null>;
   update(mutate: (current: AnalyticsPrefs) => AnalyticsPrefs | Promise<AnalyticsPrefs>): Promise<void>;
 }
 
@@ -93,6 +97,10 @@ function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsStore {
     return {
       label: 'Claude Code',
       path: getClaudeAnalyticsPreferencesPath,
+      async read() {
+        const prefs = await readClaudeAnalyticsPreferences();
+        return prefs.kind === 'ok' ? prefs.value : null;
+      },
       async update(mutate) {
         await updateClaudeAnalyticsPreferences(async (current) => {
           const next = { ...current, ...(await mutate(current)) };
@@ -105,10 +113,18 @@ function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsStore {
   return {
     label: connectorId === COPILOT_CLI_OTLP_AGENT_NAME ? 'Copilot CLI' : 'Copilot Chat',
     path: getCopilotAnalyticsPreferencesPath,
+    async read() {
+      const prefs = await readCopilotAnalyticsPreferences(connectorId);
+      return prefs.kind === 'ok' ? prefs.value : null;
+    },
     async update(mutate) {
       await updateCopilotAnalyticsPreferences(connectorId, mutate);
     },
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof ConfigurationError ? error.message : error instanceof Error ? error.message : String(error);
 }
 
 async function withErrorHandling(action: () => Promise<void>): Promise<void> {
@@ -129,9 +145,10 @@ function printSaved(store: AnalyticsStore, suffix = ''): void {
  * Says whether `target` is collected right now and, if not, why and which command changes that.
  * `include`/`enable` only edit the opt-out layer; whether a project is collected at all also depends
  * on the connector scope written by `connect`, so this closes the gap between the two. Advisory
- * only: it reads state, never throws, and never changes the command's outcome.
+ * only: it reads state, never throws, and never changes the command's outcome. With `confirmLabel`
+ * a tracked project is confirmed as tracked by that connector.
  */
-async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: string): Promise<void> {
+async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: string, confirmLabel?: string): Promise<void> {
   try {
     const decision =
       connectorId === CLAUDE_CODE_OTLP_AGENT_NAME
@@ -140,7 +157,11 @@ async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: s
     // The Claude gate only models opt-outs; with no CodeMie hooks in settings.json nothing runs at all.
     const hooksMissing = decision.tracked && connectorId === CLAUDE_CODE_OTLP_AGENT_NAME && !(await hasClaudeCodeOtlpHooks());
     if (decision.tracked && !hooksMissing) {
-      console.log(chalk.dim(`Effective now: ${target} is tracked.`));
+      console.log(
+        confirmLabel
+          ? chalk.green(`✓ Done: ${target} is tracked by ${confirmLabel}.`)
+          : chalk.dim(`Effective now: ${target} is tracked.`)
+      );
       return;
     }
     const reason = hooksMissing ? 'hooks-not-installed' : 'reason' in decision ? decision.reason : 'unknown';
@@ -158,117 +179,272 @@ async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: s
   }
 }
 
-async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<void> {
-  await withErrorHandling(async () => {
-    const connectorId = resolveAnalyticsConnector(opts);
-    const store = storeForConnector(connectorId);
-    let changed = true;
-    await store.update((current) => {
-      changed = current.enabled !== enabled;
-      return { ...current, enabled };
-    });
-    if (!changed) {
-      console.log(chalk.dim('Nothing to change.'));
-    } else {
-      printSaved(store);
+type AnalyticsVerb = 'enable' | 'disable' | 'include' | 'exclude';
+
+export interface TargetSelection {
+  /** The connectors the command acts on, in table order. */
+  targets: AnalyticsConnector[];
+  /** Targets whose connector state could not be read; they are still acted on, and named. */
+  unreadable: AnalyticsConnector[];
+}
+
+function hasConnectorFlag(opts: ConnectorOptions): boolean {
+  return Boolean(opts.claudeCodeOtlp || opts.copilotCliOtlp || opts.copilotChatOtlp);
+}
+
+const CONNECTOR_FLAGS = [CLAUDE_CODE_OTLP_AGENT_NAME, COPILOT_CLI_OTLP_AGENT_NAME, COPILOT_CHAT_OTLP_AGENT_NAME].map((id) => `--${id}`);
+
+/** Whether a connector's state cannot be read: its activity check throws or its stored scope is invalid. */
+async function connectorState(entry: AnalyticsConnector): Promise<{ active: boolean; unreadable: boolean }> {
+  let active = false;
+  let unreadable = false;
+  try {
+    active = await entry.isActive();
+  } catch (error) {
+    logger.debug(`[proxy analytics] ${entry.id} activity check failed:`, error);
+    unreadable = true;
+  }
+  if ('invalid' in (await entry.readScope())) {
+    unreadable = true;
+  }
+  return { active, unreadable };
+}
+
+/**
+ * The connectors a `proxy analytics` write acts on. A connector flag picks exactly that connector.
+ * Without one, `include`/`exclude` act on every connected connector, while `enable`/`disable` also act
+ * on a connector whose state cannot be read, so a skipped connector can never keep collecting (the
+ * Copilot gate checks the preference before the scope). Throws when nothing is left to act on.
+ */
+export async function selectTargetConnectors(verb: AnalyticsVerb, opts: ConnectorOptions): Promise<TargetSelection> {
+  if (hasConnectorFlag(opts)) {
+    const id = resolveAnalyticsConnector(opts);
+    const selected = ANALYTICS_CONNECTORS.filter((entry) => entry.id === id);
+    return { targets: selected, unreadable: [] };
+  }
+  let targets: AnalyticsConnector[];
+  let unreadable: AnalyticsConnector[] = [];
+  if (verb === 'include' || verb === 'exclude') {
+    targets = await listActiveAnalyticsConnectors();
+  } else {
+    const states = await Promise.all(ANALYTICS_CONNECTORS.map(connectorState));
+    targets = ANALYTICS_CONNECTORS.filter((_, index) => states[index].active || states[index].unreadable);
+    unreadable = ANALYTICS_CONNECTORS.filter((_, index) => states[index].unreadable);
+  }
+  if (targets.length === 0) {
+    throw new ConfigurationError(
+      renderHint({
+        reason: 'No analytics connector is connected',
+        command: `codemie proxy connect ${CONNECTOR_FLAGS.join(' | ')}`,
+      })
+    );
+  }
+  return { targets, unreadable };
+}
+
+/**
+ * Runs `act` for every selected connector. Without a connector flag each connector gets its own
+ * heading, a failure is reported and the next connector still runs, and the exit code is 1 when any
+ * failed (as `disconnect --all` does). `act` resolves false when it reported "not done" without failing.
+ * Resolves true when every connector succeeded.
+ */
+async function forEachTarget(
+  verb: AnalyticsVerb,
+  opts: ConnectorOptions,
+  act: (connector: AnalyticsConnector) => Promise<boolean>
+): Promise<boolean> {
+  let selection: TargetSelection;
+  try {
+    selection = await selectTargetConnectors(verb, opts);
+  } catch (error) {
+    console.error(chalk.red(`✗ ${errorMessage(error)}`));
+    process.exitCode = 1;
+    return false;
+  }
+  const fanOut = !hasConnectorFlag(opts);
+  let allSucceeded = true;
+  for (const connector of selection.targets) {
+    const label = storeForConnector(connector.id).label;
+    if (fanOut) console.log(chalk.bold(`${label}:`));
+    if (selection.unreadable.includes(connector)) {
+      console.log(chalk.yellow(`${label}: its connector settings could not be read; saving its ${verb} preference anyway.`));
     }
-    if (!enabled) {
-      console.log(chalk.dim(coverageNote(connectorId)));
-      printNext('proxy analytics disable');
-      return;
+    try {
+      if (!(await act(connector))) allSucceeded = false;
+    } catch (error) {
+      allSucceeded = false;
+      process.exitCode = 1;
+      console.error(chalk.red(`✗ ${fanOut ? `${label}: ` : ''}${errorMessage(error)}`));
     }
-    const resume = changed ? resumeNote(connectorId) : undefined;
-    if (resume) {
-      console.log(chalk.dim(resume));
-    }
-    await reportEffectiveState(connectorId, process.cwd());
-    printNext('proxy analytics enable');
+  }
+  return allSucceeded;
+}
+
+async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean): Promise<boolean> {
+  const store = storeForConnector(connectorId);
+  let changed = true;
+  await store.update((current) => {
+    changed = current.enabled !== enabled;
+    return { ...current, enabled };
   });
+  if (!changed) {
+    console.log(chalk.dim('Nothing to change.'));
+  } else {
+    printSaved(store);
+  }
+  if (!enabled) {
+    console.log(chalk.dim(coverageNote(connectorId)));
+    return true;
+  }
+  const resume = changed ? resumeNote(connectorId) : undefined;
+  if (resume) {
+    console.log(chalk.dim(resume));
+  }
+  await reportEffectiveState(connectorId, process.cwd());
+  return true;
+}
+
+async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<void> {
+  const verb = enabled ? 'enable' : 'disable';
+  const succeeded = await forEachTarget(verb, opts, (connector) => setEnabledFor(connector.id, enabled));
+  if (succeeded) printNext(`proxy analytics ${verb}`);
+}
+
+async function excludeFor(connectorId: AnalyticsConnectorId, path: string | undefined): Promise<boolean> {
+  const store = storeForConnector(connectorId);
+  const target = path ?? resolveProjectRoot();
+  const canonical = await canonicalizePath(target);
+  let changed = true;
+  let coveredBy: string | undefined;
+  await store.update(async (current) => {
+    for (const entry of current.excludedProjects) {
+      const canonicalEntry = await canonicalizePath(entry);
+      if (comparable(canonicalEntry) !== comparable(canonical) && isPathInside(canonical, canonicalEntry)) {
+        coveredBy = entry;
+        break;
+      }
+    }
+    if (coveredBy) {
+      changed = false;
+      return current;
+    }
+    // Drop entries strictly nested under the new, broader exclusion — they are now redundant.
+    // The entry equal to the new target itself is kept so `addProjectPath` can dedupe it.
+    const kept: string[] = [];
+    for (const entry of current.excludedProjects) {
+      const canonicalEntry = await canonicalizePath(entry);
+      const isRedundantChild = comparable(canonicalEntry) !== comparable(canonical) && isPathInside(canonicalEntry, canonical);
+      if (!isRedundantChild) {
+        kept.push(entry);
+      }
+    }
+    const excludedProjects = await addProjectPath(kept, target);
+    changed = excludedProjects.length !== current.excludedProjects.length || kept.length !== current.excludedProjects.length;
+    return changed ? { ...current, excludedProjects } : current;
+  });
+  if (!changed) {
+    console.log(
+      chalk.dim(
+        coveredBy ? `Nothing to change: ${canonical} is already excluded via ${coveredBy}.` : 'Nothing to change.'
+      )
+    );
+    return true;
+  }
+  printSaved(store, ` (project: ${canonical})`);
+  console.log(chalk.dim(coverageNote(connectorId)));
+  return true;
 }
 
 async function excludeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
-  await withErrorHandling(async () => {
-    const connectorId = resolveAnalyticsConnector(opts);
-    const store = storeForConnector(connectorId);
-    const target = path ?? resolveProjectRoot();
-    const canonical = await canonicalizePath(target);
-    let changed = true;
-    let coveredBy: string | undefined;
-    await store.update(async (current) => {
-      for (const entry of current.excludedProjects) {
-        const canonicalEntry = await canonicalizePath(entry);
-        if (comparable(canonicalEntry) !== comparable(canonical) && isPathInside(canonical, canonicalEntry)) {
-          coveredBy = entry;
-          break;
-        }
-      }
-      if (coveredBy) {
-        changed = false;
-        return current;
-      }
-      // Drop entries strictly nested under the new, broader exclusion — they are now redundant.
-      // The entry equal to the new target itself is kept so `addProjectPath` can dedupe it.
-      const kept: string[] = [];
-      for (const entry of current.excludedProjects) {
-        const canonicalEntry = await canonicalizePath(entry);
-        const isRedundantChild = comparable(canonicalEntry) !== comparable(canonical) && isPathInside(canonicalEntry, canonical);
-        if (!isRedundantChild) {
-          kept.push(entry);
-        }
-      }
-      const excludedProjects = await addProjectPath(kept, target);
-      changed = excludedProjects.length !== current.excludedProjects.length || kept.length !== current.excludedProjects.length;
-      return changed ? { ...current, excludedProjects } : current;
-    });
-    if (!changed) {
-      console.log(
-        chalk.dim(
-          coveredBy ? `Nothing to change: ${canonical} is already excluded via ${coveredBy}.` : 'Nothing to change.'
-        )
-      );
-      return;
+  await forEachTarget('exclude', opts, (connector) => excludeFor(connector.id, path));
+}
+
+/** An excluded entry other than `target` itself that still covers it, or undefined. */
+async function findCoveringExclusion(excludedProjects: string[], target: string, canonical: string): Promise<string | undefined> {
+  for (const entry of await removeProjectPath(excludedProjects, target)) {
+    if (isPathInside(canonical, await canonicalizePath(entry))) {
+      return entry;
     }
+  }
+  return undefined;
+}
+
+async function isListed(paths: string[], canonical: string): Promise<boolean> {
+  for (const entry of paths) {
+    if (isPathInside(canonical, await canonicalizePath(entry))) return true;
+  }
+  return false;
+}
+
+/**
+ * Makes `path` tracked by one connector. In project scope the connector's own project list is written
+ * first and the exclusion removed second, so a failure between them leaves the project still excluded
+ * (never tracked by half a change) and a re-run finishes the job.
+ */
+async function includeFor(connector: AnalyticsConnector, path: string | undefined): Promise<boolean> {
+  const connectorId = connector.id;
+  const store = storeForConnector(connectorId);
+  const target = path ?? resolveProjectRoot();
+  const canonical = await canonicalizePath(target);
+  const current = await store.read();
+  const blockedBy = current ? await findCoveringExclusion(current.excludedProjects, target, canonical) : undefined;
+
+  let added = false;
+  const scope = await connector.readScope();
+  if (!blockedBy && 'scope' in scope && scope.scope === 'project' && !(await isListed(scope.paths, canonical))) {
+    try {
+      await connector.addProject(target);
+    } catch (error) {
+      throw new ConfigurationError(
+        `Could not add ${canonical} to the ${store.label} tracked projects: ${errorMessage(error)} Nothing was changed; a re-run is safe.`
+      );
+    }
+    added = true;
+    console.log(chalk.green(`✓ Added ${canonical} to the ${store.label} tracked projects.`));
+  }
+
+  let removed = true;
+  let coveringParent: string | undefined;
+  try {
+    await store.update(async (prefs) => {
+      const excludedProjects = await removeProjectPath(prefs.excludedProjects, target);
+      removed = excludedProjects.length !== prefs.excludedProjects.length;
+      // Checked against the list AFTER removal: a redundant entry nested under a
+      // still-present parent must not be reported as "resumed" (CR-003 follow-up).
+      coveringParent = await findCoveringExclusion(excludedProjects, target, canonical);
+      return removed ? { ...prefs, excludedProjects } : prefs;
+    });
+  } catch (error) {
+    if (!added) throw error;
+    throw new ConfigurationError(
+      `${canonical} was added to the ${store.label} tracked projects, but removing its exclusion failed: ${errorMessage(error)} ` +
+        `Still owed: remove the exclusion. A re-run is safe: codemie proxy analytics include "${canonical}" --${connectorId}`
+    );
+  }
+  if (coveringParent) {
+    console.log(chalk.yellow(`${canonical} is not tracked: it is still excluded via ${coveringParent}.`));
+    console.log(
+      chalk.yellow(
+        `  ${renderHint({ reason: 'To remove that exclusion', command: `codemie proxy analytics include "${coveringParent}" --${connectorId}` })}`
+      )
+    );
+    return false;
+  }
+  if (removed) {
     printSaved(store, ` (project: ${canonical})`);
-    console.log(chalk.dim(coverageNote(connectorId)));
-  });
+    const resume = resumeNote(connectorId);
+    if (resume) {
+      console.log(chalk.dim(resume));
+    }
+  } else if (!added) {
+    console.log(chalk.dim('Nothing to change.'));
+  }
+  await reportEffectiveState(connectorId, canonical, store.label);
+  return true;
 }
 
 async function includeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
-  await withErrorHandling(async () => {
-    const connectorId = resolveAnalyticsConnector(opts);
-    const store = storeForConnector(connectorId);
-    const target = path ?? resolveProjectRoot();
-    const canonical = await canonicalizePath(target);
-    let removed = true;
-    let coveringParent: string | undefined;
-    await store.update(async (current) => {
-      const excludedProjects = await removeProjectPath(current.excludedProjects, target);
-      removed = excludedProjects.length !== current.excludedProjects.length;
-      // Checked against the list AFTER removal: a redundant entry nested under a
-      // still-present parent must not be reported as "resumed" (CR-003 follow-up).
-      for (const entry of excludedProjects) {
-        if (isPathInside(canonical, await canonicalizePath(entry))) {
-          coveringParent = entry;
-          break;
-        }
-      }
-      return removed ? { ...current, excludedProjects } : current;
-    });
-    if (coveringParent) {
-      console.log(chalk.dim(`Nothing to change: ${canonical} is still excluded via ${coveringParent}.`));
-      return;
-    }
-    if (!removed) {
-      console.log(chalk.dim('Nothing to change.'));
-    } else {
-      printSaved(store, ` (project: ${canonical})`);
-      const resume = resumeNote(connectorId);
-      if (resume) {
-        console.log(chalk.dim(resume));
-      }
-    }
-    await reportEffectiveState(connectorId, canonical);
-  });
+  await forEachTarget('include', opts, (connector) => includeFor(connector, path));
 }
 
 /** Delivery health of the running daemon, or `null` when it is stopped. */
@@ -388,22 +564,22 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
 
 function withConnectorOptions(command: Command): Command {
   return command
-    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Target Claude Code (default)')
-    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Target Copilot CLI')
-    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Target Copilot Chat (VS Code)');
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Target Claude Code only')
+    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Target Copilot CLI only')
+    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Target Copilot Chat (VS Code) only');
 }
 
 export function createProxyAnalyticsCommand(): Command {
   const analytics = new Command('analytics');
   analytics.description(
-    'Turn analytics collection off/on, or exclude a single project (Claude Code by default; pass a connector flag for Copilot)'
+    'Turn analytics collection off/on, or exclude a single project (every connected connector by default; pass a connector flag for one)'
   );
 
   withConnectorOptions(
-    analytics.command('disable').description('Stop all analytics collection for the connector (hooks stay installed)')
+    analytics.command('disable').description('Stop all analytics collection (every connected connector, or the flagged one; hooks stay installed)')
   ).action((opts: ConnectorOptions) => setEnabled(false, opts));
 
-  withConnectorOptions(analytics.command('enable').description('Resume analytics collection for the connector')).action(
+  withConnectorOptions(analytics.command('enable').description('Resume analytics collection (every connected connector, or the flagged one)')).action(
     (opts: ConnectorOptions) => setEnabled(true, opts)
   );
 
@@ -416,7 +592,7 @@ export function createProxyAnalyticsCommand(): Command {
   withConnectorOptions(
     analytics
       .command('include [path]')
-      .description('Remove a project from the exclusion list (default: the current project root)')
+      .description('Track a project again: remove its exclusion and, in project scope, add it to the tracked list (default: the current project root)')
   ).action((path: string | undefined, opts: ConnectorOptions) => includeProject(path, opts));
 
   withConnectorOptions(

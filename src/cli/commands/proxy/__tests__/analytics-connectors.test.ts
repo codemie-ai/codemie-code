@@ -9,6 +9,8 @@ import { join } from 'node:path';
 
 vi.mock('../connectors/claude-code-otlp.js', () => ({
   hasClaudeCodeOtlpHooks: vi.fn(),
+  readClaudeCodeOtlpScope: vi.fn(),
+  addClaudeCodeOtlpProject: vi.fn(),
 }));
 
 vi.mock('../connectors/desktop.js', () => ({

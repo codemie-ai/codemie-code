@@ -654,10 +654,10 @@ codemie proxy disconnect --claude-code-otlp
 Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
 
 ```bash
-# Stop all analytics collection; hooks stay installed
+# Stop all analytics collection for every connected connector; hooks stay installed
 codemie proxy analytics disable
 
-# Exclude the current project, even when Global scope is enabled
+# Exclude the current project for every connected connector, even when Global scope is enabled
 codemie proxy analytics exclude
 
 # Show delivery health, unsent data, the effective scope and the tracked/excluded projects
@@ -666,11 +666,11 @@ codemie proxy analytics status
 
 `disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
 
-`include`/`enable` only undo `disable`/`exclude`; they do not add a project to the Project-scope allowlist. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
+`include`/`enable` undo `exclude`/`disable`; in Project scope `include` also adds the project to each connector's own tracked list. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
 
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
 
-The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+Without a connector flag these controls act on every connected connector (Claude Code, Copilot CLI, Copilot Chat); add one connector flag to limit them to that connector:
 
 ```bash
 # Copilot CLI or VS Code Copilot Chat

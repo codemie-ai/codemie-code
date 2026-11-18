@@ -28,8 +28,7 @@ import { CLIENT_CONFIGS, collectClientNotices, collectDesktopCollection, type Cl
 import { collectDeliveryHealth, DELIVERY_REASONS, unknownHint } from '../delivery-health.js';
 import { findOlderCliOnPath } from '../connect-orchestrator.js';
 import { checkClaudeCodeOtlpEndpoint } from '../connectors/claude-code-otlp-endpoint.js';
-import { ANALYTICS_CONNECTORS, type AnalyticsConnectorStatus } from '../analytics-connectors.js';
-import type { ClaudeAnalyticsStatus } from '../analytics-status.js';
+import { ANALYTICS_CONNECTORS, type AnalyticsConnectorStatus, type ConnectorScopeRead } from '../analytics-connectors.js';
 import type { inspectDesktopProxy } from '../inspect-desktop.js';
 
 /**
@@ -145,6 +144,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 interface ConnectorEntry {
   id: string;
   status?: AnalyticsConnectorStatus;
+  /** The tracking scope read through the connector's own store (`AnalyticsConnector.readScope`). */
+  scope?: ConnectorScopeRead;
   error?: string;
 }
 
@@ -155,7 +156,8 @@ function isConnected(status: AnalyticsConnectorStatus): boolean {
 async function collectConnectors(): Promise<ConnectorEntry[]> {
   return Promise.all(ANALYTICS_CONNECTORS.map(async (connector): Promise<ConnectorEntry> => {
     try {
-      return { id: connector.id, status: await connector.collect() };
+      const [status, scope] = await Promise.all([connector.collect(), connector.readScope()]);
+      return { id: connector.id, status, scope };
     } catch (error) {
       logger.debug(`[proxy-doctor] ${connector.id} status failed:`, error);
       return { id: connector.id, error: errorText(error) };
@@ -190,8 +192,10 @@ function connectorSections(entries: ConnectorEntry[]): Sections {
       continue;
     }
     const status = entry.status;
-    if (!status) continue;
-    if (status.scope === 'corrupt') {
+    const scope = entry.scope;
+    if (!status || !scope) continue;
+    const claudeEntry = 'hooksInstalled' in status;
+    if ('invalid' in scope && !claudeEntry) {
       sections.push({
         id: 'connectors',
         status: 'warn',
@@ -204,7 +208,7 @@ function connectorSections(entries: ConnectorEntry[]): Sections {
       continue;
     }
     if (!isConnected(status)) continue;
-    if (status.scope === 'invalid') {
+    if ('invalid' in scope) {
       sections.push({
         id: 'connectors',
         status: 'warn',
@@ -212,10 +216,10 @@ function connectorSections(entries: ConnectorEntry[]): Sections {
         hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${flag} --force` }),
       });
     } else {
-      const scope = status.scope === 'project'
-        ? `scope project (${status.trackedProjects.length} tracked)`
+      const scopeText = scope.scope === 'project'
+        ? `scope project (${scope.paths.length} tracked)`
         : 'scope user (all projects)';
-      sections.push({ id: 'connectors', status: 'ok', message: `${label} analytics: connected, ${scope}` });
+      sections.push({ id: 'connectors', status: 'ok', message: `${label} analytics: connected, ${scopeText}` });
     }
     if (status.preferencesCorrupt) {
       sections.push({
@@ -330,13 +334,12 @@ async function desktopSections(state: DaemonState): Promise<Sections> {
 }
 
 /** The `connect` flags that repeat Claude Code's current tracking scope. */
-function claudeScopeFlags(claude: ClaudeAnalyticsStatus | undefined): string {
-  if (claude?.scope === 'user' || claude?.scope === 'project') return ` --scope ${claude.scope}`;
-  if (claude?.scope === 'invalid') return ' --force';
-  return '';
+function claudeScopeFlags(scope: ConnectorScopeRead | undefined): string {
+  if (!scope) return '';
+  return 'invalid' in scope ? ' --force' : ` --scope ${scope.scope}`;
 }
 
-async function claudeOtlpSections(state: DaemonState, claude: ClaudeAnalyticsStatus | undefined): Promise<Sections> {
+async function claudeOtlpSections(state: DaemonState, claudeScope: ConnectorScopeRead | undefined): Promise<Sections> {
   const check = await checkClaudeCodeOtlpEndpoint(state);
   if (!check) return [];
   if (check.matches) {
@@ -352,7 +355,7 @@ async function claudeOtlpSections(state: DaemonState, claude: ClaudeAnalyticsSta
       '. After repairing, start a new Claude Code session.',
     hint: renderHint({
       reason: 'Claude Code exports to another proxy',
-      command: `${CONNECT_COMMAND} --claude-code-otlp${claudeScopeFlags(claude)}`,
+      command: `${CONNECT_COMMAND} --claude-code-otlp${claudeScopeFlags(claudeScope)}`,
     }),
   }];
 }
@@ -559,9 +562,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
   const anyConnector = connectors.some((entry) => entry.status && isConnected(entry.status));
   const nothingConnected = configured !== null && configured.length === 0 && !anyConnector &&
     !connectors.some((entry) => entry.error !== undefined);
-  const claude = connectors.find((entry) => entry.status && 'hooksInstalled' in entry.status)?.status as
-    | ClaudeAnalyticsStatus
-    | undefined;
+  const claudeScope = connectors.find((entry) => entry.status && 'hooksInstalled' in entry.status)?.scope;
 
   if (!state) {
     if (!sections.some((s) => s.id === 'daemon')) {
@@ -584,7 +585,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
       guarded('clients', 'Clients', () => clientSections(live, configured, nothingConnected)),
       analyticsActive ? guarded('delivery', 'Analytics delivery', () => deliverySections(live, verifiedReply)) : Promise.resolve([]),
       guarded('desktop', 'Claude Desktop', () => desktopSections(live)),
-      guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claude)),
+      guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claudeScope)),
       Promise.resolve(connectorSections(connectors)),
       guarded('cli-path', 'CLI path', cliPathSections),
     ]);
