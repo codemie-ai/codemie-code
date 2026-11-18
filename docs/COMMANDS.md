@@ -114,9 +114,9 @@ codemie proxy clients --json     # List every client and analytics connector: co
 Configure VS Code Stable with the currently selected SSO-backed CodeMie profile:
 
 ```bash
-codemie proxy connect vscode
-codemie proxy connect vscode --profile work
-codemie proxy connect vscode --insiders
+codemie proxy connect --vscode
+codemie proxy connect --vscode --profile work
+codemie proxy connect --vscode --insiders
 ```
 
 The connector resolves the selected profile once, synchronizes skills, and writes every enabled tenant model from the live catalog into VS Code's `User/chatLanguageModels.json`, in catalog order. Known families are enriched from the capability table; unknown models get conservative defaults rather than being dropped. The output limit (`maxOutputTokens`) resolves in the order tenant catalog, built-in capability table, default (8192). The input limit (`maxInputTokens`) is the catalog `max_input_tokens` minus the resolved output limit, so input plus output fits the context window; when the catalog has no usable input value, or the subtraction is not positive, it is the table value or 128000. The profile's default model does not affect which models are written. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
@@ -253,7 +253,7 @@ Recommended setup:
 codemie proxy connect --claude-desktop
 ```
 
-After the config is written, quit and reopen Claude Desktop. The older form `codemie proxy connect desktop` still works as a deprecated alias.
+After the config is written, quit and reopen Claude Desktop.
 
 **Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends the Cowork sessions it served to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. These stop a Cowork session from being sent:
 
@@ -322,7 +322,7 @@ The proxy also repairs requests the upstream gateway would reject but that direc
 
 **Switching models in the app's picker works.** The app owns the `model` key and writes its picker selection back into `~/.codex/config.toml`, overwriting the pinned value, and the names it writes are undated (`gpt-5.6-luna`) while CodeMie deployments are dated (`gpt-5.6-luna-2026-07-09`). The proxy resolves the difference: it matches the requested name to a deployment CodeMie actually has, and when nothing matches it falls back to the newest available deployment and records the substitution in the proxy log. The picker itself still displays `Custom` rather than the CodeMie model name, which is an upstream limitation — the desktop renderer filters locally configured models out of the list.
 
-`--force` has a second meaning for this target. It bypasses both the app-not-found check — useful when the app is installed somewhere the connector does not look — and the refusal to replace an existing non-CodeMie `model_provider`.
+`--overwrite` has two effects for this target. It bypasses both the app-not-found check — useful when the app is installed somewhere the connector does not look — and the refusal to replace an existing non-CodeMie `model_provider`.
 
 The connector refuses to write, and changes nothing, when the app cannot be found, when `~/.codex/config.toml` is not valid TOML, when the config already selects a different custom provider, or when the proxy exposes no GPT/Codex-compatible model.
 
@@ -362,9 +362,9 @@ Costs are converted from the catalog's USD per token to omp's USD per million to
 
 To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
 
-omp's requests carry its own key, so they are labelled and handled as `codemie-daemon` whichever other clients the daemon serves; `--omp` can be combined with any other target, `--vscode` included. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped and omp is still installed. Without an interactive terminal that combination needs `--silent`, otherwise the whole run fails before omp is configured.
+omp's requests carry its own key, so they are labelled and handled as `codemie-daemon` whichever other clients the daemon serves; `--omp` can be combined with any other target, `--vscode` included. If the Claude Code analytics confirmation is declined in `connect --omp --claude-code-otlp`, that target is dropped and omp is still installed. Without an interactive terminal that combination needs `--yes`, otherwise the whole run fails before omp is configured.
 
-`--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
+`--overwrite` replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
 
 ```bash
 codemie proxy disconnect --omp
@@ -1885,9 +1885,9 @@ The allowlist in `~/.claude/settings.json` is the only source of truth. An empty
 
 **Confirmation.** Before the proxy starts or `~/.claude/settings.json` is changed, `connect --claude-code-otlp` asks once. The prompt shows the profile and the CodeMie URL when configured and, for `--scope project`, a `Repository:` line with the current repository's analytics name (`owner/repo` from the git remote, or `parent/folder` without the drive letter), and then offers **Confirm** or **Decline** in the same list style as `codemie setup`. **Decline** or Ctrl+C stop the command: the proxy is not started, `settings.json` is not written, and the existing allowlist is left untouched (a cancelled prompt is never treated as Global). An already running proxy keeps running.
 
-**`--silent` and non-interactive use.** `--silent` (a flag of `proxy connect` that applies to `--claude-code-otlp`) skips the prompt and prints its `CodeMie URL:` line and, for project scope, its `Repository:` line right after `Using profile:`. Without `--scope` it writes Global and replaces existing project entries without asking; `--scope project --silent` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-code-otlp` without `--silent` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--silent` for unattended runs. An invalid allowlist still stops `connect` unless `--force` is passed, with or without `--silent`.
+**`--yes` and non-interactive use.** `--yes` (a flag of `proxy connect` that applies to `--claude-code-otlp`) skips the prompt and prints its `CodeMie URL:` line and, for project scope, its `Repository:` line right after `Using profile:`. Without `--scope` it writes Global and replaces existing project entries without asking; `--scope project --yes` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-code-otlp` without `--yes` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--yes` for unattended runs. An invalid allowlist still stops `connect` unless `--overwrite` is passed, with or without `--yes`.
 
-A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--force` to discard it. `--force` never edits a valid list.
+A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--overwrite` to discard it. `--overwrite` never edits a valid list.
 
 **How the filter works.** The hook process reads the project allowlist. For an untracked project, a hook exits before starting the proxy or checking SSO, so that hook event is not forwarded. This allowlist does not filter OTel records: the OTel environment is global, and records are exported to the local daemon independently. Before forwarding, the daemon applies its project gate to bind each session to a project and discard unbound or conflicting sessions; its completeness gate (`otlp-spool/completeness-gate.ts`) also never forwards OTel-only sessions. Both gates must allow a session before its records are sent. The allowlist decision is per hook event, so a session may have hooks from its tracked stretches and OTel records from both tracked and untracked stretches.
 
@@ -1895,7 +1895,7 @@ A `cwd` inside any listed path is tracked (nested directories included). An inva
 
 Allowlist changes apply immediately; the first-time setup needs a Claude Code restart.
 
-**Backup lifecycle.** `connect` snapshots `~/.claude/settings.json` to `settings.json.codemie-backup` before writing its own hooks/env, and refreshes that backup on every subsequent `connect` that still finds the file already under CodeMie's management (not just the first time) — so it always reflects the state right before the most recent `connect`, not whichever one ran first. Only values that are genuinely foreign (or that a `--force` connect displaced and the live file still carries CodeMie's own replacement for) are ever kept in it; a value you change after `connect` is never recorded as "pre-connect" and is never resurrected by a later `disconnect`. `disconnect` deletes the backup once it finishes: a value you changed or removed since `connect` is left exactly as you set it, never restored from the backup; a value a `--force` connect displaced is put back, but only if nothing has touched it since. If nothing is left in the file after removal, the file itself is deleted. No "restored from backup" message is printed — the backup is bookkeeping, not something you interact with directly.
+**Backup lifecycle.** `connect` snapshots `~/.claude/settings.json` to `settings.json.codemie-backup` before writing its own hooks/env, and refreshes that backup on every subsequent `connect` that still finds the file already under CodeMie's management (not just the first time) — so it always reflects the state right before the most recent `connect`, not whichever one ran first. Only values that are genuinely foreign (or that an `--overwrite` connect displaced and the live file still carries CodeMie's own replacement for) are ever kept in it; a value you change after `connect` is never recorded as "pre-connect" and is never resurrected by a later `disconnect`. `disconnect` deletes the backup once it finishes: a value you changed or removed since `connect` is left exactly as you set it, never restored from the backup; a value an `--overwrite` connect displaced is put back, but only if nothing has touched it since. If nothing is left in the file after removal, the file itself is deleted. No "restored from backup" message is printed — the backup is bookkeeping, not something you interact with directly.
 
 ### Claude Code OTLP analytics — disable
 

@@ -624,7 +624,7 @@ codemie proxy connect --claude-code-otlp
 codemie proxy connect --claude-code-otlp --scope project
 
 # Unattended or CI run: skip the confirmation prompt
-codemie proxy connect --claude-code-otlp --silent
+codemie proxy connect --claude-code-otlp --yes
 
 # Optional: use the preview profile for this command only
 codemie proxy connect --claude-code-otlp --scope project --profile preview
@@ -634,12 +634,12 @@ codemie proxy connect --claude-code-otlp --scope project --profile preview
 |---|---|
 | `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
 | `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
-| `--silent` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
+| `--yes` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
 | `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
-| `--force` | Discard an invalid project allowlist so setup can continue; valid allowlists are not changed. |
+| `--overwrite` | Discard an invalid project allowlist so setup can continue, and replace conflicting Claude Code settings; valid allowlists are not changed. |
 | `--verbose` | Show detailed command output. |
 
-Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--silent` writes the Global scope and replaces any listed projects; with `--scope project --silent` the current project is added and existing entries are kept.
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--yes` writes the Global scope and replaces any listed projects; with `--scope project --yes` the current project is added and existing entries are kept.
 
 Disconnect a project or remove the integration entirely:
 
@@ -706,7 +706,7 @@ codemie proxy connect --vscode-claude-code                   # VS Code Claude Co
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
 ```
 
-Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
+Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets (it exits non-zero). Shared options: `--profile <name>`, `--restart-daemon` (replace a running proxy even when it looks healthy), `--overwrite` (replace client config CodeMie did not write), `--yes` (skip confirmation prompts), `--verbose`, and `--insiders` (VS Code targets only). A flag passed without a target it applies to prints a note that it has no effect.
 
 One daemon serves every connected client at the same time. `proxy connect` gives each client a key of its own — `codemie-proxy.<client>`, for example `codemie-proxy.claude-desktop` — and a request is labelled and handled as the client its key names. A client set up by an older CLI holds the shared key `codemie-proxy` and keeps working; `codemie proxy connect`, `codemie proxy start` and `codemie proxy restart` move such clients to their own keys and print which application to restart. After a reboot, start the daemon with `codemie proxy start`. After a downgrade to an older CLI — or while an older install stands beside this one and its hooks start its own daemon — a client that holds its own key gets an authentication error (`Invalid API key`), because an older daemon accepts the shared key only: run `codemie proxy connect` again with the CLI whose daemon runs.
 
@@ -722,7 +722,7 @@ codemie proxy disconnect --all             # everything `codemie proxy clients` 
 
 `--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. `--all` disconnects every connected target, continues past a failing one, reports each and exits non-zero if any failed; add `--stop` to stop the daemon afterwards. Quit and reopen the app afterwards.
 
-> **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
+> **Removed:** the old subcommand aliases for Claude Desktop and VS Code now fail; use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode`.
 
 ## Connect the Codex desktop app via CodeMie Proxy
 
@@ -736,7 +736,7 @@ Then **quit and reopen the app**; it reads its configuration at startup. macOS a
 
 The connector writes your user-level `~/.codex/config.toml`, preserving everything it does not own, and never touches `~/.codex/auth.json`. Switching models in the app's picker works — the proxy maps the app's model names onto CodeMie deployments. Undo it with `codemie proxy disconnect --codex-desktop`.
 
-See [docs/COMMANDS.md](docs/COMMANDS.md) for the managed-block format, `--model`, `--force`, and the backup and restore behaviour.
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the managed-block format, `--model`, `--overwrite`, and the backup and restore behaviour.
 
 > The Codex desktop app and the `codemie-codex` CLI use different Codex homes by design, so settings and history differ between the two surfaces.
 

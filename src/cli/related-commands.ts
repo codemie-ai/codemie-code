@@ -52,8 +52,6 @@ export const RELATED: Record<string, RelatedEntry> = {
   'proxy doctor': { related: [STATUS, CONNECT, CLIENTS, A_STATUS], next: {} },
   'proxy clients': { related: [CONNECT, DISCONNECT, DOCTOR, A_STATUS], next: {} },
   'proxy connect': { related: [DISCONNECT, CLIENTS, STATUS, A_STATUS], next: { default: 'codemie proxy status' } },
-  'proxy connect desktop': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
-  'proxy connect vscode': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
   'proxy disconnect': { related: [CONNECT, CLIENTS, STATUS], next: { default: 'codemie proxy status' } },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },

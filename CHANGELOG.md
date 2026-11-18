@@ -15,6 +15,7 @@ All notable changes to this project are documented in this file, following [Keep
 - A proxy started by an older CLI is replaced on its port by `codemie proxy connect`, `codemie proxy start`, `codemie proxy restart` and a Claude Code hook
 - The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
+- `codemie proxy connect` and `codemie proxy disconnect` with no target print the target list and exit non-zero; `--scope`, `--yes`, `--insiders` or `--model` passed without a target they apply to print a note that the flag has no effect
 - `codemie proxy status` prints facts only — state, URL, port, profile, project, CLI version and uptime — and, when anything is wrong, one `Issues found — run: codemie proxy doctor` line; client, Claude Desktop, analytics delivery, Claude Code OTLP and PATH findings moved to `codemie proxy doctor`. The gateway key is masked (`****`) in the text, including the `Client keys` line, and in `--json` unless `--show-key` is given. `--json` now carries only `status`, `apiKey`, `url`, `port`, `profile`, `project`, `version` and `uptimeSec`
 
 ### Deprecated
@@ -28,6 +29,21 @@ Each form below still works until its removal date and prints a one-line notice 
 | `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
 | `codemie proxy analytics connect-folder` | `codemie proxy analytics consent grant` | 2026-12-31 |
 | `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
+| `codemie proxy connect --force` | `codemie proxy connect --restart-daemon --overwrite` | 2026-12-31 |
+| `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
+<!-- deprecation-table:end -->
+
+`--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. `--restart-daemon` now only replaces the proxy and `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
+
+### Removed
+
+Each form below fails with a message naming its replacement and exits non-zero.
+
+<!-- deprecation-table:start -->
+| Old | New | Removal |
+| --- | --- | --- |
+| `codemie proxy connect desktop` | `codemie proxy connect --claude-desktop` | 2026-12-31 |
+| `codemie proxy connect vscode` | `codemie proxy connect --vscode` | 2026-12-31 |
 <!-- deprecation-table:end -->
 
 ## [0.16.10] - 2026-11-17

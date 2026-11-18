@@ -300,19 +300,20 @@ describe('claude-code-otlp connector', () => {
         expect(result.allowlist).toEqual([]);
       });
 
-      it('aborts before writing when the existing allowlist is invalid, unless forced', async () => {
+      it('aborts before writing when the existing allowlist is invalid, unless overwritten', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         const original = JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: 'not-json' } });
         await writeFile(settingsPath, original);
 
         await expect(writeClaudeCodeOtlpConfig()).rejects.toBeInstanceOf(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
         expect(await readRaw(settingsPath)).toBe(original);
 
-        const forced = await writeClaudeCodeOtlpConfig({ force: true });
+        const forced = await writeClaudeCodeOtlpConfig({ overwrite: true });
         expect(forced.allowlist).toEqual([]);
 
-        const forcedProject = await writeClaudeCodeOtlpConfig({ force: true, scope: 'project' });
+        const forcedProject = await writeClaudeCodeOtlpConfig({ overwrite: true, scope: 'project' });
         expect(forcedProject.allowlist).toEqual([await realpath(projectDir)]);
       });
 
@@ -429,17 +430,17 @@ describe('claude-code-otlp connector', () => {
         expect(backup.hooks.PreToolUse).toEqual([{ matcher: '', hooks: [{ type: 'command', command: 'echo mine' }] }]);
       });
 
-      it('CR-003: a foreign value under a managed env key name (via --force) is preserved verbatim in the backup, not stripped', async () => {
+      it('CR-003: a foreign value under a managed env key name (via --overwrite) is preserved verbatim in the backup, not stripped', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         // Foreign, unrelated value that happens to reuse one of our managed
-        // env var names — requires --force since it conflicts with what this
+        // env var names — requires --overwrite since it conflicts with what this
         // tool would write. No codemie hook group, no backup file yet.
         const original = { env: { OTEL_LOGS_EXPORTER: 'jaeger' } };
         await writeFile(settingsPath, JSON.stringify(original, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig({ force: true });
+        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         // A value mismatch must NOT be treated as "already managed" — the
@@ -492,7 +493,7 @@ describe('claude-code-otlp connector', () => {
         expect(await readJson(result.backupPath!)).toEqual({ env: { STEP: 'B' } });
       });
 
-      it('overwrites a single conflicting env value when force is true', async () => {
+      it('overwrites a single conflicting env value when overwrite is true', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(
@@ -500,14 +501,14 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://conflicting.example.com' } }, null, 2)
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ force: true });
+        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
         expect(merged.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${mockState.url}/v1/analytics/otlp`);
       });
 
-      it('overwrites every conflicting codemie env key when force is true, leaving unrelated env vars alone', async () => {
+      it('overwrites every conflicting codemie env key when overwrite is true, leaving unrelated env vars alone', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
@@ -520,7 +521,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { ...conflictingEnv, KEEP_ME: 'yes' } }, null, 2)
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ force: true });
+        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -531,7 +532,7 @@ describe('claude-code-otlp connector', () => {
         });
       });
 
-      it('does not require force when existing env values already match the desired codemie values', async () => {
+      it('does not require overwrite when existing env values already match the desired codemie values', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ env: { OTEL_LOGS_EXPORTER: 'otlp' } }, null, 2));
@@ -541,7 +542,7 @@ describe('claude-code-otlp connector', () => {
         expect(result.written).toBe(true);
       });
 
-      it('(CR-003) does not require force when OTEL_EXPORTER_OTLP_PROTOCOL still holds the pre-upgrade http/protobuf value, and migrates it to http/json', async () => {
+      it('(CR-003) does not require overwrite when OTEL_EXPORTER_OTLP_PROTOCOL still holds the pre-upgrade http/protobuf value, and migrates it to http/json', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(
@@ -556,12 +557,12 @@ describe('claude-code-otlp connector', () => {
         expect(merged.env.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/json');
       });
 
-      it('overwrites a malformed (non-array) existing hooks event value when force is true', async () => {
+      it('overwrites a malformed (non-array) existing hooks event value when overwrite is true', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: 'not-an-array' } }, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig({ force: true });
+        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -795,7 +796,7 @@ describe('claude-code-otlp connector', () => {
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
       });
 
-      it('throws ConfigurationError on a conflicting env value without force, and does not modify the file or create a backup', async () => {
+      it('throws ConfigurationError on a conflicting env value without overwrite, and does not modify the file or create a backup', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         const original = { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://conflicting.example.com' } };
@@ -803,13 +804,14 @@ describe('claude-code-otlp connector', () => {
         await writeFile(settingsPath, originalRaw);
 
         await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
 
         expect(await readRaw(settingsPath)).toBe(originalRaw);
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
       });
     });
 
-    it('throws ConfigurationError when an existing hooks event value is not an array, without force, and leaves the file unchanged', async () => {
+    it('throws ConfigurationError when an existing hooks event value is not an array, without overwrite, and leaves the file unchanged', async () => {
       const settingsPath = join(homeDir, '.claude', 'settings.json');
       await mkdir(join(homeDir, '.claude'), { recursive: true });
       const original = { hooks: { PreToolUse: 'not-an-array' } };
@@ -1066,7 +1068,7 @@ describe('claude-code-otlp connector', () => {
     });
 
     describe('regression: ownership is checked by VALUE, not by key presence', () => {
-      it('preserves the user\'s own OTEL setup (endpoint, header with a secret) through force-connect + disconnect, even though CLAUDE_CODE_ENABLE_TELEMETRY coincidentally already equals codemie\'s own value', async () => {
+      it('preserves the user\'s own OTEL setup (endpoint, header with a secret) through overwrite-connect + disconnect, even though CLAUDE_CODE_ENABLE_TELEMETRY coincidentally already equals codemie\'s own value', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
         await mkdir(join(homeDir, '.claude'), { recursive: true });
@@ -1090,7 +1092,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        await writeClaudeCodeOtlpConfig({ force: true });
+        await writeClaudeCodeOtlpConfig({ overwrite: true });
         expect(existsSync(backupPath)).toBe(true);
         const backupAfterConnect = await readJson(backupPath);
         expect(backupAfterConnect.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('https://collector.corp.example');
@@ -1144,7 +1146,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }, null, 2));
-        await writeClaudeCodeOtlpConfig({ force: true }); // displaces nothing here, just establishes a connected file
+        await writeClaudeCodeOtlpConfig({ overwrite: true }); // displaces nothing here, just establishes a connected file
 
         // User repoints BOTH endpoint and header at their own unrelated collector.
         // 'Authorization=Bearer ...' alone is the generic HTTP auth scheme, not
@@ -1185,15 +1187,15 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ force: true }); // conflicting HEADERS value requires --force regardless
+        const result = await writeClaudeCodeOtlpConfig({ overwrite: true }); // conflicting HEADERS value requires --overwrite regardless
 
         const backup = await readJson(result.backupPath!);
         expect(backup).toEqual({ theme: 'dark', env: { FOO: 'bar', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer codemie-proxy' } });
       });
     });
 
-    describe('regression: finding #5 — a malformed hook `--force` displaces is restored like a displaced env value', () => {
-      it('restores a malformed Stop hook `--force` dropped at connect, on disconnect, if the user never replaced it', async () => {
+    describe('regression: finding #5 — a malformed hook `--overwrite` displaces is restored like a displaced env value', () => {
+      it('restores a malformed Stop hook `--overwrite` dropped at connect, on disconnect, if the user never replaced it', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
@@ -1202,7 +1204,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } }, env: { KEEP: '1' } }, null, 2)
         );
 
-        await writeClaudeCodeOtlpConfig({ force: true });
+        await writeClaudeCodeOtlpConfig({ overwrite: true });
         const afterConnect = await readJson(settingsPath);
         expect(Array.isArray(afterConnect.hooks.Stop)).toBe(true); // malformed value was replaced with our array
 
@@ -1221,7 +1223,7 @@ describe('claude-code-otlp connector', () => {
           settingsPath,
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } } }, null, 2)
         );
-        await writeClaudeCodeOtlpConfig({ force: true });
+        await writeClaudeCodeOtlpConfig({ overwrite: true });
 
         // User replaces the Stop hook with their own valid entry after connecting.
         const afterConnect = await readJson(settingsPath);
@@ -1243,7 +1245,7 @@ describe('claude-code-otlp connector', () => {
           settingsPath,
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } } }, null, 2)
         );
-        await writeClaudeCodeOtlpConfig({ force: true }); // connect #1: displaces the malformed hook into the backup
+        await writeClaudeCodeOtlpConfig({ overwrite: true }); // connect #1: displaces the malformed hook into the backup
 
         // Reconnect (e.g. --scope project), no disconnect in between.
         await writeClaudeCodeOtlpConfig({ scope: 'project' });
@@ -1546,7 +1548,7 @@ describe('claude-code-otlp connector', () => {
         )
       );
 
-      const result = await writeClaudeCodeOtlpConfig({ force: true });
+      const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
 
       const backup = await readJson(result.backupPath!);
       expect(backup.env).toEqual({

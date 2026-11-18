@@ -1,7 +1,7 @@
 /**
  * Unified `proxy connect` command wiring tests (Task 4).
  * The orchestrator is mocked here so these tests assert only the CLI surface:
- * target-flag mapping, the deprecated-alias notices, and option exposure.
+ * target-flag mapping, deprecated-flag notices, removed-alias stubs, and option exposure.
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,11 @@ import { Command } from 'commander';
 
 vi.mock('../disconnect-orchestrator.js', () => ({
   disconnectTargets: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../disconnect-all.js', () => ({
+  disconnectAll: vi.fn().mockResolvedValue({ disconnected: [], failed: [] }),
+  stopDaemonAfterDisconnect: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../connect-orchestrator.js', () => ({
@@ -20,7 +25,7 @@ vi.mock('../connect-orchestrator.js', () => ({
   printProxyError: vi.fn(),
 }));
 
-describe('proxy connect — unified command and deprecated aliases', () => {
+describe('proxy connect — unified command, deprecated flags and removed aliases', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -58,7 +63,7 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     );
   });
 
-  it('defaults the Claude Code analytics scope to Global (user)', async () => {
+  it('leaves an omitted --scope undefined so the orchestrator can detect it', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -70,8 +75,10 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
         targets: expect.objectContaining({ claudeCodeOtlp: true }),
-        scope: 'user',
-        silent: false,
+        scope: undefined,
+        yes: false,
+        restartDaemon: false,
+        overwrite: false,
       })
     );
   });
@@ -90,37 +97,82 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     );
   });
 
-  it('forwards --silent for the Claude Code analytics target', async () => {
+  it('maps --yes, --restart-daemon and --overwrite onto the connect options', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
 
     await createProxyCommand().parseAsync(
-      ['connect', '--claude-code-otlp', '--silent'],
+      ['connect', '--claude-code-otlp', '--yes', '--restart-daemon', '--overwrite'],
       { from: 'user' }
     );
 
     expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: expect.objectContaining({ claudeCodeOtlp: true }),
-        scope: 'user',
-        silent: true,
-      })
+      expect.objectContaining({ yes: true, restartDaemon: true, overwrite: true })
     );
   });
 
-  it('exposes --silent on connect only, not on start, disconnect or the aliases', async () => {
+  it('--restart-daemon alone replaces the daemon without overwriting foreign config', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['connect', '--omp', '--restart-daemon'], { from: 'user' });
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ restartDaemon: true, overwrite: false })
+    );
+  });
+
+  it('deprecated --force acts as --restart-daemon --overwrite and prints one notice naming both', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const { connectTargets } = await import('../connect-orchestrator.js');
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['connect', '--omp', '--force'], { from: 'user' });
+
+      expect(connectTargets).toHaveBeenCalledWith(
+        expect.objectContaining({ restartDaemon: true, overwrite: true })
+      );
+      const lines = stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('codemie proxy connect --force');
+      expect(lines[0]).toContain('--restart-daemon');
+      expect(lines[0]).toContain('--overwrite');
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('deprecated --silent acts as --yes and prints one notice naming --yes', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const { connectTargets } = await import('../connect-orchestrator.js');
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['connect', '--claude-code-otlp', '--silent'], { from: 'user' });
+
+      expect(connectTargets).toHaveBeenCalledWith(expect.objectContaining({ yes: true }));
+      const lines = stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('codemie proxy connect --silent');
+      expect(lines[0]).toContain('codemie proxy connect --yes');
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('hides --force and --silent from connect help and keeps them off start and disconnect', async () => {
     const { createProxyCommand } = await import('../index.js');
     const proxy = createProxyCommand();
-    const hasSilent = (name: string): boolean =>
-      Boolean(proxy.commands.find((c) => c.name() === name)?.options.some((o) => o.long === '--silent'));
+    const option = (name: string, long: string) =>
+      proxy.commands.find((c) => c.name() === name)?.options.find((o) => o.long === long);
 
-    expect(hasSilent('connect')).toBe(true);
-    expect(hasSilent('start')).toBe(false);
-    expect(hasSilent('disconnect')).toBe(false);
-    const connect = proxy.commands.find((c) => c.name() === 'connect');
-    for (const alias of connect?.commands ?? []) {
-      expect(alias.options.some((o) => o.long === '--silent')).toBe(false);
-    }
+    expect(option('connect', '--force')?.hidden).toBe(true);
+    expect(option('connect', '--silent')?.hidden).toBe(true);
+    expect(option('connect', '--yes')?.hidden).toBe(false);
+    expect(option('start', '--silent')).toBeUndefined();
+    expect(option('disconnect', '--silent')).toBeUndefined();
+    expect(option('disconnect', '--force')).toBeUndefined();
   });
 
   it('forwards an explicitly selected Claude Code analytics scope', async () => {
@@ -140,124 +192,75 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     );
   });
 
-  it('deprecated `connect desktop` prints a notice and delegates to { claudeDesktop: true }', async () => {
-    const { connectTargets } = await import('../connect-orchestrator.js');
+  it('the removed `connect desktop` / `connect vscode` stubs are hidden from help', async () => {
     const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((c) => c.name() === 'connect');
+    const help = connect?.helpInformation() ?? '';
 
-    await createProxyCommand().parseAsync(['connect', 'desktop'], { from: 'user' });
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('codemie proxy connect --claude-desktop')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
-    expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({ targets: { claudeDesktop: true } })
-    );
-  });
-
-  it('deprecated `connect vscode` prints a notice and delegates to { vscode: true }', async () => {
-    const { connectTargets } = await import('../connect-orchestrator.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    await createProxyCommand().parseAsync(['connect', 'vscode'], { from: 'user' });
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('codemie proxy connect --vscode')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
-    expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({ targets: { vscode: true } })
-    );
-  });
-
-  it('the unified connect command exposes --vscode-claude-code but the aliases do not', async () => {
-    const { createProxyCommand } = await import('../index.js');
-    const proxy = createProxyCommand();
-    const connect = proxy.commands.find((c) => c.name() === 'connect');
-    expect(connect).toBeDefined();
-
-    const hasFlag = (cmd: typeof connect): boolean =>
-      Boolean(cmd?.options.some((o) => o.long === '--vscode-claude-code'));
-
-    expect(hasFlag(connect)).toBe(true);
-
-    const desktop = connect?.commands.find((c) => c.name() === 'desktop');
-    const vscode = connect?.commands.find((c) => c.name() === 'vscode');
-    expect(desktop).toBeDefined();
-    expect(vscode).toBeDefined();
-    expect(hasFlag(desktop)).toBe(false);
-    expect(hasFlag(vscode)).toBe(false);
+    expect(help).not.toMatch(/^\s+desktop\b/m);
+    expect(help).not.toMatch(/^\s+vscode\b/m);
   });
 });
 
-// Regression: the real CLI mounts `proxy` under a root `program` that does NOT
-// call enablePositionalOptions(). Under that nesting Commander captures the
-// alias flags (--profile/--verbose/--force/--insiders, which the unified
-// `connect` command also declares) on the intermediate `connect` command rather
-// than the alias leaf. These tests reproduce that nesting so the aliases must not
-// silently drop their flags. Parsing `createProxyCommand()` directly (proxy as
-// root) hid the bug because that path routed the flags to the leaf.
-describe('deprecated aliases forward their flags under real CLI nesting', () => {
+// The real CLI mounts `proxy` under a root `program`. The removed aliases must fail naming their replacement
+// under that nesting too, with any options (here `--profile x`), never with a Commander "unknown option" error.
+describe('removed `connect desktop` / `connect vscode` aliases', () => {
+  let stderrSpy: ReturnType<typeof vi.spyOn>;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    process.exitCode = undefined;
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    stderrSpy.mockRestore();
     consoleLogSpy.mockRestore();
+    process.exitCode = undefined;
   });
 
   async function rootWithProxy(): Promise<Command> {
     const { createProxyCommand } = await import('../index.js');
     // A bare root program, like src/cli/index.ts, with NO enablePositionalOptions.
     const root = new Command();
+    root.exitOverride();
     root.addCommand(createProxyCommand());
     return root;
   }
 
-  it('`proxy connect desktop --profile custom --verbose --force` forwards every flag', async () => {
+  const stderrText = (): string => stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+
+  it.each([
+    [['proxy', 'connect', 'desktop', '--profile', 'x'], 'codemie proxy connect --claude-desktop'],
+    [['proxy', 'connect', 'desktop', '--profile', 'x', '--force', '--bogus'], 'codemie proxy connect --claude-desktop'],
+    [['proxy', 'connect', 'vscode', '--profile', 'x', '--insiders'], 'codemie proxy connect --vscode'],
+    [['proxy', 'connect', 'vscode'], 'codemie proxy connect --vscode'],
+  ])('`%s` fails naming %s, exit code 1, nothing connected', async (argv, replacement) => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const root = await rootWithProxy();
 
-    await root.parseAsync(
-      ['proxy', 'connect', 'desktop', '--profile', 'custom', '--verbose', '--force'],
-      { from: 'user' }
-    );
+    await root.parseAsync(argv, { from: 'user' });
 
-    expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: { claudeDesktop: true },
-        profile: 'custom',
-        verbose: true,
-        force: true,
-      })
-    );
+    expect(stderrText()).toContain(replacement);
+    expect(stderrText()).toContain('Removed:');
+    expect(stderrText()).not.toMatch(/unknown option/i);
+    expect(process.exitCode).toBe(1);
+    expect(connectTargets).not.toHaveBeenCalled();
   });
 
-  it('`proxy connect vscode --profile work --insiders` forwards every flag', async () => {
-    const { connectTargets } = await import('../connect-orchestrator.js');
-    const root = await rootWithProxy();
-
-    await root.parseAsync(
-      ['proxy', 'connect', 'vscode', '--profile', 'work', '--insiders'],
-      { from: 'user' }
-    );
-
-    expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: { vscode: true },
-        profile: 'work',
-        insiders: true,
-      })
-    );
-  });
+  async function rootWithProxyForUnified(): Promise<Command> {
+    const { createProxyCommand } = await import('../index.js');
+    const root = new Command();
+    root.addCommand(createProxyCommand());
+    return root;
+  }
 
   it('unified `proxy connect --vscode --profile p` still forwards flags under nesting', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
-    const root = await rootWithProxy();
+    const root = await rootWithProxyForUnified();
 
     await root.parseAsync(
       ['proxy', 'connect', '--vscode', '--profile', 'p'],
@@ -335,7 +338,7 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
     await createProxyCommand().parseAsync(['disconnect', '--copilot-chat-otlp'], { from: 'user' });
 
     expect(disconnectTargets).toHaveBeenCalledWith({
-      scope: 'user',
+      scope: undefined,
       insiders: false,
       targets: {
         claudeCodeOtlp: false,
@@ -400,7 +403,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     await createProxyCommand().parseAsync(['disconnect', '--codex-desktop'], { from: 'user' });
 
     expect(disconnectTargets).toHaveBeenCalledWith({
-      scope: 'user',
+      scope: undefined,
       insiders: false,
       targets: {
         claudeCodeOtlp: false,
@@ -433,7 +436,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     await createProxyCommand().parseAsync(['disconnect', '--omp'], { from: 'user' });
 
     expect(disconnectTargets).toHaveBeenCalledWith({
-      scope: 'user',
+      scope: undefined,
       insiders: false,
       targets: {
         claudeCodeOtlp: false,
@@ -455,7 +458,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     await createProxyCommand().parseAsync(['disconnect', '--claude-desktop'], { from: 'user' });
 
     expect(disconnectTargets).toHaveBeenCalledWith({
-      scope: 'user',
+      scope: undefined,
       insiders: false,
       targets: {
         claudeCodeOtlp: false,
@@ -477,7 +480,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     await createProxyCommand().parseAsync(['disconnect', '--vscode-claude-code', '--insiders'], { from: 'user' });
 
     expect(disconnectTargets).toHaveBeenCalledWith({
-      scope: 'user',
+      scope: undefined,
       insiders: true,
       targets: {
         claudeCodeOtlp: false,
@@ -490,5 +493,20 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
         omp: false,
       },
     });
+  });
+
+  it('`proxy disconnect --all --scope project` warns that --scope is ignored and disconnects all', async () => {
+    const { disconnectAll } = await import('../disconnect-all.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['disconnect', '--all', '--scope', 'project'], { from: 'user' });
+
+      expect(disconnectAll).toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('--scope has no effect with --all'));
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

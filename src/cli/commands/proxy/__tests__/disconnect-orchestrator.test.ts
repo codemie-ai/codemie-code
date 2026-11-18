@@ -25,6 +25,32 @@ describe('disconnectTargets', () => {
     await disconnectTargets({ targets: {} });
 
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('--codex-desktop'));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  it.each([
+    ['--scope', { scope: 'project' as const }],
+    ['--insiders', { insiders: true }],
+  ])('%s without a target it applies to warns that it has no effect', async (flag, extra) => {
+    vi.doMock('../connectors/codex-desktop.js', () => ({
+      removeCodexDesktopConfig: vi.fn().mockResolvedValue({ removed: false, usedBackup: false, configPath: null }),
+    }));
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    await disconnectTargets({ targets: { codexDesktop: true }, ...extra });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`${flag} has no effect`));
+  });
+
+  it('an omitted --scope reaches the Claude Code remover as the user scope', async () => {
+    const remove = vi.fn().mockResolvedValue({ removed: false });
+    vi.doMock('../connectors/claude-code-otlp.js', () => ({ removeClaudeCodeOtlpConfig: remove }));
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    await disconnectTargets({ targets: { claudeCodeOtlp: true } });
+
+    expect(remove).toHaveBeenCalledWith({ scope: 'user' });
   });
 
   it('reports the removal for the Codex desktop target', async () => {

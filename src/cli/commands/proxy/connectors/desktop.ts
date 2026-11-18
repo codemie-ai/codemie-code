@@ -142,7 +142,7 @@ export async function fetchClaudeModels(
             'The local gateway key was not accepted by the proxy or was forwarded upstream incorrectly.'
           : response.status === 404 && project
             ? `Local proxy model discovery failed at ${endpoint}: project "${project}" was not found. ` +
-              'Check the project in your CodeMie profile, then run `codemie proxy connect desktop` again.'
+              'Check the project in your CodeMie profile, then run `codemie proxy connect --claude-desktop` again.'
             : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
       );
     }
@@ -151,7 +151,7 @@ export async function fetchClaudeModels(
       throw new ConfigurationError(
         `Local proxy model discovery received an unexpected response (${contentType || 'no content-type'}) from ${endpoint}. ` +
         `Your SSO session may have expired — run \`codemie proxy stop && codemie profile login\` ` +
-        `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
+        `to re-authenticate, then run \`codemie proxy connect --claude-desktop\` again.`
       );
     }
     const json = await response.json() as ModelsListResponse | DesktopCatalogEntry[];
@@ -769,7 +769,7 @@ export async function writeDesktopConfig(
     throw new ConfigurationError(
       project
         ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
-          'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
+          'on the project\'s Models tab, then run `codemie proxy connect --claude-desktop` again.'
         : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
     );
   }

@@ -32,6 +32,7 @@ import {
   deprecate,
   deprecatedCommand,
   deprecatedOption,
+  removedCommand,
   type DeprecationEntry,
 } from '../../deprecation.js';
 
@@ -52,6 +53,34 @@ const INSPECT_DESKTOP_DEPRECATION: DeprecationEntry = {
   old: 'codemie proxy inspect desktop',
   replacement: 'codemie proxy doctor --verbose',
   removeOn: DEPRECATION_REMOVE_ON,
+};
+
+const CONNECT_FORCE_DEPRECATION: DeprecationEntry = {
+  kind: 'deprecated',
+  old: 'codemie proxy connect --force',
+  replacement: 'codemie proxy connect --restart-daemon --overwrite',
+  removeOn: DEPRECATION_REMOVE_ON,
+};
+
+const CONNECT_SILENT_DEPRECATION: DeprecationEntry = {
+  kind: 'deprecated',
+  old: 'codemie proxy connect --silent',
+  replacement: 'codemie proxy connect --yes',
+  removeOn: DEPRECATION_REMOVE_ON,
+};
+
+const CONNECT_DESKTOP_REMOVAL: DeprecationEntry = {
+  kind: 'removed',
+  old: 'codemie proxy connect desktop',
+  replacement: 'codemie proxy connect --claude-desktop',
+  dropOn: DEPRECATION_REMOVE_ON,
+};
+
+const CONNECT_VSCODE_REMOVAL: DeprecationEntry = {
+  kind: 'removed',
+  old: 'codemie proxy connect vscode',
+  replacement: 'codemie proxy connect --vscode',
+  dropOn: DEPRECATION_REMOVE_ON,
 };
 
 interface StatusOptions {
@@ -76,55 +105,20 @@ interface UnifiedConnectOptions {
   insiders?: boolean;
   model?: string;
   omp?: boolean;
+  overwrite?: boolean;
   profile?: string;
+  restartDaemon?: boolean;
   scope?: AllowlistScope;
   silent?: boolean;
   verbose?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
-}
-
-interface AliasConnectOptions {
-  profile?: string;
-  insiders?: boolean;
-  verbose?: boolean;
-  force?: boolean;
-}
-
-/** Print the highlighted deprecation notice for a legacy `connect` subcommand. */
-function printConnectDeprecation(oldSubcommand: 'desktop' | 'vscode', newFlag: string): void {
-  console.log(
-    chalk.bold.yellow(
-      `⚠ 'codemie proxy connect ${oldSubcommand}' is deprecated — ` +
-      `use 'codemie proxy connect ${newFlag}' instead.`
-    )
-  );
-}
-
-/**
- * Resolve a deprecated alias's options, merging the parent `connect` command's
- * options with the alias leaf's own (leaf wins on conflict).
- *
- * The unified `connect` command declares the same option names (`--profile`,
- * `--verbose`, `--force`, `--insiders`) as its `desktop`/`vscode` subcommands.
- * Under the real CLI nesting (`program → proxy → connect → <alias>`) Commander
- * captures those shared flags on the intermediate `connect` command rather than
- * the alias leaf — so an alias action reading only its own opts silently drops
- * them. Merging the parent's opts makes the aliases forward every flag regardless
- * of how positional-option parsing resolves at each level.
- */
-function resolveAliasOptions(opts: AliasConnectOptions, command: Command): AliasConnectOptions {
-  const parentOpts = (command.parent?.opts() ?? {}) as AliasConnectOptions;
-  return { ...parentOpts, ...opts };
+  yes?: boolean;
 }
 
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
-  proxy
-    .description('Manage the CodeMie local gateway proxy daemon')
-    // Required so nested subcommands (e.g. `connect vscode`) can reuse option
-    // names their parent also defines; the parent has no options of its own.
-    .enablePositionalOptions();
+  proxy.description('Manage the CodeMie local gateway proxy daemon');
 
   // ── proxy start ─────────────────────────────────────────────────────────────
   proxy
@@ -241,12 +235,7 @@ export function createProxyCommand(): Command {
 
   // ── proxy connect ────────────────────────────────────────────────────────────
   const connect = new Command('connect');
-  connect
-    .description('Configure clients to use the local CodeMie proxy')
-    // Let the deprecated `desktop`/`vscode` subcommands reuse option names (e.g.
-    // --profile) that the unified command also defines, instead of the parent
-    // swallowing them.
-    .enablePositionalOptions();
+  connect.description('Configure clients to use the local CodeMie proxy');
 
   connect
     .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
@@ -256,7 +245,9 @@ export function createProxyCommand(): Command {
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
     .option('--profile <name>', 'Profile whose credentials to use')
-    .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
+    .option('--restart-daemon', 'Stop any running proxy and start a fresh one, even if it looks healthy')
+    .option('--overwrite', 'Replace client config CodeMie did not write (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list)')
+    .addOption(deprecatedOption(CONNECT_FORCE_DEPRECATION, '--force', 'Same as --restart-daemon --overwrite'))
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
@@ -267,14 +258,16 @@ export function createProxyCommand(): Command {
         '--scope <scope>',
         `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others`,
       )
-      .default('user')
       .choices(['user', 'project']),
     )
     .option(
-      '--silent',
-      `Skip the confirmation prompt (required when non-interactive; applies to --${CLAUDE_CODE_OTLP_AGENT_NAME})`,
+      '--yes',
+      `Skip the confirmation prompts (required when non-interactive; applies to --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME})`,
     )
+    .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
     .action(async (opts: UnifiedConnectOptions) => {
+      if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
+      if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
       await connectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
@@ -288,11 +281,13 @@ export function createProxyCommand(): Command {
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
-        force: Boolean(opts.force),
+        // `--force` keeps both meanings during its deprecation period.
+        restartDaemon: Boolean(opts.restartDaemon || opts.force),
+        overwrite: Boolean(opts.overwrite || opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
         scope: opts.scope,
-        silent: Boolean(opts.silent),
+        yes: Boolean(opts.yes || opts.silent),
       });
       printNext('proxy connect');
     });
@@ -316,7 +311,6 @@ export function createProxyCommand(): Command {
         '--scope <scope>',
         `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
       )
-      .default('user')
       .choices(['user', 'project']),
     )
     .action(async (opts: {
@@ -334,6 +328,9 @@ export function createProxyCommand(): Command {
       scope?: 'user' | 'project';
     }) => {
       if (opts.all) {
+        if (opts.scope) {
+          console.log(chalk.yellow('Note: --scope has no effect with --all (every connector is disconnected at user scope).'));
+        }
         await disconnectAll({ stop: opts.stop });
         printNext('proxy disconnect');
         return;
@@ -356,44 +353,9 @@ export function createProxyCommand(): Command {
       printNext('proxy disconnect');
     });
 
-  // Deprecated aliases — kept working, mapped onto the unified target flags.
-  connect
-    .command('desktop')
-    .description("[deprecated] use 'codemie proxy connect --claude-desktop'")
-    .option('--profile <name>', 'Profile whose credentials to use for Claude Desktop proxy')
-    .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
-    .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
-    .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
-    .action(async (opts: AliasConnectOptions, command: Command) => {
-      const resolved = resolveAliasOptions(opts, command);
-      printConnectDeprecation('desktop', '--claude-desktop');
-      await connectTargets({
-        targets: { claudeDesktop: true },
-        profile: resolved.profile,
-        insiders: Boolean(resolved.insiders),
-        force: Boolean(resolved.force),
-        verbose: Boolean(resolved.verbose),
-      });
-    });
-
-  connect
-    .command('vscode')
-    .description("[deprecated] use 'codemie proxy connect --vscode'")
-    .option('--profile <name>', 'Profile whose URL, credentials, and project to use')
-    .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
-    .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
-    .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
-    .action(async (opts: AliasConnectOptions, command: Command) => {
-      const resolved = resolveAliasOptions(opts, command);
-      printConnectDeprecation('vscode', '--vscode');
-      await connectTargets({
-        targets: { vscode: true },
-        profile: resolved.profile,
-        insiders: Boolean(resolved.insiders),
-        force: Boolean(resolved.force),
-        verbose: Boolean(resolved.verbose),
-      });
-    });
+  // Removed aliases: hidden stubs that accept any options and fail naming the replacement.
+  connect.addCommand(removedCommand(CONNECT_DESKTOP_REMOVAL, 'desktop'));
+  connect.addCommand(removedCommand(CONNECT_VSCODE_REMOVAL, 'vscode'));
 
   const inspect = new Command('inspect');
   inspect.description('Inspect proxy integrations and telemetry state');

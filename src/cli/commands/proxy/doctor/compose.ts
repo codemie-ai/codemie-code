@@ -202,7 +202,7 @@ function connectorSections(entries: ConnectorEntry[]): Sections {
         id: 'connectors',
         status: 'warn',
         message: `${label} analytics: the tracked-project list in ${getClaudeSettingsPath()} is invalid`,
-        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${flag} --force` }),
+        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${flag} --overwrite` }),
       });
     } else {
       const scopeText = scope.scope === 'project'
@@ -329,7 +329,7 @@ async function desktopSections(state: DaemonState): Promise<Sections> {
 /** The `connect` flags that repeat Claude Code's current tracking scope. */
 function claudeScopeFlags(scope: ConnectorScopeRead | undefined): string {
   if (!scope) return '';
-  return 'invalid' in scope ? ' --force' : ` --scope ${scope.scope}`;
+  return 'invalid' in scope ? ' --overwrite' : ` --scope ${scope.scope}`;
 }
 
 async function claudeOtlpSections(state: DaemonState, claudeScope: ConnectorScopeRead | undefined): Promise<Sections> {

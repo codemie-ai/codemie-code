@@ -290,7 +290,7 @@ afterEach(async () => {
   vi.mocked(readDesktopGateway).mockResolvedValue(null);
 });
 
-describe('proxy connect desktop', () => {
+describe('proxy connect --claude-desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -338,7 +338,7 @@ describe('proxy connect desktop', () => {
 
     const command = createProxyCommand();
     await expect(
-      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -445,7 +445,7 @@ describe('proxy connect desktop', () => {
 
     const command = createProxyCommand();
     await expect(
-      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -492,7 +492,7 @@ describe('proxy connect desktop', () => {
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
 
     const command = createProxyCommand();
-    await command.parseAsync(['connect', 'desktop', '--profile', 'test-profile'], { from: 'user' });
+    await command.parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], { from: 'user' });
 
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
     expect(syncPluginSkills).toHaveBeenCalledOnce();
@@ -533,7 +533,7 @@ describe('proxy connect desktop', () => {
       '/etc/claude-desktop/managed-settings.json exists. Claude Desktop applies managed settings instead of local configuration, so this write may have no effect.'
     );
 
-    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], {
       from: 'user',
     });
 
@@ -575,7 +575,7 @@ describe('proxy connect desktop', () => {
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
     vi.mocked(describeManagedSettingsOverride).mockReturnValue(null);
 
-    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], {
       from: 'user',
     });
 
@@ -615,7 +615,7 @@ describe('proxy connect desktop', () => {
     } as Awaited<ReturnType<typeof spawnDaemon>>);
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
 
-    await createProxyCommand().parseAsync(['connect', 'desktop'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
     expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
@@ -1375,7 +1375,7 @@ describe('proxy inspect desktop', () => {
   });
 });
 
-describe('proxy connect vscode', () => {
+describe('proxy connect --vscode', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -1439,7 +1439,7 @@ describe('proxy connect vscode', () => {
     });
 
     await createProxyCommand().parseAsync(
-      ['connect', 'vscode', '--profile', 'custom'],
+      ['connect', '--vscode', '--profile', 'custom'],
       { from: 'user' }
     );
 
@@ -1492,7 +1492,7 @@ describe('proxy connect vscode', () => {
     });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
 
-    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--vscode', '--profile', 'custom'], { from: 'user' });
 
     expect(stopDaemon).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -1545,7 +1545,7 @@ describe('proxy connect vscode', () => {
       startedAt: new Date().toISOString(),
     } as Awaited<ReturnType<typeof spawnDaemon>>);
 
-    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--vscode', '--profile', 'custom'], { from: 'user' });
 
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();

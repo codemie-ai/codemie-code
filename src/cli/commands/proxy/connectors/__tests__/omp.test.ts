@@ -62,16 +62,16 @@ describe('omp extension installer', () => {
     expect(readFileSync(path, 'utf-8')).toBe(BUNDLE);
   });
 
-  it('preserves a foreign extension unless force is requested', async () => {
+  it('preserves a foreign extension unless --overwrite is requested', async () => {
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     const path = join(agentDir, 'extensions', 'codemie-models.js');
     mkdirSync(join(agentDir, 'extensions'), { recursive: true });
     const foreign = 'export default () => "user extension";\n';
     writeFileSync(path, foreign);
     await expect(writeOmpExtension()).rejects.toBeInstanceOf(ConfigurationError);
-    await expect(writeOmpExtension()).rejects.toThrow(/--force/);
+    await expect(writeOmpExtension()).rejects.toThrow(/--overwrite/);
     expect(readFileSync(path, 'utf-8')).toBe(foreign);
-    expect(await writeOmpExtension({ force: true })).toEqual({ path, changed: true });
+    expect(await writeOmpExtension({ overwrite: true })).toEqual({ path, changed: true });
     expect(readFileSync(path, 'utf-8')).toBe(BUNDLE);
   });
 

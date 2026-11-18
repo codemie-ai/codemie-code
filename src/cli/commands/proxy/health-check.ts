@@ -5,7 +5,7 @@
  * - deep: shallow + one authenticated upstream call (`/v1/llm_models`) through
  *   the gateway → also confirms the SSO session/token is still valid.
  *
- * Consumed by `proxy status`, `proxy connect desktop`, and the in-daemon
+ * Consumed by `proxy status`, `proxy connect --claude-desktop`, and the in-daemon
  * ProxyWatcher. Never throws — always resolves to a typed result.
  */
 import { logger } from '../../../utils/logger.js';

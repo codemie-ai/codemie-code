@@ -34,7 +34,8 @@ import type { ConnectorScopeRead } from '@/agents/core/project-allowlist.js';
 import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
-  force?: boolean;
+  /** Replace conflicting settings and an invalid project list (`--overwrite`). */
+  overwrite?: boolean;
   scope?: AllowlistScope;
 }
 
@@ -123,7 +124,7 @@ const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
  * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
  * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
  * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
- * to today's default with no `--force`, and a disconnect still clean it up.
+ * to today's default with no `--overwrite`, and a disconnect still clean it up.
  */
 const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
   OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
@@ -171,7 +172,7 @@ export function isCodemieOwnedEnvValue(
 }
 
 /**
- * Puts a value a `--force` connect once displaced into `backupEnv` back
+ * Puts a value an `--overwrite` connect once displaced into `backupEnv` back
  * into `baseEnv`, for any key `baseEnv` doesn't hold — only while `liveEnv`
  * still carries codemie's OWN value right now (AC3: a user edit since then
  * leaves `baseEnv` untouched).
@@ -517,7 +518,7 @@ export async function writeClaudeCodeOtlpConfig(
       continue;
     }
     // A prior CodeMie version's own value for this key — migrated to today's default by
-    // this same write below, not a conflict requiring --force.
+    // this same write below, not a conflict requiring --overwrite.
     if (isHistoricalCodemieValue(key, currentVal)) {
       continue;
     }
@@ -534,7 +535,7 @@ export async function writeClaudeCodeOtlpConfig(
     }
   }
 
-  if ((envConflicts.length > 0 || malformedHookEvents.length > 0) && !opts.force) {
+  if ((envConflicts.length > 0 || malformedHookEvents.length > 0) && !opts.overwrite) {
     const parts: string[] = [];
     if (envConflicts.length > 0) {
       parts.push(`conflicting env values for: ${envConflicts.join(', ')}`);
@@ -543,17 +544,20 @@ export async function writeClaudeCodeOtlpConfig(
       parts.push(`non-array hooks entries for: ${malformedHookEvents.join(', ')}`);
     }
     throw new ConfigurationError(
-      `Claude Code settings already contain ${parts.join('; ')}. Re-run with --force to overwrite.`
+      renderHint({
+        reason: `Claude Code settings already contain ${parts.join('; ')}`,
+        action: 're-run with --overwrite to replace them',
+      })
     );
   }
 
   // --- Allowlist pre-check (before anything is written) ---
   const rawAllowlist: unknown = existingEnv[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV];
   const existingAllowlist = parseAllowlist(rawAllowlist);
-  if (existingAllowlist.kind === 'invalid' && !opts.force) {
+  if (existingAllowlist.kind === 'invalid' && !opts.overwrite) {
     throw new ConfigurationError(
       `Claude Code settings contain an invalid ${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} value: ${JSON.stringify(rawAllowlist)}. ` +
-      `Fix it manually (expected a JSON array of absolute paths, e.g. '["/path/to/project"]') or re-run with --force to discard it.`
+      `Fix it manually (expected a JSON array of absolute paths, e.g. '["/path/to/project"]') or re-run with --overwrite to discard it.`
     );
   }
 
@@ -586,7 +590,7 @@ export async function writeClaudeCodeOtlpConfig(
       // the bearer token) are never enshrined as the "original".
       const { stripped } = stripCodemieManagedContent(existing);
 
-      // Carry forward a value a PRIOR --force connect displaced into the
+      // Carry forward a value a PRIOR --overwrite connect displaced into the
       // existing backup: it is no longer present in `existing` itself
       // (codemie's own write replaced it), so stripping `existing` alone
       // would silently drop it from the refreshed backup.
@@ -598,7 +602,7 @@ export async function writeClaudeCodeOtlpConfig(
         delete stripped.env;
       }
 
-      // Same carry-forward for a hook event a PRIOR --force connect displaced
+      // Same carry-forward for a hook event a PRIOR --overwrite connect displaced
       // (dropped a malformed value) — otherwise it would be silently lost
       // from the refreshed backup before an eventual disconnect ever restores it.
       const mergedHooks = withDisplacedHooks(stripped.hooks, oldBackup?.hooks, existingHooksBlock);
@@ -658,7 +662,7 @@ export async function writeClaudeCodeOtlpConfig(
   const hooks: Record<string, unknown[]> = {};
   for (const [eventName, entries] of Object.entries(existingHooksBlock)) {
     if (!Array.isArray(entries)) {
-      // Only reachable here when `force` is set (validated above) — an
+      // Only reachable here when `overwrite` is set (validated above) — an
       // explicit, consented overwrite. Drop the malformed value rather than
       // propagate it further.
       continue;
@@ -766,7 +770,7 @@ export async function removeClaudeCodeOtlpConfig(
   const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
   const backupSettings = await readBackupSettings(backupPath);
 
-  // Put back a value a `--force` connect displaced into the backup (preserves
+  // Put back a value an `--overwrite` connect displaced into the backup (preserves
   // AC3 — never resurrects a value the user changed after connect; see
   // `withDisplacedEnvValues`).
   const restoredEnv = withDisplacedEnvValues(stripped.env, backupSettings?.env, existing.env ?? {});
@@ -776,7 +780,7 @@ export async function removeClaudeCodeOtlpConfig(
     delete stripped.env;
   }
 
-  // Same restore for a hook event a `--force` connect displaced (dropped a
+  // Same restore for a hook event an `--overwrite` connect displaced (dropped a
   // malformed value) — see `withDisplacedHooks` for the AC3 guard.
   const restoredHooks = withDisplacedHooks(stripped.hooks, backupSettings?.hooks, existing.hooks ?? {});
   if (restoredHooks) {
@@ -789,7 +793,7 @@ export async function removeClaudeCodeOtlpConfig(
 
   // Always derive the result from the CURRENT live content, never raw backup
   // bytes — a backup can hold a value the user changed/removed since connect.
-  // The one exception: a value `--force` displaced, restored above only
+  // The one exception: a value `--overwrite` displaced, restored above only
   // while codemie still owns it right now.
   if (isEmpty) {
     await unlink(settingsPath);

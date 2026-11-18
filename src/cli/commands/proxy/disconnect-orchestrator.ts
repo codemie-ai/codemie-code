@@ -34,6 +34,7 @@ export interface DisconnectTargets {
 
 export interface DisconnectOptions {
   targets: DisconnectTargets;
+  /** Left undefined when `--scope` is omitted; coalesced to `user` after the ignored-flag checks. */
   scope?: 'user' | 'project';
   insiders?: boolean;
 }
@@ -250,8 +251,22 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
     !targets.omp && !targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.vscode
   ) {
     console.log(DISCONNECT_TARGET_LIST);
+    process.exitCode = 1;
     return;
   }
+
+  if (opts.insiders && !targets.vscode && !targets.vscodeClaudeCode) {
+    console.log(
+      chalk.yellow('Note: --insiders has no effect without a VS Code target (--vscode / --vscode-claude-code).')
+    );
+  }
+  if (opts.scope && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp) {
+    console.log(chalk.yellow(
+      'Note: --scope has no effect without an analytics connector target ' +
+      `(--${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}).`
+    ));
+  }
+  const scope = opts.scope ?? 'user';
 
   if (targets.claudeDesktop) {
     await disconnectClaudeDesktop();
@@ -270,15 +285,15 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   }
 
   if (targets.claudeCodeOtlp) {
-    await disconnectClaudeCodeOtlp(opts.scope);
+    await disconnectClaudeCodeOtlp(scope);
   }
 
   if (targets.copilotChatOtlp) {
-    await disconnectCopilotChatOtlp(opts.scope);
+    await disconnectCopilotChatOtlp(scope);
   }
 
   if (targets.copilotCliOtlp) {
-    await disconnectCopilotCliOtlp(opts.scope);
+    await disconnectCopilotCliOtlp(scope);
   }
 
   if (targets.omp) {
