@@ -1191,6 +1191,59 @@ describe('openMainTranscriptPass — tool-call accumulation', () => {
     expect(summary?.tool_results).toBe(2);
   });
 
+  describe('Agent calls in summary.agents (EPMCDME-15557)', () => {
+    const agentCallLine = (id: string, subagentType: string): string =>
+      JSON.stringify({
+        gitBranch: 'main',
+        timestamp: '2026-10-01T00:00:00.000Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType } }],
+        },
+      });
+    const resultLine = (id: string, isError: boolean, content: string): string =>
+      JSON.stringify({
+        gitBranch: 'main',
+        timestamp: '2026-10-01T00:00:01.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content }],
+        },
+      });
+    const stopSummary = async (name: string, lines: string[]): Promise<Record<string, unknown> | undefined> => {
+      const events = parseAll(await mainEvents(`session-${name}`, writeTranscript(`transcript-${name}.jsonl`, lines), 'Stop'));
+      return events.find((e) => e.type === 'agent.session.summary');
+    };
+
+    it('excludes a denied Agent call from summary.agents', async () => {
+      const summary = await stopSummary('agent-denied', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', true, 'QA-15557 deny'),
+      ]);
+
+      expect(summary?.agents).toEqual({});
+      expect(summary?.tool_calls).toBe(1);
+      expect(summary?.tool_errors).toBe(1);
+    });
+
+    it('counts only the allowed call when a denied and an allowed Agent run in one session', async () => {
+      const summary = await stopSummary('agent-denied-and-allowed', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', true, 'QA-15557 deny'),
+        agentCallLine('tool-2', 'Plan'),
+        resultLine('tool-2', false, 'done'),
+      ]);
+
+      expect(summary?.agents).toEqual({ Plan: 1 });
+    });
+
+    it('still counts an Agent call with no result yet', async () => {
+      const summary = await stopSummary('agent-pending', [agentCallLine('tool-1', 'Explore')]);
+
+      expect(summary?.agents).toEqual({ Explore: 1 });
+    });
+  });
+
   it('counts MultiEdit (file_path) and NotebookEdit (notebook_path) toward files_edited/files_changed, not files_written', async () => {
 
     const sessionId = 'session-tools-multiedit-notebook';

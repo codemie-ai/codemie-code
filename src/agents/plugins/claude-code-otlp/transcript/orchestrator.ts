@@ -59,6 +59,7 @@ import {
   type NamedInvocationCounts,
 } from './session-summary.js';
 import {
+  collectFailedToolUseIds,
   extractNamedInvocations,
   extractOrderedNamedInvocations,
 } from '@/agents/plugins/claude/session/claude-named-invocations.js';
@@ -275,21 +276,7 @@ interface TranscriptLine extends SignalLine {
  * drift between the two call sites.
  */
 function collectErrorToolUseIds(parsedLines: TranscriptLine[]): Set<string> {
-  const errorByToolUseId = new Set<string>();
-  for (const parsed of parsedLines) {
-    const content = parsed.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const item of content as ContentBlock[]) {
-      if (
-        item?.type === 'tool_result' &&
-        typeof item.tool_use_id === 'string' &&
-        (item.is_error === true || item.isError === true)
-      ) {
-        errorByToolUseId.add(item.tool_use_id);
-      }
-    }
-  }
-  return errorByToolUseId;
+  return collectFailedToolUseIds(parsedLines);
 }
 
 /** The first non-empty `timestamp` among `parsedLines`, in order, or `''` when none carry one. */
@@ -496,7 +483,8 @@ async function buildFullAccumulator(
   // use, so a fork recovered from a path outside discovery is counted here too.
   pass.snapshot = await resolveSubagentSnapshot(transcriptPath, { final, extra, raw });
   const { slashPromptIds } = pass.snapshot;
-  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
+  // A denied/errored Agent call started no agent: `errorByToolUseId` keeps it out of `agents`.
+  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds, errorByToolUseId);
   acc.commandsInOrder = named.commandsInOrder;
 
   const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
