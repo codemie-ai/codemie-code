@@ -17,7 +17,8 @@ import {
   type ConflictRunners,
   type ResolveConflictInput,
 } from './resolver.js';
-import { applySwitch, type SwitchDeps, type SwitchResult } from './switcher.js';
+import { applySwitch, emptySwitchResult, type SwitchDeps, type SwitchResult } from './switcher.js';
+import { flagState } from '@/agents/core/evidence/routing.js';
 import { logger } from '@/utils/logger.js';
 
 /**
@@ -55,7 +56,6 @@ export interface DetectAndAskInput {
   switchDeps?: SwitchDeps;
 }
 
-const INERT_RESULT = (): SwitchResult => ({ backupDir: null, files: [], changed: [] });
 const claudeAgents: readonly string[] = ['claude', 'claude-acp'];
 
 function inert(): GateOutcome {
@@ -66,40 +66,42 @@ function stop(reason: StopReason, findings: ConflictFindings): GateOutcome {
   return { kind: 'stop', reason, guidance: stopGuidance(reason, findings) };
 }
 
+function shellFlagMessage(provider: CloudProviderDescriptor): string {
+  return `The shell variable ${provider.flag} is set and can select ${provider.displayName} for Claude started outside codemie-claude; it is not changed here, and codemie-claude ignores it for its own process.`;
+}
+
+/**
+ * An install only warns about the shell variable: it cannot change the shell, and codemie-claude drops the
+ * variable from its own process anyway. Any value but an explicit off (including an unfamiliar spelling) warns.
+ */
+function warnShellFlag(provider: CloudProviderDescriptor, env: NodeJS.ProcessEnv): void {
+  const raw = env[provider.flag];
+  if (typeof raw === 'string' && raw !== '' && flagState(raw) !== 'off') logger.notice(shellFlagMessage(provider));
+}
+
 /** True when the only layers deciding the provider are the inherited shell environment, which cannot be switched. */
 function onlyShellEnv(resolution: ConflictResolution): boolean {
   const deciding = resolution.layers.filter((l) => l.inEffect);
   return deciding.length > 0 && deciding.every((l) => l.scope === 'env');
 }
 
-export async function detectAndAsk(input: DetectAndAskInput): Promise<GateOutcome> {
-  const { flow, canPrompt } = input;
-  const provider = input.provider ?? BEDROCK;
-  const profileProvider = input.profile?.provider;
-
+/** Outcomes decided before anything is read: a Bedrock profile, an install without a profile, analytics only. */
+function outcomeBeforeReading(input: DetectAndAskInput, provider: CloudProviderDescriptor): GateOutcome | null {
   // A Bedrock profile sets its own environment for the process only; with no profile an install has no
   // gateway to route to yet.
-  if (profileProvider === provider.name || (flow === 'install' && !input.profile)) return inert();
-
-  if (flow === 'connect-otlp-only') {
-    logger.warn(
-      `[cloud-provider-conflict] ${provider.displayName} settings in Claude configuration are not checked for this target; if they are enabled, analytics attribution may be unknown.`
+  if (input.profile?.provider === provider.name || (input.flow === 'install' && !input.profile)) return inert();
+  if (input.flow === 'connect-otlp-only') {
+    logger.notice(
+      `${provider.displayName} settings in Claude configuration are not checked for this target; if they are enabled, analytics attribution may be unknown.`
     );
     return inert();
   }
+  return null;
+}
 
-  const plan: ResolveConflictInput = {
-    provider,
-    flow,
-    paths: input.paths,
-    platform: input.platform,
-    env: input.env,
-    cwd: input.cwd,
-    runners: input.runners,
-  };
-  const resolution = await resolveProviderConflict(plan);
-  const findings: ConflictFindings = { resolution, flow, provider };
-
+/** What a resolution decides without a question: proceed or stop. Null means the user is asked. */
+function outcomeWithoutAsking(findings: ConflictFindings, canPrompt: boolean): GateOutcome | null {
+  const { resolution, provider } = findings;
   switch (resolution.verdict) {
     case 'none':
       return inert();
@@ -110,23 +112,55 @@ export async function detectAndAsk(input: DetectAndAskInput): Promise<GateOutcom
     case 'conflict-editable':
       break;
   }
-
   if (onlyShellEnv(resolution)) {
-    logger.warn(
-      `[cloud-provider-conflict] The shell variable ${provider.flag} selects ${provider.displayName}; it is not changed here, and codemie-claude ignores it for its own process.`
-    );
+    logger.notice(shellFlagMessage(provider));
     return inert();
   }
-  if (!canPrompt) return stop('non-interactive', findings);
+  return canPrompt ? null : stop('non-interactive', findings);
+}
+
+/**
+ * Resolves the cloud-provider settings for one flow and, when editable settings select the provider and a
+ * question may be asked, asks whether to back up and switch. Changes nothing: a `proceed` token is applied
+ * later with `applyConsented`. Warnings (malformed files, the shell variable) are shown on stderr.
+ *
+ * @param input - The flow, whether a question may be asked, the profile, and test seams
+ * @returns `proceed` with a token for `applyConsented`, or `stop` with the reason and guidance to print
+ */
+export async function detectAndAsk(input: DetectAndAskInput): Promise<GateOutcome> {
+  const provider = input.provider ?? BEDROCK;
+  const early = outcomeBeforeReading(input, provider);
+  if (early) return early;
+  if (input.flow === 'install') warnShellFlag(provider, input.env ?? process.env);
+
+  const plan: ResolveConflictInput = {
+    provider,
+    flow: input.flow,
+    paths: input.paths,
+    platform: input.platform,
+    env: input.env,
+    cwd: input.cwd,
+    runners: input.runners,
+  };
+  const resolution = await resolveProviderConflict(plan);
+  for (const warning of resolution.warnings) logger.notice(warning);
+  const findings: ConflictFindings = { resolution, flow: input.flow, provider };
+  const decided = outcomeWithoutAsking(findings, input.canPrompt);
+  if (decided) return decided;
 
   const choice = await askSwitchOrCancel(findings, input.prompt);
   if (choice === 'cancel') return stop('cancel', findings);
   return { kind: 'proceed', token: { plan, deps: input.switchDeps ?? {} } };
 }
 
-/** Performs the switch the user consented to. An inert token does nothing and returns an empty result. */
+/**
+ * Performs the switch the user consented to. An inert token does nothing and returns an empty result.
+ *
+ * @throws {SwitchBlockedError} When the state changed to managed policy or cannot be told since the question
+ * @throws {SwitchFailedError} When the backup or a write fails; its `backupDir` names the folder to recover from
+ */
 export async function applyConsented(token: ConsentToken): Promise<SwitchResult> {
-  if (!token.plan) return INERT_RESULT();
+  if (!token.plan) return emptySwitchResult();
   return applySwitch(token.plan, token.deps);
 }
 

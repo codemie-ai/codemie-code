@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { routedViaCodemie } from '@/agents/core/evidence/routing.js';
+import { logger } from '@/utils/logger.js';
 import { BEDROCK } from '../provider.js';
 import type { ConflictFlow, ConflictPaths } from '../resolver.js';
 import type { SwitchPrompt, SwitchPromptDeps } from '../prompt.js';
@@ -274,6 +275,60 @@ describe('cloud-provider-conflict gate', () => {
 
       // Settings outrank the shell variable, so the file is what decides; the user is asked about it.
       expect(outcome).toMatchObject({ kind: 'stop', reason: 'cancel' });
+    });
+  });
+
+  describe('warnings shown to the user', () => {
+    let notices: string[];
+    let noticeSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      notices = [];
+      noticeSpy = vi.spyOn(logger, 'notice').mockImplementation((message: string) => {
+        notices.push(message);
+      });
+    });
+    afterEach(() => {
+      noticeSpy.mockRestore();
+    });
+
+    it('shows nothing when nothing is configured', async () => {
+      expect((await run({ flow: 'claude-agent' })).kind).toBe('proceed');
+      expect((await run({ flow: 'install' })).kind).toBe('proceed');
+      expect(notices).toEqual([]);
+    });
+
+    it('shows the --claude-code-otlp warning on screen, not only in the log file', async () => {
+      await run({ flow: 'connect-otlp-only' });
+      expect(notices).toEqual([expect.stringMatching(/not checked for this target/)]);
+    });
+
+    it.each(['1', 'true', 'maybe'])('an install with the shell variable set to %s warns and proceeds, never stops', async (value) => {
+      const fake = fakePrompt('switch');
+      const outcome = await run({ flow: 'install', env: { CLAUDE_CODE_USE_BEDROCK: value }, promptDeps: { prompt: fake.prompt } });
+      expect(outcome.kind).toBe('proceed');
+      expect(fake.prompt).not.toHaveBeenCalled();
+      expect(notices).toEqual([expect.stringContaining('CLAUDE_CODE_USE_BEDROCK')]);
+    });
+
+    it.each(['0', 'false', ''])('an install with the shell variable set to "%s" shows no warning', async (value) => {
+      expect((await run({ flow: 'install', env: { CLAUDE_CODE_USE_BEDROCK: value } })).kind).toBe('proceed');
+      expect(notices).toEqual([]);
+    });
+
+    it('shows the shell-variable warning when only the shell selects Bedrock for the launch', async () => {
+      expect((await run({ flow: 'claude-agent', env: { CLAUDE_CODE_USE_BEDROCK: '1' } })).kind).toBe('proceed');
+      expect(notices).toEqual([expect.stringContaining('CLAUDE_CODE_USE_BEDROCK')]);
+    });
+
+    it.each([
+      ['broken JSON', '{ broken'],
+      ['a null env', '{"env": null}'],
+      ['an array root', '[]'],
+    ])('a user settings file with %s proceeds and is named in one on-screen warning', async (_n, body) => {
+      const file = put('user/settings.json', body);
+      expect((await run({ flow: 'claude-agent' })).kind).toBe('proceed');
+      expect(notices).toEqual([expect.stringContaining(file)]);
+      expect(notices[0]).toMatch(/analytics attribution/i);
     });
   });
 

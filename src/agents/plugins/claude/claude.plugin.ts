@@ -1,5 +1,7 @@
 import type {
   AgentMetadata,
+  ProviderSettingsCheckInput,
+  ProviderSettingsCheckOutcome,
   ResumeOwnershipInput,
   ResumeOwnershipResult,
 } from '../../core/types.js';
@@ -729,6 +731,15 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getExtensionInstaller(): BaseExtensionInstaller {
     return this.extensionInstaller;
+  }
+
+  /**
+   * Bedrock selected by Claude's own settings would send Claude traffic around the CodeMie gateway: detect it
+   * and ask whether to back up and switch it off (see `AgentAdapter.checkProviderSettings`).
+   */
+  async checkProviderSettings(input: ProviderSettingsCheckInput): Promise<ProviderSettingsCheckOutcome> {
+    const { checkClaudeProviderSettings } = await import('./cloud-provider-conflict/adapter-check.js');
+    return checkClaudeProviderSettings(this.name, input);
   }
 
   /**

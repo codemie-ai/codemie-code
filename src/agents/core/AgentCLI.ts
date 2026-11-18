@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from './provider-settings-check.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
@@ -176,17 +177,12 @@ export class AgentCLI {
     }
   }
 
-  /** The Claude agents (CLI and ACP) share the Bedrock settings gate. */
-  private isClaudeAgent(): boolean {
-    return this.adapter.name === 'claude' || this.adapter.name === 'claude-acp';
-  }
-
   /**
    * Handle main run action
    */
   private async handleRun(args: string[], options: Record<string, unknown>): Promise<void> {
-    // Backup folder of a Claude settings switch applied during this launch (repeated if a later step fails)
-    let settingsBackupDir: string | null = null;
+    // Settings switch agreed during this launch; its backup folder is repeated if a later step fails
+    let settingsSwitch: ProviderSettingsSwitch | null = null;
     try {
       // Check if agent is installed
       if (!(await this.adapter.isInstalled())) {
@@ -325,30 +321,14 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      // Claude only: the codemie-claude process itself must not inherit a Bedrock selection from the shell
-      // (the child env is built from process.env), then settings that select Bedrock are resolved before
-      // auth. The shell is already stripped here, so the gate never prompts on its own account.
+      // Agents whose own settings can select a cloud provider (Claude: Bedrock) check them before auth, so a
+      // cancel never starts a sign-in; the agreed switch is applied only once the launch is ready to run.
       const { canPromptForProject } = await import('../../utils/interactive.js');
-      let bedrockConsent: import('../plugins/claude/cloud-provider-conflict/gate.js').ConsentToken | null = null;
-      if (this.isClaudeAgent() && config.provider !== 'bedrock') {
-        const { dropInheritedBedrockFlag, detectAndAsk } = await import('../plugins/claude/cloud-provider-conflict/gate.js');
-        dropInheritedBedrockFlag({ agent: this.adapter.name, provider: config.provider });
-        const outcome = await detectAndAsk({
-          flow: 'claude-agent',
-          canPrompt:
-            canPromptForProject({ task: options.task }) &&
-            !options.silent &&
-            !options.printConfig &&
-            this.adapter.name !== 'claude-acp',
-          profile: config,
-        });
-        if (outcome.kind === 'stop') {
-          // stderr: stdout must stay clean for wrappers (and ACP editors) that parse it
-          console.error(outcome.guidance);
-          process.exit(1);
-        }
-        bedrockConsent = outcome.token;
-      }
+      settingsSwitch = await runProviderSettingsCheck(
+        this.adapter,
+        { flow: 'launch', canPrompt: canPromptForProject({ task: options.task }) && !options.silent, profile: config },
+        'exit'
+      );
 
       // NEW: Auth validation via provider plugin
       // Skip when --jwt-token is explicitly provided: it overrides any configured provider auth
@@ -426,10 +406,7 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      if (bedrockConsent) {
-        const { applyConsented } = await import('../plugins/claude/cloud-provider-conflict/gate.js');
-        settingsBackupDir = (await applyConsented(bedrockConsent)).backupDir;
-      }
+      await settingsSwitch.apply();
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
@@ -583,9 +560,7 @@ export class AgentCLI {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(chalk.red(`\n✗ Failed to run ${this.adapter.displayName}\n`));
       console.error(chalk.white(errorMessage));
-      if (settingsBackupDir) {
-        console.error(chalk.white(`Backup of your Claude settings: ${settingsBackupDir}`));
-      }
+      settingsSwitch?.printBackupNote();
       console.error('');
 
       // Log detailed error for debugging

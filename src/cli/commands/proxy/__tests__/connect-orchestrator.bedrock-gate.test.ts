@@ -1,5 +1,7 @@
 /**
- * connect-orchestrator: Bedrock settings conflict gate wiring
+ * connect-orchestrator: Bedrock settings check wiring. The orchestrator asks the Claude adapter from the
+ * registry (`checkProviderSettings`); only the adapter's gate is mocked, so these cases also cover how the
+ * adapter maps the connect targets onto the gate's flows and files.
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -259,7 +261,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     expect(input.cwd).toBeUndefined();
   });
 
-  it('resolves both VS Code editions for the Claude Code extension', async () => {
+  it('checks only the stable VS Code edition it configures for the Claude Code extension', async () => {
     await setupHappyMocks();
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
@@ -268,12 +270,22 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
 
     const input = vi.mocked(detectAndAsk).mock.calls[0][0];
     expect(input.flow).toBe('connect-vscode');
-    expect(input.paths).toEqual({
-      vscodeSettings: ['/mock/vscode/User/settings.json', '/mock/vscode-insiders/User/settings.json'],
+    expect(input.paths).toEqual({ vscodeSettings: ['/mock/vscode/User/settings.json'] });
+  });
+
+  it('checks only the Insiders edition with --insiders', async () => {
+    await setupHappyMocks();
+    const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { vscodeClaudeCode: true }, insiders: true });
+
+    expect(vi.mocked(detectAndAsk).mock.calls[0][0].paths).toEqual({
+      vscodeSettings: ['/mock/vscode-insiders/User/settings.json'],
     });
   });
 
-  it('omits a VS Code edition whose user-data directory does not exist', async () => {
+  it('checks no VS Code file when the configured edition has no user-data directory', async () => {
     await setupHappyMocks();
     const { ConfigurationError } = await import('../../../../utils/errors.js');
     const { getVsCodeClaudeCodeSettingsPath } = await import('../connectors/vscode-claude-code.js');
@@ -284,26 +296,30 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { vscodeClaudeCode: true } });
+    await connectTargets({ targets: { vscodeClaudeCode: true }, insiders: true });
 
-    expect(vi.mocked(detectAndAsk).mock.calls[0][0].paths).toEqual({ vscodeSettings: ['/mock/vscode/User/settings.json'] });
+    expect(vi.mocked(detectAndAsk).mock.calls[0][0].paths).toEqual({ vscodeSettings: [] });
     expect(console_.err()).not.toContain('user data directory');
   });
 
-  it('runs the gate once per selected Claude flow when Desktop and the VS Code extension are both selected', async () => {
+  it('runs one gate check covering Desktop and the VS Code extension when both are selected, so the user is asked once', async () => {
     await setupHappyMocks();
     const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
-    const desktopToken = { plan: null, deps: { tag: 'desktop' } };
-    const vscodeToken = { plan: null, deps: { tag: 'vscode' } };
-    vi.mocked(detectAndAsk)
-      .mockResolvedValueOnce({ kind: 'proceed', token: desktopToken })
-      .mockResolvedValueOnce({ kind: 'proceed', token: vscodeToken });
+    const token = { plan: null, deps: { tag: 'both' } };
+    vi.mocked(detectAndAsk).mockResolvedValueOnce({ kind: 'proceed', token });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true, vscodeClaudeCode: true } });
 
-    expect(vi.mocked(detectAndAsk).mock.calls.map((c) => c[0].flow)).toEqual(['connect-desktop', 'connect-vscode']);
-    expect(vi.mocked(applyConsented).mock.calls.map((c) => c[0])).toEqual([desktopToken, vscodeToken]);
+    expect(detectAndAsk).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(detectAndAsk).mock.calls[0][0];
+    expect(input.flow).toBe('connect-desktop');
+    expect(input.paths).toMatchObject({
+      desktopApplied: expect.any(String),
+      vscodeSettings: expect.arrayContaining([expect.any(String)]),
+    });
+    expect(input.paths).toHaveProperty('desktopManaged');
+    expect(vi.mocked(applyConsented).mock.calls.map((c) => c[0])).toEqual([token]);
   });
 
   it('does not treat Claude Code analytics as alone when a Desktop target is selected', async () => {
@@ -354,12 +370,10 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     loggerError.mockRestore();
   });
 
-  it('stops on the second flow when only the VS Code check stops', async () => {
+  it('a stop from the combined Desktop and VS Code check aborts before anything starts', async () => {
     await setupHappyMocks();
     const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
-    vi.mocked(detectAndAsk)
-      .mockResolvedValueOnce({ kind: 'proceed', token: INERT_TOKEN })
-      .mockResolvedValueOnce({ kind: 'stop', reason: 'cancel', guidance: 'VSCODE CANCELLED' });
+    vi.mocked(detectAndAsk).mockResolvedValueOnce({ kind: 'stop', reason: 'cancel', guidance: 'BOTH CANCELLED' });
     const { spawnDaemon } = await import('../daemon-manager.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -367,7 +381,8 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
       connectTargets({ targets: { claudeDesktop: true, vscodeClaudeCode: true } })
     ).rejects.toThrow('process.exit:1');
 
-    expect(console_.err()).toContain('VSCODE CANCELLED');
+    expect(detectAndAsk).toHaveBeenCalledTimes(1);
+    expect(console_.err()).toContain('BOTH CANCELLED');
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(applyConsented).not.toHaveBeenCalled();
   });
@@ -398,7 +413,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
 
     expect(writeDesktopConfig).toHaveBeenCalledTimes(1);
     expect(process.exitCode).toBe(0);
-    expect(console_.err()).not.toContain('Backup of your Claude settings');
+    expect(console_.err()).not.toContain('Backup of your Claude Code settings');
   });
 
   it('prints the backup folder when a failure follows the apply (daemon start)', async () => {
@@ -411,7 +426,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
 
     await expect(connectTargets({ targets: { claudeDesktop: true } })).rejects.toThrow('process.exit:1');
 
-    expect(console_.err()).toContain('Backup of your Claude settings: /backups/claude-1');
+    expect(console_.err()).toContain('Backup of your Claude Code settings: /backups/claude-1');
   });
 
   it('prints the backup folder when a target fails after the apply', async () => {
@@ -425,23 +440,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     await connectTargets({ targets: { claudeDesktop: true } });
 
     expect(process.exitCode).toBe(1);
-    expect(console_.err()).toContain('Backup of your Claude settings: /backups/claude-2');
-  });
-
-  it('prints the first backup folder when the second apply fails', async () => {
-    await setupHappyMocks();
-    const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
-    vi.mocked(detectAndAsk).mockResolvedValue({ kind: 'proceed', token: INERT_TOKEN });
-    vi.mocked(applyConsented)
-      .mockResolvedValueOnce(emptyResult('/backups/first'))
-      .mockRejectedValueOnce(new Error('second switch failed'));
-    const { connectTargets } = await import('../connect-orchestrator.js');
-
-    await expect(
-      connectTargets({ targets: { claudeDesktop: true, vscodeClaudeCode: true } })
-    ).rejects.toThrow('process.exit:1');
-
-    expect(console_.err()).toContain('Backup of your Claude settings: /backups/first');
+    expect(console_.err()).toContain('Backup of your Claude Code settings: /backups/claude-2');
   });
 
   it('skips the gate result entirely for a Bedrock profile (the gate decides; profile is passed through)', async () => {

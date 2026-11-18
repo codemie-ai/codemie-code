@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendFileSync,
   existsSync,
@@ -14,10 +14,21 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { rename as fsRename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { logger } from '@/utils/logger.js';
 import { BEDROCK } from '../provider.js';
-import type { ConflictPaths } from '../resolver.js';
-import { SwitchBlockedError, SwitchFailedError, applySwitch, type SwitchDeps, type SwitchPlan } from '../switcher.js';
+import type { ConflictPaths, ResolveConflictInput } from '../resolver.js';
+import {
+  RENAME_RETRY_DELAYS_MS,
+  SettingsFileChangedError,
+  SwitchBlockedError,
+  SwitchFailedError,
+  applySwitch,
+  renameReplacing,
+  writeFileAtomicDefault,
+  type SwitchDeps,
+} from '../switcher.js';
 
 const SECRET = 'SECRET-VALUE-9f3a';
 const BEDROCK_MODEL = 'us.anthropic.claude-sonnet-4-5-v1:0';
@@ -45,7 +56,7 @@ describe('applySwitch', () => {
     managedDropInDirs: [abs('managed/managed-settings.d')],
     ...extra,
   });
-  const plan = (over: Partial<SwitchPlan> & { paths?: ConflictPaths } = {}): SwitchPlan => ({
+  const plan = (over: Partial<ResolveConflictInput> & { paths?: ConflictPaths } = {}): ResolveConflictInput => ({
     provider: BEDROCK,
     flow: 'claude-agent',
     platform: 'linux',
@@ -201,6 +212,22 @@ describe('applySwitch', () => {
     expect(readdirSync(takenToo)).toEqual([]);
   });
 
+  it('changes nothing and names the cause when every backup folder name is taken', async () => {
+    const user = put('user/settings.json', bedrockUser());
+    const original = read(user);
+    const taken = join(backupRoot, 'bedrock-switch-2026-11-17T10-20-30-456Z');
+    mkdirSync(taken, { recursive: true });
+    mkdirSync(`${taken}-same`);
+
+    const run = applySwitch(plan(), deps({ randomSuffix: () => 'same' }));
+
+    await expect(run).rejects.toBeInstanceOf(SwitchFailedError);
+    await expect(run).rejects.toThrow(/could not find a free backup folder name.*Nothing was changed/);
+    await expect(run).rejects.toMatchObject({ backupDir: null });
+    expect(read(user)).toBe(original);
+    expect(readdirSync(backupRoot).sort()).toEqual(['bedrock-switch-2026-11-17T10-20-30-456Z', 'bedrock-switch-2026-11-17T10-20-30-456Z-same']);
+  });
+
   it('removes flag-scoped keys only from layers that set the flag, but model ids from every editable layer', async () => {
     const user = put('user/settings.json', bedrockUser());
     const project = put('proj/.claude/settings.json', {
@@ -261,7 +288,7 @@ describe('applySwitch', () => {
   });
 
   describe('VS Code settings', () => {
-    const vscodePlan = (file: string): SwitchPlan => plan({ flow: 'connect-vscode', paths: { vscodeSettings: [file] } });
+    const vscodePlan = (file: string): ResolveConflictInput => plan({ flow: 'connect-vscode', paths: { vscodeSettings: [file] } });
     const entry = (name: string, value: string): string =>
       `    {\n      "name": "${name}",\n      "value": "${value}"\n    }`;
     const settings = (entries: string[]): string => `{
@@ -508,5 +535,158 @@ ${entries.join(',\n')}
       if (previous === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previous;
     }
+  });
+
+  describe('backup folder access on Windows', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('limits a new backup folder to the current account before anything is written into it', async () => {
+      put('user/settings.json', bedrockUser());
+      const seen: Array<{ dir: string; entries: string[] }> = [];
+      const restrictBackupAccess = async (dir: string): Promise<void> => {
+        seen.push({ dir, entries: readdirSync(dir) });
+      };
+      const result = await applySwitch(plan(), deps({ platform: 'win32', restrictBackupAccess }));
+      expect(seen).toEqual([{ dir: result.backupDir, entries: [] }]);
+      expect(readdirSync(result.backupDir as string)).toContain('manifest.json');
+    });
+
+    it('still switches, and says so, when the access cannot be limited', async () => {
+      const user = put('user/settings.json', bedrockUser());
+      const notice = vi.spyOn(logger, 'notice').mockImplementation(() => undefined);
+      const restrictBackupAccess = async (): Promise<void> => {
+        throw new Error('icacls exited with code 5');
+      };
+      const result = await applySwitch(plan(), deps({ platform: 'win32', restrictBackupAccess }));
+      expect(JSON.parse(read(user)).env).not.toHaveProperty('CLAUDE_CODE_USE_BEDROCK');
+      expect(notice).toHaveBeenCalledTimes(1);
+      const message = String(notice.mock.calls[0][0]);
+      expect(message).toContain(result.backupDir as string);
+      expect(message).toContain('icacls exited with code 5');
+      expect(message).not.toContain(SECRET);
+    });
+
+    it('leaves folder access alone on other platforms', async () => {
+      const restrictBackupAccess = vi.fn(async (): Promise<void> => undefined);
+      for (const platform of ['darwin', 'linux'] as const) {
+        put('user/settings.json', bedrockUser());
+        const result = await applySwitch(plan(), deps({ platform, restrictBackupAccess, randomSuffix: () => platform }));
+        expect(result.backupDir).toBeTruthy();
+      }
+      expect(restrictBackupAccess).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('renameReplacing', () => {
+  const locked = (code: string): NodeJS.ErrnoException => Object.assign(new Error(`${code}: resource busy or locked`), { code });
+
+  it('retries a file Windows reports as locked and succeeds once it is released', async () => {
+    let calls = 0;
+    const slept: number[] = [];
+    const checks: number[] = [];
+    await renameReplacing('a.tmp', 'a', async () => void checks.push(calls), {
+      platform: 'win32',
+      rename: async () => {
+        calls += 1;
+        if (calls < 3) throw locked(calls === 1 ? 'EBUSY' : 'EPERM');
+      },
+      sleep: async (ms) => void slept.push(ms),
+    });
+    expect(calls).toBe(3);
+    expect(slept).toEqual(RENAME_RETRY_DELAYS_MS.slice(0, 2));
+    // The change check runs before every attempt, so a file edited while waiting is never overwritten.
+    expect(checks).toEqual([0, 1, 2]);
+  });
+
+  it('gives up with the last error after the last pause', async () => {
+    let calls = 0;
+    const error = await renameReplacing('a.tmp', 'a', undefined, {
+      platform: 'win32',
+      rename: async () => {
+        calls += 1;
+        throw locked('EACCES');
+      },
+      sleep: async () => undefined,
+    }).catch((e: unknown) => e);
+    expect((error as NodeJS.ErrnoException).code).toBe('EACCES');
+    expect(calls).toBe(RENAME_RETRY_DELAYS_MS.length + 1);
+  });
+
+  it.each([
+    ['another platform', 'linux', 'EBUSY'],
+    ['an error that is not a lock', 'win32', 'ENOENT'],
+  ])('fails on the first attempt for %s', async (_label, platform, code) => {
+    let calls = 0;
+    const sleep = vi.fn(async () => undefined);
+    const error = await renameReplacing('a.tmp', 'a', undefined, {
+      platform: platform as NodeJS.Platform,
+      rename: async () => {
+        calls += 1;
+        throw locked(code);
+      },
+      sleep,
+    }).catch((e: unknown) => e);
+    expect((error as NodeJS.ErrnoException).code).toBe(code);
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('stops retrying when the file changed while waiting', async () => {
+    let calls = 0;
+    let checks = 0;
+    const error = await renameReplacing(
+      'a.tmp',
+      'a',
+      async () => {
+        checks += 1;
+        if (checks === 2) throw new SettingsFileChangedError('a');
+      },
+      {
+        platform: 'win32',
+        rename: async () => {
+          calls += 1;
+          throw locked('EBUSY');
+        },
+        sleep: async () => undefined,
+      }
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SettingsFileChangedError);
+    expect(calls).toBe(1);
+  });
+
+  describe('through writeFileAtomicDefault', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'rename-replacing-'));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('replaces the file after a locked first attempt and leaves no temp file behind', async () => {
+      const file = join(dir, 'settings.json');
+      writeFileSync(file, '{"a":1}');
+      const before = statSync(file);
+      let calls = 0;
+      await writeFileAtomicDefault(file, Buffer.from('{"a":2}'), {
+        mode: 0o600,
+        expected: { mtimeMs: before.mtimeMs, size: before.size },
+        renameRetry: {
+          platform: 'win32',
+          sleep: async () => undefined,
+          rename: async (from, to) => {
+            calls += 1;
+            if (calls === 1) throw locked('EBUSY');
+            await fsRename(from, to);
+          },
+        },
+      });
+      expect(readFileSync(file, 'utf-8')).toBe('{"a":2}');
+      expect(calls).toBe(2);
+      expect(readdirSync(dir)).toEqual(['settings.json']);
+    });
   });
 });

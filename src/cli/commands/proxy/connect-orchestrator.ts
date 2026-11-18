@@ -78,12 +78,8 @@ import {
   VSCODE_BYOK,
 } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
-import {
-  applyConsented,
-  detectAndAsk,
-  type ConsentToken,
-} from '@/agents/plugins/claude/cloud-provider-conflict/gate.js';
-import type { ConflictFlow, ConflictPaths } from '@/agents/plugins/claude/cloud-provider-conflict/resolver.js';
+import type { ProviderSettingsConnectTargets, ProviderSettingsProfile } from '@/agents/core/types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from '@/agents/core/provider-settings-check.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -326,76 +322,60 @@ export function printProxyError(error: unknown, label: string): never {
   process.exit(1);
 }
 
-// ── Bedrock settings conflict gate ───────────────────────────────────────────
+// ── Claude provider settings check ───────────────────────────────────────────
 
-/** VS Code settings files of the editions that exist; an edition without a user-data directory is left out. */
-function resolveVsCodeSettingsFiles(): string[] {
-  const files: string[] = [];
-  for (const insiders of [false, true]) {
-    try {
-      files.push(getVsCodeClaudeCodeSettingsPath(insiders));
-    } catch (error) {
-      if (!(error instanceof ConfigurationError)) throw error;
-    }
-  }
-  return files;
-}
+/** The agent whose own settings the Claude targets (Desktop, VS Code extension, Claude Code analytics) read. */
+const CLAUDE_AGENT = 'claude';
 
 /**
- * The Claude flows to check for the selected targets, each with the extra files only this orchestrator can
- * name. Project settings are never read here: a connect run configures the user's apps, not a project.
- * Claude Code analytics on its own is only warned about; any other target is not a Claude flow.
+ * The settings file of the one VS Code edition this run configures (stable, or Insiders with `--insiders`);
+ * empty when that edition has no user-data directory.
  */
-async function claudeConflictChecks(targets: ConnectTargets): Promise<Array<{ flow: ConflictFlow; paths?: ConflictPaths }>> {
-  const checks: Array<{ flow: ConflictFlow; paths?: ConflictPaths }> = [];
-  if (targets.claudeDesktop) {
-    checks.push({
-      flow: 'connect-desktop',
-      paths: {
-        desktopApplied: await getDesktopConfigPath(),
-        desktopManaged: getClaudeDesktopManagedSettingsPath(),
-      },
-    });
+function resolveVsCodeSettingsFiles(insiders: boolean): string[] {
+  try {
+    return [getVsCodeClaudeCodeSettingsPath(insiders)];
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) throw error;
+    return [];
   }
-  if (targets.vscodeClaudeCode) {
-    checks.push({ flow: 'connect-vscode', paths: { vscodeSettings: resolveVsCodeSettingsFiles() } });
-  }
-  if (checks.length === 0 && targets.claudeCodeOtlp) {
-    checks.push({ flow: 'connect-otlp-only' });
-  }
-  return checks;
 }
 
-/**
- * Asks about Bedrock settings that would send Claude traffic around the gateway. Every stop (cancel, managed,
- * unknown, no terminal) aborts the command through the caller's error path; nothing is changed until the
- * returned tokens are applied.
- */
-async function checkBedrockConflicts(
+/** The client files this run is about to configure, or null when no Claude target is selected. */
+async function claudeConnectTargets(
   targets: ConnectTargets,
-  profile: { provider?: string },
-  silent: boolean
-): Promise<ConsentToken[]> {
-  const tokens: ConsentToken[] = [];
-  for (const check of await claudeConflictChecks(targets)) {
-    const outcome = await detectAndAsk({
-      flow: check.flow,
-      canPrompt: canPromptForProject() && !silent,
-      profile,
-      paths: check.paths,
-    });
-    if (outcome.kind === 'stop') {
-      throw new ConfigurationError(outcome.guidance);
-    }
-    tokens.push(outcome.token);
-  }
-  return tokens;
+  insiders: boolean
+): Promise<ProviderSettingsConnectTargets | null> {
+  if (!targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.claudeCodeOtlp) return null;
+  return {
+    ...(targets.claudeDesktop
+      ? { desktop: { configFile: await getDesktopConfigPath(), managedFile: getClaudeDesktopManagedSettingsPath() } }
+      : {}),
+    ...(targets.vscodeClaudeCode ? { vscodeSettingsFiles: resolveVsCodeSettingsFiles(insiders) } : {}),
+    claudeCodeOtlp: targets.claudeCodeOtlp,
+  };
 }
 
-function printBackupNote(backupDirs: readonly string[]): void {
-  for (const dir of backupDirs) {
-    console.error(chalk.yellow(`Backup of your Claude settings: ${dir}`));
-  }
+/**
+ * Asks the Claude adapter, through the registry, about settings that would send Claude traffic around the
+ * gateway. Every stop (cancel, managed, unknown, no terminal) aborts the command through the caller's error
+ * path; nothing is changed until the returned switch is applied.
+ */
+async function checkClaudeProviderSettings(
+  targets: ConnectTargets,
+  profile: ProviderSettingsProfile,
+  options: { silent: boolean; insiders: boolean }
+): Promise<ProviderSettingsSwitch | null> {
+  const { silent, insiders } = options;
+  const connect = await claudeConnectTargets(targets, insiders);
+  if (!connect) return null;
+  const { AgentRegistry } = await import('@/agents/registry.js');
+  const claude = AgentRegistry.getAgent(CLAUDE_AGENT);
+  if (!claude) return null;
+  return runProviderSettingsCheck(
+    claude,
+    { flow: 'connect', canPrompt: canPromptForProject() && !silent, profile, connect },
+    'throw'
+  );
 }
 
 // ── Unified connect orchestrator ─────────────────────────────────────────────
@@ -997,7 +977,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
   let projectBinding: ProjectBindingState | undefined;
-  const backupDirs: string[] = [];
+  let settingsSwitch: ProviderSettingsSwitch | null = null;
   try {
     // Without a TTY the confirmation cannot be shown; --silent is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
@@ -1053,7 +1033,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
     // Before anything is started or written: Bedrock settings in Claude's own configuration would send
     // Claude traffic around the gateway this command is about to connect.
-    const consents = await checkBedrockConflicts(targets, config, Boolean(opts.silent));
+    settingsSwitch = await checkClaudeProviderSettings(targets, config, { silent: Boolean(opts.silent), insiders });
 
     if (targets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
@@ -1071,10 +1051,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       }
     }
 
-    for (const consent of consents) {
-      const switched = await applyConsented(consent);
-      if (switched.backupDir) backupDirs.push(switched.backupDir);
-    }
+    await settingsSwitch?.apply();
 
     const cwd = process.cwd();
     await Promise.allSettled([
@@ -1097,7 +1074,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     if (startedInThisRun) {
       await rollbackDaemon();
     }
-    printBackupNote(backupDirs);
+    settingsSwitch?.printBackupNote();
     printProxyError(error, 'Failed to connect proxy');
     // printProxyError calls process.exit and never returns; this explicit return
     // guarantees control can never fall through to the dispatch below with
@@ -1163,7 +1140,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // already printed their own line.
   printFailures(results);
   if (anyFailed) {
-    printBackupNote(backupDirs);
+    settingsSwitch?.printBackupNote();
     process.exitCode = 1;
   }
   const olderCli = await findOlderCliOnPath();

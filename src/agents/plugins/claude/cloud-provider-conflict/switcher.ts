@@ -15,17 +15,15 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeDisplayText } from '@/utils/project-binding.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { restrictToCurrentWindowsUser } from './backup-access.js';
 import type { CloudProviderDescriptor } from './provider.js';
+import { EDITABLE_CLAUDE_SETTINGS_SCOPES, isPlainObject, printLine, VSCODE_ENV_KEY } from './shared.js';
 import {
   resolveProviderConflict,
   type ConflictLayer,
-  type ConflictScope,
   type ConflictVerdict,
   type ResolveConflictInput,
 } from './resolver.js';
-
-/** Same inputs the gate resolved with. */
-export type SwitchPlan = ResolveConflictInput;
 
 export type SwitchFileKind = 'claude-json' | 'vscode-jsonc' | 'desktop-applied';
 
@@ -56,6 +54,18 @@ export interface AtomicWriteOptions {
   expected?: FileStamp;
   /** Test seam: runs after the temp file is written and before the stat check and rename. */
   beforeRename?: (file: string) => void | Promise<void>;
+  /** How the final rename retries a locked file (test seam; production uses the defaults of `renameReplacing`). */
+  renameRetry?: RenameRetryOptions;
+}
+
+/** How `renameReplacing` retries; every field is a test seam with a production default. */
+export interface RenameRetryOptions {
+  /** Retries happen on Windows only; defaults to the running platform. */
+  platform?: NodeJS.Platform;
+  rename?: (from: string, to: string) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+  /** Pause before each retry; their count is the number of retries. */
+  delaysMs?: readonly number[];
 }
 
 export type AtomicWriter = (file: string, content: Buffer, options: AtomicWriteOptions) => Promise<void>;
@@ -70,6 +80,10 @@ export interface SwitchDeps {
   afterBackupWrite?: (name: string) => void | Promise<void>;
   beforeRename?: (file: string) => void | Promise<void>;
   writeFileAtomic?: AtomicWriter;
+  /** Platform the backup folder is protected for; defaults to the running platform. */
+  platform?: NodeJS.Platform;
+  /** Limits a new backup folder to the current account on Windows; defaults to `restrictToCurrentWindowsUser`. */
+  restrictBackupAccess?: (dir: string) => Promise<void>;
 }
 
 /** The re-resolve found a state the switch must not act on (managed policy, or cannot be told). */
@@ -98,6 +112,14 @@ export class SwitchFailedError extends ConfigurationError {
   }
 }
 
+/** The backup folder or one of its copies could not be made; the switch reports it as a failed backup. */
+export class BackupWriteError extends ConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BackupWriteError';
+  }
+}
+
 /** A settings file was modified by someone else after it was read. */
 export class SettingsFileChangedError extends ConfigurationError {
   constructor(readonly file: string) {
@@ -108,9 +130,11 @@ export class SettingsFileChangedError extends ConfigurationError {
 
 const MANIFEST_NAME = 'manifest.json';
 const MANIFEST_VERSION = 1;
-const VSCODE_ENV_KEY = 'claudeCode.environmentVariables';
-const CLAUDE_SCOPES: readonly ConflictScope[] = ['user', 'project', 'project-local'];
 const MAX_FOLDER_ATTEMPTS = 10;
+/** Windows reports a file held open by antivirus, an indexer or an editor as one of these; it usually clears quickly. */
+const LOCKED_FILE_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES']);
+/** About 1.5 s in all before a locked file is reported. */
+export const RENAME_RETRY_DELAYS_MS: readonly number[] = [50, 100, 200, 400, 800];
 
 interface Target {
   /** Path as the resolver reported it. */
@@ -124,10 +148,6 @@ interface Target {
   mode: number;
   /** Rewritten content, or null when the file is only backed up. */
   next: Buffer | null;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function errorText(err: unknown): string {
@@ -218,24 +238,58 @@ function stripVscode(raw: string, file: string, provider: CloudProviderDescripto
   return editor.apply();
 }
 
+const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Renames `from` over `to`. On Windows a replace fails with EPERM/EBUSY/EACCES while another process holds
+ * `to` open; that is retried with short pauses, and `beforeAttempt` runs before every attempt so a file that
+ * changed in the meantime is never overwritten. Other platforms and other errors fail on the first attempt.
+ *
+ * @throws The last rename error, or whatever `beforeAttempt` throws
+ */
+export async function renameReplacing(
+  from: string,
+  to: string,
+  beforeAttempt?: () => Promise<void>,
+  options: RenameRetryOptions = {}
+): Promise<void> {
+  const delays = (options.platform ?? process.platform) === 'win32' ? (options.delaysMs ?? RENAME_RETRY_DELAYS_MS) : [];
+  const doRename = options.rename ?? rename;
+  const sleep = options.sleep ?? sleepMs;
+  for (let attempt = 0; ; attempt++) {
+    await beforeAttempt?.();
+    try {
+      await doRename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= delays.length || !code || !LOCKED_FILE_CODES.has(code)) throw err;
+      logger.debug(`[cloud-provider-conflict] ${code} replacing ${to}; retrying in ${delays[attempt]}ms`);
+      await sleep(delays[attempt]);
+    }
+  }
+}
+
 /**
  * Atomic replace: resolve the real path, write the temp file beside it (so a symlink to the settings file
- * survives and the rename stays on one filesystem), then rename. Cleans the temp file on every failure.
+ * survives and the rename stays on one filesystem), then rename, retrying a file Windows reports as locked.
+ * Cleans the temp file on every failure.
  */
 export const writeFileAtomicDefault: AtomicWriter = async (file, content, options) => {
   const real = await realpath(file);
   const tmp = join(dirname(real), `.${basename(real)}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`);
+  const unchanged = async (): Promise<void> => {
+    if (!options.expected) return;
+    const now = await stat(real);
+    if (now.mtimeMs !== options.expected.mtimeMs || now.size !== options.expected.size) {
+      throw new SettingsFileChangedError(file);
+    }
+  };
   try {
     await writeFile(tmp, content, { mode: options.mode, flag: 'wx' });
     await chmod(tmp, options.mode);
     await options.beforeRename?.(real);
-    if (options.expected) {
-      const now = await stat(real);
-      if (now.mtimeMs !== options.expected.mtimeMs || now.size !== options.expected.size) {
-        throw new SettingsFileChangedError(file);
-      }
-    }
-    await rename(tmp, real);
+    await renameReplacing(tmp, real, unchanged, options.renameRetry);
   } finally {
     await rm(tmp, { force: true }).catch(() => undefined);
   }
@@ -256,7 +310,7 @@ async function readTarget(layer: ConflictLayer, kind: SwitchFileKind): Promise<O
 
 function kindOf(layer: ConflictLayer): SwitchFileKind | undefined {
   if (layer.scope === 'vscode') return layer.editable && layer.state === 'ok' ? 'vscode-jsonc' : undefined;
-  if (CLAUDE_SCOPES.includes(layer.scope)) return layer.editable && layer.state === 'ok' ? 'claude-json' : undefined;
+  if (EDITABLE_CLAUDE_SETTINGS_SCOPES.includes(layer.scope)) return layer.editable && layer.state === 'ok' ? 'claude-json' : undefined;
   // Desktop applied config is only backed up here; the connect writer removes the provider keys.
   if (layer.scope === 'desktop-applied') return layer.state === 'ok' && layer.setsFlag ? 'desktop-applied' : undefined;
   return undefined;
@@ -302,20 +356,37 @@ function folderName(now: Date, suffix?: string): string {
   return `bedrock-switch-${stamp}${suffix ? `-${suffix}` : ''}`;
 }
 
+/**
+ * On Windows the folder's modes mean nothing, so its access is limited to the current account before any file
+ * is written into it. If that fails the switch still goes ahead (the folder keeps its parent's access rules,
+ * private under the user profile by default) and the user is told.
+ */
+async function protectBackupDir(dir: string, deps: SwitchDeps): Promise<void> {
+  if ((deps.platform ?? process.platform) !== 'win32') return;
+  try {
+    await (deps.restrictBackupAccess ?? restrictToCurrentWindowsUser)(dir);
+  } catch (err) {
+    logger.notice(
+      `Could not limit access to the backup folder ${sanitizeDisplayText(dir)} to your Windows account (${sanitizeDisplayText(errorText(err))}); it keeps the access rules of ${sanitizeDisplayText(dirname(dir))}.`
+    );
+  }
+}
+
 /** Non-recursive mkdir of a fresh folder; on EEXIST retry with a random suffix, never reuse. */
-async function createBackupDir(root: string, now: Date, randomSuffix: () => string): Promise<string> {
+async function createBackupDir(root: string, now: Date, randomSuffix: () => string, deps: SwitchDeps): Promise<string> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   for (let attempt = 0; attempt < MAX_FOLDER_ATTEMPTS; attempt++) {
     const dir = join(root, folderName(now, attempt === 0 ? undefined : randomSuffix()));
     try {
       await mkdir(dir, { mode: 0o700 });
       await chmod(dir, 0o700);
+      await protectBackupDir(dir, deps);
       return dir;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
   }
-  throw new Error('could not find a free backup folder name');
+  throw new BackupWriteError('could not find a free backup folder name');
 }
 
 /** Manifest first (paths and kinds only), then each copy at 0600, verified byte for byte before anything is stripped. */
@@ -336,7 +407,7 @@ async function writeBackup(dir: string, targets: Target[], provider: CloudProvid
   for (const [index, target] of targets.entries()) await writePrivate(entries[index].backup, target.bytes);
   for (const [index, target] of targets.entries()) {
     const copy = await readFile(join(dir, entries[index].backup));
-    if (!copy.equals(target.bytes)) throw new Error(`backup copy of ${sanitizeDisplayText(target.path)} does not match the original`);
+    if (!copy.equals(target.bytes)) throw new BackupWriteError(`backup copy of ${sanitizeDisplayText(target.path)} does not match the original`);
   }
 }
 
@@ -362,10 +433,6 @@ function report(print: (line: string) => void, backupDir: string, result: Switch
   print('A managed policy, if one is set, still takes precedence over these settings.');
 }
 
-const defaultPrint = (line: string): void => {
-  console.log(line);
-};
-
 /** Folder plus manifest and verified copies; a failure removes the folder again and reports that nothing changed. */
 async function backupTargets(targets: Target[], provider: CloudProviderDescriptor, deps: SwitchDeps): Promise<string> {
   const now = (deps.now ?? (() => new Date()))();
@@ -374,7 +441,7 @@ async function backupTargets(targets: Target[], provider: CloudProviderDescripto
 
   let backupDir: string | undefined;
   try {
-    backupDir = await createBackupDir(backupRoot, now, randomSuffix);
+    backupDir = await createBackupDir(backupRoot, now, randomSuffix, deps);
     await writeBackup(backupDir, targets, provider, deps, now);
     return backupDir;
   } catch (err) {
@@ -409,13 +476,27 @@ async function writeTargets(targets: Target[], backupDir: string, deps: SwitchDe
   return written;
 }
 
-export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Promise<SwitchResult> {
+/** The result of a switch that had nothing to do: no backup, no file changed. */
+export function emptySwitchResult(): SwitchResult {
+  return { backupDir: null, files: [], changed: [] };
+}
+
+/**
+ * Performs the switch the user agreed to. Re-resolves first with the same input the gate asked about, so a
+ * state that changed meanwhile is acted on as it is now; then backs up, strips and writes each editable file.
+ *
+ * @param plan - The resolve input the gate asked the user about
+ * @param deps - Test seams; production passes none
+ * @returns The backup folder and the files backed up and changed; an empty result when nothing needed switching
+ * @throws {SwitchBlockedError} When the re-resolve finds managed policy or a state that cannot be told
+ * @throws {SwitchFailedError} When reading, backing up or writing fails; `backupDir` names the folder to recover from
+ */
+export async function applySwitch(plan: ResolveConflictInput, deps: SwitchDeps = {}): Promise<SwitchResult> {
   const provider = plan.provider;
-  const empty: SwitchResult = { backupDir: null, files: [], changed: [] };
 
   // Re-resolve: the state may have changed since the user was asked.
   const resolution = await resolveProviderConflict(plan);
-  if (resolution.verdict === 'none') return empty;
+  if (resolution.verdict === 'none') return emptySwitchResult();
   if (resolution.verdict !== 'conflict-editable') throw new SwitchBlockedError(resolution.verdict, resolution.unknownReason);
 
   let targets: Target[];
@@ -425,7 +506,7 @@ export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Prom
     if (err instanceof SwitchFailedError) throw err;
     throw new SwitchFailedError(`Could not read the settings files (${errorText(err)}). Nothing was changed.`, null);
   }
-  if (targets.length === 0) return empty;
+  if (targets.length === 0) return emptySwitchResult();
 
   const backupDir = await backupTargets(targets, provider, deps);
   const written = await writeTargets(targets, backupDir, deps);
@@ -433,6 +514,6 @@ export async function applySwitch(plan: SwitchPlan, deps: SwitchDeps = {}): Prom
   const files = targets.map((t) => ({ path: t.path, kind: t.kind }));
   const changed = written.map((t) => t.path);
   logger.debug(`[cloud-provider-conflict] switched ${provider.name}: ${changed.length} changed, ${files.length} backed up`);
-  report(deps.print ?? defaultPrint, backupDir, files, changed);
+  report(deps.print ?? printLine, backupDir, files, changed);
   return { backupDir, files, changed };
 }

@@ -10,6 +10,7 @@ import { sanitizeDisplayText } from '@/utils/project-binding.js';
 import { logger } from '@/utils/logger.js';
 import type { CloudProviderDescriptor } from './provider.js';
 import type { ConflictFlow, ConflictLayer, ConflictResolution, ConflictScope } from './resolver.js';
+import { isManagedScope, printLine } from './shared.js';
 
 export type PromptChoice = 'switch' | 'cancel';
 
@@ -56,10 +57,6 @@ const SCOPE_LABELS: Record<ConflictScope, string> = {
 const defaultPrompt: SwitchPrompt = async (questions) =>
   (await inquirer.prompt(questions as unknown as Parameters<typeof inquirer.prompt>[0])) as { choice: PromptChoice };
 
-const defaultPrint = (line: string): void => {
-  console.log(line);
-};
-
 function safe(value: string): string {
   return sanitizeDisplayText(value);
 }
@@ -76,10 +73,6 @@ function foundLayers(resolution: ConflictResolution): ConflictLayer[] {
 function describeLayer(layer: ConflictLayer): string {
   const keys = layer.keyNames.length > 0 ? `: ${names(layer.keyNames)}` : '';
   return `  - ${safe(layer.path)} (${SCOPE_LABELS[layer.scope]})${keys}`;
-}
-
-function isManagedScope(layer: ConflictLayer): boolean {
-  return layer.scope === 'managed' || layer.scope === 'desktop-managed';
 }
 
 function isConnectFlow(flow: ConflictFlow): boolean {
@@ -123,7 +116,7 @@ function promptLines(findings: ConflictFindings): string[] {
  */
 export async function askSwitchOrCancel(findings: ConflictFindings, deps: SwitchPromptDeps = {}): Promise<PromptChoice> {
   const prompt = deps.prompt ?? defaultPrompt;
-  const print = deps.print ?? defaultPrint;
+  const print = deps.print ?? printLine;
 
   for (const line of promptLines(findings)) print(line);
 
@@ -168,6 +161,7 @@ function connectSentence(flow: ConflictFlow): string[] {
     ? [
         'Connect flows check only the user, managed, Desktop and VS Code layers; a Bedrock project elsewhere is not seen by them.',
         'Claude Desktop managed policy on macOS and Windows is not detected.',
+        'Claude Code policy in the Windows registry is not detected.',
         'A --settings file passed to Claude is not read.',
       ]
     : [];

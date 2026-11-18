@@ -1,23 +1,14 @@
 /**
- * Claude launcher gate: an inherited Bedrock flag is dropped from the codemie-claude process itself, and
- * the settings conflict gate runs before auth (switch applied just before the provider env export).
+ * Provider-settings check on launch: AgentCLI asks the adapter's optional `checkProviderSettings` hook
+ * before auth and applies the agreed switch just before the provider env export. Core knows nothing about
+ * which agent implements the hook or what it checks.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentCLI } from '../AgentCLI.js';
-import type { AgentAdapter } from '../types.js';
+import type { AgentAdapter, ProviderSettingsCheckInput, ProviderSettingsCheckOutcome } from '../types.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
-
-const gate = vi.hoisted(() => ({
-  detectAndAsk: vi.fn(),
-  applyConsented: vi.fn(),
-}));
-
-vi.mock('../../plugins/claude/cloud-provider-conflict/gate.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../plugins/claude/cloud-provider-conflict/gate.js')>();
-  return { ...actual, detectAndAsk: gate.detectAndAsk, applyConsented: gate.applyConsented };
-});
 
 class ExitError extends Error {
   constructor(public code?: string | number | null) {
@@ -25,20 +16,17 @@ class ExitError extends Error {
   }
 }
 
-const FLAG = 'CLAUDE_CODE_USE_BEDROCK';
-const TOKEN = { plan: null, deps: {} };
-
 type HandleRun = (args: string[], options: Record<string, unknown>) => Promise<void>;
 
-function adapter(name: string, run: AgentAdapter['run']): AgentAdapter {
+function adapter(name: string, run: AgentAdapter['run'], check?: AgentAdapter['checkProviderSettings']): AgentAdapter {
   return {
     name,
     displayName: name,
-    description: 'bedrock gate test adapter',
+    description: 'provider settings check test adapter',
     metadata: {
       name,
       displayName: name,
-      description: 'bedrock gate test adapter',
+      description: 'provider settings check test adapter',
       npmPackage: null,
       cliCommand: name,
       envMapping: {},
@@ -50,13 +38,17 @@ function adapter(name: string, run: AgentAdapter['run']): AgentAdapter {
     run,
     getVersion: async () => null,
     getMetricsConfig: () => undefined,
+    warnOnceIfUntested: async () => {},
+    ...(check ? { checkProviderSettings: check } : {}),
   };
 }
 
-describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
+describe('AgentCLI.handleRun - provider settings check', () => {
   let calls: string[];
   let validateAuth: ReturnType<typeof vi.fn>;
   let provider: string;
+  let check: ReturnType<typeof vi.fn<(input: ProviderSettingsCheckInput) => Promise<ProviderSettingsCheckOutcome>>>;
+  let apply: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     calls = [];
@@ -65,15 +57,14 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
       calls.push('auth');
       return { valid: true };
     });
-    gate.detectAndAsk.mockReset().mockImplementation(async () => {
-      calls.push('gate');
-      return { kind: 'proceed', token: TOKEN };
-    });
-    gate.applyConsented.mockReset().mockImplementation(async () => {
+    apply = vi.fn(async () => {
       calls.push('apply');
-      return { backupDir: null, files: [], changed: [] };
+      return { backupDir: null };
     });
-
+    check = vi.fn(async () => {
+      calls.push('check');
+      return { kind: 'proceed' as const, apply };
+    });
     vi.spyOn(ConfigLoader, 'load').mockImplementation(
       async () =>
         ({
@@ -94,17 +85,15 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
     });
     vi.spyOn(ProviderRegistry, 'getProvider').mockReturnValue({ requiresAuth: true } as never);
     vi.spyOn(ProviderRegistry, 'getSetupSteps').mockReturnValue({ validateAuth } as never);
-    vi.stubEnv(FLAG, '1');
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    delete process.env[FLAG];
   });
 
-  function build(name: string, run: AgentAdapter['run']): HandleRun {
-    const cli = new AgentCLI(adapter(name, run)) as unknown as {
+  function build(run: AgentAdapter['run'], withCheck = true): HandleRun {
+    const cli = new AgentCLI(adapter('test-agent', run, withCheck ? check : undefined)) as unknown as {
       handleRun: HandleRun;
       validateCompatibility: (config: unknown) => boolean;
     };
@@ -123,69 +112,42 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
   }
 
-  it('removes the inherited flag from process.env and the env handed to the adapter for a non-Bedrock profile', async () => {
-    const run = vi.fn().mockResolvedValue(undefined);
+  it('runs the check before auth and applies the switch after compatibility, before the env export', async () => {
+    await build(vi.fn().mockResolvedValue(undefined))([], {});
 
-    await build('claude', run)([], {});
-
-    expect(FLAG in process.env).toBe(false);
-    expect(process.env[FLAG]).not.toBe('undefined');
-    const env = run.mock.calls[0][1] as Record<string, unknown>;
-    expect(Object.keys(env)).not.toContain(FLAG);
-    expect(Object.values(env)).not.toContain('undefined');
-  });
-
-  it('leaves the flag alone and does not call the gate for a bedrock profile', async () => {
-    provider = 'bedrock';
-    const run = vi.fn().mockResolvedValue(undefined);
-
-    await build('claude', run)([], {});
-
-    expect(process.env[FLAG]).toBe('1');
-    expect(gate.detectAndAsk).not.toHaveBeenCalled();
-    expect(gate.applyConsented).not.toHaveBeenCalled();
-  });
-
-  it('leaves the flag alone and does not call the gate for a non-Claude agent', async () => {
-    const run = vi.fn().mockResolvedValue(undefined);
-
-    await build('codex', run)([], {});
-
-    expect(process.env[FLAG]).toBe('1');
-    expect(gate.detectAndAsk).not.toHaveBeenCalled();
-    expect(gate.applyConsented).not.toHaveBeenCalled();
-  });
-
-  it('runs the gate before auth and applies the consent after compatibility, before the env export', async () => {
-    await build('claude', vi.fn().mockResolvedValue(undefined))([], {});
-
-    expect(calls).toEqual(['gate', 'auth', 'compat', 'apply', 'export']);
-    expect(gate.detectAndAsk).toHaveBeenCalledWith(
-      expect.objectContaining({ flow: 'claude-agent', profile: expect.objectContaining({ provider: 'litellm' }) })
+    expect(calls).toEqual(['check', 'auth', 'compat', 'apply', 'export']);
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({ flow: 'launch', profile: expect.objectContaining({ provider: 'litellm' }) })
     );
-    expect(gate.applyConsented).toHaveBeenCalledWith(TOKEN);
+    expect(apply).toHaveBeenCalledTimes(1);
   });
 
-  it('prints the guidance, exits 1 from AgentCLI and never reaches auth on a stop outcome', async () => {
-    mockExit();
-    gate.detectAndAsk.mockResolvedValue({ kind: 'stop', reason: 'managed', guidance: 'GUIDANCE-TEXT' });
+  it('runs no check for an adapter without the hook', async () => {
     const run = vi.fn().mockResolvedValue(undefined);
 
-    await expect(build('claude', run)([], {})).rejects.toMatchObject({ code: 1 });
+    await build(run, false)([], {});
 
-    const printed = [...vi.mocked(console.error).mock.calls, ...vi.mocked(console.log).mock.calls].flat().join('\n');
-    expect(printed).toContain('GUIDANCE-TEXT');
+    expect(calls).toEqual(['auth', 'compat', 'export']);
+    expect(run).toHaveBeenCalled();
+  });
+
+  it('prints the guidance, exits 1 and never reaches auth on a stop outcome', async () => {
+    mockExit();
+    check.mockResolvedValue({ kind: 'stop', guidance: 'GUIDANCE-TEXT' });
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await expect(build(run)([], {})).rejects.toMatchObject({ code: 1 });
+
+    expect(vi.mocked(console.error).mock.calls.flat().join('\n')).toContain('GUIDANCE-TEXT');
+    expect(vi.mocked(console.log).mock.calls.flat().join('\n')).not.toContain('GUIDANCE-TEXT');
     expect(validateAuth).not.toHaveBeenCalled();
-    expect(gate.applyConsented).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('passes canPrompt=false for the ACP agent and for a --task run', async () => {
-    await build('claude-acp', vi.fn().mockResolvedValue(undefined))([], {});
-    expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
-
-    await build('claude', vi.fn().mockResolvedValue(undefined))([], { task: 'x' });
-    expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
+  it('passes canPrompt=false for a --task run', async () => {
+    await build(vi.fn().mockResolvedValue(undefined))([], { task: 'x' });
+    expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
   });
 
   it('passes canPrompt=false for --silent at a terminal, and true for a plain interactive run', async () => {
@@ -195,11 +157,11 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     vi.stubEnv('CODEMIE_NO_PROMPTS', '');
     try {
-      await build('claude', vi.fn().mockResolvedValue(undefined))([], {});
-      expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: true }));
+      await build(vi.fn().mockResolvedValue(undefined))([], {});
+      expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: true }));
 
-      await build('claude', vi.fn().mockResolvedValue(undefined))([], { silent: true });
-      expect(gate.detectAndAsk).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
+      await build(vi.fn().mockResolvedValue(undefined))([], { silent: true });
+      expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ canPrompt: false }));
     } finally {
       if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
       else delete (process.stdin as { isTTY?: boolean }).isTTY;
@@ -210,12 +172,11 @@ describe('AgentCLI.handleRun - Bedrock settings conflict gate', () => {
 
   it('prints the backup folder when a launch step fails after the switch was applied', async () => {
     mockExit();
-    gate.applyConsented.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: [] });
+    apply.mockResolvedValue({ backupDir: '/tmp/backup-dir' });
     const run = vi.fn().mockRejectedValue(new Error('boom'));
 
-    await expect(build('claude', run)([], {})).rejects.toMatchObject({ code: 1 });
+    await expect(build(run)([], {})).rejects.toMatchObject({ code: 1 });
 
-    const printed = vi.mocked(console.error).mock.calls.flat().join('\n');
-    expect(printed).toContain('Backup of your Claude settings: /tmp/backup-dir');
+    expect(vi.mocked(console.error).mock.calls.flat().join('\n')).toContain('Backup of your test-agent settings: /tmp/backup-dir');
   });
 });

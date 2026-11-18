@@ -6,15 +6,15 @@
  * and the keys that carry model ids. Only Bedrock is filled in; Vertex and Foundry are deferred and
  * will be added as further instances of the same shape.
  */
-import { CLOUD_FLAGS } from '@/agents/core/evidence/routing.js';
+import type { CloudFlag } from '@/agents/core/evidence/routing.js';
 
 export interface CloudProviderDescriptor {
   /** Stable machine name. */
   name: string;
   /** Name shown to the user. */
   displayName: string;
-  /** Environment flag that selects the provider; a member of the routing `CLOUD_FLAGS`. */
-  flag: string;
+  /** Environment flag that selects the provider; one of the routing `CLOUD_FLAGS`, checked at compile time. */
+  flag: CloudFlag;
   /** Keys removed from each layer that sets the flag. */
   flagScopedKeys: { env: string[]; topLevel: string[] };
   /** Keys that can carry a model id; only values that `isModelId` accepts are provider-specific. */
@@ -31,10 +31,7 @@ export interface CloudProviderDescriptor {
  */
 const BEDROCK_MODEL_ID = /^(?:(?:[a-z]{2,3}(?:-gov)?|apac|global)\.anthropic\.|anthropic\.claude-|arn:aws[a-z-]*:bedrock:)/i;
 
-const BEDROCK_FLAG = 'CLAUDE_CODE_USE_BEDROCK';
-if (!CLOUD_FLAGS.includes(BEDROCK_FLAG)) {
-  throw new Error(`${BEDROCK_FLAG} is not a known cloud-provider flag`);
-}
+const BEDROCK_FLAG: CloudFlag = 'CLAUDE_CODE_USE_BEDROCK';
 
 export const BEDROCK: CloudProviderDescriptor = {
   name: 'bedrock',
@@ -68,5 +65,6 @@ export const BEDROCK: CloudProviderDescriptor = {
     list: ['availableModels'],
   },
   isModelId: (value: unknown): boolean => typeof value === 'string' && BEDROCK_MODEL_ID.test(value.trim()),
+  // Kept in step with DESKTOP_BEDROCK_KEY_PREFIX in src/cli/commands/proxy/connectors/desktop.ts, which cannot import it.
   desktopKeyPrefix: 'inferenceBedrock',
 };

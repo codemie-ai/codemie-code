@@ -4,8 +4,8 @@ import { getAgentInstallCommand, getAgentLauncherCommand, getUserFacingAgentName
 import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
-import type { AgentInstallationOptions } from '@/agents/core/types.js';
-import type { ConsentToken } from '@/agents/plugins/claude/cloud-provider-conflict/gate.js';
+import type { AgentInstallationOptions, ProviderSettingsProfile } from '@/agents/core/types.js';
+import { runProviderSettingsCheck } from '@/agents/core/provider-settings-check.js';
 import { ConfigLoader } from '@/utils/config.js';
 import {
   STATUSLINE_NAME,
@@ -17,14 +17,14 @@ import {
 import ora from 'ora';
 import chalk from 'chalk';
 
-/** The active profile, or undefined when there is none or it cannot be read (the gate skips an install without one). */
-async function loadActiveProfile(): Promise<{ provider?: string } | undefined> {
+/** The active profile, or undefined when there is none or it cannot be read (the check skips an install without one). */
+async function loadActiveProfile(): Promise<ProviderSettingsProfile | undefined> {
   try {
     const name = await ConfigLoader.getActiveProfileName();
     if (!name) return undefined;
     return (await ConfigLoader.getProfile(name)) ?? undefined;
   } catch (error: unknown) {
-    logger.debug(`Could not load the active profile for the Bedrock settings check: ${getErrorMessage(error)}`);
+    logger.debug(`Could not load the active profile for the provider settings check: ${getErrorMessage(error)}`);
     return undefined;
   }
 }
@@ -116,47 +116,23 @@ export function createInstallCommand(): Command {
         const agent = AgentRegistry.getAgent(canonicalName);
 
         if (agent) {
-          // Claude only: Bedrock selected by Claude settings would bypass the gateway. Detect (and ask)
-          // before any other prompt; the agreed switch is applied only once the run really installs.
-          let consent: ConsentToken | null = null;
-          if (agent.name === 'claude') {
-            const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
-            const { canPromptForProject } = await import('@/utils/interactive.js');
-            const outcome = await detectAndAsk({
-              flow: 'install',
-              canPrompt: canPromptForProject({}),
-              profile: await loadActiveProfile(),
-            });
-            if (outcome.kind === 'stop') {
-              // stderr, like the other failure output of this command
-              console.error(outcome.guidance);
-              process.exit(1);
-            }
-            consent = outcome.token;
-          }
-
-          // Set once a switch backed the settings up; a later failure in this run points at the folder again.
-          let settingsBackupDir: string | null = null;
-          const applyBedrockConsent = async (): Promise<void> => {
-            if (!consent) return;
-            const token = consent;
-            consent = null;
-            const { applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
-            const result = await applyConsented(token);
-            if (result.backupDir !== null) {
-              settingsBackupDir = result.backupDir;
-              console.log(chalk.yellow('Nothing routes to the CodeMie gateway until the next codemie-claude run.'));
-            }
-          };
-          const printBackupDir = (): void => {
-            if (settingsBackupDir) console.error(chalk.white(`Backup of your Claude settings: ${settingsBackupDir}`));
-          };
+          // Agents whose own settings can select a cloud provider (Claude: Bedrock) check them before any other
+          // prompt; the agreed switch is applied only once the run really installs.
+          // A later failure in this run points at the switch's backup folder again.
+          const { canPromptForProject } = await import('@/utils/interactive.js');
+          const settingsSwitch = agent.checkProviderSettings
+            ? await runProviderSettingsCheck(
+                agent,
+                { flow: 'install', canPrompt: canPromptForProject({}), profile: await loadActiveProfile() },
+                'exit'
+              )
+            : null;
           const runAdditionalInstallation = async (): Promise<void> => {
-            await applyBedrockConsent();
+            await settingsSwitch?.apply();
             try {
               await agent.additionalInstallation?.(options);
             } catch (error: unknown) {
-              printBackupDir();
+              settingsSwitch?.printBackupNote();
               throw error;
             }
           };
@@ -238,7 +214,7 @@ export function createInstallCommand(): Command {
             ? ` v${actualVersionToInstall}`
             : '';
 
-          await applyBedrockConsent();
+          await settingsSwitch?.apply();
 
           const spinner = ora(`Installing ${agent.displayName}${versionMessage}...`).start();
 
@@ -312,7 +288,7 @@ export function createInstallCommand(): Command {
             }
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${agent.displayName}`);
-            printBackupDir();
+            settingsSwitch?.printBackupNote();
             throw error;
           }
           return;

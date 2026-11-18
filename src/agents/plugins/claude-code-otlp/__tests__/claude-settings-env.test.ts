@@ -3,16 +3,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  MANAGED_PLIST_PATH,
   managedDropInDirs,
+  managedPlistPaths,
   managedSettingsPaths,
-  readClaudeSettingsEnv,
+  PLUTIL_PATH,
   readManagedDropIns,
   readManagedPlist,
-  readManagedRegistry,
+  readManagedPlists,
   type CommandRunner,
   readSettingsLayer,
   settingsLayerPaths,
-} from '../event-fields/claude-settings-env.js';
+} from '@/agents/core/claude-settings.js';
+import { readClaudeSettingsEnv } from '../event-fields/claude-settings-env.js';
 
 describe('claude settings env layers (CR-006)', () => {
   let root: string;
@@ -77,8 +80,9 @@ describe('claude settings env layers (CR-006)', () => {
   it('uses only the managed settings file of the running platform', () => {
     expect(managedSettingsPaths('linux')).toEqual(['/etc/claude-code/managed-settings.json']);
     expect(managedSettingsPaths('darwin')).toEqual(['/Library/Application Support/ClaudeCode/managed-settings.json']);
+    // Claude Code reads only this fixed folder on Windows: not %ProgramFiles%, and no longer C:\ProgramData.
     const win = managedSettingsPaths('win32');
-    expect(win[0]).toBe('C:/Program Files/ClaudeCode/managed-settings.json');
+    expect(win).toEqual(['C:/Program Files/ClaudeCode/managed-settings.json']);
     expect(settingsLayerPaths('/c', {}, 'linux').slice(-1)).toEqual(managedSettingsPaths('linux'));
     expect(settingsLayerPaths('/c', {}, 'win32').slice(-win.length)).toEqual(win);
   });
@@ -104,11 +108,11 @@ describe('claude settings env layers (CR-006)', () => {
     });
 
     it.each([['an array root', '[1]'], ['a scalar root', '"s"'], ['a null root', 'null']])(
-      'reports unreadable for %s',
+      'reports malformed for %s (valid JSON that is not a settings object)',
       async (_n, body) => {
         put('odd.json', body);
         const r = await readSettingsLayer(join(root, 'odd.json'));
-        expect(r.state).toBe('unreadable');
+        expect(r.state).toBe('malformed');
         expect(r.parsed).toBeUndefined();
       }
     );
@@ -147,12 +151,18 @@ describe('claude settings env layers (CR-006)', () => {
     it.each([
       ['linux', ['/etc/claude-code/managed-settings.d']],
       ['darwin', ['/Library/Application Support/ClaudeCode/managed-settings.d']],
-      [
-        'win32',
-        ['C:/Program Files/ClaudeCode/managed-settings.d', 'C:/ProgramData/ClaudeCode/managed-settings.d'],
-      ],
+      ['win32', ['C:/Program Files/ClaudeCode/managed-settings.d']],
     ] as const)('derives the default managed-settings.d directories on %s', (platform, expected) => {
       expect(managedDropInDirs(platform)).toEqual(expected);
+    });
+
+    it('skips hidden drop-in files and non-JSON names, as Claude Code does', async () => {
+      const dir = join(root, 'managed-settings.d');
+      put('managed-settings.d/.10-hidden.json', '{"env":{"A":"1"}}');
+      put('managed-settings.d/20-notes.txt', 'x');
+      put('managed-settings.d/30-real.json', '{"env":{"B":"1"}}');
+      const r = await readManagedDropIns('linux', [dir]);
+      expect(r.map((x) => x.path)).toEqual([join(dir, '30-real.json')]);
     });
 
     it('defaults to the managed-settings.d directory next to each managed-settings.json of the platform', async () => {
@@ -190,7 +200,9 @@ describe('claude settings env layers (CR-006)', () => {
       const r = await readManagedPlist(run, async () => true);
       expect(r.state).toBe('ok');
       expect(r.parsed).toEqual({ env: { A: 'b' } });
-      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', FILE]]]);
+      // Full path, so a plutil earlier on PATH is never run; `--` so the path is never read as an option.
+      expect(calls).toEqual([[PLUTIL_PATH, ['-convert', 'json', '-o', '-', '--', FILE]]]);
+      expect(PLUTIL_PATH).toBe('/usr/bin/plutil');
     });
 
     it('reports an existing plist that plutil cannot convert, whose output is not an object, or whose runner throws as unreadable', async () => {
@@ -208,91 +220,38 @@ describe('claude settings env layers (CR-006)', () => {
     });
   });
 
-  describe('readManagedRegistry', () => {
-    const KEY = String.raw`SOFTWARE\Policies\ClaudeCode`;
-    const valueOut = (hive: string, json: string): string =>
-      `\r\n${hive}\\${KEY}\r\n    Settings    REG_SZ    ${json}\r\n`;
-
-    /** Scripted reg: key = per-hive key query, value = per-hive value query. */
-    function scripted(plan: Record<string, { code: number; stdout: string } | Error>): { run: CommandRunner; calls: string[][] } {
-      const calls: string[][] = [];
-      const run: CommandRunner = async (cmd, args) => {
-        calls.push([cmd, ...args]);
-        const entry = plan[args.join(' ')];
-        if (entry === undefined) return { code: 1, stdout: '', stderr: 'unscripted' };
-        if (entry instanceof Error) throw entry;
-        return { ...entry, stderr: '' };
-      };
-      return { run, calls };
-    }
-    const q = (hive: string, value = false): string => `query ${hive}\\${KEY}${value ? ' /v Settings' : ''}`;
-
-    it('queries the key then the value for HKLM then HKCU and parses the REG_SZ JSON data', async () => {
-      const { run, calls } = scripted({
-        [q('HKLM')]: { code: 0, stdout: 'HKLM key' },
-        [q('HKLM', true)]: { code: 0, stdout: valueOut('HKEY_LOCAL_MACHINE', '{"env":{"A":"1"}}') },
-        [q('HKCU')]: { code: 0, stdout: 'HKCU key' },
-        [q('HKCU', true)]: { code: 0, stdout: valueOut('HKEY_CURRENT_USER', '{"model":"x"}') },
-      });
-      const r = await readManagedRegistry(run);
-      expect(r.map((x) => [x.path, x.state])).toEqual([
-        [String.raw`HKLM\SOFTWARE\Policies\ClaudeCode\Settings`, 'ok'],
-        [String.raw`HKCU\SOFTWARE\Policies\ClaudeCode\Settings`, 'ok'],
+  describe('managedPlistPaths', () => {
+    it('lists the per-user plist first, then the device-level one, as Claude Code reads them', () => {
+      expect(managedPlistPaths('alice')).toEqual([
+        '/Library/Managed Preferences/alice/com.anthropic.claudecode.plist',
+        MANAGED_PLIST_PATH,
       ]);
-      expect(r[0].parsed).toEqual({ env: { A: '1' } });
-      expect(r[1].parsed).toEqual({ model: 'x' });
-      // Hives are queried in parallel; within one hive the key query precedes the value query.
-      const lines = calls.map((c) => c.join(' '));
-      for (const hive of ['HKLM', 'HKCU']) {
-        expect(lines.filter((l) => l.includes(` ${hive}\\`))).toEqual([`reg ${q(hive)}`, `reg ${q(hive, true)}`]);
-      }
     });
 
-    it('treats a non-zero exit with empty stdout as absent whatever the message says (key or value)', async () => {
-      const localized = async (): Promise<{ code: number; stdout: string; stderr: string }> =>
-        ({ code: 1, stdout: '', stderr: 'FEHLER: Das System kann den angegebenen Registrierungsschluessel nicht finden.' });
-      const noKey = await readManagedRegistry(localized);
-      expect(noKey.map((x) => x.state)).toEqual(['absent', 'absent']);
-
-      const { run } = scripted({
-        [q('HKLM')]: { code: 0, stdout: 'key' },
-        [q('HKLM', true)]: { code: 1, stdout: '' },
-        [q('HKCU')]: { code: 1, stdout: '' },
-      });
-      expect((await readManagedRegistry(run)).map((x) => x.state)).toEqual(['absent', 'absent']);
+    it.each(['', '.', '..', 'a/b', 'a\\b', 'a\0b'])('leaves the per-user plist out for the name %j', (name) => {
+      expect(managedPlistPaths(name)).toEqual([MANAGED_PLIST_PATH]);
     });
 
-    it('reports a runner that cannot start, or times out, as unreadable for that hive only', async () => {
-      const { run } = scripted({
-        [q('HKLM')]: new Error('spawn reg ENOENT'),
-        [q('HKCU')]: { code: 1, stdout: '' },
-      });
-      expect((await readManagedRegistry(run)).map((x) => x.state)).toEqual(['unreadable', 'absent']);
-
-      const hang: CommandRunner = () => new Promise(() => undefined);
-      expect((await readManagedRegistry(hang, { timeoutMs: 20 })).map((x) => x.state)).toEqual(['unreadable', 'unreadable']);
+    it('defaults to the current login name without throwing', () => {
+      const paths = managedPlistPaths();
+      expect(paths[paths.length - 1]).toBe(MANAGED_PLIST_PATH);
     });
+  });
 
-    it('reports unparseable output (no Settings line, wrong type, bad JSON, non-object) as unreadable', async () => {
-      const cases = [
-        'garbage',
-        '    Settings    REG_DWORD    0x1',
-        '    Settings    REG_SZ    {not json',
-        '    Settings    REG_SZ    [1,2]',
-      ];
-      for (const out of cases) {
-        const { run } = scripted({
-          [q('HKLM')]: { code: 0, stdout: 'k' },
-          [q('HKLM', true)]: { code: 0, stdout: out },
-          [q('HKCU')]: { code: 1, stdout: '' },
-        });
-        expect((await readManagedRegistry(run))[0].state).toBe('unreadable');
-      }
-    });
-
-    it('reports a non-zero exit with output on the key query as unreadable', async () => {
-      const { run } = scripted({ [q('HKLM')]: { code: 5, stdout: 'partial' }, [q('HKCU')]: { code: 1, stdout: '' } });
-      expect((await readManagedRegistry(run))[0].state).toBe('unreadable');
+  describe('readManagedPlists', () => {
+    it('reads every plist in order, running plutil only for those that exist', async () => {
+      const userPlist = '/Library/Managed Preferences/alice/com.anthropic.claudecode.plist';
+      const ran: string[] = [];
+      const run: CommandRunner = async (_cmd, args) => {
+        ran.push(args[args.length - 1]);
+        return { code: 0, stdout: '{"env":{"A":"b"}}', stderr: '' };
+      };
+      const r = await readManagedPlists(run, (file) => file === userPlist, { files: [userPlist, MANAGED_PLIST_PATH] });
+      expect(r.map((x) => [x.path, x.state])).toEqual([
+        [userPlist, 'ok'],
+        [MANAGED_PLIST_PATH, 'absent'],
+      ]);
+      expect(ran).toEqual([userPlist]);
     });
   });
 });

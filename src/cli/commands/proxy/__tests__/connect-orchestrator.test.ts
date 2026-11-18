@@ -133,7 +133,7 @@ vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
   canPromptForProject: vi.fn().mockReturnValue(true),
 }));
-// The Claude settings conflict gate has its own tests; here it finds no conflict and never reads real settings.
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
 vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
   detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
   applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),

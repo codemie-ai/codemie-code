@@ -13,19 +13,23 @@ import {
   defaultCommandRunner,
   managedSettingsPaths,
   readManagedDropIns,
-  readManagedPlist,
-  readManagedRegistry,
+  readManagedPlists,
   readSettingsLayer,
   settingsLayerPaths,
   type CommandRunner,
   type SettingsLayerResult,
   type SettingsLayerState,
-} from '@/agents/plugins/claude-code-otlp/event-fields/claude-settings-env.js';
+} from '@/agents/core/claude-settings.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeDisplayText } from '@/utils/project-binding.js';
 import type { CloudProviderDescriptor } from './provider.js';
+import { CLAUDE_SETTINGS_FILE_SCOPES, isManagedScope, isPlainObject, VSCODE_ENV_KEY } from './shared.js';
 
-/** `connect-otlp-only` reads nothing: the gate only warns for it. */
+/**
+ * `connect-otlp-only` reads nothing: the gate only warns for it. A connect flow (`connect-desktop`,
+ * `connect-vscode`) reads every target file its caller supplies in `paths`, so one connect run that
+ * configures both Claude Desktop and VS Code is resolved, and asked about, once.
+ */
 export type ConflictFlow = 'claude-agent' | 'install' | 'connect-desktop' | 'connect-vscode' | 'connect-otlp-only';
 
 export type ConflictScope =
@@ -44,7 +48,7 @@ export type ConflictFlagValue = 'on' | 'off' | 'unknown' | 'unset';
 export type ConflictVerdict = 'none' | 'conflict-editable' | 'conflict-managed' | 'unknown';
 
 export interface ConflictLayer {
-  /** File path, registry value path, or `process environment` for the shell env layer. */
+  /** File path, or `process environment` for the shell env layer. */
   path: string;
   scope: ConflictScope;
   /** False for managed sources and the process environment. */
@@ -81,19 +85,19 @@ export interface ConflictPaths {
   managedFiles?: string[];
   /** `managed-settings.d` directories; defaults to the one beside each managed file. */
   managedDropInDirs?: string[];
-  managedPlist?: string;
-  /** Applied Claude Desktop `configLibrary` file (connect-desktop). Supplied by the caller. */
+  /** macOS managed plists, highest first; defaults to the per-user then the device-level plist. */
+  managedPlists?: string[];
+  /** Applied Claude Desktop `configLibrary` file (connect flows that configure Desktop). Supplied by the caller. */
   desktopApplied?: string;
-  /** Claude Desktop managed settings file, or null where the platform has none (connect-desktop). */
+  /** Claude Desktop managed settings file, or null where the platform has none (connect flows that configure Desktop). */
   desktopManaged?: string | null;
-  /** VS Code `settings.json` files, stable and Insiders; editions that do not exist are omitted (connect-vscode). */
+  /** VS Code `settings.json` files, stable and Insiders; editions that do not exist are omitted (connect flows that configure VS Code). */
   vscodeSettings?: string[];
 }
 
 export interface ConflictRunners {
   plutil?: CommandRunner;
-  reg?: CommandRunner;
-  /** Existence check for the managed plist; defaults to the filesystem. */
+  /** Existence check for the managed plists; defaults to the filesystem. */
   plistExists?: (file: string) => boolean | Promise<boolean>;
   timeoutMs?: number;
 }
@@ -109,17 +113,11 @@ export interface ResolveConflictInput {
 }
 
 const ENV_LAYER_PATH = 'process environment';
-const VSCODE_ENV_KEY = 'claudeCode.environmentVariables';
-const CLAUDE_FILE_SCOPES: readonly ConflictScope[] = ['user', 'project', 'project-local', 'managed'];
 
 type Decision =
   | { kind: 'none' }
   | { kind: 'on'; layer: ConflictLayer }
   | { kind: 'unknown'; reason: string };
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Scalar flag values are classified by the shared rule; anything else cannot be told. */
 function classifyFlag(value: unknown): ConflictFlagValue {
@@ -133,18 +131,22 @@ interface KeyInfo {
   bedrockModelKeys: string[];
 }
 
-/** Key names found in an env-like map (and, for settings files, the top level). Names only, never values. */
+/**
+ * Key names found in an env-like map (and, for settings files, the top level). Names only, never values.
+ * A flag set explicitly off is not listed: it selects no provider, and the guidance tells the user to remove
+ * every key listed.
+ */
 function collectKeys(
   provider: CloudProviderDescriptor,
   env: Record<string, unknown>,
   top: Record<string, unknown> | undefined,
   envPrefix: string,
-  flagOn: boolean
+  flag: ConflictFlagValue
 ): KeyInfo {
   const keyNames: string[] = [];
   const bedrockModelKeys: string[] = [];
-  if (env[provider.flag] !== undefined) keyNames.push(`${envPrefix}${provider.flag}`);
-  if (flagOn) {
+  if (env[provider.flag] !== undefined && flag !== 'off') keyNames.push(`${envPrefix}${provider.flag}`);
+  if (flag === 'on') {
     for (const key of provider.flagScopedKeys.env) {
       if (key !== provider.flag && env[key] !== undefined) keyNames.push(`${envPrefix}${key}`);
     }
@@ -190,20 +192,22 @@ function settingsLayer(
   if (result.state !== 'ok' || !parsed) return makeLayer(base, 'unset', flagKey);
   const block = parsed.env;
   if (block !== undefined && !isPlainObject(block)) {
-    // An `env` that is not an object could still carry the flag in some form: cannot tell.
-    return makeLayer({ ...base, state: 'unreadable' }, 'unset', flagKey);
+    // Claude Code reads `env` only as an object of variables, so an `env` of any other type (null, a
+    // string, an array) cannot set the flag: the layer is skipped with a warning like a malformed file.
+    return makeLayer({ ...base, state: 'malformed' }, 'unset', flagKey);
   }
   const env = block ?? {};
   const flag = classifyFlag(env[provider.flag]);
-  return makeLayer(base, flag, flagKey, collectKeys(provider, env, parsed, 'env.', flag === 'on'));
+  return makeLayer(base, flag, flagKey, collectKeys(provider, env, parsed, 'env.', flag));
 }
 
 function envLayer(provider: CloudProviderDescriptor, env: NodeJS.ProcessEnv): ConflictLayer {
   const raw = env[provider.flag];
   const defined = typeof raw === 'string' && raw !== '';
   const base = { path: ENV_LAYER_PATH, scope: 'env' as const, editable: false, state: defined ? ('ok' as const) : ('absent' as const) };
-  return makeLayer(base, defined ? flagState(raw) : 'unset', provider.flag, {
-    keyNames: defined ? [provider.flag] : [],
+  const flag = defined ? flagState(raw) : 'unset';
+  return makeLayer(base, flag, provider.flag, {
+    keyNames: defined && flag !== 'off' ? [provider.flag] : [],
     bedrockModelKeys: [],
   });
 }
@@ -222,7 +226,8 @@ function desktopLayer(
   const value = parsed[flagKey];
   const flag: ConflictFlagValue =
     value === undefined ? 'unset' : typeof value === 'string' ? (value.trim().toLowerCase() === provider.name ? 'on' : 'off') : 'unknown';
-  const keyNames: string[] = value === undefined ? [] : [flagKey];
+  // Another provider (the gateway, say) is not listed: the guidance tells the user to remove what is listed.
+  const keyNames: string[] = value === undefined || flag === 'off' ? [] : [flagKey];
   if (flag === 'on') keyNames.push(...Object.keys(parsed).filter((k) => k.startsWith(provider.desktopKeyPrefix)));
   return makeLayer(base, flag, flagKey, { keyNames, bedrockModelKeys: [] });
 }
@@ -251,14 +256,14 @@ async function readVscodeLayer(provider: CloudProviderDescriptor, file: string):
     }
   }
   const flag = classifyFlag(env[provider.flag]);
-  return makeLayer({ ...base, state: 'ok' }, flag, flagKey, collectKeys(provider, env, undefined, '', flag === 'on'));
+  return makeLayer({ ...base, state: 'ok' }, flag, flagKey, collectKeys(provider, env, undefined, '', flag));
 }
 
 /** Highest layer that defines the flag decides; an unreadable layer reached first means cannot tell. */
 function decide(chain: ConflictLayer[]): Decision {
   for (const layer of chain) {
     if (layer.state === 'absent') continue;
-    if (layer.state === 'malformed' && CLAUDE_FILE_SCOPES.includes(layer.scope)) continue;
+    if (layer.state === 'malformed' && CLAUDE_SETTINGS_FILE_SCOPES.includes(layer.scope)) continue;
     if (layer.state === 'malformed' || layer.state === 'unreadable') {
       const where = sanitizeDisplayText(layer.path);
       return { kind: 'unknown', reason: `${where}: cannot be read, so it is unknown whether ${sanitizeDisplayText(layer.flagKey)} is set there` };
@@ -276,7 +281,7 @@ function decide(chain: ConflictLayer[]): Decision {
 }
 
 function malformedWarning(layer: ConflictLayer): string {
-  return `${sanitizeDisplayText(layer.path)} is not valid JSON, so Claude Code ignores it; CodeMie analytics attribution stays unknown until the file is fixed.`;
+  return `${sanitizeDisplayText(layer.path)} is not a valid Claude settings file (invalid JSON, or a root or "env" that is not an object), so it cannot select ${sanitizeDisplayText(layer.flagKey)} and is skipped; CodeMie analytics attribution stays unknown until the file is fixed.`;
 }
 
 /** Everything one resolve reads from disk and the OS, before any layer is ranked. */
@@ -286,8 +291,7 @@ interface Sources {
   local?: SettingsLayerResult;
   managedFiles: SettingsLayerResult[];
   dropIns: SettingsLayerResult[];
-  plist?: SettingsLayerResult;
-  registry?: SettingsLayerResult[];
+  plists: SettingsLayerResult[];
   desktopApplied?: SettingsLayerResult;
   desktopManaged?: SettingsLayerResult;
   vscode?: ConflictLayer[];
@@ -303,7 +307,7 @@ interface ResolveContext {
 
 /** Reads every source the flow needs, in parallel; sources the flow does not look at stay undefined. */
 async function readAllSources(input: ResolveConflictInput, ctx: ResolveContext): Promise<Sources> {
-  const { provider, flow, platform, env, agentFlow } = ctx;
+  const { provider, platform, env, agentFlow } = ctx;
   const cwd = input.cwd ?? process.cwd();
   const paths = input.paths ?? {};
   const runners = input.runners ?? {};
@@ -314,7 +318,7 @@ async function readAllSources(input: ResolveConflictInput, ctx: ResolveContext):
   const dropInDirs =
     paths.managedDropInDirs ?? (paths.managedFiles ? paths.managedFiles.map((f) => join(dirname(f), 'managed-settings.d')) : undefined);
 
-  const [user, project, local, managedFileResults, dropIns, plist, registry, desktopApplied, desktopManaged, vscode] =
+  const [user, project, local, managedFileResults, dropIns, plists, desktopApplied, desktopManaged, vscode] =
     await Promise.all([
       readSettingsLayer(paths.userSettings ?? defaults[0]),
       agentFlow ? readSettingsLayer(paths.projectSettings ?? defaults[1]) : undefined,
@@ -322,87 +326,81 @@ async function readAllSources(input: ResolveConflictInput, ctx: ResolveContext):
       Promise.all(managedFiles.map(readSettingsLayer)),
       readManagedDropIns(platform, dropInDirs),
       platform === 'darwin'
-        ? readManagedPlist(runners.plutil ?? defaultCommandRunner, runners.plistExists, { file: paths.managedPlist, timeoutMs })
-        : undefined,
-      platform === 'win32' ? readManagedRegistry(runners.reg ?? defaultCommandRunner, { timeoutMs }) : undefined,
-      flow === 'connect-desktop' && paths.desktopApplied ? readSettingsLayer(paths.desktopApplied) : undefined,
-      flow === 'connect-desktop' && paths.desktopManaged ? readSettingsLayer(paths.desktopManaged) : undefined,
-      flow === 'connect-vscode' ? Promise.all((paths.vscodeSettings ?? []).map((f) => readVscodeLayer(provider, f))) : undefined,
+        ? readManagedPlists(runners.plutil ?? defaultCommandRunner, runners.plistExists, { files: paths.managedPlists, timeoutMs })
+        : [],
+      !agentFlow && paths.desktopApplied ? readSettingsLayer(paths.desktopApplied) : undefined,
+      !agentFlow && paths.desktopManaged ? readSettingsLayer(paths.desktopManaged) : undefined,
+      !agentFlow && paths.vscodeSettings ? Promise.all(paths.vscodeSettings.map((f) => readVscodeLayer(provider, f))) : undefined,
     ]);
-  return { user, project, local, managedFiles: managedFileResults, dropIns, plist, registry, desktopApplied, desktopManaged, vscode };
+  return { user, project, local, managedFiles: managedFileResults, dropIns, plists, desktopApplied, desktopManaged, vscode };
 }
 
-/** Managed tier, highest first: OS policy (plist, HKLM), drop-ins (later name wins), managed file, HKCU. */
+/** Managed tier, highest first: OS policy (macOS per-user, then device-level plist), drop-ins (later name wins), managed file. */
 function buildManagedChain(provider: CloudProviderDescriptor, sources: Sources): ConflictLayer[] {
   const managed = (r: SettingsLayerResult): ConflictLayer => settingsLayer(provider, r, 'managed', false);
-  const registryLayers = (sources.registry ?? []).map(managed);
   return [
-    ...(sources.plist ? [managed(sources.plist)] : []),
-    ...registryLayers.filter((l) => l.path.startsWith('HKLM')),
+    ...sources.plists.map(managed),
     ...[...sources.dropIns].reverse().map(managed),
     ...sources.managedFiles.map(managed),
-    ...registryLayers.filter((l) => !l.path.startsWith('HKLM')),
   ];
 }
 
-/** Claude Code's own precedence, highest first: managed, local, project, user, then the shell env. */
+/**
+ * Claude Code's own precedence, highest first: managed, local, project, user, then the shell env. The shell
+ * env decides only for the launch: for an install it is warned about by the gate, never a stop.
+ */
 function buildClaudeChain(ctx: ResolveContext, sources: Sources): ConflictLayer[] {
-  const { provider, agentFlow, env } = ctx;
+  const { provider, flow, env } = ctx;
   return [
     ...buildManagedChain(provider, sources),
     ...(sources.local ? [settingsLayer(provider, sources.local, 'project-local', true)] : []),
     ...(sources.project ? [settingsLayer(provider, sources.project, 'project', true)] : []),
     settingsLayer(provider, sources.user, 'user', true),
-    ...(agentFlow ? [envLayer(provider, env)] : []),
+    ...(flow === 'claude-agent' ? [envLayer(provider, env)] : []),
   ];
 }
 
-/** The chains whose verdicts are combined, plus the non-Claude layers that are reported next to the Claude ones. */
+/**
+ * The chains whose verdicts are combined, plus the non-Claude layers that are reported next to the Claude ones.
+ * A connect flow gets the Claude chain plus one chain per target file it was given: Desktop managed and applied
+ * on their own, each VS Code edition below every Claude settings layer (its entries are process env for the
+ * extension). The Claude chain alone never changes a verdict the VS Code chains would reach.
+ */
 function buildChains(ctx: ResolveContext, sources: Sources, claudeChain: ConflictLayer[]): { chains: ConflictLayer[][]; extras: ConflictLayer[] } {
-  const { provider, flow, agentFlow } = ctx;
-  const chains: ConflictLayer[][] = [];
+  const { provider } = ctx;
+  const chains: ConflictLayer[][] = [claudeChain];
   const extras: ConflictLayer[] = [];
-  if (agentFlow) {
-    chains.push(claudeChain);
-  } else if (flow === 'connect-desktop') {
-    chains.push(claudeChain);
-    if (sources.desktopManaged) {
-      const layer = desktopLayer(provider, sources.desktopManaged, 'desktop-managed', false);
-      extras.push(layer);
-      chains.push([layer]);
-    }
-    if (sources.desktopApplied) {
-      const layer = desktopLayer(provider, sources.desktopApplied, 'desktop-applied', true);
-      extras.push(layer);
-      chains.push([layer]);
-    }
-  } else if (sources.vscode && sources.vscode.length > 0) {
-    // VS Code entries are process env for the extension: below every Claude settings layer, each edition on its own.
-    for (const layer of sources.vscode) chains.push([...claudeChain, layer]);
-    extras.push(...sources.vscode);
-  } else {
-    chains.push(claudeChain);
+  if (sources.desktopManaged) {
+    const layer = desktopLayer(provider, sources.desktopManaged, 'desktop-managed', false);
+    extras.push(layer);
+    chains.push([layer]);
+  }
+  if (sources.desktopApplied) {
+    const layer = desktopLayer(provider, sources.desktopApplied, 'desktop-applied', true);
+    extras.push(layer);
+    chains.push([layer]);
+  }
+  for (const layer of sources.vscode ?? []) {
+    extras.push(layer);
+    chains.push([...claudeChain, layer]);
   }
   return { chains, extras };
 }
 
+/**
+ * Messages for the gate to show, once per file (user and project settings are the same file when Claude runs
+ * from the home folder). The resolver itself prints nothing, so a re-resolve never repeats them.
+ */
 function collectWarnings(layers: ConflictLayer[]): string[] {
-  const warnings: string[] = [];
-  for (const layer of layers) {
-    if (layer.state === 'malformed' && CLAUDE_FILE_SCOPES.includes(layer.scope)) {
-      const message = malformedWarning(layer);
-      warnings.push(message);
-      logger.warn(`[cloud-provider-conflict] ${message}`);
-    }
-  }
-  return warnings;
+  const malformed = layers.filter((l) => l.state === 'malformed' && CLAUDE_SETTINGS_FILE_SCOPES.includes(l.scope));
+  return [...new Set(malformed.map(malformedWarning))];
 }
 
 /** Managed-on beats unknown beats editable-on; no source on and nothing unknown is none. */
 function computeVerdict(decisions: Decision[]): { verdict: ConflictVerdict; unknownReasons: string[] } {
   const unknownReasons = [...new Set(decisions.flatMap((d) => (d.kind === 'unknown' ? [d.reason] : [])))];
   const ons = decisions.flatMap((d) => (d.kind === 'on' ? [d.layer] : []));
-  const verdict: ConflictVerdict = ons.some((l) => l.scope === 'managed' || l.scope === 'desktop-managed')
+  const verdict: ConflictVerdict = ons.some(isManagedScope)
     ? 'conflict-managed'
     : unknownReasons.length > 0
       ? 'unknown'
@@ -412,6 +410,14 @@ function computeVerdict(decisions: Decision[]): { verdict: ConflictVerdict; unkn
   return { verdict, unknownReasons };
 }
 
+/**
+ * Reads every source that can select the provider for one flow, ranks them as Claude Code does and returns
+ * one result per layer plus the merged verdict. Reads only; never throws for a missing or unreadable source
+ * (those become `absent`, `malformed` or `unreadable` layers, and the verdict says what that means).
+ *
+ * @param input - The provider, the flow, and the paths, platform, env, cwd and command runners to use
+ * @returns The layers, highest first, the verdict, the reason when it is `unknown`, and warnings to show
+ */
 export async function resolveProviderConflict(input: ResolveConflictInput): Promise<ConflictResolution> {
   const { provider, flow } = input;
   if (flow === 'connect-otlp-only') return { verdict: 'none', layers: [], warnings: [] };

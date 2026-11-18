@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const order: string[] = [];
 const getAgentMock = vi.fn();
-const detectAndAskMock = vi.fn();
-const applyConsentedMock = vi.fn();
+const checkMock = vi.fn();
+const applyMock = vi.fn();
 const getActiveProfileNameMock = vi.fn();
 const getProfileMock = vi.fn();
 const canPromptMock = vi.fn();
@@ -18,22 +18,18 @@ vi.mock('../../../utils/config.js', () => ({
   ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, getProfile: getProfileMock },
 }));
 vi.mock('../../../utils/interactive.js', () => ({ canPromptForProject: canPromptMock }));
-vi.mock('../../../agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
-  detectAndAsk: detectAndAskMock,
-  applyConsented: applyConsentedMock,
-}));
 vi.mock('inquirer', () => ({ default: { prompt: promptMock } }));
 vi.mock('ora', () => ({
   default: vi.fn(() => ({ start: vi.fn(() => ({ succeed: vi.fn(), fail: vi.fn(), warn: vi.fn() })) })),
 }));
-
-const TOKEN = { plan: null, deps: {} };
 
 interface FakeAgentOptions {
   name?: string;
   installed?: boolean;
   installedVersion?: string;
   withAdditional?: boolean;
+  /** Whether the adapter implements `checkProviderSettings` (the Claude adapters do). */
+  withCheck?: boolean;
 }
 
 function fakeAgent(opts: FakeAgentOptions = {}): Record<string, ReturnType<typeof vi.fn> | string | object> {
@@ -48,6 +44,9 @@ function fakeAgent(opts: FakeAgentOptions = {}): Record<string, ReturnType<typeo
     getVersion: vi.fn().mockResolvedValue(opts.installedVersion ?? '2.1.34'),
     warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
   };
+  if (opts.withCheck ?? true) {
+    agent.checkProviderSettings = checkMock;
+  }
   if (opts.withAdditional) {
     agent.additionalInstallation = vi.fn(async () => { order.push('additional'); });
   }
@@ -59,7 +58,7 @@ async function runInstall(...args: string[]): Promise<void> {
   await createInstallCommand().parseAsync(['node', 'codemie', ...args]);
 }
 
-describe('install command Bedrock settings gate', () => {
+describe('install command provider settings check', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -68,10 +67,10 @@ describe('install command Bedrock settings gate', () => {
     canPromptMock.mockReturnValue(true);
     getActiveProfileNameMock.mockResolvedValue('work');
     getProfileMock.mockResolvedValue({ provider: 'ai-run-sso' });
-    detectAndAskMock.mockResolvedValue({ kind: 'proceed', token: TOKEN });
-    applyConsentedMock.mockImplementation(async () => {
+    checkMock.mockResolvedValue({ kind: 'proceed', apply: applyMock });
+    applyMock.mockImplementation(async () => {
       order.push('apply');
-      return { backupDir: null, files: [], changed: [] };
+      return { backupDir: null };
     });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -80,44 +79,44 @@ describe('install command Bedrock settings gate', () => {
     }) as never);
   });
 
-  it('leaves a non-claude agent untouched', async () => {
-    getAgentMock.mockReturnValue(fakeAgent({ name: 'codex' }));
+  it('leaves an agent without the check untouched', async () => {
+    getAgentMock.mockReturnValue(fakeAgent({ name: 'codex', withCheck: false }));
 
     await runInstall('codex');
 
-    expect(detectAndAskMock).not.toHaveBeenCalled();
-    expect(applyConsentedMock).not.toHaveBeenCalled();
+    expect(checkMock).not.toHaveBeenCalled();
+    expect(applyMock).not.toHaveBeenCalled();
     expect(getActiveProfileNameMock).not.toHaveBeenCalled();
   });
 
-  it('passes no profile to the gate when none is active', async () => {
+  it('passes no profile to the check when none is active', async () => {
     getActiveProfileNameMock.mockResolvedValue(null);
     getAgentMock.mockReturnValue(fakeAgent());
 
     await runInstall('claude');
 
-    expect(detectAndAskMock).toHaveBeenCalledWith(
+    expect(checkMock).toHaveBeenCalledWith(
       expect.objectContaining({ flow: 'install', profile: undefined })
     );
     expect(getProfileMock).not.toHaveBeenCalled();
   });
 
-  it('passes no profile to the gate when loading it fails', async () => {
+  it('passes no profile to the check when loading it fails', async () => {
     getActiveProfileNameMock.mockRejectedValue(new Error('broken config'));
     getAgentMock.mockReturnValue(fakeAgent());
 
     await runInstall('claude');
 
-    expect(detectAndAskMock).toHaveBeenCalledWith(expect.objectContaining({ profile: undefined }));
+    expect(checkMock).toHaveBeenCalledWith(expect.objectContaining({ profile: undefined }));
   });
 
-  it('hands the active profile and the prompt capability to the gate', async () => {
+  it('hands the active profile and the prompt capability to the check', async () => {
     canPromptMock.mockReturnValue(false);
     getAgentMock.mockReturnValue(fakeAgent());
 
     await runInstall('claude');
 
-    expect(detectAndAskMock).toHaveBeenCalledWith({
+    expect(checkMock).toHaveBeenCalledWith({
       flow: 'install',
       canPrompt: false,
       profile: { provider: 'ai-run-sso' },
@@ -125,14 +124,14 @@ describe('install command Bedrock settings gate', () => {
   });
 
   it('prints the guidance and exits 1 on stop, changing nothing', async () => {
-    detectAndAskMock.mockResolvedValue({ kind: 'stop', reason: 'non-interactive', guidance: 'GUIDANCE TEXT' });
+    checkMock.mockResolvedValue({ kind: 'stop', guidance: 'GUIDANCE TEXT' });
     const agent = fakeAgent();
     getAgentMock.mockReturnValue(agent);
 
     await expect(runInstall('claude')).rejects.toThrow('exit:1');
 
     expect(errorSpy).toHaveBeenCalledWith('GUIDANCE TEXT');
-    expect(applyConsentedMock).not.toHaveBeenCalled();
+    expect(applyMock).not.toHaveBeenCalled();
     expect(agent.install).not.toHaveBeenCalled();
     expect(agent.installVersion).not.toHaveBeenCalled();
     expect(order).toEqual([]);
@@ -145,8 +144,8 @@ describe('install command Bedrock settings gate', () => {
 
     await runInstall('claude');
 
-    expect(detectAndAskMock).toHaveBeenCalledOnce();
-    expect(applyConsentedMock).not.toHaveBeenCalled();
+    expect(checkMock).toHaveBeenCalledOnce();
+    expect(applyMock).not.toHaveBeenCalled();
     expect(agent.installVersion).not.toHaveBeenCalled();
   });
 
@@ -183,29 +182,29 @@ describe('install command Bedrock settings gate', () => {
 
     await runInstall('claude');
 
-    expect(applyConsentedMock).not.toHaveBeenCalled();
+    expect(applyMock).not.toHaveBeenCalled();
   });
 
   it('prints the backup folder when the install fails after a switch was applied', async () => {
-    applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: ['a'] });
+    applyMock.mockResolvedValue({ backupDir: '/tmp/backup-dir' });
     const agent = fakeAgent();
     (agent.installVersion as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('npm failed'));
     getAgentMock.mockReturnValue(agent);
 
     await expect(runInstall('claude')).rejects.toThrow('exit:1');
 
-    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude settings: /tmp/backup-dir');
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude Code settings: /tmp/backup-dir');
   });
 
   it('prints the backup folder when additionalInstallation fails after a switch on an installed agent', async () => {
-    applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup-dir', files: [], changed: ['a'] });
+    applyMock.mockResolvedValue({ backupDir: '/tmp/backup-dir' });
     const agent = fakeAgent({ installed: true, installedVersion: '2.1.34', withAdditional: true });
     (agent.additionalInstallation as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('extra failed'));
     getAgentMock.mockReturnValue(agent);
 
     await expect(runInstall('claude')).rejects.toThrow('exit:1');
 
-    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude settings: /tmp/backup-dir');
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain('Backup of your Claude Code settings: /tmp/backup-dir');
   });
 
   it('prints no backup line when the install fails and nothing was switched', async () => {
@@ -215,16 +214,6 @@ describe('install command Bedrock settings gate', () => {
 
     await expect(runInstall('claude')).rejects.toThrow('exit:1');
 
-    expect(errorSpy.mock.calls.flat().join('\n')).not.toContain('Backup of your Claude settings');
-  });
-
-  it('says nothing routes to the gateway yet when a switch was made', async () => {
-    applyConsentedMock.mockResolvedValue({ backupDir: '/tmp/backup', files: [], changed: ['a'] });
-    getAgentMock.mockReturnValue(fakeAgent());
-    const log = vi.spyOn(console, 'log');
-
-    await runInstall('claude');
-
-    expect(log.mock.calls.flat().join('\n')).toContain('until the next codemie-claude run');
+    expect(errorSpy.mock.calls.flat().join('\n')).not.toContain('Backup of your Claude Code settings');
   });
 });

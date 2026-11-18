@@ -236,14 +236,16 @@ describe('stopGuidance', () => {
     expect(text).toMatch(/rerun/i);
   });
 
-  it('states all three residual bypasses for connect flows only', () => {
+  it('states every residual bypass for connect flows only', () => {
     const connect = stopGuidance('non-interactive', findings([layer()], { flow: 'connect-vscode' }));
     expect(connect).toMatch(/Bedrock project elsewhere/);
     expect(connect).toMatch(/user, managed, Desktop and VS Code/);
     expect(connect).toMatch(/Desktop managed policy on macOS and Windows is not detected/);
+    expect(connect).toMatch(/Claude Code policy in the Windows registry is not detected/);
     expect(connect).toMatch(/--settings/);
     const agent = stopGuidance('non-interactive', findings([layer()], { flow: 'claude-agent' }));
     expect(agent).not.toMatch(/Bedrock project elsewhere/);
+    expect(agent).not.toMatch(/Windows registry/);
     expect(agent).not.toMatch(/--settings/);
   });
 

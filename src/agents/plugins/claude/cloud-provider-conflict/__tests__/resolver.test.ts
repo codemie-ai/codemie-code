@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '@/utils/logger.js';
-import type { CommandRunner } from '@/agents/plugins/claude-code-otlp/event-fields/claude-settings-env.js';
+import type { CommandRunner } from '@/agents/core/claude-settings.js';
 import { BEDROCK } from '../provider.js';
 import {
   resolveProviderConflict,
@@ -104,32 +104,47 @@ describe('resolveProviderConflict', () => {
     it('detects a macOS managed plist through the injected runner, only on darwin', async () => {
       const plutil: CommandRunner = async () => ({ code: 0, stdout: JSON.stringify(ON), stderr: '' });
       const runners: ConflictRunners = { plutil, plistExists: () => true };
-      const r = await resolve('claude-agent', { platform: 'darwin', runners, paths: { managedPlist: abs('x.plist') } });
+      const r = await resolve('claude-agent', { platform: 'darwin', runners, paths: { managedPlists: [abs('x.plist')] } });
       expect(r.verdict).toBe('conflict-managed');
       expect(layerAt(r, 'x.plist')).toMatchObject({ scope: 'managed', editable: false, inEffect: true });
 
-      const linux = await resolve('claude-agent', { platform: 'linux', runners, paths: { managedPlist: abs('x.plist') } });
+      const linux = await resolve('claude-agent', { platform: 'linux', runners, paths: { managedPlists: [abs('x.plist')] } });
       expect(linux.verdict).toBe('none');
     });
 
-    it('detects a Windows registry policy through the injected runner, only on win32', async () => {
-      const reg: CommandRunner = async (_c, args) =>
-        args.includes('/v')
-          ? { code: 0, stdout: `\r\n    Settings    REG_SZ    ${JSON.stringify(ON)}\r\n`, stderr: '' }
-          : { code: 0, stdout: 'key', stderr: '' };
-      const r = await resolve('claude-agent', { platform: 'win32', runners: { reg } });
+    it('reads the per-user plist above the device-level one, both as managed', async () => {
+      const userPlist = abs('Managed Preferences/alice/com.anthropic.claudecode.plist');
+      const devicePlist = abs('Managed Preferences/com.anthropic.claudecode.plist');
+      const plutil: CommandRunner = async (_cmd, args) => ({
+        code: 0,
+        stdout: JSON.stringify(args[args.length - 1] === userPlist ? ON : { env: { CLAUDE_CODE_USE_BEDROCK: '0' } }),
+        stderr: '',
+      });
+      const paths = { managedPlists: [userPlist, devicePlist] };
+      const r = await resolve('claude-agent', { platform: 'darwin', runners: { plutil, plistExists: () => true }, paths });
       expect(r.verdict).toBe('conflict-managed');
-      expect(r.layers.find((l) => l.path.startsWith('HKLM'))).toMatchObject({ scope: 'managed', editable: false, inEffect: true });
+      expect(layerAt(r, 'alice/com.anthropic.claudecode.plist')).toMatchObject({ scope: 'managed', editable: false, inEffect: true });
+      expect(r.layers.findIndex((l) => l.path === userPlist)).toBeLessThan(r.layers.findIndex((l) => l.path === devicePlist));
 
-      expect((await resolve('claude-agent', { platform: 'linux', runners: { reg } })).verdict).toBe('none');
+      // Only the per-user plist exists: it is still read.
+      const onlyUser = await resolve('claude-agent', {
+        platform: 'darwin',
+        runners: { plutil, plistExists: (file) => file === userPlist },
+        paths,
+      });
+      expect(onlyUser.verdict).toBe('conflict-managed');
     });
 
-    it('detects shell env as a non-file, non-editable layer for claude-agent and install only', async () => {
+    it('detects shell env as a non-file, non-editable layer for claude-agent only', async () => {
       const env = { CLAUDE_CODE_USE_BEDROCK: 'true' };
       const r = await resolve('claude-agent', { env });
       expect(r.verdict).toBe('conflict-editable');
       expect(r.layers.find((l) => l.scope === 'env')).toMatchObject({ editable: false, inEffect: true, keyNames: ['CLAUDE_CODE_USE_BEDROCK'] });
-      expect((await resolve('install', { env })).verdict).toBe('conflict-editable');
+      // An install only warns about the shell variable (the gate does that): it is not in the chain at all.
+      const install = await resolve('install', { env });
+      expect(install.verdict).toBe('none');
+      expect(install.layers.some((l) => l.scope === 'env')).toBe(false);
+      expect((await resolve('install', { env: { CLAUDE_CODE_USE_BEDROCK: 'maybe' } })).verdict).toBe('none');
       expect((await resolve('connect-desktop', { env })).verdict).toBe('none');
       expect((await resolve('connect-vscode', { env })).verdict).toBe('none');
     });
@@ -214,17 +229,6 @@ describe('resolveProviderConflict', () => {
       expect((await resolve('claude-agent')).verdict).toBe('none');
     });
 
-    it('lets registry HKLM outrank HKCU', async () => {
-      const reg: CommandRunner = async (_c, args) => {
-        const hklm = args[1].startsWith('HKLM');
-        const settings = hklm ? { env: { CLAUDE_CODE_USE_BEDROCK: '0' } } : ON;
-        return args.includes('/v')
-          ? { code: 0, stdout: `    Settings    REG_SZ    ${JSON.stringify(settings)}`, stderr: '' }
-          : { code: 0, stdout: 'k', stderr: '' };
-      };
-      expect((await resolve('claude-agent', { platform: 'win32', runners: { reg } })).verdict).toBe('none');
-    });
-
     it('handles the split-layer case: flag in one layer, Bedrock model id in another', async () => {
       put('user/settings.json', { model: BEDROCK_MODEL, availableModels: [BEDROCK_MODEL, 'sonnet'], env: { ANTHROPIC_MODEL: 'sonnet' } });
       put('proj/.claude/settings.local.json', ON);
@@ -239,51 +243,55 @@ describe('resolveProviderConflict', () => {
   });
 
   describe('absent versus cannot tell', () => {
-    it('gives none when there is no plist, registry key/value not found, and no managed files', async () => {
+    it('gives none when there is no plist and no managed files, and starts no command on Windows', async () => {
       const darwin = await resolve('claude-agent', { platform: 'darwin', runners: { plistExists: () => false, plutil: async () => { throw new Error('must not run'); } } });
       expect(darwin.verdict).toBe('none');
 
-      const reg: CommandRunner = async () => ({ code: 1, stdout: '', stderr: 'ERROR: not found (any locale)' });
-      const win = await resolve('claude-agent', { platform: 'win32', runners: { reg } });
+      const win = await resolve('claude-agent', { platform: 'win32', runners: { plutil: async () => { throw new Error('must not run'); } } });
       expect(win.verdict).toBe('none');
       expect(win.unknownReason).toBeUndefined();
 
       expect((await resolve('claude-agent', { platform: 'linux' })).verdict).toBe('none');
     });
 
-    it('gives unknown when the registry runner cannot start or times out, naming the source', async () => {
-      const reg: CommandRunner = async () => { throw new Error('spawn reg ENOENT'); };
-      const r = await resolve('claude-agent', { platform: 'win32', runners: { reg } });
-      expect(r.verdict).toBe('unknown');
-      expect(r.unknownReason).toContain('HKLM');
-
-      const hang: CommandRunner = () => new Promise(() => undefined);
-      const t = await resolve('claude-agent', { platform: 'win32', runners: { reg: hang, timeoutMs: 20 } });
-      expect(t.verdict).toBe('unknown');
-    });
-
-    it('gives unknown for unparseable registry output', async () => {
-      const reg: CommandRunner = async (_c, args) =>
-        args.includes('/v') ? { code: 0, stdout: 'garbage', stderr: '' } : { code: 0, stdout: 'k', stderr: '' };
-      expect((await resolve('claude-agent', { platform: 'win32', runners: { reg } })).verdict).toBe('unknown');
-    });
-
     it('gives unknown for an existing plist that cannot be read, but not when a higher layer already decides', async () => {
       const bad: ConflictRunners = { plistExists: () => true, plutil: async () => ({ code: 1, stdout: '', stderr: 'x' }) };
-      const r = await resolve('claude-agent', { platform: 'darwin', runners: bad, paths: { managedPlist: abs('x.plist') } });
+      const r = await resolve('claude-agent', { platform: 'darwin', runners: bad, paths: { managedPlists: [abs('x.plist')] } });
       expect(r.verdict).toBe('unknown');
       expect(r.unknownReason).toContain(abs('x.plist'));
     });
 
-    it('gives unknown for an unreadable decisive file layer (root is not an object)', async () => {
-      const file = put('user/settings.json', '[1]');
+    it.each([
+      ['an array root', '[1]'],
+      ['a null root', 'null'],
+      ['a null env', '{"env": null}'],
+      ['a string env', '{"env": "CLAUDE_CODE_USE_BEDROCK=1"}'],
+      ['an array env', '{"env": ["CLAUDE_CODE_USE_BEDROCK"]}'],
+    ])('skips a settings file with %s as malformed, with a warning, never a stop', async (_n, body) => {
+      const file = put('user/settings.json', body);
+      const r = await resolve('claude-agent');
+      expect(r.verdict).toBe('none');
+      expect(r.unknownReason).toBeUndefined();
+      expect(layerAt(r, 'user/settings.json')).toMatchObject({ state: 'malformed', inEffect: false, setsFlag: false });
+      expect(r.warnings).toEqual([expect.stringContaining(file)]);
+    });
+
+    it('still gives unknown for a decisive file that cannot be read at all (a directory)', async () => {
+      const dir = abs('user/settings.json');
+      mkdirSync(dir, { recursive: true });
       const r = await resolve('claude-agent');
       expect(r.verdict).toBe('unknown');
-      expect(r.unknownReason).toContain(file);
+      expect(r.unknownReason).toContain(dir);
       expect(r.unknownReason).toContain(BEDROCK.flag);
     });
 
-    it('ignores an unreadable layer below a layer that already decides', async () => {
+    it('reports a malformed file once when user and project settings are the same file', async () => {
+      const file = put('user/settings.json', '{ broken');
+      const r = await resolve('claude-agent', { paths: { projectSettings: file } });
+      expect(r.warnings).toHaveLength(1);
+    });
+
+    it('ignores a malformed layer below a layer that already decides', async () => {
       put('proj/.claude/settings.local.json', ON);
       put('user/settings.json', '[1]');
       expect((await resolve('claude-agent')).verdict).toBe('conflict-editable');
@@ -314,6 +322,7 @@ describe('resolveProviderConflict', () => {
 
     it('skips a malformed Claude Code file with a warning about analytics attribution, and keeps going', async () => {
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const notice = vi.spyOn(logger, 'notice').mockImplementation(() => undefined);
       const file = put('proj/.claude/settings.local.json', `{ "env": { "CLAUDE_CODE_USE_BEDROCK": "${SECRET}" `);
       put('user/settings.json', ON);
       const r = await resolve('claude-agent');
@@ -322,13 +331,14 @@ describe('resolveProviderConflict', () => {
       expect(r.warnings).toHaveLength(1);
       expect(r.warnings[0]).toContain(file);
       expect(r.warnings[0]).toMatch(/analytics attribution/i);
-      expect(warn).toHaveBeenCalled();
-      expect(JSON.stringify([r, warn.mock.calls])).not.toContain(SECRET);
+      // The resolver only returns the warning; the gate shows it, so a re-resolve never repeats it.
+      expect(warn).not.toHaveBeenCalled();
+      expect(notice).not.toHaveBeenCalled();
+      expect(JSON.stringify(r)).not.toContain(SECRET);
     });
 
     it.skipIf(process.platform === 'win32')('neutralises control characters in the unknown reason and the malformed warning', async () => {
-      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-      const evil = put('user/\u001b[31mevil\u0007.json', '[]');
+      const evil = put('user/\u001b[31mevil\u0007.json', { env: { CLAUDE_CODE_USE_BEDROCK: 'maybe' } });
       const bad = put('proj/.claude/\u001b[32mbad\u0007.json', '{ broken');
       const r = await resolve('claude-agent', { paths: { userSettings: evil, projectSettings: bad } });
       // eslint-disable-next-line no-control-regex
@@ -338,7 +348,6 @@ describe('resolveProviderConflict', () => {
       expect(r.unknownReason).toContain('evil');
       expect(r.warnings.length).toBeGreaterThan(0);
       for (const w of r.warnings) expect(w).not.toMatch(control);
-      expect(JSON.stringify(warn.mock.calls)).not.toMatch(control);
     });
 
     it('leaks no setting value in layers, unknownReason or warnings', async () => {
@@ -425,6 +434,19 @@ describe('resolveProviderConflict', () => {
       expect(r.unknownReason).toContain(f);
     });
 
+    it('resolves the Desktop and VS Code targets of one connect run together, listing both', async () => {
+      const applied = put('desktop/applied.json', { inferenceProvider: 'bedrock' });
+      const f = vs('vscode/settings.json', entries({ name: 'CLAUDE_CODE_USE_BEDROCK', value: '1' }));
+      const r = await resolve('connect-desktop', { paths: { desktopApplied: applied, vscodeSettings: [f] } });
+      expect(r.verdict).toBe('conflict-editable');
+      expect(layerAt(r, 'applied.json')).toMatchObject({ scope: 'desktop-applied', inEffect: true });
+      expect(layerAt(r, 'vscode/settings.json')).toMatchObject({ scope: 'vscode', inEffect: true });
+
+      // Either target alone decides the run: a clean Desktop does not hide a Bedrock VS Code entry.
+      put('desktop/applied.json', { inferenceProvider: 'gateway' });
+      expect((await resolve('connect-desktop', { paths: { desktopApplied: applied, vscodeSettings: [f] } })).verdict).toBe('conflict-editable');
+    });
+
     it('ranks below every Claude settings layer: a user off overrides a Bedrock entry, and the entry decides otherwise', async () => {
       const f = vs('vscode/settings.json', entries({ name: 'CLAUDE_CODE_USE_BEDROCK', value: '1' }));
       put('user/settings.json', { env: { CLAUDE_CODE_USE_BEDROCK: '0' } });
@@ -478,9 +500,29 @@ describe('resolveProviderConflict', () => {
       expect(layer?.keyNames).toEqual(expect.arrayContaining(layer?.bedrockModelKeys ?? []));
     });
 
-    it('lists AWS keys only for a layer that sets the flag on', async () => {
+    it('lists AWS keys only for a layer that sets the flag on, and no flag that is set off', async () => {
       put('user/settings.json', { env: { AWS_REGION: 'x', CLAUDE_CODE_USE_BEDROCK: '0' } });
-      expect(layerAt(await resolve('claude-agent'), 'user/settings.json')?.keyNames).toEqual(['env.CLAUDE_CODE_USE_BEDROCK']);
+      expect(layerAt(await resolve('claude-agent'), 'user/settings.json')?.keyNames).toEqual([]);
+    });
+
+    it('does not list an off flag in another layer while Bedrock is on, so the guidance never says to remove it', async () => {
+      put('user/settings.json', ON);
+      const env = { CLAUDE_CODE_USE_BEDROCK: '0' };
+      const agent = await resolve('claude-agent', { env });
+      expect(agent.verdict).toBe('conflict-editable');
+      expect(agent.layers.find((l) => l.scope === 'env')?.keyNames).toEqual([]);
+
+      const applied = put('desktop/applied.json', { inferenceProvider: 'gateway' });
+      const desktop = await resolve('connect-desktop', { paths: { desktopApplied: applied } });
+      expect(desktop.verdict).toBe('conflict-editable');
+      expect(layerAt(desktop, 'applied.json')).toMatchObject({ flag: 'off', keyNames: [] });
+
+      const vscode = put('vscode/settings.json', {
+        'claudeCode.environmentVariables': [{ name: 'CLAUDE_CODE_USE_BEDROCK', value: '0' }],
+      });
+      const vs = await resolve('connect-vscode', { paths: { vscodeSettings: [vscode] } });
+      expect(vs.verdict).toBe('conflict-editable');
+      expect(layerAt(vs, 'vscode/settings.json')).toMatchObject({ flag: 'off', keyNames: [] });
     });
 
     it('ranks managed-on over unknown over editable-on', async () => {

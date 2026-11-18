@@ -143,7 +143,9 @@ function underBase(candidate: string | undefined, base: string | undefined): boo
   return !!candidate && !!base && (candidate === base || candidate.startsWith(`${base}/`));
 }
 
-export const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+export const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'] as const;
+/** An environment flag that switches Claude Code to a cloud provider. */
+export type CloudFlag = (typeof CLOUD_FLAGS)[number];
 /** Conservative: anything but an explicit off value counts as set, so an unfamiliar spelling never reads as OAuth. */
 const flagSet = (v: string | undefined): boolean => flagState(v) !== 'off';
 /** Credentials that make Claude authenticate with something other than the saved OAuth login. Only presence is read. */
