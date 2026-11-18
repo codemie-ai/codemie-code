@@ -553,6 +553,8 @@ describe('readVsCodeByokGateway', () => {
     ['an unparsable file', async () => writeModels('[{')],
     ['no managed provider', async () => writeModels(JSON.stringify([{ name: 'Other', vendor: 'customendpoint', models: [] }]))],
     ['a non-loopback URL', async () => writeModels(provider('https://models.example.com:4001/v1/chat/completions'))],
+    // The remover keeps a provider with any non-loopback model, so it is not CodeMie's and not connected.
+    ['mixed loopback and non-loopback URLs', async () => writeModels(provider('http://127.0.0.1:4001/v1/chat/completions', 'https://models.example.com/v1/chat/completions'))],
   ])('returns null for %s', async (_case, arrange) => {
     await arrange();
 

@@ -294,14 +294,21 @@ describe('createProxyAnalyticsCommand', () => {
       const { connectFolder } = await import('@/agents/core/evidence/consent-store.js');
       const folder = await (await import('@/agents/core/project-allowlist.js')).canonicalizePath(projectRoot);
       await connectFolder({ owner_hash: 'o', api_identity: 'a', project: 'proj-x' }, folder);
+      // Another account's consent on the same machine is not this account's.
+      await connectFolder({ owner_hash: 'someone-else', api_identity: 'a', project: 'proj-other' }, folder);
+      vi.doMock('@/agents/core/evidence/hook-identity.js', () => ({
+        currentEvidenceIdentity: async () => ({ owner_hash: 'o', api_identity: 'a' }),
+      }));
       await runCommand(['status', '--claude-code-otlp']);
       const out = plainOutput();
       expect(out).toContain('Consented folders:');
       expect(out).toContain(`${folder} (proj-x)`);
+      expect(out).not.toContain('proj-other');
       logSpy.mockClear();
       await runCommand(['status', '--claude-code-otlp', '--json']);
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect(parsed.consentedFolders).toEqual([{ folder, project: 'proj-x' }]);
+      vi.doUnmock('@/agents/core/evidence/hook-identity.js');
     });
 
     it('does not read the daemon in text mode', async () => {

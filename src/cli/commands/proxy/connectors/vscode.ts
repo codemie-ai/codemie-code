@@ -275,13 +275,14 @@ async function readProviders(configPath: string): Promise<unknown[]> {
 /**
  * The port the managed CodeMie models of VS Code's (or VS Code Insiders') `chatLanguageModels.json` point at:
  * the first one that differs from the daemon's `port`, else `port`; null when there is no product directory, no
- * readable file, no managed model with a loopback URL. The key is not in this file. Never throws, writes nothing.
+ * readable file, or no managed provider whose model URLs are all loopback (the one the remover removes). The key is not in this file. Never throws, writes nothing.
  */
 export async function readVsCodeByokGateway(port: number, insiders = false): Promise<ConnectorGateway | null> {
   try {
     const providers = await readProviders(getVsCodeLanguageModelsPath(insiders));
+    // The remover's ownership rule: a managed provider with any non-loopback model is the user's, not connected.
     const ports = providers
-      .filter(isManagedProvider)
+      .filter(isCodeMieOwnedProvider)
       .flatMap(provider => Array.isArray(provider.models) ? provider.models : [])
       .map(model => isRecord(model) ? loopbackPortOf(model.url) : null)
       .filter((modelPort): modelPort is number => modelPort !== null);
@@ -366,8 +367,8 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
 }
 
-/** A managed provider is the proxy's own only when every model URL it holds is loopback (same rule as the reader). */
-function isCodeMieOwnedProvider(provider: unknown): boolean {
+/** A managed provider is the proxy's own only when every model URL it holds is loopback; the reader and the remover share it. */
+function isCodeMieOwnedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
   if (!isManagedProvider(provider)) return false;
   const models = Array.isArray(provider.models) ? provider.models : [];
   return models.length > 0 && models.every(model => isRecord(model) && loopbackPortOf(model.url) !== null);

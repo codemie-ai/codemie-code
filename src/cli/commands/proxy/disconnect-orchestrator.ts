@@ -244,7 +244,11 @@ export async function disconnectOmp(): Promise<void> {
   }
 }
 
-export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
+/**
+ * Disconnects every selected target. Resolves false, after printing the target list and setting exit code 1, when
+ * no target was selected (a usage error); true once the selected targets ran, whatever each one reported.
+ */
+export async function disconnectTargets(opts: DisconnectOptions): Promise<boolean> {
   const { targets } = opts;
   if (
     !targets.codexDesktop && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp &&
@@ -252,7 +256,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   ) {
     console.log(DISCONNECT_TARGET_LIST);
     process.exitCode = 1;
-    return;
+    return false;
   }
 
   if (opts.insiders && !targets.vscode && !targets.vscodeClaudeCode) {
@@ -299,4 +303,5 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   if (targets.omp) {
     await disconnectOmp();
   }
+  return true;
 }

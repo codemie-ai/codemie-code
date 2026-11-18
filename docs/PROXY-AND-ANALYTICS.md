@@ -61,7 +61,7 @@ codemie proxy connect --claude-code-otlp --scope project    # only the current p
 codemie proxy disconnect --claude-code-otlp --scope project
 ```
 
-Project scope writes to the repository's own settings and tracks only that project; user scope writes your user-level settings. `codemie proxy clients` shows which scope each connector holds.
+Both scopes write the same file, your user-level `~/.claude/settings.json`; no repository settings file is written. User scope tracks every project. Project scope adds only the current project to the tracked-project list in that file (run it again in another repository to add that one too), and `disconnect --scope project` removes only the current project from the list. `codemie proxy clients` shows which scope each connector holds, and `codemie proxy analytics status` lists the tracked projects.
 
 ### Grant work-folder consent
 

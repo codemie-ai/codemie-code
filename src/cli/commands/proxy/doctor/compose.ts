@@ -11,7 +11,6 @@
  */
 import type { HealthCheckDetail } from '../../doctor/types.js';
 import { renderHint } from '@/utils/hint.js';
-import { logger } from '@/utils/logger.js';
 import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
@@ -24,13 +23,29 @@ import {
   SHALLOW_TIMEOUT_MS,
   type ProxyHealthResult,
 } from '../health-check.js';
-import { collectClientNotices, collectDesktopCollection } from '../analytics-delivery-lines.js';
-import { CLIENT_TARGETS, readClientTargetStates, type ClientTarget, type ClientTargetState } from '../client-targets.js';
-import { collectDeliveryHealth, DELIVERY_REASONS, unknownHint } from '../delivery-health.js';
-import { findOlderCliOnPath } from '../connect-orchestrator.js';
-import { checkClaudeCodeOtlpEndpoint } from '../connectors/claude-code-otlp-endpoint.js';
-import { ANALYTICS_CONNECTORS, type AnalyticsConnectorStatus, type ConnectorScopeRead } from '../analytics-connectors.js';
+import { readClientTargetStates, type ClientTargetState } from '../client-targets.js';
+import { DELIVERY_REASONS } from '../delivery-health.js';
 import type { inspectDesktopProxy } from '../inspect-desktop.js';
+import {
+  CONNECT_COMMAND,
+  DEBUG_COMMAND,
+  LOGIN_COMMAND,
+  RESTART_COMMAND,
+  START_COMMAND,
+  claudeOtlpSections,
+  clientSections,
+  cliPathSections,
+  collectConnectors,
+  connectedTargets,
+  connectorSections,
+  desktopSections,
+  errorText,
+  guarded,
+  isConnected,
+  type ConnectorEntry,
+  type Sections,
+} from './sections.js';
+import { deliverySections } from './delivery-sections.js';
 
 /**
  * Stable section ids. An id repeats when a section has several findings (one entry per finding).
@@ -102,38 +117,6 @@ export interface ProxyDoctorOptions {
 /** Upper bound of the authenticated probe: its `/health` read plus its keyed request. */
 export const AUTH_PROBE_TIMEOUT_MS = SHALLOW_TIMEOUT_MS + DEEP_TIMEOUT_MS;
 
-const CONNECT_COMMAND = 'codemie proxy connect';
-const LOGIN_COMMAND = 'codemie profile login';
-const RESTART_COMMAND = 'codemie proxy restart';
-const START_COMMAND = 'codemie proxy start';
-
-const CONNECTOR_LABELS: Record<string, string> = {
-  'claude-code-otlp': 'Claude Code',
-  'copilot-cli-otlp': 'Copilot CLI',
-  'copilot-chat-otlp': 'Copilot Chat',
-};
-
-type Sections = ProxyDoctorSection[];
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** Runs one section builder; a throw becomes a single section of `failStatus` naming the failure. */
-async function guarded(
-  id: ProxyDoctorSectionId,
-  label: string,
-  build: () => Promise<Sections>,
-  failStatus: ProxyDoctorSection['status'] = 'error'
-): Promise<Sections> {
-  try {
-    return await build();
-  } catch (error) {
-    logger.debug(`[proxy-doctor] ${id} check failed:`, error);
-    return [{ id, status: failStatus, message: `${label} check failed: ${errorText(error)}` }];
-  }
-}
-
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -142,222 +125,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-interface ConnectorEntry {
-  id: string;
-  status?: AnalyticsConnectorStatus;
-  /** The tracking scope read through the connector's own store (`AnalyticsConnector.readScope`). */
-  scope?: ConnectorScopeRead;
-  error?: string;
-}
-
-function isConnected(status: AnalyticsConnectorStatus): boolean {
-  return 'hooksInstalled' in status ? status.hooksInstalled : status.connected;
-}
-
-async function collectConnectors(): Promise<ConnectorEntry[]> {
-  return Promise.all(ANALYTICS_CONNECTORS.map(async (connector): Promise<ConnectorEntry> => {
-    try {
-      const [status, scope] = await Promise.all([connector.collect(), connector.readScope()]);
-      return { id: connector.id, status, scope };
-    } catch (error) {
-      logger.debug(`[proxy-doctor] ${connector.id} status failed:`, error);
-      return { id: connector.id, error: errorText(error) };
-    }
-  }));
-}
-
-/** The connected targets of the client-target table, in table order. */
-function connectedTargets(states: ClientTargetState[] | null): ClientTarget[] {
-  return (states ?? []).filter((state) => state.connected).map((state) => state.target);
-}
-
-function connectorSections(entries: ConnectorEntry[]): Sections {
-  const sections: Sections = [];
-  for (const entry of entries) {
-    const label = CONNECTOR_LABELS[entry.id] ?? entry.id;
-    const flag = `--${entry.id}`;
-    if (entry.error !== undefined) {
-      sections.push({ id: 'connectors', status: 'error', message: `${label} analytics check failed: ${entry.error}` });
-      continue;
-    }
-    const status = entry.status;
-    const scope = entry.scope;
-    if (!status || !scope) continue;
-    const claudeEntry = 'hooksInstalled' in status;
-    if ('invalid' in scope && !claudeEntry) {
-      sections.push({
-        id: 'connectors',
-        status: 'warn',
-        message: `${label} analytics: the connector settings cannot be read, so nothing is collected`,
-        hint: renderHint({
-          reason: 'unreadable connector settings',
-          action: `fix or delete ${getCopilotConnectorsConfigPath()}, then run: ${CONNECT_COMMAND} ${flag}`,
-        }),
-      });
-      continue;
-    }
-    if (!isConnected(status)) continue;
-    if ('invalid' in scope) {
-      sections.push({
-        id: 'connectors',
-        status: 'warn',
-        message: `${label} analytics: the tracked-project list in ${getClaudeSettingsPath()} is invalid`,
-        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${flag} --overwrite` }),
-      });
-    } else {
-      const scopeText = scope.scope === 'project'
-        ? `scope project (${scope.paths.length} tracked)`
-        : 'scope user (all projects)';
-      sections.push({ id: 'connectors', status: 'ok', message: `${label} analytics: connected, ${scopeText}` });
-    }
-    if (status.preferencesCorrupt) {
-      sections.push({
-        id: 'connectors',
-        status: 'warn',
-        message: `${label} analytics: preferences cannot be read (${status.preferencesPath})`,
-        hint: renderHint({ reason: 'unreadable analytics preferences', action: `fix or delete ${status.preferencesPath}` }),
-      });
-    } else if (!status.enabled) {
-      sections.push({
-        id: 'connectors',
-        status: 'info',
-        message: `${label} analytics: collection is paused`,
-        hint: renderHint({ reason: 'collection paused', command: `codemie proxy analytics enable ${flag}` }),
-      });
-    }
-  }
-  return sections;
-}
-
-async function cliPathSections(): Promise<Sections> {
-  const older = await findOlderCliOnPath();
-  if (!older) return [];
-  return [{
-    id: 'cli-path',
-    status: 'warn',
-    message: `An older CodeMie CLI is first on PATH: ${older.path} (${older.version}); its hooks start an older proxy`,
-    hint: renderHint({ reason: 'older CLI first on PATH', action: 'update or remove it, or put this install first on PATH' }),
-  }];
-}
-
-function labelOfFlag(flag: string): string {
-  return CLIENT_TARGETS.find((target) => target.flag === flag)?.label ?? flag;
-}
-
-async function clientSections(state: DaemonState, targets: ClientTargetState[] | null, nothingConnected: boolean): Promise<Sections> {
-  const notices = await collectClientNotices(state);
-  const sections: Sections = [];
-  for (const failed of (targets ?? []).filter((entry) => entry.error !== undefined)) {
-    sections.push({ id: 'clients', status: 'warn', message: `${failed.target.label} check failed: ${failed.error}` });
-  }
-  for (const mismatch of notices.clientPortMismatch) {
-    sections.push({
-      id: 'clients',
-      status: 'warn',
-      message: `${labelOfFlag(mismatch.flag)} points at port ${mismatch.configuredPort}, the proxy listens on ${state.port}`,
-      hint: renderHint({ reason: 'client points at another port', command: `${CONNECT_COMMAND} ${mismatch.flag}` }),
-    });
-  }
-  for (const shared of notices.clientSharedKey) {
-    sections.push(shared.refused
-      ? {
-        id: 'clients',
-        status: 'warn',
-        message: `${labelOfFlag(shared.flag)} points at a local gateway with a key this proxy does not accept`,
-        hint: renderHint({ reason: 'key not accepted', action: `if it should use CodeMie, run: ${CONNECT_COMMAND} ${shared.flag}` }),
-      }
-      : {
-        id: 'clients',
-        status: 'warn',
-        message: `${labelOfFlag(shared.flag)} uses the shared key`,
-        hint: renderHint({ reason: 'shared key in use', command: `${CONNECT_COMMAND} ${shared.flag}` }),
-      });
-  }
-  for (const hooks of notices.hooksOfAnotherInstall) {
-    sections.push({
-      id: 'clients',
-      status: 'warn',
-      message: `${CONNECTOR_LABELS[hooks.connector] ?? hooks.connector} hooks run another install (${hooks.path})`,
-      hint: renderHint({ reason: 'hooks of another install', command: `${CONNECT_COMMAND} ${hooks.flag}` }),
-    });
-  }
-  if (sections.length > 0) return sections;
-  const connected = connectedTargets(targets);
-  if (connected.length > 0) {
-    return [{ id: 'clients', status: 'ok', message: `Clients connected: ${connected.map((target) => target.label).join(', ')}` }];
-  }
-  return [{
-    id: 'clients',
-    status: 'info',
-    message: 'No clients connected',
-    ...(nothingConnected && { hint: renderHint({ reason: 'nothing is connected to the proxy', command: CONNECT_COMMAND }) }),
-  }];
-}
-
-async function deliverySections(state: DaemonState, reply: AnalyticsHealthReply | undefined): Promise<Sections> {
-  const health = await collectDeliveryHealth(state, reply);
-  if (health.status === 'healthy') {
-    return [{ id: 'delivery', status: 'ok', message: 'Analytics delivery: healthy' }];
-  }
-  if (health.status === 'unhealthy') {
-    const entry = health.reason ? DELIVERY_REASONS[health.reason] : undefined;
-    return [{
-      id: 'delivery',
-      status: entry?.command ? 'error' : 'warn',
-      message: `Analytics delivery: unhealthy${entry ? ` (${entry.label})` : ''}`,
-      ...(entry?.command && { hint: renderHint({ reason: entry.label, command: entry.command }) }),
-    }];
-  }
-  return [{ id: 'delivery', status: 'info', message: `Analytics delivery: unknown (${unknownHint(health)})` }];
-}
-
-async function desktopSections(state: DaemonState): Promise<Sections> {
-  const desktop = await collectDesktopCollection(state);
-  if (!desktop) return [];
-  if (desktop.collecting) {
-    return [{ id: 'desktop', status: 'ok', message: 'Claude Desktop: collecting' }];
-  }
-  const command = desktop.remedy?.replace(/^run:\s*/, '');
-  return [{
-    id: 'desktop',
-    status: 'warn',
-    message: `Claude Desktop: not collecting — ${desktop.reason ?? 'unknown reason'}`,
-    ...(command && { hint: renderHint({ reason: 'Desktop is not collecting', command }) }),
-  }];
-}
-
-/** The `connect` flags that repeat Claude Code's current tracking scope. */
-function claudeScopeFlags(scope: ConnectorScopeRead | undefined): string {
-  if (!scope) return '';
-  return 'invalid' in scope ? ' --overwrite' : ` --scope ${scope.scope}`;
-}
-
-async function claudeOtlpSections(state: DaemonState, claudeScope: ConnectorScopeRead | undefined): Promise<Sections> {
-  const check = await checkClaudeCodeOtlpEndpoint(state);
-  if (!check) return [];
-  if (check.matches) {
-    return [{ id: 'claude-code-otlp', status: 'ok', message: 'Claude Code OTLP endpoint: points at this proxy' }];
-  }
-  const keyOnly = check.configured === check.expected;
-  return [{
-    id: 'claude-code-otlp',
-    status: 'error',
-    message: (keyOnly
-      ? 'The gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this proxy; native OTel is rejected'
-      : `Claude Code OTLP endpoint ${check.configured} does not match this proxy (${check.expected}); native OTel is not reaching it`) +
-      '. After repairing, start a new Claude Code session.',
-    hint: renderHint({
-      reason: 'Claude Code exports to another proxy',
-      command: `${CONNECT_COMMAND} --claude-code-otlp${claudeScopeFlags(claudeScope)}`,
-    }),
-  }];
-}
-
 interface DaemonContact {
   sections: Sections;
   /** The daemon answered `/health` with its own pid. */
   verified: boolean;
   reply?: AnalyticsHealthReply;
+}
+
+/** The last problem the daemon's own watcher recorded in its state, when it marked itself unhealthy. */
+function recordedHealthIssue(state: DaemonState): Sections {
+  if (state.health !== 'unhealthy' || !state.healthReason) return [];
+  return [{
+    id: 'daemon',
+    status: 'warn',
+    message: `The proxy recorded a health problem: ${state.healthReason}`,
+    hint: renderHint({ reason: 'the proxy reported itself unhealthy', command: RESTART_COMMAND }),
+  }];
 }
 
 async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
@@ -402,6 +185,7 @@ async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
     };
   }
   const running = `Running at ${state.url} (pid ${state.pid}, profile ${state.profile}`;
+  const recorded = recordedHealthIssue(state);
   const daemon: ProxyDoctorSection = state.version
     ? { id: 'daemon', status: 'ok', message: `${running}, version ${state.version})` }
     : {
@@ -410,7 +194,7 @@ async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
       message: `${running}, started by an older CLI)`,
       hint: renderHint({ reason: 'older proxy', command: RESTART_COMMAND }),
     };
-  return { verified: true, sections: [daemon], reply: parseAnalyticsReply(body, state.pid) };
+  return { verified: true, sections: [daemon, ...recorded], reply: parseAnalyticsReply(body, state.pid) };
 }
 
 async function authSections(state: DaemonState, reply: AnalyticsHealthReply | undefined, authProbe: boolean): Promise<Sections> {
@@ -432,7 +216,12 @@ async function authSections(state: DaemonState, reply: AnalyticsHealthReply | un
       `no answer within ${AUTH_PROBE_TIMEOUT_MS / 1000}s`
     );
   } catch (error) {
-    return [{ id: 'upstream', status: 'error', message: `Authenticated check failed: ${errorText(error)}` }];
+    return [{
+      id: 'upstream',
+      status: 'error',
+      message: `Authenticated check failed: ${errorText(error)}`,
+      hint: renderHint({ reason: 'the proxy did not answer the authenticated check', command: RESTART_COMMAND }),
+    }];
   }
   if (probe.healthy) {
     return [
@@ -527,11 +316,15 @@ function scrubKey(sections: Sections, key: string | undefined): Sections {
   }));
 }
 
-/** One sign-in message: drops the delivery `credentials_expired` section when `auth` already reports an error. */
+/**
+ * One sign-in message: when `auth` already reports an error and the delivery verdict is `credentials_expired`, the
+ * delivery group (verdict and its facts) is dropped; the facts only restate what signing in clears.
+ */
 function dropDuplicateSignIn(sections: Sections): Sections {
   if (!sections.some((s) => s.id === 'auth' && s.status === 'error')) return sections;
   const label = DELIVERY_REASONS.credentials_expired.label;
-  return sections.filter((s) => !(s.id === 'delivery' && s.message.includes(label)));
+  if (!sections.some((s) => s.id === 'delivery' && s.message.includes(label))) return sections;
+  return sections.filter((s) => s.id !== 'delivery');
 }
 
 /** Builds the proxy diagnosis. Never rejects. */
@@ -542,14 +335,24 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
   try {
     ({ running, state } = await readDaemonStatus());
   } catch (error) {
-    sections.push({ id: 'daemon', status: 'error', message: `Proxy state could not be read: ${errorText(error)}` });
+    sections.push({
+      id: 'daemon',
+      status: 'error',
+      message: `Proxy state could not be read: ${errorText(error)}`,
+      hint: renderHint({ reason: 'the proxy state file is unreadable', command: RESTART_COMMAND }),
+    });
   }
   if (!running) state = null;
 
   const [connectors, targets] = await Promise.all([
     collectConnectors(),
     readClientTargetStates().catch((error: unknown): null => {
-      sections.push({ id: 'clients', status: 'error', message: `Client configs check failed: ${errorText(error)}` });
+      sections.push({
+        id: 'clients',
+        status: 'error',
+        message: `Client configs check failed: ${errorText(error)}`,
+        hint: renderHint({ reason: 'the client configs could not be read', command: DEBUG_COMMAND }),
+      });
       return null;
     }),
   ]);
@@ -577,7 +380,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
     sections.push(...contact);
     const analyticsActive = anyConnector || connectedTargets(targets).some((target) => target.carriesAnalytics);
     const rest = await Promise.all([
-      guarded('clients', 'Clients', () => clientSections(live, targets, nothingConnected)),
+      guarded('clients', 'Clients', () => clientSections(live, targets, connectors, nothingConnected)),
       analyticsActive ? guarded('delivery', 'Analytics delivery', () => deliverySections(live, verifiedReply)) : Promise.resolve([]),
       guarded('desktop', 'Claude Desktop', () => desktopSections(live)),
       guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claudeScope)),

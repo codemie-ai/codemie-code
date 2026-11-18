@@ -15,11 +15,8 @@ import {
 } from '@/agents/core/copilot-connector-scope.js';
 import type { ConnectorScopeRead } from '@/agents/core/project-allowlist.js';
 import { logger } from '@/utils/logger.js';
-import {
-  addClaudeCodeOtlpProject,
-  hasClaudeCodeOtlpHooks,
-  readClaudeCodeOtlpScope,
-} from './connectors/claude-code-otlp.js';
+import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
+import { addClaudeCodeOtlpProject, readClaudeCodeOtlpScope } from './connectors/claude-code-otlp-scope.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import {
   collectClaudeAnalyticsStatus,

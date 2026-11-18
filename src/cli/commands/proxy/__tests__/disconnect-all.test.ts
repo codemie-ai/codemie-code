@@ -4,10 +4,24 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const targets: Array<{ id: string; label: string; connected: boolean; disconnect?: () => Promise<void> }> = [];
+interface FakeTarget {
+  id: string;
+  label: string;
+  connected: boolean;
+  /** The connected check failed with this message. */
+  error?: string;
+  disconnect?: () => Promise<void>;
+}
+
+const targets: FakeTarget[] = [];
 const stopDaemon = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../client-targets.js', () => ({
+  readClientTargetStates: async () => targets.map((target) => ({
+    target,
+    connected: target.connected,
+    ...(target.error !== undefined && { error: target.error }),
+  })),
   listConnectedClientTargets: async () => targets.filter((t) => t.connected),
 }));
 vi.mock('../daemon-manager.js', () => ({
@@ -26,7 +40,7 @@ describe('disconnectAll', () => {
   beforeEach(() => {
     targets.length = 0;
     process.exitCode = undefined;
-    stopDaemon.mockClear();
+    stopDaemon.mockReset().mockResolvedValue(undefined);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -62,6 +76,34 @@ describe('disconnectAll', () => {
 
     expect(stopDaemon).toHaveBeenCalledOnce();
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('a failed stop is reported and exits 1', async () => {
+    targets.push({ id: 'b', label: 'Beta', connected: true, disconnect: async () => {} });
+    stopDaemon.mockRejectedValue(new Error('kill failed'));
+    const { disconnectAll } = await import('../disconnect-all.js');
+
+    await disconnectAll({ stop: true });
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to stop proxy'));
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('a target whose connected check failed is reported as not disconnected and exits 1', async () => {
+    const remove = vi.fn(async () => {});
+    targets.push(
+      { id: 'a', label: 'Alpha', connected: false, error: 'EACCES', disconnect: remove },
+      { id: 'b', label: 'Beta', connected: true, disconnect: async () => {} },
+    );
+    const { disconnectAll } = await import('../disconnect-all.js');
+
+    const result = await disconnectAll();
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(result).toEqual({ disconnected: ['Beta'], failed: ['Alpha'] });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Alpha: check failed (EACCES); not disconnected'));
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Nothing connected'));
+    expect(process.exitCode).toBe(1);
   });
 
   it('a second run with nothing connected reports so and exits 0', async () => {

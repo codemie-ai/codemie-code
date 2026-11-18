@@ -43,6 +43,33 @@ describe('disconnectTargets', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`${flag} has no effect`));
   });
 
+  it('--vscode --insiders runs the BYOK remover for Insiders, without the target list or a failure exit', async () => {
+    const remove = vi.fn().mockResolvedValue({ removed: true });
+    vi.doMock('../connectors/vscode.js', () => ({ removeVsCodeLanguageModelsConfig: remove }));
+    process.exitCode = undefined;
+    try {
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      const ran = await disconnectTargets({ targets: { vscode: true }, insiders: true });
+
+      expect(ran).toBe(true);
+      expect(remove).toHaveBeenCalledWith({ insiders: true });
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Select at least one target'));
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('VS Code Insiders BYOK disconnected'));
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      vi.doUnmock('../connectors/vscode.js');
+      process.exitCode = undefined;
+    }
+  });
+
+  it('reports that no target ran when none is selected', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    expect(await disconnectTargets({ targets: {} })).toBe(false);
+    process.exitCode = undefined;
+  });
+
   it('an omitted --scope reaches the Claude Code remover as the user scope', async () => {
     const remove = vi.fn().mockResolvedValue({ removed: false });
     vi.doMock('../connectors/claude-code-otlp.js', () => ({ removeClaudeCodeOtlpConfig: remove }));

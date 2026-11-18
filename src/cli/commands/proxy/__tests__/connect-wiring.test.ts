@@ -495,6 +495,97 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     });
   });
 
+  it('routes `proxy disconnect --vscode --insiders` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--vscode', '--insiders'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith(expect.objectContaining({
+      insiders: true,
+      targets: expect.objectContaining({ vscode: true, vscodeClaudeCode: false }),
+    }));
+  });
+
+  it('`disconnect <target> --stop` stops the daemon once; without --stop it does not', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { stopDaemonAfterDisconnect } = await import('../disconnect-all.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(disconnectTargets).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop', '--stop'], { from: 'user' });
+    expect(stopDaemonAfterDisconnect).toHaveBeenCalledTimes(1);
+
+    vi.mocked(stopDaemonAfterDisconnect).mockClear();
+    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop'], { from: 'user' });
+    expect(stopDaemonAfterDisconnect).not.toHaveBeenCalled();
+  });
+
+  it('`disconnect --stop` with no target is a usage error and leaves the daemon running', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { stopDaemonAfterDisconnect } = await import('../disconnect-all.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(disconnectTargets).mockImplementationOnce(async () => {
+      process.exitCode = 1;
+      return false;
+    });
+    try {
+      await createProxyCommand().parseAsync(['disconnect', '--stop'], { from: 'user' });
+      expect(stopDaemonAfterDisconnect).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = undefined;
+    }
+  });
+
+  describe('Next line', () => {
+    const original = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    let written: string[];
+
+    beforeEach(() => {
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      written = [];
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        written.push(String(chunk));
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      if (original) Object.defineProperty(process.stdout, 'isTTY', original);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      vi.mocked(process.stdout.write).mockRestore();
+      process.exitCode = undefined;
+    });
+
+    it('after connecting an analytics connector names proxy doctor', async () => {
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['connect', '--claude-code-otlp'], { from: 'user' });
+
+      expect(written.join('')).toBe('Next: codemie proxy doctor\n');
+    });
+
+    it('is not printed after a failed connect', async () => {
+      const { connectTargets } = await import('../connect-orchestrator.js');
+      const { createProxyCommand } = await import('../index.js');
+      vi.mocked(connectTargets).mockImplementationOnce(async () => {
+        process.exitCode = 1;
+      });
+
+      await createProxyCommand().parseAsync(['connect'], { from: 'user' });
+
+      expect(written.join('')).not.toContain('Next:');
+    });
+
+    it('after disconnect --all names proxy clients', async () => {
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['disconnect', '--all'], { from: 'user' });
+
+      expect(written.join('')).toBe('Next: codemie proxy clients\n');
+    });
+  });
+
   it('`proxy disconnect --all --scope project` warns that --scope is ignored and disconnects all', async () => {
     const { disconnectAll } = await import('../disconnect-all.js');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

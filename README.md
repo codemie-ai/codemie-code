@@ -660,8 +660,11 @@ codemie proxy analytics disable
 # Exclude the current project for every connected connector, even when Global scope is enabled
 codemie proxy analytics exclude
 
-# Show delivery health, unsent data, the effective scope and the tracked/excluded projects
+# Show the effective scope, the tracked/excluded projects and the consented folders
 codemie proxy analytics status
+
+# Show delivery health: unsent data, the next retry and the last dropped reason
+codemie proxy doctor
 ```
 
 `disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.

@@ -4,7 +4,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -142,7 +142,28 @@ describe('consent grant / revoke / list actions', () => {
     expect(said(out)).toContain('Proj-A');
     expect(said(out)).toContain(work);
     const { listConsents } = await import('@/agents/core/evidence/consent-store.js');
-    expect(await listConsents()).toHaveLength(1);
+    const listed = await listConsents(id);
+    expect(listed.kind === 'ok' ? listed.entries : []).toHaveLength(1);
+  });
+
+  it('consent list shows only the signed-in account\'s folders', async () => {
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    identityMock.mockResolvedValue({ ...id, owner_hash: 'p'.repeat(64) });
+    out.mockClear();
+    await run(['consent', 'list']);
+    expect(said(out)).toContain('No work-consent folders');
+    expect(said(out)).not.toContain('Proj-A');
+  });
+
+  it('consent list reports an unreadable store as an error, not as none', async () => {
+    const { consentStorePath } = await import('@/agents/core/evidence/consent-store.js');
+    await mkdir(join(tempDir), { recursive: true });
+    await writeFile(consentStorePath(), '{ not json');
+    out.mockClear();
+    await run(['consent', 'list']);
+    expect(said(out)).not.toContain('No work-consent folders');
+    expect(said(err)).toContain('cannot be read');
+    expect(process.exitCode).toBe(1);
   });
 
   it('the deprecated connect-folder / disconnect-folder still work with one stderr notice each', async () => {

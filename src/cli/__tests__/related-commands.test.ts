@@ -130,4 +130,22 @@ describe('printNext', () => {
     printNext('proxy status', 'stopped');
     expect(out()).toBe(`Next: ${RELATED['proxy status'].next.byOutcome!.stopped}\n`);
   });
+
+  it('prints nothing after a failed command (non-zero exit code)', () => {
+    setTty(true);
+    const out = capture();
+    const prior = process.exitCode;
+    process.exitCode = 1;
+    try {
+      printNext('proxy connect');
+    } finally {
+      process.exitCode = prior;
+    }
+    expect(out()).toBe('');
+  });
+
+  it('connect and disconnect name an outcome-specific follow-up', () => {
+    expect(RELATED['proxy connect'].next.byOutcome?.analytics).toBe('codemie proxy doctor');
+    expect(RELATED['proxy disconnect'].next.byOutcome?.all).toBe('codemie proxy clients');
+  });
 });

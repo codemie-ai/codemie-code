@@ -58,6 +58,9 @@ vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
   hasClaudeCodeOtlpHooks: async () => true,
   readClaudeCodeHookInstall: async () => null,
+}));
+vi.mock('../connectors/claude-code-otlp-scope.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/claude-code-otlp-scope.js')>()),
   readClaudeCodeOtlpScope: async () => ({ scope: 'project', paths: [TRACKED_PROJECT] }),
 }));
 vi.mock('../connectors/copilot-cli-otlp.js', async (importOriginal) => ({
@@ -104,6 +107,18 @@ vi.mock('../connect-orchestrator.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connect-orchestrator.js')>()),
   findOlderCliOnPath: async () => null,
 }));
+
+const removers = vi.hoisted(() => ({
+  disconnectClaudeCodeOtlp: vi.fn(async () => {}),
+  disconnectClaudeDesktop: vi.fn(async () => {}),
+  disconnectCodexDesktop: vi.fn(async () => {}),
+  disconnectCopilotChatOtlp: vi.fn(async () => {}),
+  disconnectCopilotCliOtlp: vi.fn(async () => {}),
+  disconnectOmp: vi.fn(async () => {}),
+  disconnectVsCodeByok: vi.fn(async () => {}),
+  disconnectVsCodeClaudeCode: vi.fn(async () => {}),
+}));
+vi.mock('../disconnect-orchestrator.js', () => removers);
 
 let logs: string[];
 let originalFetch: typeof globalThis.fetch;
@@ -173,6 +188,31 @@ describe('client-target table', () => {
       { id: 'clients', status: 'ok', message: `Clients connected: ${connected.map((row) => row.label).join(', ')}` },
     ]);
     expect(report.nothingConnected).toBe(false);
+  });
+
+  it('each row disconnects through its own remover, with the Insiders flag and the user scope', async () => {
+    const { CLIENT_TARGETS } = await import('../client-targets.js');
+    const expected: Record<string, [keyof typeof removers, unknown[]]> = {
+      'claude-desktop': ['disconnectClaudeDesktop', []],
+      'vscode-claude-code': ['disconnectVsCodeClaudeCode', [false]],
+      'vscode-claude-code-insiders': ['disconnectVsCodeClaudeCode', [true]],
+      'codex-desktop': ['disconnectCodexDesktop', []],
+      vscode: ['disconnectVsCodeByok', [false]],
+      'vscode-insiders': ['disconnectVsCodeByok', [true]],
+      omp: ['disconnectOmp', []],
+      'claude-code-otlp': ['disconnectClaudeCodeOtlp', ['user']],
+      'copilot-cli-otlp': ['disconnectCopilotCliOtlp', ['user']],
+      'copilot-chat-otlp': ['disconnectCopilotChatOtlp', ['user']],
+    };
+    expect(CLIENT_TARGETS.map((target) => target.id).sort()).toEqual(Object.keys(expected).sort());
+    for (const target of CLIENT_TARGETS) {
+      for (const remover of Object.values(removers)) remover.mockClear();
+      await target.disconnect?.();
+      const [name, args] = expected[target.id];
+      const called = Object.entries(removers).filter(([, remover]) => remover.mock.calls.length > 0).map(([key]) => key);
+      expect(called, target.id).toEqual([name]);
+      expect(removers[name], target.id).toHaveBeenCalledWith(...args);
+    }
   });
 
   it('analytics rows show scope from readScope and never the project list', async () => {

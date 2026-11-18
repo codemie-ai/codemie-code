@@ -601,7 +601,16 @@ describe('ProxyCheck', () => {
     expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false });
     expect(result.name).toBe('Proxy');
     expect(result.success).toBe(true);
-    expect(result.details).toEqual([{ status: 'ok', message: 'running' }]);
+    expect(result.details).toEqual([
+      { status: 'ok', message: 'running' },
+      { status: 'info', message: expect.stringContaining('codemie proxy doctor') },
+    ]);
+  });
+
+  it('ends with a pointer to codemie proxy doctor for the full report', async () => {
+    h.composeMock.mockResolvedValue({ sections: [{ id: 'clients', status: 'warn', message: 'w', hint: 'h' }], nothingConnected: false });
+    const result = await new ProxyCheck().run();
+    expect(result.details.at(-1)).toEqual({ status: 'info', message: 'Full report: codemie proxy doctor' });
   });
 
   it('fails only on an error section, not on a warning', async () => {

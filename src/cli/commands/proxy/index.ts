@@ -116,6 +116,13 @@ interface UnifiedConnectOptions {
   yes?: boolean;
 }
 
+/** The `Next:` outcome of a connect: an analytics connector wins, then Claude Desktop; otherwise the default. */
+function connectOutcome(opts: UnifiedConnectOptions): string | undefined {
+  if (opts.claudeCodeOtlp || opts.copilotChatOtlp || opts.copilotCliOtlp) return 'analytics';
+  if (opts.claudeDesktop) return 'claude-desktop';
+  return undefined;
+}
+
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
   proxy.description('Manage the CodeMie local gateway proxy daemon');
@@ -289,7 +296,7 @@ export function createProxyCommand(): Command {
         scope: opts.scope,
         yes: Boolean(opts.yes || opts.silent),
       });
-      printNext('proxy connect');
+      printNext('proxy connect', connectOutcome(opts));
     });
 
   proxy
@@ -332,10 +339,10 @@ export function createProxyCommand(): Command {
           console.log(chalk.yellow('Note: --scope has no effect with --all (every connector is disconnected at user scope).'));
         }
         await disconnectAll({ stop: opts.stop });
-        printNext('proxy disconnect');
+        printNext('proxy disconnect', 'all');
         return;
       }
-      await disconnectTargets({
+      const ran = await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
           copilotChatOtlp: Boolean(opts.copilotChatOtlp),
@@ -349,8 +356,9 @@ export function createProxyCommand(): Command {
         scope: opts.scope,
         insiders: Boolean(opts.insiders),
       });
-      if (opts.stop) await stopDaemonAfterDisconnect();
-      printNext('proxy disconnect');
+      // A usage error (no target) must not stop the daemon every other client relies on.
+      if (opts.stop && ran) await stopDaemonAfterDisconnect();
+      printNext('proxy disconnect', opts.stop && ran ? 'stopped' : undefined);
     });
 
   // Removed aliases: hidden stubs that accept any options and fail naming the replacement.

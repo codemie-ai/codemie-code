@@ -7,7 +7,7 @@
 import chalk from 'chalk';
 
 import { logger } from '@/utils/logger.js';
-import { listConnectedClientTargets } from './client-targets.js';
+import { readClientTargetStates } from './client-targets.js';
 import { checkStatus, stopDaemon } from './daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
 
@@ -31,12 +31,21 @@ export async function stopDaemonAfterDisconnect(): Promise<void> {
   }
 }
 
-/** Disconnects every connected target, reports each, sets `process.exitCode = 1` when any failed. */
+/**
+ * Disconnects every connected target, reports each, sets `process.exitCode = 1` when any failed. A target whose
+ * connected check failed may still be connected: it is reported as not disconnected, never skipped silently.
+ */
 export async function disconnectAll(opts: { stop?: boolean } = {}): Promise<DisconnectAllResult> {
   const result: DisconnectAllResult = { disconnected: [], failed: [] };
-  const targets = await listConnectedClientTargets();
+  const states = await readClientTargetStates();
+  const unchecked = states.filter((state) => state.error !== undefined);
+  const targets = states.filter((state) => state.connected).map((state) => state.target);
 
-  if (targets.length === 0) {
+  for (const state of unchecked) {
+    console.error(chalk.red(`! ${state.target.label}: check failed (${state.error}); not disconnected`));
+    result.failed.push(state.target.label);
+  }
+  if (targets.length === 0 && unchecked.length === 0) {
     console.log(chalk.dim('Nothing connected.'));
   }
 

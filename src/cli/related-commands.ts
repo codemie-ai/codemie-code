@@ -51,8 +51,16 @@ export const RELATED: Record<string, RelatedEntry> = {
   },
   'proxy doctor': { related: [STATUS, CONNECT, CLIENTS, A_STATUS], next: {} },
   'proxy clients': { related: [CONNECT, DISCONNECT, DOCTOR, A_STATUS], next: {} },
-  'proxy connect': { related: [DISCONNECT, CLIENTS, STATUS, A_STATUS], next: { default: 'codemie proxy status' } },
-  'proxy disconnect': { related: [CONNECT, CLIENTS, STATUS], next: { default: 'codemie proxy status' } },
+  'proxy connect': {
+    related: [DISCONNECT, CLIENTS, STATUS, A_STATUS],
+    // `analytics`: an analytics connector was connected; `claude-desktop`: Desktop collects through the proxy.
+    next: { default: 'codemie proxy status', byOutcome: { analytics: 'codemie proxy doctor', 'claude-desktop': 'codemie proxy doctor' } },
+  },
+  'proxy disconnect': {
+    related: [CONNECT, CLIENTS, STATUS],
+    // `all`: `--all` ran; `stopped`: `--stop` also stopped the daemon. Either way, what is left is the client list.
+    next: { default: 'codemie proxy status', byOutcome: { all: 'codemie proxy clients', stopped: 'codemie proxy clients' } },
+  },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },
   'proxy analytics enable': { related: [A_STATUS, A_DISABLE], next: { default: 'codemie proxy analytics status' } },
@@ -131,8 +139,12 @@ export function applyRelatedHelp(root: Command): void {
   walk(root, '');
 }
 
-/** Print one `Next: <command>` line; only on a TTY, never for --json, hooks or the scheduled run. */
+/**
+ * Print one `Next: <command>` line after a successful command; only on a TTY, never for --json, hooks or the
+ * scheduled run, and never once the command has set a non-zero exit code.
+ */
 export function printNext(path: string, outcome?: string, ctx: { json?: boolean } = {}): void {
+  if (process.exitCode !== undefined && Number(process.exitCode) !== 0) return;
   if (!process.stdout.isTTY) return;
   const { json, silent } = getInvocationContext({ json: ctx.json });
   if (json || silent) return;

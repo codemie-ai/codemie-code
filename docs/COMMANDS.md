@@ -260,7 +260,7 @@ After the config is written, quit and reopen Claude Desktop.
 **Cowork sessions in CLI Analytics.** While Claude Desktop is connected, the daemon also sends the Cowork sessions it served to CLI Analytics: its turns, tool calls, subagents, tokens and cost appear on the CLI Analytics tab under the signed-in user and the profile's CodeMie project. A session that ran while the daemon was stopped is sent once the daemon runs again, up to 7 days back. Nothing has to be switched on. Sessions of the Code tab are not sent this way; they are covered by the Claude Code hooks. These stop a Cowork session from being sent:
 
 - `codemie proxy analytics disable`, or the session's folder under `codemie proxy analytics exclude` — the same switches as for Claude Code; the folder allowlist of `connect --claude-code-otlp` does not apply to Cowork;
-- no CodeMie project for the session's folder — `codemie proxy status` then shows `Last dropped: no_project`;
+- no CodeMie project for the session's folder — `codemie proxy doctor` then shows `Last dropped: no_project` in its analytics delivery section;
 - Claude Desktop's config not pointing at the running daemon — see the `Desktop:` line below;
 - none of the session's requests having gone through this daemon.
 
@@ -273,7 +273,7 @@ After the config is written, quit and reopen Claude Desktop.
 | `Claude Desktop: collecting` | Claude Desktop's applied config points at this daemon. |
 | `Claude Desktop: not collecting — Claude Desktop points at port <a>, the proxy listens on <b>` | The port Claude Desktop points at was taken; the hint's command (`codemie proxy connect --claude-desktop`) re-writes Claude Desktop's config, then restart Claude Desktop. |
 
-`codemie proxy analytics status` shows, as a row above its connector section, a `Last dropped: <reason> (<stream>, <time>)` line (the time in the local time zone, `YYYY-MM-DD HH:mm:ss +HH:MM`) naming the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project).
+`codemie proxy doctor` shows, in its analytics delivery section, a `Last dropped: <reason> (<stream>, <time>)` line (the time in the local time zone, `YYYY-MM-DD HH:mm:ss +HH:MM`) naming the latest analytics data that was not stored: a backend refusal (`cli_analytics_disabled`, `project_context_required`, `project_context_conflict`) or a local one (`no_project`, with a hint to set a project).
 
 #### `codemie proxy status`
 
@@ -1909,7 +1909,7 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics enable` | Resume collection (same connectors as `disable`). |
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root; without a connector flag, for every connected connector). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Track a project again (default: the current project root; without a connector flag, for every connected connector). In Project scope it first adds the project to the connector's own tracked list (the `settings.json` allowlist for Claude Code, `~/.codemie/copilot-connectors.json` for Copilot), then removes its exclusion, and confirms it is tracked only after both succeed; if the second step fails it names the step still owed, and a re-run is safe. A project excluded through a parent folder stays excluded: the command says so and names the `include` for the parent. `exclude` and `include` are exact inverses. |
-| `codemie proxy analytics status [--json]` | Starts, when an OTLP connector (Claude Code, Copilot CLI or Copilot Chat) is connected, with delivery rows that have no heading and start at the left edge: `Delivery` (`healthy`, `unhealthy (<reason>)`, `unknown (restart the proxy to enable all checks)` when the daemon sent no health reply, `unknown (local analytics data could not be read)` when the spool could not be read completely and no failure was found in what was read, or `proxy not running`), `Unsent data` (`none`, `unknown` when the spool could not be read, or the bytes across all sessions on this machine, because the spool is shared by the whole machine, followed by `, <size> of it on hold` for the part kept in sessions that are held as a whole and not sent for now, except the holds that `Delivery` names itself and the short wait of a new session), and, when sending fails, `Next retry` (time, or `due now` once the time has come and the proxy has not retried yet) and `Error` (the error code, or `backend unreachable` when the backend gave no HTTP response). Only sessions that are still retried count as failing: a session that is held as a whole (for example `publication_stopped`) is not retried, so its old failure neither makes `Delivery` unhealthy nor sets `Next retry`, while its bytes stay in `Unsent data` (and are counted as on hold) until the retention bound drops them. Times (`Next retry`, `Last dropped`) are printed in the local time zone as `YYYY-MM-DD HH:mm:ss +HH:MM`, for example `2026-11-16 01:24:22 +03:00`; `--json` keeps epoch milliseconds. A `Run:` hint appears only when the user can act. The `Last dropped` row follows when the spool records a drop. After an empty line (always) come the tool sections, separated by empty lines: one `Claude`, `Copilot CLI` or `Copilot Chat` section per connected tool, or only the tool a connector flag selects (`Claude` when no tool is connected). Each shows hooks installed or connected, the effective scope, the tracked projects (one per line), whether collection is enabled and the excluded projects (one per line), each shown as its analytics project name (`owner/repo` from the git remote, otherwise `parent/folder`); an empty list reads `none`. Section headings are bold and rows are plain, with no icons; only the `Delivery` status is colored (`healthy` green, every other state yellow) and the closing notice is dimmed. With `--json` the output mirrors the text report: a `delivery` key (the analytics delivery health, including `pendingBytes` (the `Unsent data` size), `heldBytes` (the part of it on hold; absent when none) and `sendFailure` with `nextAt` and `detail` when sending fails; `null` when the daemon is stopped or no connector is connected) and a `connectors` array with one object per shown tool (each with its `connector` id and the status fields above, and no `current` key). |
+| `codemie proxy analytics status [--json]` | Shows the effective configuration, not delivery health. One `Claude`, `Copilot CLI` or `Copilot Chat` section per connected tool, or only the tool a connector flag selects (`Claude` when no tool is connected), separated by empty lines. Each shows hooks installed or connected, the effective scope, the tracked projects (one per line), whether collection is enabled and the excluded projects (one per line), each shown as its analytics project name (`owner/repo` from the git remote, otherwise `parent/folder`); an empty list reads `none`. Then a `Consented folders` row lists the work-consent folders of the signed-in account (`none` when there are none or nobody is signed in, `unknown` when the consent store cannot be read), followed by `Delivery health — run: codemie proxy doctor`: delivery (its verdict, `Unsent data`, `Next retry` with the error of a failing send, and `Last dropped`) is reported by `codemie proxy doctor`. With `--json` the output is a `delivery` key (the analytics delivery health, including `pendingBytes`, `heldBytes` when some is on hold and `sendFailure` with `nextAt` and `detail` when sending fails; `null` when the daemon is stopped or no connector is connected), a `connectors` array with one object per shown tool (each with its `connector` id and the status fields above) and `consentedFolders` (the signed-in account's folders with their projects; `null` when the consent store cannot be read). |
 
 Claude Desktop Cowork sessions follow `disable` / `enable` and `exclude` / `include` too (the session's folder is what is excluded), although no hook runs for them; the folder allowlist of `connect --claude-code-otlp` does not apply to them.
 
@@ -1926,12 +1926,9 @@ A corrupt `claude-analytics.json` fails closed on the hook path (collection stop
 
 `status` shows `Hooks: not installed` with a `Run: codemie proxy connect --claude-code-otlp` hint when no CodeMie hooks are installed.
 
-Example for Claude Code in project scope (healthy delivery):
+Example for Claude Code in project scope:
 
 ```text
-Delivery: healthy
-Unsent data: none
-
 Claude:
   Hooks: installed
   Scope: project
@@ -1944,6 +1941,9 @@ Claude:
     work/legacy-app
 
   These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.
+
+Consented folders: none
+Delivery health — run: codemie proxy doctor
 ```
 
 **Which command do I use?**
