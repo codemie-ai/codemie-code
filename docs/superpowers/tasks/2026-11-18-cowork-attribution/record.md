@@ -54,6 +54,27 @@ pre-existing spool binding without a pin; cursor-only without binding; failed co
 headers exact set for profile and linked-folder sources; no mark -> Project header alone; spool-bound pin with no
 source -> Project header alone; native (non-Cowork) session control -> Project header alone.
 
+### Review follow-up R1: the actual Desktop metadata transition (synthetic)
+
+The first regression scenarios changed `.codemie` config at the *same* discovered folder and appended no new work. R1
+adds `sends work done after the folders change ...` (3 cases): Desktop's `userSelectedFolders` changes to a DISTINCT
+directory resolving another project (add: none -> P2; reorder: [P2,P3] -> [P3,P2]; remove: [P2] -> none), then a new
+prompt, tool call + result and answer with usage are appended to the transcript. Flow: collect and forward P1; change
+folders; process inside the discovery window (cached folder) and forward; (reorder/remove: new producer = daemon restart);
+process after the discovery refresh; end; forward. Asserts: the new prompt, tool start/end and usage (`msg_synthetic_H2`) are
+actually sent; every sent event and every request's `X-CodeMie-Project` stays P1; the final summary and `agent.session.end`
+are delivered; no project conflict in the spool status; discovered cwd really changed.
+
+| Check (delta after `1ffe202b`) | Result |
+|---|---|
+| R1 cases on baseline source (the 3 source edits reverse-applied, `-t "after the folders change"`) | exit 1, 3 failed (RED). Source restored; `git status` shows only the test file modified. |
+| `npx vitest run src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts` with the fix | exit 0, 86 passed / 2 skipped |
+| `npx eslint` on that test file, `--max-warnings 0` | exit 0 |
+
+Source is unchanged by R1, so the earlier 281-test scoped run and `check:pre-commit` on `1ffe202b` still describe the source.
+Evidence class: **synthetic fixture** (real producer/spool/forwarder, mocked HTTP). It is not live backend acceptance: the
+backend persistence, public projection and spend path was traced in source only; no live persisted row was observed.
+
 ## Limitations and unverified items
 
 - **No live acceptance.** Persisted `subscription_type=codemie`, public projection and CodeMie-spend grouping were traced

@@ -1440,6 +1440,67 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
     expect(status().projectConflict).toBeUndefined();
   });
 
+  /** A folder of its own under the temp home whose `.codemie` config links it to `project`. */
+  function linkedFolder(name: string, project: string): string {
+    const folder = join(home, name);
+    mkdirSync(join(folder, '.codemie'), { recursive: true });
+    writeFileSync(join(folder, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: project } }));
+    return folder;
+  }
+
+  // Desktop's own transition: userSelectedFolders changes (a DISTINCT directory resolving another project) while the
+  // task keeps working. Synthetic fixture: real producer, spool and forwarder, mocked HTTP; not a live backend.
+  it.each([
+    { change: 'a folder is added', initial: [], next: ['p2'], first: 'synthetic-project', restart: false },
+    { change: 'the folders are reordered, then the daemon restarts', initial: ['p2', 'p3'], next: ['p3', 'p2'], first: 'other-project', restart: true },
+    { change: 'the only folder is removed, then the daemon restarts', initial: ['p2'], next: [], first: 'other-project', restart: true },
+  ])('sends work done after the folders change under the first project, and delivers the final summary and end: $change', async ({ initial, next, first, restart }) => {
+    const dirs: Record<string, string> = { p2: linkedFolder('folder-p2', 'other-project'), p3: linkedFolder('folder-p3', 'third-project') };
+    const select = (keys: string[]): void => writeMetadata(LOCAL, { userSelectedFolders: keys.map((key) => dirs[key]) });
+    const cwdOf = async (): Promise<string> => (await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS))[0].workingDirectory;
+    select(initial);
+    const initialCwd = await cwdOf();
+    let producer = newProducer();
+    await settle(producer, FIRST);
+    await forwardSession(CLI, true, credentials as never);
+    const firstRequests = fetchMock.mock.calls.length;
+    expect(firstRequests).toBeGreaterThan(0);
+
+    // Desktop now lists other folders, and the task does new work: a prompt, a tool call and its result, an answer with usage.
+    select(next);
+    expect(await cwdOf()).not.toBe(initialCwd);
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h1', '2026-11-10T10:01:00.000Z', 'Create notes2.md in the new folder'));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h2', '2026-11-10T10:01:05.000Z', 'msg_synthetic_H1',
+      [{ type: 'tool_use', id: 'toolu_synthetic_h', name: 'Write', input: { file_path: 'notes2.md', content: 'x' } }]));
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h3', '2026-11-10T10:01:10.000Z',
+      [{ type: 'tool_result', tool_use_id: 'toolu_synthetic_h', content: 'ok' }]));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h4', '2026-11-10T10:01:15.000Z', 'msg_synthetic_H2', [{ type: 'text', text: 'Done.' }]));
+
+    // Inside the discovery window (the producer still holds its cached folder), then after the refresh, then the end.
+    await settle(producer, FIRST + 60_000);
+    await forwardSession(CLI, true, credentials as never);
+    if (restart) producer = newProducer();
+    await settle(producer, FIRST + INACTIVITY_TIMEOUT_MS + 60_000);
+    await settle(producer, FIRST + 2 * INACTIVITY_TIMEOUT_MS + 120_000);
+    await forwardSession(CLI, true, credentials as never);
+
+    const requests = sentRequests();
+    const afterChange = requests.slice(firstRequests).flatMap(({ events: sentEvents }) => sentEvents);
+    const idsAfter = afterChange.map((event) => event['event_id']);
+    expect(idsAfter).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000h1`);
+    expect(afterChange.filter((event) => event['type'] === 'agent.tool.start' || event['type'] === 'agent.tool.end').length).toBeGreaterThanOrEqual(2);
+    expect(afterChange.filter((event) => event['type'] === 'agent.usage.request').map((event) => event['message_id'])).toContain('msg_synthetic_H2');
+    expect(afterChange.some((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toBe(true);
+    expect(afterChange.some((event) => event['type'] === 'agent.session.end')).toBe(true);
+    for (const { headers, events: sentEvents } of requests) {
+      expect(headers['X-CodeMie-Project']).toBe(first);
+      for (const event of sentEvents) expect(event['codemie_project_name']).toBe(first);
+    }
+    for (const event of events()) expect(event['codemie_project_name']).toBe(first);
+    expect(status().projectConflict).toBeUndefined();
+    expect(status().project).toBe(first);
+  });
+
   it('keeps the first project over a daemon restart (a new producer) when the folder\'s or the profile\'s project changed meanwhile', async () => {
     await settle(newProducer(), FIRST);
     writeSharedProject('profile-project-2');
