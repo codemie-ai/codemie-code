@@ -716,9 +716,11 @@ Remove a target's configuration with `codemie proxy disconnect`:
 codemie proxy disconnect --claude-desktop --vscode-claude-code
 codemie proxy disconnect --codex-desktop
 codemie proxy disconnect --omp
+codemie proxy disconnect --vscode          # VS Code BYOK: removes the CodeMie provider, keeps your own models
+codemie proxy disconnect --all             # everything `codemie proxy clients` shows as connected
 ```
 
-`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. Quit and reopen the app afterwards.
+`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. `--all` disconnects every connected target, continues past a failing one, reports each and exits non-zero if any failed; add `--stop` to stop the daemon afterwards. Quit and reopen the app afterwards.
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
 

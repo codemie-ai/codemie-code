@@ -46,6 +46,7 @@ import {
   disconnectCopilotChatOtlp,
   disconnectCopilotCliOtlp,
   disconnectOmp,
+  disconnectVsCodeByok,
   disconnectVsCodeClaudeCode,
 } from './disconnect-orchestrator.js';
 
@@ -221,6 +222,7 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--vscode',
     label: 'VS Code BYOK',
     configLocation: () => getVsCodeLanguageModelsPath(false),
+    disconnect: () => disconnectVsCodeByok(false),
     carriesAnalytics: false,
     gateway: { client: VSCODE_BYOK, read: (state) => readVsCodeByokGateway(state.port, false) },
   }),
@@ -229,6 +231,7 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--vscode --insiders',
     label: 'VS Code Insiders BYOK',
     configLocation: () => getVsCodeLanguageModelsPath(true),
+    disconnect: () => disconnectVsCodeByok(true),
     carriesAnalytics: false,
     gateway: { client: VSCODE_BYOK, read: (state) => readVsCodeByokGateway(state.port, true) },
   }),

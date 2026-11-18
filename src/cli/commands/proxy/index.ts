@@ -11,6 +11,7 @@ import { printNext } from '../../related-commands.js';
 import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
+import { disconnectAll, stopDaemonAfterDisconnect } from './disconnect-all.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { createProxyDoctorCommand } from './doctor/command.js';
 import { createProxyClientsCommand } from './clients-command.js';
@@ -300,10 +301,13 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--claude-desktop', 'Remove the CodeMie gateway config and managed MCP servers from Claude Desktop')
+    .option('--vscode', 'Remove the CodeMie provider from VS Code BYOK (chatLanguageModels.json); your own models stay')
     .option('--vscode-claude-code', 'Remove the CodeMie ANTHROPIC_BASE_URL/token from the VS Code Claude Code extension settings.json')
-    .option('--insiders', 'Target VS Code Insiders (applies to --vscode-claude-code)')
+    .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
     .option('--omp', 'Remove the CodeMie model catalog extension from oh-my-pi')
+    .option('--all', 'Disconnect every connected client and analytics connector (see `codemie proxy clients`)')
+    .option('--stop', 'Also stop the proxy daemon after disconnecting (it keeps running otherwise)')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
     .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Remove Copilot Chat analytics hook file, settings entry and project scope')
     .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Remove Copilot CLI analytics hook file and project scope')
@@ -321,11 +325,19 @@ export function createProxyCommand(): Command {
       copilotCliOtlp?: boolean;
       claudeDesktop?: boolean;
       vscodeClaudeCode?: boolean;
+      vscode?: boolean;
       codexDesktop?: boolean;
       omp?: boolean;
+      all?: boolean;
+      stop?: boolean;
       insiders?: boolean;
       scope?: 'user' | 'project';
     }) => {
+      if (opts.all) {
+        await disconnectAll({ stop: opts.stop });
+        printNext('proxy disconnect');
+        return;
+      }
       await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
@@ -333,12 +345,14 @@ export function createProxyCommand(): Command {
           copilotCliOtlp: Boolean(opts.copilotCliOtlp),
           claudeDesktop: Boolean(opts.claudeDesktop),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
+          vscode: Boolean(opts.vscode),
           codexDesktop: Boolean(opts.codexDesktop),
           omp: Boolean(opts.omp),
         },
         scope: opts.scope,
         insiders: Boolean(opts.insiders),
       });
+      if (opts.stop) await stopDaemonAfterDisconnect();
       printNext('proxy disconnect');
     });
 

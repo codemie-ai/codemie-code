@@ -16,6 +16,7 @@ import { removeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { removeOmpExtension } from './connectors/omp.js';
 import { removeDesktopConfig } from './connectors/desktop.js';
 import { removeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import { removeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -26,6 +27,7 @@ export interface DisconnectTargets {
   copilotCliOtlp?: boolean;
   claudeDesktop?: boolean;
   vscodeClaudeCode?: boolean;
+  vscode?: boolean;
   codexDesktop?: boolean;
   omp?: boolean;
 }
@@ -40,6 +42,7 @@ const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
   '  --claude-desktop       Claude Desktop app (removes the gateway config and managed MCP servers)',
+  '  --vscode               VS Code BYOK (removes the CodeMie provider from chatLanguageModels.json)',
   '  --vscode-claude-code   VS Code Claude Code extension (removes ANTHROPIC_* env vars from settings.json)',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
   '  --omp                  oh-my-pi (removes the CodeMie model catalog extension)',
@@ -49,6 +52,7 @@ const DISCONNECT_TARGET_LIST = [
   '',
   'Example:',
   '  codemie proxy disconnect --claude-desktop --vscode-claude-code',
+  '  codemie proxy disconnect --all      (every connected target)',
 ].join('\n');
 
 export async function disconnectClaudeDesktop(): Promise<void> {
@@ -90,6 +94,26 @@ export async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<voi
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('[proxy] VS Code Claude Code disconnect failed', ...sanitizeLogArgs({ error: message }));
     console.error(chalk.red(`✗ VS Code Claude Code — ${message}`));
+    process.exitCode = 1;
+  }
+}
+
+export async function disconnectVsCodeByok(insiders: boolean): Promise<void> {
+  const label = insiders ? 'VS Code Insiders BYOK' : 'VS Code BYOK';
+  try {
+    const result = await removeVsCodeLanguageModelsConfig({ insiders });
+
+    if (!result.removed) {
+      console.log(chalk.dim(`${label}: nothing to disconnect.`));
+      return;
+    }
+
+    console.log(chalk.green(`✓ ${label} disconnected`));
+    console.log(chalk.yellow('⚠ Reload VS Code to apply the change.'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] VS Code BYOK disconnect failed', ...sanitizeLogArgs({ error: message }));
+    console.error(chalk.red(`✗ ${label} — ${message}`));
     process.exitCode = 1;
   }
 }
@@ -223,7 +247,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   const { targets } = opts;
   if (
     !targets.codexDesktop && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp &&
-    !targets.omp && !targets.claudeDesktop && !targets.vscodeClaudeCode
+    !targets.omp && !targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.vscode
   ) {
     console.log(DISCONNECT_TARGET_LIST);
     return;
@@ -235,6 +259,10 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
 
   if (targets.vscodeClaudeCode) {
     await disconnectVsCodeClaudeCode(Boolean(opts.insiders));
+  }
+
+  if (targets.vscode) {
+    await disconnectVsCodeByok(Boolean(opts.insiders));
   }
 
   if (targets.codexDesktop) {

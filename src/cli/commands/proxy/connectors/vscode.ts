@@ -365,3 +365,35 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
 
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
 }
+
+/** A managed provider is the proxy's own only when every model URL it holds is loopback (same rule as the reader). */
+function isCodeMieOwnedProvider(provider: unknown): boolean {
+  if (!isManagedProvider(provider)) return false;
+  const models = Array.isArray(provider.models) ? provider.models : [];
+  return models.length > 0 && models.every(model => isRecord(model) && loopbackPortOf(model.url) !== null);
+}
+
+/**
+ * Removes the `CodeMie`/`customendpoint` provider `writeVsCodeLanguageModelsConfig` wrote, only when all its model
+ * URLs are loopback; user-added providers, and a non-loopback provider that happens to be named CodeMie, stay.
+ * Writes nothing when there is nothing to remove.
+ */
+export async function removeVsCodeLanguageModelsConfigAtPath(configPath: string): Promise<{ removed: boolean }> {
+  const providers = await readProviders(configPath);
+  const kept = providers.filter(provider => !isCodeMieOwnedProvider(provider));
+  if (kept.length === providers.length) return { removed: false };
+  try {
+    await writeAtomically(configPath, `${JSON.stringify(kept, null, '\t')}\n`);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to update VS Code language model configuration at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { removed: true };
+}
+
+export async function removeVsCodeLanguageModelsConfig(opts: { insiders: boolean }): Promise<{ removed: boolean }> {
+  if (!existsSync(getVsCodeProductDir(opts.insiders))) return { removed: false };
+  return removeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(opts.insiders));
+}

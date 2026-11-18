@@ -91,7 +91,9 @@ codemie proxy connect --vscode   # Configure VS Code BYOK to use the local proxy
 codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
+codemie proxy disconnect --vscode          # Remove the CodeMie provider from VS Code BYOK (your own models stay)
 codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
+codemie proxy disconnect --all             # Disconnect everything `proxy clients` shows as connected (add --stop to stop the daemon)
 codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
 codemie proxy connect --omp              # Give oh-my-pi the live CodeMie model catalog
 codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
