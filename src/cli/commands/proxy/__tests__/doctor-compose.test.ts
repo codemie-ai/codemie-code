@@ -137,6 +137,24 @@ describe('composeProxyDoctor', () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
+  it('shows one sign-in message: delivery credentials_expired is dropped when auth errors', async () => {
+    healthBody = { status: 'ok', pid: STATE.pid, analytics: { credentials: 'stale' } };
+    collectDeliveryHealth.mockResolvedValue({ status: 'unhealthy', reason: 'credentials_expired' });
+
+    const report = await compose();
+
+    expect(report.sections.filter((s) => s.id === 'auth' && s.status === 'error')).toHaveLength(1);
+    expect(report.sections.some((s) => s.id === 'delivery')).toBe(false);
+  });
+
+  it('keeps the delivery credentials_expired error when auth is not an error', async () => {
+    collectDeliveryHealth.mockResolvedValue({ status: 'unhealthy', reason: 'credentials_expired' });
+
+    const report = await compose({ authProbe: false, verbose: false });
+
+    expect(report.sections.some((s) => s.id === 'delivery' && s.status === 'error')).toBe(true);
+  });
+
   it('runs the authenticated probe when the daemon is signed in', async () => {
     const report = await compose();
 

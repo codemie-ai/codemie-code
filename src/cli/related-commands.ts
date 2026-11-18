@@ -18,6 +18,7 @@ const DISCONNECT: RelatedCommand = { path: 'codemie proxy disconnect', purpose: 
 const A_STATUS: RelatedCommand = { path: 'codemie proxy analytics status', purpose: 'Show the effective analytics configuration' };
 const A_ENABLE: RelatedCommand = { path: 'codemie proxy analytics enable', purpose: 'Resume analytics collection' };
 const A_DISABLE: RelatedCommand = { path: 'codemie proxy analytics disable', purpose: 'Stop analytics collection' };
+const DOCTOR: RelatedCommand = { path: 'codemie proxy doctor', purpose: 'Diagnose the proxy, clients and analytics delivery' };
 const SYNC_STATUS: RelatedCommand = { path: 'codemie analytics sync status', purpose: 'Show analytics sync status' };
 
 /**
@@ -25,7 +26,7 @@ const SYNC_STATUS: RelatedCommand = { path: 'codemie analytics sync status', pur
  * Hidden (deprecated/removed) nodes need no entry and must never be referenced.
  */
 export const RELATED: Record<string, RelatedEntry> = {
-  proxy: { related: [STATUS, CONNECT, A_STATUS], next: {} },
+  proxy: { related: [STATUS, DOCTOR, CONNECT, A_STATUS], next: {} },
   'proxy start': {
     related: [STATUS, { path: 'codemie proxy stop', purpose: 'Stop the proxy daemon' }, CONNECT],
     next: { default: 'codemie proxy status' },
@@ -43,10 +44,12 @@ export const RELATED: Record<string, RelatedEntry> = {
       { path: 'codemie proxy start', purpose: 'Start the proxy daemon' },
       { path: 'codemie proxy restart', purpose: 'Restart the proxy daemon' },
       { path: 'codemie proxy inspect desktop', purpose: 'Inspect Claude Desktop proxy state' },
+      DOCTOR,
       A_STATUS,
     ],
     next: { byOutcome: { stopped: 'codemie proxy start' } },
   },
+  'proxy doctor': { related: [STATUS, CONNECT, A_STATUS], next: {} },
   'proxy connect': { related: [DISCONNECT, STATUS, A_STATUS], next: { default: 'codemie proxy status' } },
   'proxy connect desktop': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
   'proxy connect vscode': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },

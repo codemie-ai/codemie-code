@@ -530,6 +530,13 @@ function scrubKey(sections: Sections, key: string | undefined): Sections {
   }));
 }
 
+/** One sign-in message: drops the delivery `credentials_expired` section when `auth` already reports an error. */
+function dropDuplicateSignIn(sections: Sections): Sections {
+  if (!sections.some((s) => s.id === 'auth' && s.status === 'error')) return sections;
+  const label = DELIVERY_REASONS.credentials_expired.label;
+  return sections.filter((s) => !(s.id === 'delivery' && s.message.includes(label)));
+}
+
 /** Builds the proxy diagnosis. Never rejects. */
 export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<ProxyDoctorReport> {
   const sections: Sections = [];
@@ -590,6 +597,6 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
     report.verbose = detail.verbose;
     sections.push(...detail.sections);
   }
-  report.sections = scrubKey(sections, state?.gatewayKey);
+  report.sections = scrubKey(dropDuplicateSignIn(sections), state?.gatewayKey);
   return report;
 }

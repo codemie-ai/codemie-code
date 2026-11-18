@@ -12,6 +12,7 @@ import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
+import { createProxyDoctorCommand } from './doctor/command.js';
 import { checkProxyHealth } from './health-check.js';
 import {
   collectClientNotices,
@@ -456,6 +457,7 @@ export function createProxyCommand(): Command {
   proxy.addCommand(connect);
   proxy.addCommand(inspect);
   proxy.addCommand(createProxyAnalyticsCommand());
+  proxy.addCommand(createProxyDoctorCommand());
 
   return proxy;
 }

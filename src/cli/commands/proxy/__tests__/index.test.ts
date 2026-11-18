@@ -53,6 +53,10 @@ vi.mock('@/utils/cli-updater.js', async (importOriginal) => ({
   getCurrentCliVersion: vi.fn(async () => '0.17.0'),
 }));
 
+vi.mock('../doctor/compose.js', () => ({
+  composeProxyDoctor: vi.fn(),
+}));
+
 vi.mock('../health-check.js', () => ({
   checkProxyHealth: vi.fn(),
 }));
