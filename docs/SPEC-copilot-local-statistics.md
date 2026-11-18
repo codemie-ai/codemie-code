@@ -1,6 +1,6 @@
 # Specification: GitHub Copilot Local Statistics
 
-**Status:** Draft implemented — typecheck, lint and build pass; another team verifies against real Windows artifacts
+**Status:** Draft implemented and verified against a real Windows collector bundle (2026-11-18). See [REPORT-copilot-local-statistics-draft.md](REPORT-copilot-local-statistics-draft.md) for the reconciliation and the seven defects it surfaced.
 **Created:** 2026-11-18
 **Branch:** `feature/Ievgen_Kyvgyla-github-copilot-local-statistics`
 **Ports from:** `sl-ai-sdlc-cost-tracking` (`src/parsers/`, Python, Windows-only)
@@ -39,7 +39,7 @@ Verified absent from `src/`: any reader for `session-store.db`, `assistant_usage
 
 | Parser | Source | Lines |
 |---|---|---|
-| `copilot_cli_store.py` | `~/.copilot/session-store.db` → `assistant_usage_events` + `sessions` (schema v8) | 508 |
+| `copilot_cli_store.py` | `~/.copilot/session-store.db` → `assistant_usage_events` + `sessions` (schema v8 per its code; real machines write **v10**) | 508 |
 | `copilot_cli_events.py` | `events.jsonl` → `session.usage_record` / `usage_checkpoint` / `shutdown` | 586 |
 | `vscode_sessions.py` | `workspaceStorage/*/chatSessions/*.jsonl` append-log | 425 |
 | `vscode_paths.py` | editions × profiles × 3 location kinds | 136 |
@@ -132,6 +132,7 @@ Verified on macOS during design: 3 entries under `User/profiles/*`,
 | `events-reader.ts` | `events.jsonl` fallback for sessions the store does not cover (all Desktop sessions). |
 | `vscode-sessions-reader.ts` | `chatSessions/*.jsonl` append-log: `kind:0` snapshot, `kind:1` property update, `kind:2` request batch. |
 | `wsl-reader.ts` | Running distros only; each home read in isolation through the store/events readers. |
+| `desktop-sessions.ts` | Desktop-session ids from the desktop app's own `data.db`, so Desktop attribution does not depend on per-session `workspace.yaml`. Exactly one query, `SELECT id FROM sessions` — that file also holds the user's access token. |
 | `copilot-local-loader.ts` | Orchestrate → dedupe → group by session → `RawSessionData[]` + `SessionCostIndex` + `CostSummary`. |
 | `index.ts` | Barrel. |
 
@@ -205,10 +206,16 @@ different dollar figures for the same session.
 
 ### Premium requests are not tokens
 
-A Copilot subscription is billed in premium requests, not tokens. `total_nano_aiu` /
-`totalNanoAiu` (1e-9 AI unit) and VS Code's `copilotCredits` are the only figures that
-reconcile against an invoice, and are carried on every row as `billedNanoAiu` /
-`reportedCredits`.
+A Copilot subscription is billed in premium requests, not tokens, so `total_nano_aiu` /
+`totalNanoAiu` (1e-9 AI unit), the store's `request_multiplier`, the transcript's
+`usage.cost` and VS Code's `copilotCredits` are the only figures that reconcile against an
+invoice. All four are carried per row (`billedNanoAiu`, `requestMultiplier`,
+`premiumRequestCost`, `reportedCredits`) and summed by `totalPremiumRequests()` /
+`totalBilledNanoAiu()`.
+
+`request_multiplier` is **15** on 7,342 of 9,834 rows on a real store, so a premium-request
+total that assumes one request per call understates the bill by more than an order of
+magnitude.
 
 ### VS Code append-log schema drift
 
@@ -219,7 +226,13 @@ entirely." macOS writes the array form. Both branches must survive the port.
 
 ### Surface attribution
 
-`client_name` is authoritative and cwd-invariant: `github/autopilot` → Desktop,
+Two independent signals, in precedence order. The desktop app's own `data.db` claims its
+sessions outright — verified to find exactly the 12 Desktop sessions and 54 Desktop turns the
+Python tool reports for the same machine — and does not depend on any per-session file. A real
+collector bundle contained no `workspace.yaml` at all, which is why that cannot be the only
+signal.
+
+`client_name` remains the fallback, authoritative and cwd-invariant: `github/autopilot` → Desktop,
 `vscode-agent-host` → VS Code's Copilot CLI agent (stays on the `copilot-cli` key, matching
 `copilot-cli-otlp`), anything else → CLI. The cwd heuristic is a fallback only; it mislabels a
 Desktop session opened on a project folder.
