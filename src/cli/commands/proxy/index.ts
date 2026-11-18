@@ -7,6 +7,7 @@ import {
   stopDaemon,
 } from './daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
+import { printNext } from '../../related-commands.js';
 import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
@@ -104,6 +105,7 @@ export function createProxyCommand(): Command {
     .action(async (opts: ProxyStartOptions) => {
       try {
         await startProxy(opts);
+        printNext('proxy start');
       } catch (error) {
         printProxyError(error, 'Failed to start proxy');
       }
@@ -121,6 +123,7 @@ export function createProxyCommand(): Command {
           return running;
         });
         console.log(stopped ? chalk.green('✓ Proxy stopped') : 'Proxy is not running.');
+        printNext('proxy stop');
       } catch (error) {
         printProxyError(error, 'Failed to stop proxy');
       }
@@ -134,6 +137,7 @@ export function createProxyCommand(): Command {
     .action(async (opts: { profile?: string }) => {
       try {
         await restartProxy(opts);
+        printNext('proxy restart');
       } catch (error) {
         printProxyError(error, 'Failed to restart proxy');
       }
@@ -153,6 +157,7 @@ export function createProxyCommand(): Command {
         } else {
           console.log('Status: stopped');
         }
+        printNext('proxy status', 'stopped', { json: opts.json });
         return;
       }
 
@@ -342,6 +347,7 @@ export function createProxyCommand(): Command {
         scope: opts.scope,
         silent: Boolean(opts.silent),
       });
+      printNext('proxy connect');
     });
 
   proxy
@@ -387,6 +393,7 @@ export function createProxyCommand(): Command {
         scope: opts.scope,
         insiders: Boolean(opts.insiders),
       });
+      printNext('proxy disconnect');
     });
 
   // Deprecated aliases — kept working, mapped onto the unified target flags.

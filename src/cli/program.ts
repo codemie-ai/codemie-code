@@ -37,6 +37,7 @@ import { createCodebaseCommand } from './commands/codebase/index.js';
 import { createDocsCommand } from './commands/docs.js';
 import { createTipsCommand } from './commands/tips.js';
 import { createWhatsnewCommand } from './commands/whatsnew.js';
+import { applyRelatedHelp } from './related-commands.js';
 import { getDirname } from '../utils/paths.js';
 
 /**
@@ -109,6 +110,8 @@ Profile selection:
   program.addCommand(createDocsCommand());
   program.addCommand(createTipsCommand());
   program.addCommand(createWhatsnewCommand());
+
+  applyRelatedHelp(program);
 
   return program;
 }

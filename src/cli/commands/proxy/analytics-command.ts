@@ -45,6 +45,7 @@ import {
   listActiveAnalyticsConnectors,
   type AnalyticsConnector,
 } from './analytics-connectors.js';
+import { printNext } from '../../related-commands.js';
 import { readDaemonStatus } from './daemon-manager.js';
 import { checkProxyHealth } from './health-check.js';
 import { collectDeliveryHealth, formatDeliveryLines, type DeliveryHealth } from './delivery-health.js';
@@ -172,6 +173,7 @@ async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<voi
     }
     if (!enabled) {
       console.log(chalk.dim(coverageNote(connectorId)));
+      printNext('proxy analytics disable');
       return;
     }
     const resume = changed ? resumeNote(connectorId) : undefined;
@@ -179,6 +181,7 @@ async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<voi
       console.log(chalk.dim(resume));
     }
     await reportEffectiveState(connectorId, process.cwd());
+    printNext('proxy analytics enable');
   });
 }
 
