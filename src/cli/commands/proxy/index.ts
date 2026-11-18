@@ -210,7 +210,9 @@ function aggregatesGiven(opts: AggregateOptions): AggregateId[] {
 
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
-  proxy.description('Manage the CodeMie local gateway proxy daemon');
+  proxy
+    .description('Manage the CodeMie local gateway proxy daemon')
+    .addHelpText('after', `\nAfter 'reset-mcp-auth':\n${RESET_NEXT_STEPS}`);
 
   // ── proxy start ─────────────────────────────────────────────────────────────
   proxy
@@ -446,7 +448,7 @@ export function createProxyCommand(): Command {
   connect.addCommand(removedCommand(CONNECT_VSCODE_REMOVAL, 'vscode'));
 
   // Not part of `disconnect`: `--claude-otlp` expands to Claude Desktop, and an analytics disconnect must keep its sign-ins.
-  // The restart and Reconnect steps are in this command's own `--help`; `proxy --help` lists it by description.
+  // The restart and Reconnect steps show in this command's own `--help` and, for AC9, at the end of `proxy --help`.
   proxy
     .command('reset-mcp-auth')
     .description('Clear the saved MCP sign-ins of a client so they can be redone')
