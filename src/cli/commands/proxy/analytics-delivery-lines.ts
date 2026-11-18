@@ -150,7 +150,7 @@ export interface ClientConfig {
    * and what the user does for the application to load it.
    */
   moveToNamedKey?: {
-    write: (state: DaemonState) => Promise<'moved' | 'left' | 'unchanged'>;
+    write: (state: DaemonState) => Promise<'moved' | 'unchanged'>;
     hint: string;
   };
   /** `proxy connect`, `proxy start` and `proxy restart` write this config only while the connection record holds an older CLI's client identity. */

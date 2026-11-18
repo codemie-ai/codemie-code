@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename, rm, lstat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -13,6 +13,7 @@ import {
   isDesktopPointedAtLocalProxy,
   readDesktopGatewayConfig,
 } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -25,7 +26,7 @@ import {
 import { CLAUDE_DESKTOP, clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
 import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
-import { writeAtomically } from './vscode.js';
+import { isSymbolicLink } from './vscode.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -902,14 +903,13 @@ export async function writeDesktopConfig(
  * loopback gateway on `port` whose key is sealed (Desktop alone opens it) or reads as the shared key. `unchanged`
  * otherwise: Desktop's own or another client's named key, a refused key, no key, another port, a config that is not a
  * loopback gateway, no applied config, an unreadable config (a link to nothing included), a platform without a
- * Desktop directory. `left` for an entry it would move that is a symbolic link: nothing is written. The entry is
- * replaced atomically; a failed write throws.
+ * Desktop directory. The entry is replaced atomically, a symbolic link written through; a failed write throws.
  */
 export async function moveDesktopToNamedKey(
   gatewayKey: string,
   port: number,
   baseDir?: string
-): Promise<'moved' | 'left' | 'unchanged'> {
+): Promise<'moved' | 'unchanged'> {
   let configPath: string;
   let entry: Record<string, unknown>;
   try {
@@ -929,11 +929,9 @@ export async function moveDesktopToNamedKey(
     if (named === null || named.client !== undefined) return 'unchanged';
   }
 
-  if ((await lstat(configPath)).isSymbolicLink()) return 'left';
-
   const desktopKey = `${gatewayKey}.${CLAUDE_DESKTOP}`;
   entry.inferenceGatewayApiKey = desktopKey;
-  await writeAtomically(configPath, JSON.stringify(entry, null, 2));
+  await writeFileAtomic(configPath, JSON.stringify(entry, null, 2));
   logger.info(
     '[proxy] Moved Claude Desktop to its named key',
     ...sanitizeLogArgs({ configPath, inferenceGatewayApiKey: desktopKey })
@@ -974,7 +972,8 @@ export async function readDesktopGateway(baseDir?: string, stateFile?: string): 
  * Only acts on a config whose gateway points at a loopback address — a gateway anywhere else
  * was configured by the user, not by `connect`. MCP servers the user added themselves and any
  * unrelated keys are preserved. When nothing else remains, the config file is deleted and its
- * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied.
+ * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied; a config that is
+ * a symbolic link has its target written `{}` first (a failed write is only logged), then the link is removed.
  */
 export async function removeDesktopConfig(
   baseDir: string = getDesktopBaseDir(),
@@ -1043,6 +1042,18 @@ export async function removeDesktopConfig(
 
   const deletedConfigFile = Object.keys(existing).length === 0;
   if (deletedConfigFile) {
+    // The next connect writes a new file under a new id, so a kept link would be read by nothing:
+    // the target is emptied (a synced dotfile loses CodeMie's gateway too) and the link removed.
+    if (await isSymbolicLink(configPath)) {
+      try {
+        await writeFile(configPath, '{}', 'utf-8');
+      } catch (error) {
+        logger.warn(
+          '[proxy] Could not empty the target of the linked Claude Desktop config; removing the link',
+          ...sanitizeLogArgs({ configPath, error: error instanceof Error ? error.message : String(error) })
+        );
+      }
+    }
     await rm(configPath, { force: true });
     const updatedMeta: ConfigMeta = {
       ...meta,

@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import stripAnsi from 'strip-ansi';
-import { chmod, mkdtemp, mkdir, readFile, symlink, unlink, utimes, writeFile, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, symlink, unlink, utimes, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -2235,18 +2235,45 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     expect(printed().some((line) => line.includes('Codex desktop'))).toBe(false);
   });
 
-  it('leaves a Codex config that is a symbolic link, naming the command that connects it', async () => {
+  it('moves a Codex config that is a symbolic link through the link, and a second connect leaves it', async () => {
     const target = join(clientHome, 'dotfiles-config.toml');
     await writeAt(target, codexConfig('Bearer gk'));
     await mkdir(dirname(codexConfigPath()), { recursive: true });
     await symlink(target, codexConfigPath());
 
     await connect({ claudeDesktop: true });
+    await connect({ claudeDesktop: true });
 
+    expect((await lstat(codexConfigPath())).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe(codexConfig('Bearer gk.codex-desktop'));
+    expect(printed().filter((line) => line.includes('Codex desktop'))).toEqual([
+      '✓ Codex desktop moved to its own key — Quit and reopen the ChatGPT desktop app to apply the change.',
+    ]);
+  });
+
+  it.skipIf(process.platform === 'win32')('warns once for a linked Codex config whose target it cannot write, leaves the link, still moves the other client', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    const targetDir = join(clientHome, 'read-only-dotfiles');
+    const target = join(targetDir, 'config.toml');
+    await writeAt(target, codexConfig('Bearer gk'));
+    await mkdir(dirname(codexConfigPath()), { recursive: true });
+    await symlink(target, codexConfigPath());
+    await writeAt(await vscodeSettingsPath(), vscodeSettings('gk'));
+
+    await chmod(targetDir, 0o555);
+    try {
+      await connect({ claudeDesktop: true });
+    } finally {
+      await chmod(targetDir, 0o755);
+    }
+
+    expect((await lstat(codexConfigPath())).isSymbolicLink()).toBe(true);
     expect(await readFile(target, 'utf-8')).toBe(codexConfig('Bearer gk'));
-    expect(printed()).toContain(
-      '  Codex desktop left on the shared key: its config is a symbolic link — Run: codemie proxy connect --codex-desktop'
-    );
+    expect(await readFile(await vscodeSettingsPath(), 'utf-8')).toBe(vscodeSettings('gk.vscode-claude-code'));
+    expect(printed().filter((line) => line.includes('Codex desktop'))).toEqual([
+      expect.stringMatching(/^Warning: could not move Codex desktop to its own key: .*EACCES/),
+    ]);
+    expect(process.exitCode).toBe(0);
   });
 
   it('--vscode-claude-code --insiders moves the stable VS Code settings to the named key', async () => {

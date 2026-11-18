@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -293,10 +294,42 @@ export async function readVsCodeByokGateway(port: number, insiders = false): Pro
   }
 }
 
-export async function writeAtomically(configPath: string, content: string): Promise<void> {
-  const configDir = dirname(configPath);
-  await mkdir(configDir, { recursive: true });
+// Codes of a link target that cannot be written (a read-only mount, home-manager's store).
+const READ_ONLY_TARGET_CODES = new Set(['EACCES', 'EPERM', 'EROFS']);
 
+/**
+ * Write a client config atomically through `writeFileAtomic`: a symbolic link is
+ * written through and stays a link. When the link's target cannot be written
+ * (`EACCES` / `EPERM` / `EROFS`), the link itself is replaced by a regular file, so a
+ * link into a read-only place keeps working as before. Not on win32: there these codes
+ * come from a rename over a file another process holds open, not from a read-only
+ * place, and the error is rethrown.
+ */
+export async function writeAtomically(configPath: string, content: string): Promise<void> {
+  try {
+    await writeFileAtomic(configPath, content);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code ?? '';
+    if (process.platform === 'win32' || !READ_ONLY_TARGET_CODES.has(code) || !(await isSymbolicLink(configPath))) {
+      throw error;
+    }
+    await replaceLink(configPath, content);
+    logger.warn(
+      '[proxy] Replaced a linked config with a file: its target cannot be written',
+      ...sanitizeLogArgs({ configPath, code })
+    );
+  }
+}
+
+export async function isSymbolicLink(configPath: string): Promise<boolean> {
+  try {
+    return (await lstat(configPath)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+async function replaceLink(configPath: string, content: string): Promise<void> {
   const tempPath = `${configPath}.${process.pid}.tmp`;
   const mode = existsSync(configPath)
     ? (await stat(configPath)).mode & 0o777
