@@ -91,21 +91,22 @@ export async function disconnectClaudeDesktop(): Promise<void> {
 }
 
 export async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<void> {
+  const label = insiders ? 'VS Code Insiders Claude Code' : 'VS Code Claude Code';
   try {
     const result = await removeVsCodeClaudeCodeConfig(insiders);
 
     if (!result.removed) {
       const reason = result.reason ? ` (${result.reason})` : '';
-      console.log(chalk.dim(`VS Code Claude Code: nothing to disconnect${reason}.`));
+      console.log(chalk.dim(`${label}: nothing to disconnect${reason}.`));
       return;
     }
 
-    console.log(chalk.green(`✓ VS Code Claude Code disconnected (${result.path})`));
-    console.log(chalk.yellow('⚠ Fully quit and reopen VS Code to apply the change.'));
+    console.log(chalk.green(`✓ ${label} disconnected (${result.path})`));
+    console.log(chalk.yellow(`⚠ Fully quit and reopen ${insiders ? 'VS Code Insiders' : 'VS Code'} to apply the change.`));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[proxy] VS Code Claude Code disconnect failed', ...sanitizeLogArgs({ error: message }));
-    console.error(chalk.red(`✗ VS Code Claude Code — ${message}`));
+    logger.warn('[proxy] VS Code Claude Code disconnect failed', ...sanitizeLogArgs({ error: message, insiders }));
+    console.error(chalk.red(`✗ ${label} — ${message}`));
     process.exitCode = 1;
   }
 }
@@ -255,27 +256,63 @@ export async function disconnectOmp(): Promise<void> {
   }
 }
 
+interface AggregateDisconnect {
+  targets: DisconnectTargets;
+  /** The VS Code editions (`insiders`) whose extension route a vendor flag disconnects; empty when it does not. */
+  extensionEditions: boolean[];
+}
+
 /**
  * A copy of `targets` without the members an aggregate set that stay as they are: with scope `project` the
  * machine-wide Claude Desktop and extension, left connected; and any member neither found nor configured, which has
- * nothing to remove and prints `<client>: nothing to disconnect.` (not a failure).
+ * nothing to remove and prints `<client>: nothing to disconnect.` (not a failure). The extension set by a vendor flag
+ * is handed over as editions: both stable and Insiders, or Insiders alone with `--insiders`.
  */
-async function dropAggregateMembers(opts: DisconnectOptions): Promise<DisconnectTargets> {
-  if (!opts.aggregates?.length) return { ...opts.targets };
+async function dropAggregateMembers(opts: DisconnectOptions): Promise<AggregateDisconnect> {
+  if (!opts.aggregates?.length) return { targets: { ...opts.targets }, extensionEditions: [] };
   const run = { insiders: Boolean(opts.insiders) };
   const members = [...membersOf(opts.aggregates)].filter((member) => opts.targets[member]);
-  const kept = await Promise.all(members.map(async (member): Promise<'run' | 'kept' | 'nothing'> => {
+  const kept = await Promise.all(members.map(async (member): Promise<'run' | 'kept' | 'nothing' | 'editions'> => {
     if (opts.scope === 'project' && (member === 'claudeDesktop' || member === 'vscodeClaudeCode')) return 'kept';
+    if (member === 'vscodeClaudeCode') return 'editions';
     const [found, configured] = await Promise.all([isMemberFound(member, run), isMemberConfigured(member, run)]);
     return found || configured ? 'run' : 'nothing';
   }));
   const targets: DisconnectTargets = { ...opts.targets };
+  let extensionEditions: boolean[] = [];
   members.forEach((member, i) => {
     if (kept[i] === 'run') return;
     targets[member] = false;
+    if (kept[i] === 'editions') extensionEditions = opts.insiders ? [true] : [false, true];
     if (kept[i] === 'nothing') console.log(chalk.dim(`${MEMBER_LABELS[member]}: nothing to disconnect.`));
   });
-  return targets;
+  return { targets, extensionEditions };
+}
+
+/**
+ * Removes the extension's CodeMie route from each edition that has one, through the edition's client target
+ * (`vscode-claude-code`, `vscode-claude-code-insiders`). An installed edition with no route prints
+ * `<target>: nothing to disconnect.`; an edition neither installed nor routed prints nothing.
+ */
+async function disconnectExtensionEditions(editions: readonly boolean[]): Promise<void> {
+  // Loaded here: `client-targets.ts` imports this module.
+  const { CLIENT_TARGETS } = await import('./client-targets.js');
+  for (const insiders of editions) {
+    const target = CLIENT_TARGETS.find((entry) => entry.id === (insiders ? 'vscode-claude-code-insiders' : 'vscode-claude-code'));
+    if (!target) continue;
+    let routed: boolean;
+    try {
+      routed = await target.isConnected();
+    } catch (error) {
+      logger.debug(`[proxy] ${target.id} connected check failed; disconnecting it`, ...sanitizeLogArgs(error));
+      routed = true;
+    }
+    if (routed) {
+      await target.disconnect?.();
+    } else if (await isMemberFound('vscodeClaudeCode', { insiders })) {
+      console.log(chalk.dim(`${target.label}: nothing to disconnect.`));
+    }
+  }
 }
 
 /**
@@ -307,7 +344,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<boolea
   }
   const scope = opts.scope ?? 'user';
 
-  const targets = await dropAggregateMembers(opts);
+  const { targets, extensionEditions } = await dropAggregateMembers(opts);
 
   if (targets.claudeDesktop) {
     await disconnectClaudeDesktop();
@@ -316,6 +353,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<boolea
   if (targets.vscodeClaudeCode) {
     await disconnectVsCodeClaudeCode(Boolean(opts.insiders));
   }
+  await disconnectExtensionEditions(extensionEditions);
 
   if (targets.vscode) {
     await disconnectVsCodeByok(Boolean(opts.insiders));
