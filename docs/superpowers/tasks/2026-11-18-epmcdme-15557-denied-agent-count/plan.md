@@ -1,5 +1,10 @@
 # EPMCDME-15557 Exclude Denied Agent/Task Calls From Agent Counts — Implementation Plan
 
+> **SUPERSEDED IN PART by commit `ece9dd1d` (2026-11-18, "count an Agent call only once its result has succeeded"). Read the shipped code and `CHANGELOG.md` for the current behavior.**
+> - The "a call with no result yet (pending) is still counted" rule below was **reversed**: an `Agent`/`Task` call that has an `id` is counted only when its `tool_result` has arrived without `is_error`/`isError`. A pending call is not counted (a later denial could not be subtracted); an id-less `tool_use` still counts.
+> - The API was renamed: the `failedToolUseIds` set is now `toolOutcomes: ReadonlyMap<string, ToolOutcome>` (`'ok' | 'failed'`), built by the new exported `collectToolOutcomes(messages)`. `collectFailedToolUseIds` is kept as a thin wrapper over it. `run-prompts.ts` takes `toolOutcomes` (required), and the OTLP orchestrator, `ClaudeSessionAdapter.extractMetrics` and `MetricsProcessor` pass `collectToolOutcomes(messages)`.
+> - Where the text below says `failedToolUseIds`, "pending calls still count", `still counts an Agent call with no result yet`, or `collectFailedToolUseIds` is passed to a caller, read the rules above instead. The matching tests now assert that a pending call is NOT counted and that it is counted once a successful result is in the transcript.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A denied or errored `Agent`/`Task` tool call must not be counted in the `agents` map of `agent.session.summary` (nor in `agentInvocations` of the legacy metrics paths).

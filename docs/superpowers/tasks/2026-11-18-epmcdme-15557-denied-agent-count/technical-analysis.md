@@ -1,5 +1,10 @@
 # Technical Research
 
+> **SUPERSEDED IN PART by commit `ece9dd1d` (2026-11-18, "count an Agent call only once its result has succeeded"). Read the shipped code and `CHANGELOG.md` for the current behavior.**
+> - The "a call with no result yet (pending) is still counted" rule below was **reversed**: an `Agent`/`Task` call that has an `id` is counted only when its `tool_result` has arrived without `is_error`/`isError`. A pending call is not counted (a later denial could not be subtracted); an id-less `tool_use` still counts.
+> - The API was renamed: the `failedToolUseIds` set is now `toolOutcomes: ReadonlyMap<string, ToolOutcome>` (`'ok' | 'failed'`), built by the new exported `collectToolOutcomes(messages)`. `collectFailedToolUseIds` is kept as a thin wrapper over it. `run-prompts.ts` takes `toolOutcomes` (required), and the OTLP orchestrator, `ClaudeSessionAdapter.extractMetrics` and `MetricsProcessor` pass `collectToolOutcomes(messages)`.
+> - This research is a record of the state before implementation. Its "Recommended minimum: ... leave pending calls with no result counted" and the `claude-run-baseline.test.ts:227` regression note describe the old design; that test is now named "counts a Task invocation once, in the run whose group resolves it (not while it is pending)" and still passes, because the live processor only counts groups whose `tool_use` blocks are all resolved.
+
 **Task**: claude named invocations agent count session summary otlp transcript denied tool_result
 **Generated**: 2026-11-18
 **Research path**: filesystem (codegraph MCP tool unavailable in this environment)

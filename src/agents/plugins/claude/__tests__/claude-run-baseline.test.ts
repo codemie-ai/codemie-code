@@ -224,7 +224,7 @@ describe('claude run baseline', () => {
       await run([...run1, result]);
     }
 
-    it('counts a pending Task invocation once, in the run that emits it', async () => {
+    it('counts a Task invocation once, in the run whose group resolves it (not while it is pending)', async () => {
       await runPendingThenResolved('Task', { subagent_type: 'X' });
 
       expect(deltas().map(d => d.recordId)).toEqual(['a1', 'a2']);

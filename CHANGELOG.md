@@ -20,7 +20,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
-- A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before. Skill counts are unchanged
+- A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before, and a call whose result has not arrived yet is counted only once that result succeeds. Skill counts are unchanged
 
 ## [0.16.10] - 2026-11-17
 
