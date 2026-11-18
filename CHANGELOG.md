@@ -18,6 +18,10 @@ All notable changes to this project are documented in this file, following [Keep
 - The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
 - `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
 
+### Fixed
+
+- A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before. Skill counts are unchanged
+
 ## [0.16.10] - 2026-11-17
 
 ### Added
