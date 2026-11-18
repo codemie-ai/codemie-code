@@ -35,14 +35,26 @@ The attribution-header change is CRITICAL in `.ai-run/guides/security/security-p
 (`security-review.md`, skill run twice) found no vulnerability. **The guide's security-review sign-off by the repository's
 security reviewers is an external merge gate and is not claimed here.** It is not an implementation finding.
 
-## Review history (all earlier rounds are superseded, not final)
-
-`superseded-ee54d4da/`, `superseded-ad8ba2f4/` (CR-001 sign-off, CR-002 AC1 partial, CR-003 hard-link failure, CR-004 unreadable
-pin overwrite; CR-003/CR-004 fixed in `eee936ee`), `superseded-c02998c5/` (CR-001 fresh-session cases; evidence added to
-`review-facts.md`, then judged by this round).
-
 ## Verification
 
 Scoped checks on the final source: cowork and forwarder suites 205 passed / 2 skipped, `tsc` clean, eslint clean; real-local-backend
-runs r4/r6 (fresh served session, transient failure then recovery) and r7 (adoption seam) in `record.md`. Synthetic input, not a
-real macOS Desktop session.
+runs r4/r6 covered a fresh served session and a transient failure followed by recovery; r7 checked legacy adoption.
+The actual producer, spool and forwarder sent synthetic Cowork input over HTTP to local backend `cdd8829db3` and PostgreSQL.
+Public APIs confirmed P1 retained, `final`, `codemie`, positive API spend and zero subscription spend, token conservation,
+and unchanged totals after repeated forwarding. The native legacy control retained its classification.
+Run r6 also confirmed no append during the injected lookup failure and successful recovery. These probes passed;
+they are not a real macOS Desktop session or runtime acceptance on current backend main.
+
+## Rebase verification
+
+Rebased from main `252233ba` onto `37a2fe476b079226be981a4566c6e771d08cc4eb` without conflicts. Original reviewed delivery
+`cb2dac2f` maps to `cf6cba60`; `git range-diff` marked all 15 original task commits identical (`=`).
+Reviewed implementation `eee936ee` maps to `803c14cd`, and reviewed range end `ad955b7e` maps to `03aa5f23`.
+Historical revision references in the machine verdict and complexity artifact remain intentional; task patches did not change.
+
+The new main commit changes the shared atomic writer used by spool status, so focused checks were run:
+`node node_modules/vitest/vitest.mjs run src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts src/telemetry/runtime/cowork/__tests__/cowork-attribution.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts src/utils/__tests__/atomic-write.test.ts`.
+Result outside the restricted sandbox: exit 0, 4 files passed, 195 passed / 7 skipped, no unhandled errors.
+The initial sandbox run exited 1 with Node child-process `read ENOTCONN`; only the successful rerun is counted.
+`git diff --check` passed. Subsequent artifact cleanup changes documentation only and preserves the machine verdict and
+actual complexity unchanged. Intermediate review inputs and superseded reports are retained locally outside the repository.

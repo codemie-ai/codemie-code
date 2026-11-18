@@ -44,7 +44,7 @@ validation; recorded and native sessions not auto-funded; no new logging.
   already builds analytics evidence headers with that builder. The reviewer treated this as a policy judgment for the
   security owners, not a vulnerability; it is raised here so it is decided explicitly.
 - **Backend contract:** the server must continue to honour `Project-Source` and accept a funding declaration without a
-  contract header (verified for the probed backend revision in `../record.md`; not re-verified for current `origin/main`).
+  contract header (verified for the probed backend revision in `code-review-report.md`; not re-verified for current `origin/main`).
 
 ## Second security review run, on the attribution delta (`c38b2fe4..eee936ee`, source files `252233ba..eee936ee`)
 
