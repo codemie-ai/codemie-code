@@ -21,7 +21,7 @@ import { takeMessagesBefore } from './messages-before.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
 import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { collectRunPromptsAndInvocations, PROMPTS_RECORD_SUFFIX } from './run-prompts.js';
-import { collectFailedToolUseIds } from '../claude-named-invocations.js';
+import { collectToolOutcomes } from '../claude-named-invocations.js';
 
 interface RunOptions {
   /** Lines stamped before it give the run no prompt or named invocation. */
@@ -376,7 +376,7 @@ export class MetricsProcessor implements SessionProcessor {
     const { prompts, named, promptsDelta } = collectRunPromptsAndInvocations(messages, messagesByUuid, {
       sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex,
       emittedDeltas: deltas.length > 0, cutoffMs, finalPass, namedOnly,
-      failedToolUseIds: collectFailedToolUseIds(messages)
+      toolOutcomes: collectToolOutcomes(messages)
     });
     if (promptsDelta) deltas.push(promptsDelta);
 

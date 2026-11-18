@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   collectFailedToolUseIds,
+  collectToolOutcomes,
   extractNamedInvocations,
   extractOrderedNamedInvocations,
 } from '../claude-named-invocations.js';
@@ -203,7 +204,7 @@ function toolResultMsg(id: string, flag: { is_error?: boolean; isError?: boolean
 }
 
 describe('failed Agent/Task calls (EPMCDME-15557)', () => {
-  const failedOf = (messages: unknown[]) => collectFailedToolUseIds(messages);
+  const outcomesOf = (messages: unknown[]) => collectToolOutcomes(messages);
 
   it('collectFailedToolUseIds collects is_error and isError results across messages', () => {
     const ids = collectFailedToolUseIds([
@@ -218,12 +219,31 @@ describe('failed Agent/Task calls (EPMCDME-15557)', () => {
     expect([...ids].sort()).toEqual(['a', 'b']);
   });
 
+  it('collectToolOutcomes marks each tool_use_id ok or failed, and a failed result wins', () => {
+    const outcomes = collectToolOutcomes([
+      toolResultMsg('a', { is_error: true }),
+      toolResultMsg('b', { isError: true }),
+      toolResultMsg('c', { is_error: false }),
+      toolResultMsg('d', {}),
+      toolResultMsg('e', { is_error: false }),
+      toolResultMsg('e', { is_error: true }),
+      toolResultMsg('f', { is_error: true }),
+      toolResultMsg('f', { is_error: false }),
+      { message: { role: 'user', content: [{ type: 'tool_result', content: 'no id', is_error: true }] } },
+      userStringContent('plain text'),
+      null,
+    ]);
+    expect(Object.fromEntries(outcomes)).toEqual({
+      a: 'failed', b: 'failed', c: 'ok', d: 'ok', e: 'failed', f: 'failed',
+    });
+  });
+
   it('skips a denied Agent call whose result arrives in a later message', () => {
     const messages = [
       toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
       toolResultMsg('t1', { is_error: true }, 'QA-15557 deny'),
     ];
-    expect(extractNamedInvocations(messages, failedOf(messages)).agentInvocations).toEqual({});
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
   });
 
   it('skips a denied Task call the same way as Agent', () => {
@@ -231,7 +251,7 @@ describe('failed Agent/Task calls (EPMCDME-15557)', () => {
       toolUseWithId('t1', 'Task', { subagent_type: 'Explore' }),
       toolResultMsg('t1', { is_error: true }, 'QA-15557 deny'),
     ];
-    expect(extractNamedInvocations(messages, failedOf(messages)).agentInvocations).toEqual({});
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
   });
 
   it('skips a call flagged with camelCase isError', () => {
@@ -239,7 +259,7 @@ describe('failed Agent/Task calls (EPMCDME-15557)', () => {
       toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
       toolResultMsg('t1', { isError: true }),
     ];
-    expect(extractNamedInvocations(messages, failedOf(messages)).agentInvocations).toEqual({});
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
   });
 
   it('counts the same subtype once when one call is denied and one allowed', () => {
@@ -249,27 +269,41 @@ describe('failed Agent/Task calls (EPMCDME-15557)', () => {
       toolUseWithId('t2', 'Agent', { subagent_type: 'Explore' }),
       toolResultMsg('t2', { is_error: false }),
     ];
-    expect(extractNamedInvocations(messages, failedOf(messages)).agentInvocations).toEqual({ Explore: 1 });
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({ Explore: 1 });
   });
 
-  it('counts a pending call (no result) and a call without an id', () => {
-    const out = extractNamedInvocations(
-      [
-        toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
-        toolUse('Agent', { subagent_type: 'Plan' }),
-      ],
-      new Set(['t9'])
-    );
-    expect(out.agentInvocations).toEqual({ Explore: 1, Plan: 1 });
+  it('does not count a call until its result has arrived, but counts a call without an id', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolUse('Agent', { subagent_type: 'Plan' }),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({ Plan: 1 });
   });
 
-  it('does not change Skill counting', () => {
+  it('counts the call once its successful result arrives', () => {
+    const pending = [toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' })];
+    const resolved = [...pending, toolResultMsg('t1', { is_error: false })];
+    expect(extractNamedInvocations(pending, outcomesOf(pending)).agentInvocations).toEqual({});
+    expect(extractNamedInvocations(resolved, outcomesOf(resolved)).agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('counts every call when no outcomes are passed', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }),
+    ];
+    expect(extractNamedInvocations(messages).agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('does not change Skill counting: a failed and a pending Skill call are still counted', () => {
     const messages = [
       toolUseWithId('t1', 'Skill', { skill: 'codemie:msgraph' }),
       toolResultMsg('t1', { is_error: true }),
+      toolUseWithId('t2', 'Skill', { skill: 'tech-lead' }),
     ];
-    expect(extractNamedInvocations(messages, failedOf(messages)).skillInvocations).toEqual({
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).skillInvocations).toEqual({
       'codemie:msgraph': 1,
+      'tech-lead': 1,
     });
   });
 
@@ -280,7 +314,7 @@ describe('failed Agent/Task calls (EPMCDME-15557)', () => {
       toolUseWithId('t2', 'Task', { subagent_type: 'Plan' }),
       toolResultMsg('t2', {}),
     ];
-    const failed = failedOf(messages);
+    const failed = outcomesOf(messages);
     const { commandsInOrder: _ignored, ...ordered } = extractOrderedNamedInvocations(messages, undefined, failed);
     expect(ordered).toEqual(extractNamedInvocations(messages, failed));
     expect(ordered.agentInvocations).toEqual({ Plan: 1 });

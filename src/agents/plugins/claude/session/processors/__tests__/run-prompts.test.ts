@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { collectRunPromptsAndInvocations } from '../run-prompts.js';
+import type { ToolOutcome } from '../../claude-named-invocations.js';
 
 const deniedTaskCall = {
   uuid: 'a1',
@@ -25,26 +26,34 @@ const deniedResult = {
   },
 };
 
-function collect(failedToolUseIds: ReadonlySet<string>) {
-  return collectRunPromptsAndInvocations([deniedTaskCall, deniedResult], new Map(), {
+function collect(
+  toolOutcomes: ReadonlyMap<string, ToolOutcome>,
+  { messages = [deniedTaskCall, deniedResult], finalPass = false, lastEmittedIndex = 0 } = {}
+) {
+  return collectRunPromptsAndInvocations(messages, new Map(), {
     sessionId: 's',
     processedIds: new Set<string>(),
     attachedUserPrompts: new Set<string>(),
     lastProcessedMsgIndex: -1,
-    lastEmittedIndex: 0,
+    lastEmittedIndex,
     emittedDeltas: true,
-    finalPass: false,
+    finalPass,
     namedOnly: true,
-    failedToolUseIds,
+    toolOutcomes,
   });
 }
 
-describe('collectRunPromptsAndInvocations — failed tool calls', () => {
+describe('collectRunPromptsAndInvocations — failed and pending tool calls', () => {
   it('excludes a denied Agent call whose result is outside the processed slice', () => {
-    expect(collect(new Set(['tool-1'])).named.agentInvocations).toEqual({});
+    expect(collect(new Map([['tool-1', 'failed']])).named.agentInvocations).toEqual({});
   });
 
-  it('counts the same call when the full-session failed set does not list it', () => {
-    expect(collect(new Set()).named.agentInvocations).toEqual({ Explore: 1 });
+  it('counts the same call when the full-session outcomes say its result succeeded', () => {
+    expect(collect(new Map([['tool-1', 'ok']])).named.agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('does not count a call still unresolved on the final pass, which nothing could correct later', () => {
+    const out = collect(new Map(), { messages: [deniedTaskCall], finalPass: true, lastEmittedIndex: -1 });
+    expect(out.named.agentInvocations).toEqual({});
   });
 });

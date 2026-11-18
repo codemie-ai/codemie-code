@@ -1,5 +1,5 @@
 import type { MetricDelta } from '../../../../core/metrics/types.js';
-import { extractNamedInvocations, type NamedInvocationCounts } from '../claude-named-invocations.js';
+import { extractNamedInvocations, type NamedInvocationCounts, type ToolOutcome } from '../claude-named-invocations.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 
@@ -26,7 +26,7 @@ export function collectRunPromptsAndInvocations(
   // any[]: the final-pass delta reads `gitBranch`, which is not on ClaudeMessage.
   messages: any[],
   messagesByUuid: Map<string, ClaudeMessage>,
-  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly, failedToolUseIds }: {
+  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly, toolOutcomes }: {
     sessionId: string;
     processedIds: Set<string>;
     attachedUserPrompts: Set<string>;
@@ -36,8 +36,8 @@ export function collectRunPromptsAndInvocations(
     cutoffMs?: number;
     finalPass: boolean;
     namedOnly: boolean;
-    /** `tool_use_id`s of denied/errored calls, from the FULL session: a call's result is usually outside this run's slice. */
-    failedToolUseIds: ReadonlySet<string>;
+    /** Outcome of every resolved tool call, from the FULL session: a call's result is usually outside this run's slice. */
+    toolOutcomes: ReadonlyMap<string, ToolOutcome>;
   }
 ): RunPromptsResult {
   let promptsDelta: PendingDelta | undefined;
@@ -46,7 +46,7 @@ export function collectRunPromptsAndInvocations(
   const ownLine = (line: ClaudeMessage) => !isStampedBefore(line, cutoffMs);
   const runLines = messages.slice(runStart, trailingStart).filter(ownLine);
   const trailingLines = finalPass ? messages.slice(trailingStart).filter(ownLine) : [];
-  const named = extractNamedInvocations([...runLines, ...trailingLines], failedToolUseIds);
+  const named = extractNamedInvocations([...runLines, ...trailingLines], toolOutcomes);
 
   const prompts: Array<{ count: number; text: string }> = [];
   if (attachedUserPrompts.size === 0) {

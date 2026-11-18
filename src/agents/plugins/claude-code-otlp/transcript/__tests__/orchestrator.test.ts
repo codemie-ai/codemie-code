@@ -1237,8 +1237,17 @@ describe('openMainTranscriptPass — tool-call accumulation', () => {
       expect(summary?.agents).toEqual({ Plan: 1 });
     });
 
-    it('still counts an Agent call with no result yet', async () => {
+    it('does not count an Agent call whose result has not arrived yet', async () => {
       const summary = await stopSummary('agent-pending', [agentCallLine('tool-1', 'Explore')]);
+
+      expect(summary?.agents).toEqual({});
+    });
+
+    it('counts the Agent call once its successful result is in the transcript', async () => {
+      const summary = await stopSummary('agent-resolved', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', false, 'done'),
+      ]);
 
       expect(summary?.agents).toEqual({ Explore: 1 });
     });

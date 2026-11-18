@@ -60,6 +60,7 @@ import {
 } from './session-summary.js';
 import {
   collectFailedToolUseIds,
+  collectToolOutcomes,
   extractNamedInvocations,
   extractOrderedNamedInvocations,
 } from '@/agents/plugins/claude/session/claude-named-invocations.js';
@@ -483,8 +484,9 @@ async function buildFullAccumulator(
   // use, so a fork recovered from a path outside discovery is counted here too.
   pass.snapshot = await resolveSubagentSnapshot(transcriptPath, { final, extra, raw });
   const { slashPromptIds } = pass.snapshot;
-  // A denied/errored Agent call started no agent: `errorByToolUseId` keeps it out of `agents`.
-  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds, errorByToolUseId);
+  // An Agent call counts once its result has arrived and succeeded: a denied/errored or still
+  // unresolved call stays out of `agents` (the next Stop recomputes from the whole transcript).
+  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds, collectToolOutcomes(parsedLines));
   acc.commandsInOrder = named.commandsInOrder;
 
   const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
