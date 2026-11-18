@@ -51,7 +51,8 @@ describe('resolveProviderConflict', () => {
       runners: over.runners,
     });
 
-  const layerAt = (r: ConflictResolution, suffix: string) => r.layers.find((l) => l.path.endsWith(suffix));
+  const layerAt = (r: ConflictResolution, suffix: string) =>
+    r.layers.find((l) => l.path.replaceAll('\\', '/').endsWith(suffix));
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'conflict-resolver-'));
