@@ -22,6 +22,15 @@ import {
 import { checkClaudeCodeOtlpEndpoint } from './connectors/claude-code-otlp-endpoint.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
+  ANALYTICS_AGGREGATES,
+  aggregateFlagOf,
+  collectAnalyticsClients,
+  formatAnalyticsClientLines,
+  type AggregateId,
+  type AnalyticsAggregate,
+  type AnalyticsClientRow,
+} from './analytics-clients.js';
+import {
   DEFAULT_DAEMON_PORT,
   findOlderCliOnPath,
   formatOlderCliWarning,
@@ -35,7 +44,9 @@ import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-co
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
-interface UnifiedConnectOptions {
+type AggregateOptions = Partial<Record<AnalyticsAggregate['option'], boolean>>;
+
+interface UnifiedConnectOptions extends AggregateOptions {
   claudeCodeOtlp?: boolean;
   copilotChatOtlp?: boolean;
   copilotCliOtlp?: boolean;
@@ -58,6 +69,21 @@ interface AliasConnectOptions {
   insiders?: boolean;
   verbose?: boolean;
   force?: boolean;
+}
+
+const AGGREGATE_FLAGS = ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag);
+
+/** One option per analytics aggregate; each sets its member options. */
+function addAggregateOptions(command: Command, description: 'connectDescription' | 'disconnectDescription'): Command {
+  for (const aggregate of ANALYTICS_AGGREGATES) {
+    const members = Object.fromEntries(aggregate.members.map((member) => [member, true]));
+    command.addOption(new Option(aggregate.flag, aggregate[description]).implies(members));
+  }
+  return command;
+}
+
+function aggregatesGiven(opts: AggregateOptions): AggregateId[] {
+  return ANALYTICS_AGGREGATES.filter((aggregate) => opts[aggregate.option]).map((aggregate) => aggregate.id);
 }
 
 /** Print the highlighted deprecation notice for a legacy `connect` subcommand. */
@@ -146,12 +172,16 @@ export function createProxyCommand(): Command {
     .option('--deep', 'Also verify upstream/auth reachability (slower)')
     .option('--json', 'Emit status as JSON instead of formatted output')
     .action(async (opts) => {
+      const jsonRows = (rows: AnalyticsClientRow[]) =>
+        rows.map(({ client, found, connected, flag }) => ({ client, found, connected, flag }));
       const { running, state } = await readDaemonStatus();
       if (!running || !state) {
+        const rows = await collectAnalyticsClients(null);
         if (opts.json) {
-          console.log(JSON.stringify({ status: 'stopped' }, null, 2));
+          console.log(JSON.stringify({ status: 'stopped', analyticsClients: jsonRows(rows) }, null, 2));
         } else {
           console.log('Status: stopped');
+          for (const line of formatAnalyticsClientLines(rows, { commands: true })) console.log(line);
         }
         return;
       }
@@ -170,11 +200,12 @@ export function createProxyCommand(): Command {
         expectedPid: state.pid,
       });
       const analytics = await collectVisibleDeliveryHealth(state, health.analytics);
-      const [desktop, clients, olderCli, otlp] = await Promise.all([
+      const [desktop, clients, olderCli, otlp, analyticsClients] = await Promise.all([
         collectDesktopCollection(state),
         collectClientNotices(state),
         findOlderCliOnPath(),
         checkClaudeCodeOtlpEndpoint(state),
+        collectAnalyticsClients(state),
       ]);
       const otlpMismatch = otlp && !otlp.matches ? otlp : null;
 
@@ -219,6 +250,7 @@ export function createProxyCommand(): Command {
         if (clients.hooksOfAnotherInstall.length > 0) {
           payload.hooksOfAnotherInstall = clients.hooksOfAnotherInstall;
         }
+        payload.analyticsClients = jsonRows(analyticsClients);
         console.log(JSON.stringify(payload, null, 2));
         return;
       }
@@ -285,6 +317,11 @@ export function createProxyCommand(): Command {
       if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
         console.log(chalk.yellow(`  Note:    last recorded issue — ${state.healthReason}`));
       }
+
+      // A state with no `version` names its one remedy on the `Version:` line.
+      for (const line of formatAnalyticsClientLines(analyticsClients, { commands: Boolean(state.version) })) {
+        console.log(line);
+      }
     });
 
   // ── proxy connect ────────────────────────────────────────────────────────────
@@ -296,7 +333,7 @@ export function createProxyCommand(): Command {
     // swallowing them.
     .enablePositionalOptions();
 
-  connect
+  addAggregateOptions(connect, 'connectDescription')
     .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
@@ -313,16 +350,17 @@ export function createProxyCommand(): Command {
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others`,
+        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')} / --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others. With ${AGGREGATE_FLAGS.join(' or ')} and no --scope, an existing project list is kept.`,
       )
       .default('user')
       .choices(['user', 'project']),
     )
     .option(
       '--silent',
-      `Skip the confirmation prompt (required when non-interactive; applies to --${CLAUDE_CODE_OTLP_AGENT_NAME})`,
+      `Skip the confirmation prompt (required when non-interactive; applies to ${aggregateFlagOf('claudeCodeOtlp')} / --${CLAUDE_CODE_OTLP_AGENT_NAME})`,
     )
-    .action(async (opts: UnifiedConnectOptions) => {
+    .action(async (opts: UnifiedConnectOptions, command: Command) => {
+      const aggregates = aggregatesGiven(opts);
       await connectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
@@ -339,14 +377,17 @@ export function createProxyCommand(): Command {
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
-        scope: opts.scope,
+        // Under an aggregate an omitted --scope keeps a member's project list.
+        scope: aggregates.length > 0 && command.getOptionValueSource('scope') !== 'cli' ? undefined : opts.scope,
         silent: Boolean(opts.silent),
+        aggregates,
       });
     });
 
-  proxy
-    .command('disconnect')
-    .description('Remove CodeMie proxy configuration from a client')
+  addAggregateOptions(
+    proxy.command('disconnect').description('Remove CodeMie proxy configuration from a client'),
+    'disconnectDescription',
+  )
     .option('--claude-desktop', 'Remove the CodeMie gateway config and managed MCP servers from Claude Desktop')
     .option('--vscode-claude-code', 'Remove the CodeMie ANTHROPIC_BASE_URL/token from the VS Code Claude Code extension settings.json')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode-claude-code)')
@@ -358,12 +399,12 @@ export function createProxyCommand(): Command {
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
+        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')} / --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
       )
       .default('user')
       .choices(['user', 'project']),
     )
-    .action(async (opts: {
+    .action(async (opts: AggregateOptions & {
       claudeCodeOtlp?: boolean;
       copilotChatOtlp?: boolean;
       copilotCliOtlp?: boolean;
@@ -386,6 +427,7 @@ export function createProxyCommand(): Command {
         },
         scope: opts.scope,
         insiders: Boolean(opts.insiders),
+        aggregates: aggregatesGiven(opts),
       });
     });
 

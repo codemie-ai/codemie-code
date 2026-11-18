@@ -103,6 +103,39 @@ vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
 
+// The analytics clients block reads five fixed rows; its lookups are covered by analytics-clients.test.ts.
+vi.mock('../analytics-clients.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../analytics-clients.js')>()),
+  collectAnalyticsClients: vi.fn(async () => [
+    { client: 'claude-code', label: 'Claude Code', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
+    { client: 'vscode-claude-code', label: 'VS Code Claude Code extension', found: true, connected: true, flag: '--claude-otlp', otherGateway: false },
+    { client: 'claude-desktop', label: 'Claude Desktop', found: true, connected: false, flag: '--claude-otlp', otherGateway: false },
+    { client: 'copilot-chat', label: 'Copilot Chat', found: true, connected: false, flag: '--copilot-otlp', otherGateway: false },
+    { client: 'copilot-cli', label: 'Copilot CLI', found: false, connected: false, flag: '--copilot-cli-otlp', otherGateway: false },
+  ]),
+}));
+const ANALYTICS_CLIENT_LINES = [
+  'Analytics clients:',
+  '  Claude Code:                    connected',
+  '  VS Code Claude Code extension:  connected',
+  '  Claude Desktop:                 not connected — Run: codemie proxy connect --claude-otlp',
+  '  Copilot Chat:                   not connected — Run: codemie proxy connect --copilot-otlp',
+  '  Copilot CLI:                    not found — if it is installed, run: codemie proxy connect --copilot-cli-otlp',
+];
+const ANALYTICS_CLIENTS_JSON = [
+  { client: 'claude-code', found: true, connected: true, flag: '--claude-otlp' },
+  { client: 'vscode-claude-code', found: true, connected: true, flag: '--claude-otlp' },
+  { client: 'claude-desktop', found: true, connected: false, flag: '--claude-otlp' },
+  { client: 'copilot-chat', found: true, connected: false, flag: '--copilot-otlp' },
+  { client: 'copilot-cli', found: false, connected: false, flag: '--copilot-cli-otlp' },
+];
+/** The status lines before the `Analytics clients:` block, which every status output ends with. */
+function beforeAnalyticsClients(lines: string[]): string[] {
+  const index = lines.indexOf(ANALYTICS_CLIENT_LINES[0]);
+  expect(index).toBeGreaterThan(-1);
+  return lines.slice(0, index);
+}
+
 vi.mock('../inspect-desktop.js', () => ({
   printDesktopInspection: vi.fn(),
 }));
@@ -1594,23 +1627,24 @@ describe('proxy status', () => {
     const { checkStatus } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        clientType: 'vscode-byok',
-        project: 'team-project',
-        version: '0.17.0',
-        startedAt: new Date().toISOString(),
-      } as Awaited<ReturnType<typeof checkStatus>>['state'],
-    });
+    const { collectAnalyticsClients } = await import('../analytics-clients.js');
+    const state = {
+      pid: process.pid,
+      port: 4001,
+      url: 'http://127.0.0.1:4001',
+      profile: 'work',
+      gatewayKey: 'local-key',
+      clientType: 'vscode-byok',
+      project: 'team-project',
+      version: '0.17.0',
+      startedAt: new Date().toISOString(),
+    } as Awaited<ReturnType<typeof checkStatus>>['state'];
+    vi.mocked(checkStatus).mockResolvedValue({ running: true, state });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
 
     await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(state);
 
     const printed = consoleLogSpy.mock.calls.map((call) => call[0]).join('\n');
     const payload = JSON.parse(printed);
@@ -1624,7 +1658,9 @@ describe('proxy status', () => {
       uptimeSec: payload.uptimeSec,
       level: 'shallow',
       version: '0.17.0',
+      analyticsClients: ANALYTICS_CLIENTS_JSON,
     });
+    expect(Object.keys(payload).at(-1)).toBe('analyticsClients');
     expect(typeof payload.uptimeSec).toBe('number');
     consoleLogSpy.mockRestore();
   });
@@ -1693,7 +1729,11 @@ describe('proxy status', () => {
 
     await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ status: 'stopped' }, null, 2));
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      JSON.stringify({ status: 'stopped', analyticsClients: ANALYTICS_CLIENTS_JSON }, null, 2)
+    );
+    const { collectAnalyticsClients } = await import('../analytics-clients.js');
+    expect(collectAnalyticsClients).toHaveBeenLastCalledWith(null);
     consoleLogSpy.mockRestore();
   });
 
@@ -1838,7 +1878,7 @@ describe('proxy status', () => {
       const uptimeIndex = lines.findIndex((line) => line.startsWith('  Uptime:'));
       expect(uptimeIndex).toBeGreaterThan(-1);
       expect(lines[uptimeIndex + 1]).toBe(`Analytics: ${chalk.green('healthy')}`);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
+      expect(beforeAnalyticsClients(lines).some((line) => line.includes('Run:'))).toBe(false);
 
       const { checkProxyHealth } = await import('../health-check.js');
       const { collectDeliveryHealth } = await import('../delivery-health.js');
@@ -1896,7 +1936,7 @@ describe('proxy status', () => {
 
       const index = lines.indexOf(`Analytics: ${chalk.yellow('unhealthy (last send to CodeMie failed, retrying)')}`);
       expect(index).toBeGreaterThan(-1);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
+      expect(beforeAnalyticsClients(lines).some((line) => line.includes('Run:'))).toBe(false);
     });
 
     it('prints a dim unknown line with no Run tip when the daemon sent no analytics block', async () => {
@@ -1926,7 +1966,7 @@ describe('proxy status', () => {
       const lines = await runStatus(['status']);
 
       expect(lines.some((line) => line.startsWith('Analytics:'))).toBe(false);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
+      expect(beforeAnalyticsClients(lines).some((line) => line.includes('Run:'))).toBe(false);
     });
 
     it('hides the line and keeps the default output unchanged when nothing is connected or pending', async () => {
@@ -1943,6 +1983,7 @@ describe('proxy status', () => {
         '  Profile: work',
         '  Version: 0.17.0',
         lines[7],
+        ...ANALYTICS_CLIENT_LINES,
       ]);
       expect(lines[7]).toMatch(/^ {2}Uptime: {2}\d+s$/);
     });
@@ -1999,9 +2040,11 @@ describe('proxy status', () => {
       vi.mocked(readDesktopGateway).mockClear();
       vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
 
-      expect(await runStatus(['status'])).toEqual(['Status: stopped']);
+      expect(await runStatus(['status'])).toEqual(['Status: stopped', ...ANALYTICS_CLIENT_LINES]);
       consoleLogSpy.mockClear();
-      expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
+      expect(await runStatus(['status', '--json'])).toEqual([
+        JSON.stringify({ status: 'stopped', analyticsClients: ANALYTICS_CLIENTS_JSON }, null, 2),
+      ]);
       expect(checkProxyHealth).not.toHaveBeenCalled();
       expect(collectDeliveryHealth).not.toHaveBeenCalled();
       expect(readDesktopGateway).not.toHaveBeenCalled();
@@ -2080,9 +2123,23 @@ describe('proxy status', () => {
         const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
 
         expect(lines).toContain(chalk.yellow('  Version: older CLI — Run: codemie proxy restart'));
-        expect(lines.some((line) => line.includes('Desktop:'))).toBe(false);
+        expect(beforeAnalyticsClients(lines).some((line) => line.includes('Desktop:'))).toBe(false);
         expect(payload.version).toBeNull();
         expect(payload).not.toHaveProperty('desktop');
+      });
+
+      it('names no command in a not connected analytics client row under a daemon whose state has no version', async () => {
+        await arrangeDesktop(4001, { version: undefined });
+
+        const lines = await runStatus(['status']);
+        consoleLogSpy.mockClear();
+        const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
+
+        expect(lines).toContain('  Claude Desktop:                 not connected');
+        expect(lines.slice(lines.indexOf('Analytics clients:')).some((line) => line.includes('Run:'))).toBe(false);
+        expect(payload.analyticsClients[2]).toEqual(
+          { client: 'claude-desktop', found: true, connected: false, flag: '--claude-otlp' }
+        );
       });
 
       it('names both ports when Desktop points at another port than the daemon listens on', async () => {
@@ -2257,7 +2314,7 @@ describe('proxy status', () => {
       expect((await statusJson()).clientSharedKey).toEqual([{ client: 'vscode-claude-code', flag: '--vscode-claude-code' }]);
 
       await extensionSettings(false, 'http://127.0.0.1:60122', 'codemie-proxy.vscode-claude-code');
-      expect((await status()).some((line) => line.includes('VS Code Claude Code extension'))).toBe(false);
+      expect(beforeAnalyticsClients(await status()).some((line) => line.includes('VS Code Claude Code extension'))).toBe(false);
     });
 
     it('names an extension config holding a key the proxy refuses', async () => {
@@ -2297,7 +2354,7 @@ describe('proxy status', () => {
           inferenceGatewayApiKey: 'other-key',
         }));
 
-        expect((await status()).some((line) => line.includes('Claude Desktop:'))).toBe(false);
+        expect(beforeAnalyticsClients(await status()).some((line) => line.includes('Claude Desktop:'))).toBe(false);
         expect(await statusJson()).not.toHaveProperty('clientSharedKey');
       });
 
@@ -2372,7 +2429,7 @@ describe('proxy status', () => {
         '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 60122; ' +
         'run: codemie proxy connect --claude-desktop'
       ));
-      expect(lines.filter((line) => line.includes('Claude Desktop'))).toHaveLength(1);
+      expect(beforeAnalyticsClients(lines).filter((line) => line.includes('Claude Desktop'))).toHaveLength(1);
     });
 
     it('names a Desktop config holding the shared key', async () => {
@@ -2455,7 +2512,7 @@ describe('proxy status', () => {
         const payload = await statusJson();
 
         expect(lines).toContain(line);
-        expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
+        expect(beforeAnalyticsClients(lines).some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
         expect(payload.desktop).toEqual(desktop);
         expect(payload).not.toHaveProperty('clientSharedKey');
       });
@@ -2465,8 +2522,8 @@ describe('proxy status', () => {
 
         const lines = await status();
 
-        expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
-        expect(lines.some((printed) => printed.includes('Desktop:'))).toBe(false);
+        expect(beforeAnalyticsClients(lines).some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
+        expect(beforeAnalyticsClients(lines).some((printed) => printed.includes('Desktop:'))).toBe(false);
         expect(await statusJson()).not.toHaveProperty('clientSharedKey');
       });
     });
@@ -2657,6 +2714,7 @@ describe('proxy status', () => {
         '  Profile: work',
         '  Version: 0.17.0',
         lines[7],
+        ...ANALYTICS_CLIENT_LINES,
       ]);
       const payload = await statusJson();
       for (const key of ['clientPortMismatch', 'clientSharedKey', 'olderCliOnPath', 'hooksOfAnotherInstall']) {

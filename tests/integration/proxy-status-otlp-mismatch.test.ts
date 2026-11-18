@@ -184,7 +184,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       expect(result.stdout, describeRun(result)).toContain(
         `Claude Code OTLP endpoint ${staleEndpoint} does not match this daemon (${daemonUrl}${OTLP_PATH})`
       );
-      expect(result.stdout).toContain('codemie proxy connect --claude-code-otlp');
+      expect(result.stdout).toMatch(/Repair:.*codemie proxy connect --claude-code-otlp/);
     });
   });
 

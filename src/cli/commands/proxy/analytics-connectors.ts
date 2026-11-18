@@ -67,7 +67,7 @@ export const ANALYTICS_CONNECTORS: readonly AnalyticsConnector[] = [
     id: CLAUDE_CODE_OTLP_AGENT_NAME,
     collect: collectClaudeAnalyticsStatus,
     format: formatClaudeAnalyticsStatus,
-    isActive: hasClaudeCodeOtlpHooks,
+    isActive: () => hasClaudeCodeOtlpHooks(),
   }),
   copilotConnector(COPILOT_CLI_OTLP_AGENT_NAME),
   copilotConnector(COPILOT_CHAT_OTLP_AGENT_NAME),

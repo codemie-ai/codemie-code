@@ -19,6 +19,7 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
@@ -32,6 +33,8 @@ const CLI_HOOK_FILE_NAME = 'codemie-copilot-cli-hooks.json';
 
 export interface WriteCopilotCliOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotCliOtlpResult {
@@ -99,7 +102,10 @@ export function buildHookFileContent(): Record<string, unknown> {
   return { version: 1, hooks };
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotCliOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CLI_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }

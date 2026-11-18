@@ -35,6 +35,12 @@ export function getClaudeDesktopBaseDir(): string {
   );
 }
 
+/** Install locations of the Claude Desktop application; empty where no install location is known. */
+export function getClaudeDesktopAppCandidates(): string[] {
+  if (process.platform !== 'darwin') return [];
+  return ['/Applications/Claude.app', join(homedir(), 'Applications', 'Claude.app')];
+}
+
 /**
  * Path to the managed (MDM) settings source, where the platform exposes one as
  * a plain file. A managed source overrides local configLibrary entries

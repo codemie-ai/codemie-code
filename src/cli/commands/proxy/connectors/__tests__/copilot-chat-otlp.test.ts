@@ -12,7 +12,7 @@ import { logger } from '@/utils/logger.js';
 import { getDirname } from '@/utils/paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
-import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
+import { getCopilotConnectorsConfigPath, writeCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 
 const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '' }));
 
@@ -277,6 +277,45 @@ describe('copilot-chat-otlp connector', () => {
       const result = await removeCopilotChatOtlpConfig({ scope: 'project' });
 
       expect(result).toMatchObject({ removed: false, mode: 'noop' });
+    });
+  });
+
+  describe('keepProjectList', () => {
+    async function storeTwoProjects(): Promise<unknown> {
+      await writeCopilotChatOtlpConfig({ scope: 'project' });
+      mocks.projectRoot = projectB;
+      await writeCopilotChatOtlpConfig({ scope: 'project' });
+      return { enabled: true, scope: 'project', paths: [await canonicalizePath(projectA), await canonicalizePath(projectB)] };
+    }
+
+    it('writes a stored list of two projects back as it is with no scope', async () => {
+      const stored = await storeTwoProjects();
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual(stored);
+    });
+
+    it('tracks all projects when nothing is stored', async () => {
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('resets a stored list with scope user, as without the option', async () => {
+      await storeTwoProjects();
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true, scope: 'user' });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('tracks all projects over a stored disabled record', async () => {
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: false });
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
     });
   });
 
