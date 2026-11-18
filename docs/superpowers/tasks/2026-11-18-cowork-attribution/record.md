@@ -75,11 +75,44 @@ Source is unchanged by R1, so the earlier 281-test scoped run and `check:pre-com
 Evidence class: **synthetic fixture** (real producer/spool/forwarder, mocked HTTP). It is not live backend acceptance: the
 backend persistence, public projection and spend path was traced in source only; no live persisted row was observed.
 
+### Local backend acceptance probe (synthetic input, real local persistence)
+
+Evidence class: **synthetic Cowork transcript input** through the changed real producer, spool and forwarder (CLI `f4efdf83`),
+real HTTP ingestion into an existing local backend and PostgreSQL, read back through the public APIs. No mocked fetch,
+ingest, gate or reader. **Not macOS Claude Desktop UI acceptance.**
+
+- Backend: existing local Podman container `codemie-epmcdme17339` (image `localhost/codemie:17339-cdd8829`, revision
+  `cdd8829db3`) on `127.0.0.1:18339` with its own PostgreSQL. Reused as is; nothing stopped, rebuilt or reconfigured.
+- Isolation: a temp `CODEMIE_HOME`/HOME, proxy variables cleared, `NO_PROXY=127.0.0.1,localhost`, the only endpoint the
+  verified localhost URL. Local test credentials were read in-process (never in argv or logs). Fresh random session id and
+  two fresh test projects (P1, P2). The probe file is local only and not committed.
+- Scenario: served mark written; profile without own project plus global workspace project P1; initial events collected and
+  forwarded; Desktop `userSelectedFolders` switched to a DISTINCT folder resolving P2; new prompt, tool call and usage
+  appended and forwarded; session ended and forwarded. A native control (spool session with no served mark, project P1) was
+  forwarded too.
+
+| Observation (public API) | Result |
+|---|---|
+| `GET /sessions/<id>` | `summary_state=final`, `subscription_type=codemie`, `project_origin=profile`, 3 tool calls |
+| Sessions list filtered by P1 / by P2 | the session is listed under P1, P2 list is empty |
+| Native control | `subscription_type=unknown`, `project_origin=none`, `summary_state=none` (unchanged legacy behavior) |
+| Overview (the spend endpoint the UI uses), P1 | `total_cost_usd = api_cost_usd = 0.002998`, `subscription_cost_usd = 0`, 1 session, `subscription_types=[codemie]` |
+| Same, filter `subscription_type=codemie` | identical to P1; filter `unknown` returns 0 sessions; P2 returns 0 |
+| Tokens vs spooled events | stored 120 input / 126 output / 250 cache creation / 3500 cache read equal the sums of the 19 unique spooled event ids (no double counting) |
+
+The synthetic model name is `gpt-4.1` only because the local price catalog prices it (earlier unpriced runs stored the same
+classification with cost 0). A final assertion in the local probe that mapped list rows to event ids failed because list rows
+carry no `session_id`; it is a probe-side mapping error, the values above come from the same run's recorded responses.
+
+Limits of this probe: the backend image is a 17339 branch build, not `origin/main` `a01605f354` (the ingest, gate,
+classification and scope files are identical to `origin/main`; 27 unrelated reader/handler files differ). The `/cost`
+funding buckets still show Cowork as `unknown` (a separate publication-contract axis, out of scope). The probe created
+test projects and sessions in that backend's shared test DB (data only). Windows host, no real Claude Desktop.
+
 ## Limitations and unverified items
 
-- **No live acceptance.** Persisted `subscription_type=codemie`, public projection and CodeMie-spend grouping were traced
-  in backend source and existing backend tests, not run end to end (no backend DB in this environment). A preview
-  check of a new Cowork session (`GET /v1/analytics/cli-analytics/sessions/<id>`) is still needed.
+- **Live acceptance is synthetic input.** Persistence, projection and CodeMie spend were observed on a local backend (see
+  above), not with a real macOS Claude Desktop session or on `origin/main`'s backend build.
 - Sessions collected before this change: a bound session with a pin-less cursor keeps its spool project (no re-resolution),
   and declares funding only if its current resolution agrees with it; if not, it is pinned with source `none` and stays
   on the legacy Project header (no codemie claim). A session with a cursor but **no served mark** (collected before marks
