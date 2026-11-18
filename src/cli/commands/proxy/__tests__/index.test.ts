@@ -685,18 +685,24 @@ describe('proxy start', () => {
     exitSpy.mockRestore();
   });
 
-  it('starts a transparent daemon without model configuration', async () => {
+  it.each([
+    ['no model', undefined, undefined],
+    ['a blank model', '  ', undefined],
+    ['model m1', 'm1', 'm1'],
+  ])('starts a daemon with the profile\'s model, given a config with %s', async (_label, configModel, expectedModel) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce(null);
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'default',
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
       codeMieProject: 'team-project',
+      model: configModel,
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
@@ -717,7 +723,75 @@ describe('proxy start', () => {
       profile: 'default',
       project: 'team-project',
     });
-    expect(options).not.toHaveProperty('model');
+    if (expectedModel) {
+      expect(options.model).toBe(expectedModel);
+    } else {
+      expect(options).not.toHaveProperty('model');
+    }
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
+  });
+
+  it('loads the config by the active profile\'s name when no --profile is given', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://127.0.0.1:4001',
+      profile: 'work',
+      port: 4001,
+      gatewayKey: 'local-key',
+      startedAt: new Date().toISOString(),
+    });
+
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+  });
+
+  it('starts a daemon a later connect of the same profile reuses', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { buildRequestedConfig, daemonMatchesRequest } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    const config = {
+      name: 'p',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieProject: 'team-project',
+      model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>;
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue(config);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://127.0.0.1:4001',
+      profile: 'p',
+      port: 4001,
+      gatewayKey: 'local-key',
+      startedAt: new Date().toISOString(),
+    });
+
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
+
+    const spawned = vi.mocked(spawnDaemon).mock.calls[0][0];
+    const state = { ...spawned, url: 'http://127.0.0.1:4001', gatewayKey: 'local-key', startedAt: '' };
+    expect(daemonMatchesRequest(state, buildRequestedConfig('p', config, undefined, 4001))).toBe(true);
   });
 
   it('keeps explicit profile selection', async () => {
@@ -746,6 +820,7 @@ describe('proxy start', () => {
     await createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
+    expect(ConfigLoader.getActiveProfileName).not.toHaveBeenCalled();
   });
 
   it('starts with no identity on Desktop\'s gateway port while Claude Desktop is connected and nothing else names a port', async () => {
@@ -924,7 +999,7 @@ describe('proxy start', () => {
     return ConfigLoader;
   }
 
-  it('spawns the loaded config\'s values without a model when no daemon runs', async () => {
+  it('spawns the loaded config\'s values with its model when no daemon runs', async () => {
     const ConfigLoader = await arrangeProfileP();
     const { checkStatus, readConnectionRecord, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
@@ -940,7 +1015,7 @@ describe('proxy start', () => {
 
     expect(vi.mocked(spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', project: 'A', projectBinding: 'own',
-      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true,
+      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true, model: 'm1',
     });
   });
 
@@ -2877,6 +2952,22 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
   });
 
+  it('starts with the new profile\'s own model when --profile is given', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockImplementation(async (_cwd, options) => ({
+      name: (options as { name?: string } | undefined)?.name ?? 'work',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieProject: 'config-project',
+      model: 'm1',
+    }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'other' });
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'other', model: 'm1' });
+  });
+
   it('leaves the running daemon untouched when SSO credentials are missing', async () => {
     const { daemon, command } = await setup({ running: true, state: runningState });
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -3005,6 +3096,29 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('global-model');
   });
 
+  it('re-spawns a running daemon whose state has no model with the loaded config\'s when the global profile has none', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
+    vi.mocked(ConfigLoader.loadGlobalConfigProfile).mockResolvedValueOnce({});
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
+  });
+
+  it('keeps the state\'s model over the loaded config\'s when no --profile is given', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m');
+  });
+
   it.each([
     ['disappeared', { running: false, state: null }],
     ['was replaced by another run', { running: true, state: { ...runningState, pid: 9191 } }],
@@ -3036,7 +3150,18 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile, port: 52311 });
   });
 
-  it('starts a stopped daemon with the loaded config\'s values and no model', async () => {
+  it('starts a stopped daemon with no record on the active profile\'s name', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'work');
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'work', port: 4001 });
+  });
+
+  it('starts a stopped daemon with the loaded config\'s values and its model', async () => {
     const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
     vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -3048,7 +3173,7 @@ describe('proxy restart', () => {
 
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', project: 'A', projectBinding: 'own',
-      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true,
+      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true, model: 'm1',
     });
   });
 

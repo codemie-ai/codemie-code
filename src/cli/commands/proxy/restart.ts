@@ -35,7 +35,8 @@ function printRestarted(daemonState: DaemonState): void {
  */
 async function prepareStopped(opts: ProxyRestartOptions): Promise<() => Promise<DaemonState>> {
   const port = await requestedDaemonPort();
-  const profileName = opts.profile ?? (await readConnectionRecord())?.profile;
+  const profileName = opts.profile ?? (await readConnectionRecord())?.profile ??
+    await ConfigLoader.getActiveProfileName(process.cwd());
   const config = await ConfigLoader.load(process.cwd(), profileName ? { name: profileName } : undefined);
   const profile = config.name ?? 'default';
   const projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
@@ -110,10 +111,10 @@ export function restartProject(
 }
 
 /**
- * Replace a running daemon, keeping its port, gateway key, model (`modelFromState`) and project rule
- * (`restartProject`); the start-time conflict check does not apply. The profile is prepared before the
- * daemon lock, so a bad profile or expired SSO leaves the working daemon running; the stop and the spawn
- * run under it.
+ * Replace a running daemon, keeping its port, gateway key, model (the state's, else the global profile's of the
+ * state's name — `modelFromState`) and project rule (`restartProject`); the start-time conflict check does not
+ * apply. The profile is prepared before the daemon lock, so a bad profile or expired SSO leaves the working daemon
+ * running; the stop and the spawn run under it.
  */
 async function prepareRunning(state: DaemonState, opts: ProxyRestartOptions): Promise<() => Promise<DaemonState>> {
   const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
@@ -121,7 +122,8 @@ async function prepareRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
   const resolvedBinding = await reportDaemonProfileIdentity(config, 'proxy');
   const { project, projectBinding } = restartProject(state, opts, config.codeMieProject, resolvedBinding);
   const prepared = await prepareDaemonLaunch(config, profile);
-  // A switched profile's tenant may not serve the old profile's model.
+  // `--profile`: the new profile's own model, never the old one, which its tenant may not serve. Otherwise the state's
+  // model, else the global profile's of the state's name, else the loaded config's.
   const model = opts.profile ? undefined : await modelFromState(state);
   return async () => {
     await stopDaemon();

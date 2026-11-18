@@ -319,6 +319,10 @@ describe('daemonMatchesRequest — model comparison', () => {
     ).toBe(true);
   });
 
+  it('fails to match a state without a model against a requested model', () => {
+    expect(daemonMatchesRequest(codexState(), baseRequest({ model: 'm1' }))).toBe(false);
+  });
+
   it('compares no client type: a state of another client type matches', () => {
     expect(daemonMatchesRequest(codexState({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }), baseRequest())).toBe(true);
   });
@@ -3059,13 +3063,13 @@ describe('ensureOtlpProxy', () => {
       expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe(model);
     });
 
-    it('a state with a version and no model passes no model', async () => {
+    it('a state with a version and no model takes the model of the global profile of the state\'s name', async () => {
       const s = await arrangeState({ ...OLDER, model: undefined });
       vi.mocked(s.ConfigLoader.loadGlobalConfigProfile).mockResolvedValue({ name: 'p', model: 'm1' });
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
+      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
     });
 
     /** The state of a live older daemon that names no upstream. */

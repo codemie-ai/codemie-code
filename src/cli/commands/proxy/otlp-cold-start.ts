@@ -45,12 +45,11 @@ export function isRestartableState(state: DaemonState): state is RestartableStat
 }
 
 /**
- * The model of a start from a daemon's state: the state's own; for a state of an older CLI that wrote neither
- * version nor model, the model of the global profile of the state's name; otherwise none.
+ * The model of a start from a daemon's state: the state's own; for a state without a model, the model of the
+ * global profile when that profile's name is the state's; otherwise none.
  */
 export async function modelFromState(state: DaemonState): Promise<string | undefined> {
   if (normalizeDaemonModel(state.model)) return normalizeDaemonModel(state.model);
-  if (state.version !== undefined) return undefined;
   // A legacy global config answers `default` for any name, hence the name check.
   const profile = await ConfigLoader.loadGlobalConfigProfile(state.profile);
   return profile.name === state.profile ? normalizeDaemonModel(profile.model) : undefined;
@@ -58,9 +57,10 @@ export async function modelFromState(state: DaemonState): Promise<string | undef
 
 /**
  * Replaces the daemon from its own state, with everything it ran with — profile, provider, target and sync URLs,
- * project and binding, gateway key, model — on `port`; no config of the working directory is read. The stopped
- * daemon deletes its own state file, so the state is written back before the spawn: a start cut between the two
- * leaves the state of a dead daemon, from which the next start comes back. The record gets nothing but its port.
+ * project and binding, gateway key — and the state's model, else the global profile's of the state's name, on
+ * `port`; no config of the working directory is read. The stopped daemon deletes its own state file, so the state
+ * is written back before the spawn: a start cut between the two leaves the state of a dead daemon, from which the
+ * next start comes back. The record gets nothing but its port.
  * Called under the daemon lock.
  */
 export async function startFromState(state: RestartableState, port: number): Promise<DaemonState> {
