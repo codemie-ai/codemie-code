@@ -31,6 +31,8 @@ describe('claude-code-otlp scope', () => {
   });
 
   afterEach(async () => {
+    // Release the logger's file in the temp home first (before resetModules swaps the instance): Windows cannot delete an open file.
+    await (await import('@/utils/logger.js')).logger.close();
     vi.unstubAllEnvs();
     await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });

@@ -42,6 +42,8 @@ describe('analytics advice', () => {
   });
 
   afterEach(async () => {
+    // Release the logger's file in the temp home first (before resetModules swaps the instance): Windows cannot delete an open file.
+    await (await import('@/utils/logger.js')).logger.close();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.resetModules();

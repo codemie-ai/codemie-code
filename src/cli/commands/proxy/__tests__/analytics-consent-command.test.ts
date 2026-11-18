@@ -41,6 +41,8 @@ describe('consent grant / revoke / list actions', () => {
     process.exitCode = 0;
   });
   afterEach(async () => {
+    // Release the logger's file in the temp home first (before resetModules swaps the instance): Windows cannot delete an open file.
+    await (await import('@/utils/logger.js')).logger.close();
     process.stdin.isTTY = tty as boolean;
     process.exitCode = 0;
     vi.restoreAllMocks();
