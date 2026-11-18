@@ -4,12 +4,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ConfigurationError } from '@/utils/errors.js';
-import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfigAtPath } from '../vscode-claude-code.js';
+import {
+  getVsCodeClaudeCodeSettingsPath,
+  moveVsCodeClaudeCodeToNamedKey,
+  readVsCodeClaudeCodeGateway,
+  removeVsCodeClaudeCodeConfigAtPath,
+  writeVsCodeClaudeCodeConfigAtPath,
+} from '../vscode-claude-code.js';
 import * as vscodeModule from '../vscode.js';
 
 describe('writeVsCodeClaudeCodeConfigAtPath', () => {
@@ -47,7 +53,7 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(settings['claudeCode.disableLoginPrompt']).toBe(true);
     expect(settings['claudeCode.environmentVariables']).toEqual([
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
     ]);
   });
 
@@ -73,7 +79,7 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(settings['claudeCode.environmentVariables']).toEqual([
       { name: 'MY_CUSTOM_VAR', value: 'keep-me' },
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
     ]);
   });
 
@@ -90,7 +96,7 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(envVars).toHaveLength(2);
     expect(envVars).toEqual([
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:5002' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-xyz789' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-xyz789.vscode-claude-code' },
     ]);
   });
 
@@ -106,7 +112,7 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     const settings = await readSettings();
     expect(settings['claudeCode.environmentVariables']).toEqual([
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
     ]);
     expect(logger.warn).toHaveBeenCalled();
   });
@@ -132,7 +138,7 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(settings['claudeCode.environmentVariables']).toEqual([
       { name: 'MY_CUSTOM_VAR', value: 'keep-me' },
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
     ]);
     expect(logger.warn).toHaveBeenCalled();
   });
@@ -281,5 +287,189 @@ describe('getVsCodeClaudeCodeSettingsPath', () => {
     vi.spyOn(vscodeModule, 'getVsCodeProductDir').mockReturnValue(testDir);
 
     expect(getVsCodeClaudeCodeSettingsPath(false)).toBe(join(testDir, 'User', 'settings.json'));
+  });
+});
+
+describe('readVsCodeClaudeCodeGateway', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'codemie-vscode-claude-code-reader-'));
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) vi.stubEnv(name, home);
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  function settingsPath(insiders = false): string {
+    return join(vscodeModule.getVsCodeProductDir(insiders), 'User', 'settings.json');
+  }
+
+  async function writeRaw(text: string, insiders = false): Promise<void> {
+    await mkdir(join(vscodeModule.getVsCodeProductDir(insiders), 'User'), { recursive: true });
+    await writeFile(settingsPath(insiders), text);
+  }
+
+  it('reads back the port and the named key its writer wrote, and nothing after the disconnect', async () => {
+    await writeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'http://127.0.0.1:52311', 'codemie-proxy');
+
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toEqual({ port: 52311, key: 'vscode-claude-code' });
+
+    await removeVsCodeClaudeCodeConfigAtPath(settingsPath());
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toBeNull();
+    expect(await readFile(settingsPath(), 'utf-8')).not.toContain('codemie-proxy');
+  });
+
+  it('writes the custom key of a restarted daemon with the name appended, and one key on a second connect', async () => {
+    await writeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'http://127.0.0.1:4001', 'k');
+    await writeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'http://127.0.0.1:4001', 'k');
+
+    const settings = JSON.parse(await readFile(settingsPath(), 'utf-8')) as Record<string, unknown>;
+    expect(settings['claudeCode.environmentVariables']).toEqual([
+      { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'k.vscode-claude-code' },
+    ]);
+  });
+
+  it('rewrites a config holding the shared key to the named one', async () => {
+    await writeRaw(JSON.stringify({ 'claudeCode.environmentVariables': [
+      { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'codemie-proxy' },
+    ] }));
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toEqual({ port: 4001, key: 'shared' });
+
+    await writeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'http://127.0.0.1:4001', 'codemie-proxy');
+
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toEqual({ port: 4001, key: 'vscode-claude-code' });
+  });
+
+  it('reads another key as refused', async () => {
+    await writeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'http://127.0.0.1:4001', 'other-daemon-key');
+
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toEqual({ port: 4001, key: 'refused' });
+  });
+
+  it('reads settings with comments and trailing commas, the Insiders file on its own', async () => {
+    await writeRaw([
+      '{',
+      '  // set by codemie proxy connect',
+      '  "claudeCode.environmentVariables": [',
+      '    { "name": "ANTHROPIC_BASE_URL", "value": "http://127.0.0.1:4002" },',
+      '    { "name": "ANTHROPIC_AUTH_TOKEN", "value": "codemie-proxy.vscode-claude-code" },',
+      '  ],',
+      '}',
+    ].join('\n'), true);
+
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy', true)).toEqual({ port: 4002, key: 'vscode-claude-code' });
+    expect(await readVsCodeClaudeCodeGateway('codemie-proxy', false)).toBeNull();
+  });
+
+  it.each([
+    ['a missing product directory', async () => undefined],
+    ['an unparsable file', async () => writeRaw('{ "claudeCode.environmentVariables": [')],
+    ['a non-loopback URL', async () => writeRaw(JSON.stringify({ 'claudeCode.environmentVariables': [
+      { name: 'ANTHROPIC_BASE_URL', value: 'https://gateway.example.com:4001' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'codemie-proxy.vscode-claude-code' },
+    ] }))],
+  ])('returns null for %s', async (_case, arrange) => {
+    await arrange();
+
+    await expect(readVsCodeClaudeCodeGateway('codemie-proxy')).resolves.toBeNull();
+  });
+});
+
+
+describe('moveVsCodeClaudeCodeToNamedKey', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'codemie-vscode-claude-code-move-'));
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) vi.stubEnv(name, home);
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  function settingsPath(insiders = false): string {
+    return join(vscodeModule.getVsCodeProductDir(insiders), 'User', 'settings.json');
+  }
+
+  /** Settings as an older connect left them, with the user's own comment and entry beside the managed ones. */
+  function olderConnectSettings(token: string, port = 4001): string {
+    return [
+      '{',
+      '\t// my editor settings',
+      '\t"editor.fontSize": 13,',
+      '\t"claudeCode.disableLoginPrompt": true,',
+      '\t"claudeCode.environmentVariables": [',
+      '\t\t{ "name": "MY_VAR", "value": "mine" },',
+      `\t\t{ "name": "ANTHROPIC_BASE_URL", "value": "http://127.0.0.1:${port}" },`,
+      `\t\t{ "name": "ANTHROPIC_AUTH_TOKEN", "value": "${token}" },`,
+      '\t],',
+      '}',
+      '',
+    ].join('\n');
+  }
+
+  async function writeRaw(text: string, insiders = false): Promise<void> {
+    await mkdir(join(vscodeModule.getVsCodeProductDir(insiders), 'User'), { recursive: true });
+    await writeFile(settingsPath(insiders), text);
+  }
+
+  it.each([
+    ['the stable settings, the default key', false, 'codemie-proxy'],
+    ['the Insiders settings, the default key', true, 'codemie-proxy'],
+    ['the stable settings, a daemon with its own key', false, 'k-7f3a'],
+  ])('moves %s from the shared key to the named key, and nothing else', async (_case, insiders, key) => {
+    await writeRaw(olderConnectSettings(key), insiders);
+
+    expect(await moveVsCodeClaudeCodeToNamedKey(key, 4001, insiders)).toBe('moved');
+
+    expect(await readFile(settingsPath(insiders), 'utf-8')).toBe(olderConnectSettings(`${key}.vscode-claude-code`));
+    expect(await readVsCodeClaudeCodeGateway(key, insiders)).toEqual({ port: 4001, key: 'vscode-claude-code' });
+  });
+
+  it.each([
+    ['the named key', 'codemie-proxy.vscode-claude-code'],
+    ['another daemon\'s key', 'other-key'],
+  ])('leaves the bytes of settings holding %s', async (_case, token) => {
+    await writeRaw(olderConnectSettings(token));
+
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
+
+    expect(await readFile(settingsPath(), 'utf-8')).toBe(olderConnectSettings(token));
+  });
+
+  it('leaves the bytes of settings holding the shared key on another loopback port than the daemon\'s', async () => {
+    await writeRaw(olderConnectSettings('codemie-proxy', 4002));
+
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
+
+    expect(await readFile(settingsPath(), 'utf-8')).toBe(olderConnectSettings('codemie-proxy', 4002));
+  });
+
+  it('writes nothing when there is no settings file', async () => {
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
+  });
+
+  it('leaves a settings file that is a symbolic link, the link and its target', async () => {
+    const target = join(home, 'dotfiles-settings.json');
+    await writeFile(target, olderConnectSettings('codemie-proxy'));
+    await mkdir(join(vscodeModule.getVsCodeProductDir(false), 'User'), { recursive: true });
+    await symlink(target, settingsPath());
+
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('left');
+
+    expect((await lstat(settingsPath())).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy'));
   });
 });

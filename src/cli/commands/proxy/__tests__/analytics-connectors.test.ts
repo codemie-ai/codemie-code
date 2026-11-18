@@ -3,6 +3,9 @@
  * @group unit
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('../connectors/claude-code-otlp.js', () => ({
   hasClaudeCodeOtlpHooks: vi.fn(),
@@ -34,7 +37,7 @@ import {
   type ClaudeAnalyticsStatus,
   type CopilotAnalyticsStatus,
 } from '../analytics-status.js';
-import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector } from '../analytics-connectors.js';
+import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector, listActiveAnalyticsConnectors } from '../analytics-connectors.js';
 
 function connector(id: string) {
   const found = ANALYTICS_CONNECTORS.find((c) => c.id === id);
@@ -76,26 +79,26 @@ describe('ANALYTICS_CONNECTORS', () => {
   it('delegates collect and format to the Claude status helpers', async () => {
     const status = { hooksInstalled: true } as ClaudeAnalyticsStatus;
     vi.mocked(collectClaudeAnalyticsStatus).mockResolvedValue(status);
-    vi.mocked(formatClaudeAnalyticsStatus).mockReturnValue('claude text');
+    vi.mocked(formatClaudeAnalyticsStatus).mockResolvedValue('claude text');
     const entry = connector('claude-code-otlp');
 
-    const collected = await entry.collect('/work');
+    const collected = await entry.collect();
 
-    expect(collectClaudeAnalyticsStatus).toHaveBeenCalledWith('/work');
-    expect(entry.format(collected)).toBe('claude text');
+    expect(collectClaudeAnalyticsStatus).toHaveBeenCalledWith();
+    await expect(entry.format(collected)).resolves.toBe('claude text');
     expect(formatClaudeAnalyticsStatus).toHaveBeenCalledWith(status);
   });
 
   it('delegates collect and format to the Copilot status helpers with the connector id', async () => {
     const status = { connector: 'copilot-chat-otlp' } as CopilotAnalyticsStatus;
     vi.mocked(collectCopilotAnalyticsStatus).mockResolvedValue(status);
-    vi.mocked(formatCopilotAnalyticsStatus).mockReturnValue('copilot text');
+    vi.mocked(formatCopilotAnalyticsStatus).mockResolvedValue('copilot text');
     const entry = connector('copilot-chat-otlp');
 
-    const collected = await entry.collect('/work');
+    const collected = await entry.collect();
 
-    expect(collectCopilotAnalyticsStatus).toHaveBeenCalledWith('copilot-chat-otlp', '/work');
-    expect(entry.format(collected)).toBe('copilot text');
+    expect(collectCopilotAnalyticsStatus).toHaveBeenCalledWith('copilot-chat-otlp');
+    await expect(entry.format(collected)).resolves.toBe('copilot text');
     expect(formatCopilotAnalyticsStatus).toHaveBeenCalledWith(status);
   });
 });
@@ -110,6 +113,27 @@ describe('hasActiveAnalyticsConnector', () => {
   it('is true when only Claude Desktop is connected to a local gateway', async () => {
     vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
     await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
+  });
+
+  it('is true when only Claude Desktop is connected, with a key Desktop has sealed', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'analytics-connectors-desktop-'));
+    try {
+      const lib = join(baseDir, 'configLibrary');
+      await mkdir(lib, { recursive: true });
+      await writeFile(join(lib, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      await writeFile(join(lib, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+        inferenceGatewayApiKey: '__sealed__:v1:QUJD',
+      }));
+      const actual = await vi.importActual<typeof import('../connectors/desktop.js')>('../connectors/desktop.js');
+      vi.mocked(readDesktopGateway).mockImplementation(() =>
+        actual.readDesktopGateway(baseDir, join(baseDir, 'no-state.json')));
+
+      await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
   });
 
   it('is false when no connector is connected', async () => {
@@ -131,5 +155,34 @@ describe('hasActiveAnalyticsConnector', () => {
     vi.mocked(hasClaudeCodeOtlpHooks).mockRejectedValue(new Error('settings.json unreadable'));
     vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: true, scope: 'user' } });
     await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
+  });
+});
+
+describe('listActiveAnalyticsConnectors', () => {
+  beforeEach(() => {
+    vi.mocked(hasClaudeCodeOtlpHooks).mockReset().mockResolvedValue(false);
+    vi.mocked(readCopilotConnectorScope).mockReset().mockResolvedValue({ kind: 'ok', value: { enabled: false } });
+  });
+
+  it('is empty when nothing is connected', async () => {
+    await expect(listActiveAnalyticsConnectors()).resolves.toEqual([]);
+  });
+
+  it('lists every connected connector in table order', async () => {
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: true, scope: 'user' } });
+    const active = await listActiveAnalyticsConnectors();
+    expect(active.map((c) => c.id)).toEqual(['claude-code-otlp', 'copilot-cli-otlp', 'copilot-chat-otlp']);
+  });
+
+  it('skips a connector whose check throws and keeps the others', async () => {
+    vi.mocked(hasClaudeCodeOtlpHooks).mockRejectedValue(new Error('settings.json unreadable'));
+    vi.mocked(readCopilotConnectorScope).mockImplementation(async (id: string) =>
+      id === 'copilot-cli-otlp'
+        ? { kind: 'ok', value: { enabled: true, scope: 'user' } }
+        : { kind: 'ok', value: { enabled: false } }
+    );
+    const active = await listActiveAnalyticsConnectors();
+    expect(active.map((c) => c.id)).toEqual(['copilot-cli-otlp']);
   });
 });

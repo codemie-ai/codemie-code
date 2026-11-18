@@ -161,16 +161,111 @@ export function isGenuineUserTurn(parsed: SignalLine): boolean {
 }
 
 /**
- * Count real user prompts: user lines with text (a plain string or a `text` block) that are not
- * meta, sidechain or compaction-summary lines, and whose text is neither one Claude Code writes
- * itself nor an auto prompt. Lines holding only `tool_result` blocks are not prompts.
+ * Whether the line at `i` is a command Claude Code itself marked as having run locally, with no
+ * model call — the nearest preceding line carrying text is a `<local-command-caveat>` line,
+ * Claude Code's own signal for this, present regardless of the command's name. Name-list-free by
+ * design: a static denylist of local-only command names always drifts as Claude Code adds new
+ * ones (see PR #824 review — 34/2308+ real transcript lines misclassified across names never on
+ * the list). Skips any line with no usable text while scanning backward: non-message bookkeeping
+ * lines (`file-history-snapshot`, `cost-state`, ...) the same way `isCountedTranscriptLine`
+ * (orchestrator.ts) lets them through rather than filtering, but also a `message` line that
+ * carries no text of its own — `tool_result`-only content, or an explicit `message: null` — which
+ * strict adjacency to the first `message`-bearing line (the original fix) stopped at too early,
+ * missing the caveat sitting just behind it (CR-004, PR #824 review round 4). Strict index
+ * adjacency to `i - 1` is not safe either way (CR-002, PR #824 review).
  */
-export function countTurns(lines: readonly SignalLine[]): number {
-  let turns = 0;
-  for (const line of lines) {
+function isMarkedLocalCommand(lines: readonly SignalLine[], i: number): boolean {
+  for (let j = i - 1; j >= 0; j--) {
+    const text = userLineText(lines[j]);
+    if (text === '') continue;
+    return text.trimStart().startsWith('<local-command-caveat>');
+  }
+  return false;
+}
+
+/**
+ * Whether `text` is the `/compact` command wrapper. Matched directly by name, not through a
+ * growing list: `/compact` is a single, fixed exception to "marked local means excluded," not a
+ * maintained denylist — the two are not the same kind of thing. Works regardless of tag order
+ * (`<command-name>`/`<command-message>` either first) since only the name tag's own content is
+ * read.
+ */
+function isCompactCommand(text: string): boolean {
+  return /<command-name>\/compact<\/command-name>/.test(text);
+}
+
+/**
+ * Whether `text` is a genuine, un-wrapped `/compact` invocation typed straight into the CLI.
+ * Anchored with a word boundary (end of string or whitespace right after `/compact`), not a bare
+ * `startsWith`: free text or a different command sharing the prefix (`/compactify ...`) must not
+ * false-match and silently suppress a real, unrelated `/compact` rescue (CR-003, PR #824 review).
+ */
+function isTypedCompactText(text: string): boolean {
+  return /^\/compact(?:\s|$)/.test(text.trimStart());
+}
+
+/**
+ * Whether a `compact_boundary` system line appears between the previous genuine, non-self-written,
+ * non-auto-prompt user turn and `i`, with that boundary not already accounted for by a separate,
+ * already-counted turn for the same `/compact` invocation — the one exception where a
+ * locally-marked command (`/compact`) still calls the model.
+ *
+ * Scans *backward*, not forward: on a manually triggered `/compact`, Claude Code writes the
+ * boundary line before that command's own caveat/wrapper/stdout lines, as part of handling the
+ * command synchronously, not after — confirmed against real Claude Code transcripts
+ * (2.1.138–2.1.326, including local ones on this machine). A forward scan never finds it, silently
+ * dropping the `/compact` turn (PR #824 review).
+ *
+ * That same real-transcript evidence also showed every manual `/compact` writing a second,
+ * un-wrapped `user` line straight after the typed command — `isTypedCompactText` — *before* the
+ * boundary, bookkeeping lines, and the wrapped replay. That line is a genuine turn by the main
+ * loop's own ordinary rules (not self-written, not marked local) and is already counted once on
+ * its own pass through {@link countTurns}. If this scan stopped at the boundary alone, every real
+ * manual `/compact` would count twice — once for that typed line, once for the rescued wrapped
+ * replay — which is a worse regression than the one it fixes. So once the boundary is found, the
+ * scan continues past it: if the next real turn behind the boundary is that typed `/compact` line,
+ * this wrapped line is Claude Code's own redundant record of it and must not be rescued.
+ *
+ * Self-written lines (e.g. an earlier local command's own stdout) and auto-injected prompts
+ * (`<task-notification>`, `<agent-message`) must not stop the scan early, for the same reason the
+ * old forward scan couldn't skip them either. Callers must also check {@link isCompactCommand} on
+ * the marked-local line itself — an unrelated earlier boundary must not rescue a different local
+ * command (also PR #824 review).
+ */
+function isPrecededByCompactBoundary(lines: readonly SignalLine[], i: number): boolean {
+  let sawBoundary = false;
+  for (let j = i - 1; j >= 0; j--) {
+    const line = lines[j];
+    if (line.type === 'system' && line.subtype === 'compact_boundary') {
+      sawBoundary = true;
+      continue;
+    }
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    if (!sawBoundary) return false;
+    return !isTypedCompactText(text);
+  }
+  return sawBoundary;
+}
+
+/**
+ * Count real user prompts: user lines with text (a plain string or a `text` block) that are not
+ * meta, sidechain or compaction-summary lines, and whose text is neither one Claude Code writes
+ * itself nor an auto prompt, nor a command Claude Code marked as running locally (no model call)
+ * — except `/compact`, which is marked local but still calls the model, detected via the
+ * `compact_boundary` line it produces. Lines holding only `tool_result` blocks are not prompts.
+ */
+export function countTurns(lines: readonly SignalLine[]): number {
+  let turns = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!isGenuineUserTurn(line)) continue;
+    const text = userLineText(line);
+    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    const isLocal = isMarkedLocalCommand(lines, i);
+    const rescuedAsCompact = isLocal && isCompactCommand(text) && isPrecededByCompactBoundary(lines, i);
+    if (isLocal && !rescuedAsCompact) continue;
     turns += 1;
   }
   return turns;

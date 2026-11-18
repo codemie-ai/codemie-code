@@ -37,6 +37,7 @@
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 
 interface BackgroundRequestRule {
   /** Short identifier for logging — not user-facing. */
@@ -82,19 +83,16 @@ const BACKGROUND_REQUEST_RULES: readonly BackgroundRequestRule[] = [
 
 // Same agent scope as claude-request-normalizer.plugin.ts: this system-prompt-based detection
 // only ever matches traffic from Claude Code itself.
-const ALLOWED_AGENTS = ['codemie-claude', 'codemie-copilot', 'claude-desktop'];
+const ALLOWED_AGENTS: readonly string[] = ['codemie-claude', 'codemie-copilot', CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE];
 
 export class BackgroundRequestNormalizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-background-request-normalizer';
   name = 'Background Request Normalizer';
   version = '1.0.0';
   priority = 14; // Alongside the other request normalizers, before RequestSanitizer (15)
+  clients = ALLOWED_AGENTS;
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
     return new BackgroundRequestNormalizerInterceptor();
   }
 }

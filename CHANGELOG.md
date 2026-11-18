@@ -4,6 +4,60 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
+- `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
+- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client found on the machine (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route
+- `codemie proxy status` ends with an `Analytics clients:` block of the five analytics clients, each `connected`, `not connected` with the command to run, or `not found`, with the daemon stopped too; `--json` carries it as `analyticsClients`
+
+### Changed
+
+- Clients set up by an older CLI move to their own keys at `codemie proxy start` (also `codemie proxy connect` and `codemie proxy restart`); restart the applications the command names afterwards
+- A proxy started by an older CLI is replaced on its port by `codemie proxy connect`, `codemie proxy start`, `codemie proxy restart` and a Claude Code hook
+- The key to enter for VS Code BYOK is `codemie-proxy.vscode-byok`; `codemie proxy connect --omp` can be combined with `--vscode`
+- `codemie proxy status --json` no longer carries `clientType`; after a downgrade to an older CLI run `codemie proxy connect` again
+
+## [0.16.10] - 2026-11-17
+
+### Added
+
+- `codemie analytics sync bootstrap` asks first where developer machines deliver their reports (Teams webhook, a git repository, or both) and shows only the steps that target needs
+
+### Fixed
+
+- `codemie proxy analytics status` and `codemie proxy status` no longer report delivery as unhealthy, with a retry time that has already passed, because of a session that is held and not retried; the held data still counts as unsent and `Unsent data` names the part on hold (`heldBytes` in `--json`). `Next retry` reads `due now` once its time has come, and it and `Last dropped` show times in your local time zone (`2026-11-16 01:24:22 +03:00`); `--json` keeps epoch milliseconds
+- `codemie install codemie-code --supported` installs the pinned supported version
+- `codemie hook` exits 0 silently when it runs outside a CodeMie session
+- Kimi native install works on Windows
+- The MS Graph skill's `emails --read` prints the full email body
+
+## [0.16.9] - 2026-11-16
+
+### Added
+
+- `codemie-claude models select|list|add|remove` offers non-Claude models from the profile's project catalog in Claude Code's `/model` picker and in Claude Desktop's model list
+- Copilot CLI analytics cover managed and native sessions: tool and usage metrics, per-request usage and session summaries, counted once per Copilot session
+
+### Changed
+
+- `codemie proxy connect --claude-code-otlp` prints a shorter confirmation: the repository name instead of the path, no configuration tables and no restart hint
+- `codemie proxy analytics status` uses sections, adds unsent data and retry details, and drops the current project; `--json` returns `delivery` and a `connectors` array
+- Claude Desktop is offered every Claude model the profile's project allows
+
+### Fixed
+
+- Analytics prices Claude Fable 5.2 and Gemini 4 Hydrogen sessions instead of leaving their cost empty
+- Repository names no longer include the drive letter (`C:\Repositories` is `Repositories`)
+- Claude Desktop Cowork sessions show the branch of the selected folder on the CLI Analytics tab, or no branch for a folder outside Git or on a detached HEAD, instead of `HEAD`
+- `codemie-claude --resume` accepts the CodeMie session id as well as Claude's own session id
+- When the SSO login expires, the proxy keeps its port, answers 401 and opens a browser sign-in instead of stopping
+- Claude Desktop no longer gets stuck on a 401 from gateway SSO discovery
+- Analytics delivery health reports classification stalls (unreachable or unsupported) as unhealthy
+- Unconsented Personal Claude sessions are held locally instead of being sent
+- Session analytics have a retry budget, and the wrapper prints on exit which sessions are still queued or were dropped
+- Copilot desktop wrapper blocks are stripped from session prompts
+
 ## [0.16.8] - 2026-11-12
 
 ### Added

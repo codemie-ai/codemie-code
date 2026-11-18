@@ -72,8 +72,7 @@ describe('CopilotEncryptedContentSanitizerPlugin', () => {
 
   it('is scoped only to codemie-copilot', async () => {
     await expect(plugin.createInterceptor(createPluginContext('codemie-copilot'))).resolves.toBeDefined();
-    await expect(plugin.createInterceptor(createPluginContext('codemie-codex')))
-      .rejects.toThrow('Plugin disabled for agent: codemie-codex');
+    expect(plugin.clients).toEqual(['codemie-copilot']);
   });
 
   it('retries Responses API encrypted-content failures once without replayed reasoning state', async () => {

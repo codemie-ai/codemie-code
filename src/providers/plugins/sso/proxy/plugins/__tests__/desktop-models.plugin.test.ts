@@ -2,15 +2,18 @@
  * DesktopModelsPlugin Tests
  * @group unit
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginContext } from '../types.js';
 import type { ProxyContext } from '../../proxy-types.js';
 import { logger } from '../../../../../../utils/logger.js';
 
-const { fetchCodeMieLlmModels } = vi.hoisted(() => ({ fetchCodeMieLlmModels: vi.fn() }));
+const { fetchCodeMieLlmModels, getProfile } = vi.hoisted(() => ({ fetchCodeMieLlmModels: vi.fn(), getProfile: vi.fn() }));
 vi.mock('../../../sso.http-client.js', () => ({ fetchCodeMieLlmModels }));
+// The plugin reads the daemon profile's extra models through ConfigLoader.
+vi.mock('../../../../../../utils/config.js', () => ({ ConfigLoader: { getProfile } }));
 
 import { DesktopModelsPlugin, isModelsListRequest } from '../desktop-models.plugin.js';
+import { desktopExtraModelAlias } from '../../../sso.desktop-models.js';
 
 const CLAUDE_TIERS = {
   simple: { model: 'claude-haiku-5-5' },
@@ -20,7 +23,7 @@ const CLAUDE_TIERS = {
 };
 
 function makePluginContext(
-  overrides: { clientType?: string; project?: string; credentials?: object | null } = {}
+  overrides: { clientType?: string; project?: string; profile?: string; credentials?: object | null } = {}
 ): PluginContext {
   const credentials = overrides.credentials === undefined
     ? { cookies: { session: 'c' }, apiUrl: 'https://codemie.example.com/code-assistant-api' }
@@ -30,6 +33,7 @@ function makePluginContext(
       targetApiUrl: 'https://codemie.example.com/code-assistant-api',
       clientType: overrides.clientType ?? 'claude-desktop',
       project: overrides.project,
+      profile: overrides.profile,
     },
     logger,
     ...(credentials ? { credentialRefresher: { refresh: vi.fn().mockResolvedValue(credentials) } as any } : {}),
@@ -86,13 +90,12 @@ describe('DesktopModelsPlugin', () => {
     fetchCodeMieLlmModels.mockReset();
   });
 
-  it('runs right after the gateway key check (priority 8, after 7)', () => {
-    expect(plugin.priority).toBe(8);
+  it('runs right after the client attribution (priority 9, after 8)', () => {
+    expect(plugin.priority).toBe(9);
   });
 
-  it('is disabled for every client but Claude Desktop', async () => {
-    await expect(plugin.createInterceptor(makePluginContext({ clientType: 'codemie-daemon' })))
-      .rejects.toThrow('Plugin disabled');
+  it('declares exactly Claude Desktop and the VS Code Claude Code extension', () => {
+    expect(plugin.clients).toEqual(['claude-desktop', 'vscode-claude-code']);
   });
 
   it('leaves every other request to the normal pipeline', async () => {
@@ -103,7 +106,7 @@ describe('DesktopModelsPlugin', () => {
     expect(fetchCodeMieLlmModels).not.toHaveBeenCalled();
   });
 
-  it('answers with the project\'s curated Claude models in the Anthropic Models API shape', async () => {
+  it('answers with every Claude model the project allows in the Anthropic Models API shape', async () => {
     fetchCodeMieLlmModels.mockResolvedValue([
       { base_name: 'claude-opus-5', label: 'Bedrock Claude Opus 5', enabled: true },
       { base_name: 'claude-opus-5-5', label: 'Bedrock Claude Opus 5.5', enabled: true },
@@ -126,10 +129,11 @@ describe('DesktopModelsPlugin', () => {
       data: [
         { type: 'model', id: 'claude-opus-5-5', display_name: 'Bedrock Claude Opus 5.5', created_at: '1970-01-01T00:00:00Z' },
         { type: 'model', id: 'sy-signal-claude-v1', display_name: 'SY Signal Claude v1', created_at: '1970-01-01T00:00:00Z' },
+        { type: 'model', id: 'claude-opus-5', display_name: 'Bedrock Claude Opus 5', created_at: '1970-01-01T00:00:00Z' },
       ],
       has_more: false,
       first_id: 'claude-opus-5-5',
-      last_id: 'sy-signal-claude-v1',
+      last_id: 'claude-opus-5',
     });
   });
 
@@ -167,5 +171,102 @@ describe('DesktopModelsPlugin', () => {
 
     expect(status()).toBe(502);
     expect(fetchCodeMieLlmModels).not.toHaveBeenCalled();
+  });
+});
+
+describe('DesktopModelsPlugin — extra models of the profile', () => {
+  const plugin = new DesktopModelsPlugin();
+  const grokAlias = desktopExtraModelAlias('grok-4.6');
+
+  function messagesContext(body: unknown): ProxyContext {
+    const ctx = makeProxyContext('POST', '/v1/messages');
+    ctx.headers = { 'content-type': 'application/json' };
+    ctx.requestBody = Buffer.from(JSON.stringify(body), 'utf-8');
+    return ctx;
+  }
+
+  beforeEach(() => {
+    fetchCodeMieLlmModels.mockReset();
+    getProfile.mockReset().mockResolvedValue({ claudeExtraModels: ['grok-4.6'] });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('lists a selected non-Claude model under its claude-x- alias with its real name', async () => {
+    fetchCodeMieLlmModels.mockResolvedValue([
+      { base_name: 'claude-router-standard', label: 'Claude Router Standard v1', is_router: true, tiers: CLAUDE_TIERS },
+      { base_name: 'grok-4.6', deployment_name: 'grok-4.6', label: 'Grok 4.6', enabled: true },
+      { base_name: 'gemini-3.1-pro', deployment_name: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro', enabled: true },
+    ]);
+    const interceptor = await plugin.createInterceptor(makePluginContext({ project: 'router-demo', profile: 'router-demo' }));
+    const { res, json } = makeMockRes();
+
+    await interceptor.handleRequest!(makeProxyContext('GET', '/v1/models'), {} as any, res, {} as any);
+
+    expect(getProfile).toHaveBeenCalledWith('router-demo');
+    expect(json().data.map((m: { id: string; display_name?: string }) => [m.id, m.display_name])).toEqual([
+      ['claude-router-standard', 'Claude Router Standard v1'],
+      [grokAlias, 'Grok 4.6'],
+    ]);
+  });
+
+  it('lists no extra model when the profile cannot be read', async () => {
+    getProfile.mockRejectedValue(new Error('unreadable'));
+    fetchCodeMieLlmModels.mockResolvedValue([
+      { base_name: 'grok-4.6', deployment_name: 'grok-4.6', label: 'Grok 4.6', enabled: true },
+    ]);
+    const interceptor = await plugin.createInterceptor(makePluginContext({ profile: 'router-demo' }));
+    const { res, json } = makeMockRes();
+
+    await interceptor.handleRequest!(makeProxyContext('GET', '/v1/models'), {} as any, res, {} as any);
+
+    expect(json().data).toEqual([]);
+  });
+
+  it('maps the alias in a request back to the real model and fixes content-length', async () => {
+    const interceptor = await plugin.createInterceptor(makePluginContext({ profile: 'router-demo' }));
+    const ctx = messagesContext({ model: grokAlias, max_tokens: 10, messages: [] });
+
+    await interceptor.onRequest!(ctx);
+
+    const body = JSON.parse(ctx.requestBody!.toString('utf-8'));
+    expect(body).toEqual({ model: 'grok-4.6', max_tokens: 10, messages: [] });
+    expect(ctx.headers['content-length']).toBe(String(ctx.requestBody!.length));
+  });
+
+  it('leaves a Claude model request untouched without reading the profile', async () => {
+    const interceptor = await plugin.createInterceptor(makePluginContext({ profile: 'router-demo' }));
+    const ctx = messagesContext({ model: 'claude-router-standard', messages: [] });
+    const before = ctx.requestBody;
+
+    await interceptor.onRequest!(ctx);
+
+    expect(ctx.requestBody).toBe(before);
+    expect(getProfile).not.toHaveBeenCalled();
+  });
+
+  it('passes an alias the profile no longer lists through unchanged, with a warning', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const interceptor = await plugin.createInterceptor(makePluginContext({ profile: 'router-demo' }));
+    const stale = desktopExtraModelAlias('gemini-3.1-pro');
+    const ctx = messagesContext({ model: stale, messages: [] });
+
+    await interceptor.onRequest!(ctx);
+
+    expect(JSON.parse(ctx.requestBody!.toString('utf-8')).model).toBe(stale);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unknown model alias'));
+  });
+
+  it('ignores a body that is not JSON', async () => {
+    const interceptor = await plugin.createInterceptor(makePluginContext({ profile: 'router-demo' }));
+    const ctx = makeProxyContext('POST', '/v1/messages');
+    ctx.headers = { 'content-type': 'application/json' };
+    ctx.requestBody = Buffer.from('not json', 'utf-8');
+
+    await interceptor.onRequest!(ctx);
+
+    expect(ctx.requestBody.toString('utf-8')).toBe('not json');
   });
 });

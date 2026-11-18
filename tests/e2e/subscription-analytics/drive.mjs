@@ -94,7 +94,7 @@ const daemonLog = openSync(join(WORK, 'daemon.log'), 'w');
 const daemon = spawn(
   process.execPath,
   ['--import', REG, join(CLI, 'bin', 'proxy-daemon.js'), '--target-url', URL_, '--provider', 'ai-run-sso', '--profile', PROFILE,
-    '--gateway-key', 'e2e-gateway-key', '--client-type', 'claude-code-otlp', '--state-file', stateFile, '--sync-codemie-url', URL_],
+    '--gateway-key', 'e2e-gateway-key', '--state-file', stateFile, '--sync-codemie-url', URL_],
   { env: childEnv(), stdio: ['ignore', daemonLog, daemonLog] }
 );
 process.on('exit', () => { try { daemon.kill(); } catch { /* already gone */ } closeSync(daemonLog); });

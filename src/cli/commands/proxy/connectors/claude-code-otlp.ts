@@ -12,7 +12,12 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
-import { resolveCodemieBinary, rewriteHooksCommandTree } from '@/utils/hook-command.js';
+import {
+  isAbsoluteCodemiePath,
+  parseHookCommandHead,
+  resolveCodemieBinary,
+  rewriteHooksCommandTree,
+} from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -29,6 +34,8 @@ import {
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
   scope?: AllowlistScope;
+  /** With no `scope`: a stored list of named projects is written back as it is, anything else is all projects. */
+  keepProjectList?: boolean;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -569,7 +576,9 @@ export async function writeClaudeCodeOtlpConfig(
 
   const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (scope === 'project') {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    allowlist = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
+  } else if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
@@ -837,4 +846,26 @@ export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
   return Object.values(existing.hooks ?? {}).some(
     (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
   );
+}
+
+/**
+ * The absolute `codemie` the first codemie hook command in `~/.claude/settings.json` runs — a shim, a
+ * `codemie.cmd`, or the script of a `node` + script pair — or null: no settings, unreadable ones, no codemie hook,
+ * or a bare `codemie hook …` resolved through `PATH` when it runs. Never throws, writes nothing.
+ */
+export async function readClaudeCodeHookInstall(): Promise<string | null> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return null;
+  }
+  const command = Object.values(existing.hooks ?? {})
+    .flatMap((groups) => (Array.isArray(groups) ? groups : []))
+    .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
+    .filter(isHookEntry)
+    .find(isCodemieCommand)?.command;
+  const paths = command ? parseHookCommandHead(command)?.paths : undefined;
+  const last = paths?.[paths.length - 1];
+  return last !== undefined && isAbsoluteCodemiePath(last) ? last : null;
 }

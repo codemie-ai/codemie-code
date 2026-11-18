@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { fetchTenantModelDescriptors, type TenantModelDescriptor } from './tenant-catalog.js';
 import {
   buildDefaultVsCodeCapability,
@@ -61,6 +65,29 @@ function isManagedProvider(provider: unknown): provider is VsCodeLanguageModelPr
   return isRecord(provider) &&
     provider.vendor === 'customendpoint' &&
     provider.name === 'CodeMie';
+}
+
+/**
+ * What a connector wrote for the local proxy, as read back: the port of its loopback URL and, when the config
+ * holds the key, how the daemon reads it — `shared`, the client name it carries, or `refused`.
+ */
+export interface ConnectorGateway {
+  port: number;
+  key?: string;
+}
+
+/** The port of a loopback URL that names one, else null. */
+export function loopbackPortOf(url: unknown): number | null {
+  if (!isLoopbackGatewayUrl(url)) return null;
+  const port = Number.parseInt(new URL(url as string).port, 10);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+/** How the daemon of gateway key `key` reads an `Authorization` value a connector wrote. */
+export function gatewayKeyReading(authorization: string | undefined, key: string): string {
+  const named = clientOfGatewayKey(authorization, key);
+  if (named === null) return 'refused';
+  return named.client ?? 'shared';
 }
 
 export function isVsCodeSecretReference(value: unknown): value is string {
@@ -242,6 +269,27 @@ async function readProviders(configPath: string): Promise<unknown[]> {
     throw new ConfigurationError(
       `VS Code language model configuration is not valid JSON and was not changed: ${configPath}`
     );
+  }
+}
+
+/**
+ * The port the managed CodeMie models of VS Code's (or VS Code Insiders') `chatLanguageModels.json` point at:
+ * the first one that differs from the daemon's `port`, else `port`; null when there is no product directory, no
+ * readable file, no managed model with a loopback URL. The key is not in this file. Never throws, writes nothing.
+ */
+export async function readVsCodeByokGateway(port: number, insiders = false): Promise<ConnectorGateway | null> {
+  try {
+    const providers = await readProviders(getVsCodeLanguageModelsPath(insiders));
+    const ports = providers
+      .filter(isManagedProvider)
+      .flatMap(provider => Array.isArray(provider.models) ? provider.models : [])
+      .map(model => isRecord(model) ? loopbackPortOf(model.url) : null)
+      .filter((modelPort): modelPort is number => modelPort !== null);
+    if (ports.length === 0) return null;
+    return { port: ports.find(modelPort => modelPort !== port) ?? port };
+  } catch (error) {
+    logger.debug('[proxy] VS Code BYOK models not readable', ...sanitizeLogArgs({ insiders, error: String(error) }));
+    return null;
   }
 }
 

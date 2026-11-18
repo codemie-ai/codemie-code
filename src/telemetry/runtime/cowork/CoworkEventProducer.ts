@@ -1,6 +1,6 @@
 /**
- * Turns the inner transcript of every Claude Desktop Cowork session into Claude Code plugin events in the proxy's
- * OTLP spool, from where the existing tick and forwarder send them to CLI Analytics.
+ * Turns the inner transcript of every Claude Desktop Cowork session the proxy daemon served (or already collects)
+ * into Claude Code plugin events in the proxy's OTLP spool, from where the existing tick and forwarder send them to CLI Analytics.
  *
  * The usage, subagent usage and summary events come from the Claude Code transcript orchestrator, called as the hook
  * path calls it; the session, prompt, tool and subagent events come from {@link buildCoworkEvents}. A session is
@@ -38,8 +38,9 @@ import { ConfigLoader } from '@/utils/config.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
-import { detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
+import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
+import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -97,9 +98,25 @@ export class CoworkEventProducer {
     this.discover = options.discover ?? discoverClaudeDesktopSessions;
   }
 
-  /** One pass over the known Cowork sessions. Never throws: a failure is logged and retried at the next run. */
+  /**
+   * One pass over the known Cowork sessions. The session list is refreshed and the served marks pruned before the
+   * preferences and forwarding gates, so a closed gate stops the intake alone. Never throws: a failure is logged and
+   * retried at the next run.
+   */
   async run(now: number): Promise<void> {
     try {
+      if (this.refreshedAt === undefined || now - this.refreshedAt >= this.options.inactivityTimeoutMs) {
+        const { sessions, listed } = await this.listSessions(now);
+        await this.pruneServedMarks(now, listed);
+        this.sessions = sessions;
+        this.refreshedAt = now;
+        // What is remembered about a session goes with it once it left the list.
+        for (const remembered of [this.previousRun, this.processed, this.lastFailure, this.otelWarned]) {
+          for (const id of [...remembered.keys()]) {
+            if (!listed.has(id)) remembered.delete(id);
+          }
+        }
+      }
       const preferences = await readClaudeAnalyticsPreferences();
       if (preferences.kind === 'corrupt') {
         if (!this.corruptPreferencesWarned) {
@@ -116,17 +133,6 @@ export class CoworkEventProducer {
           logger.warn('[cowork-producer] Cowork sessions are not sent while OTLP_ALLOW_HOOKS_ONLY_FORWARD is false');
         }
         return;
-      }
-      if (this.refreshedAt === undefined || now - this.refreshedAt >= this.options.inactivityTimeoutMs) {
-        const { sessions, listed } = await this.listSessions(now);
-        this.sessions = sessions;
-        this.refreshedAt = now;
-        // What is remembered about a session goes with it once it left the list.
-        for (const remembered of [this.previousRun, this.processed, this.lastFailure, this.otelWarned]) {
-          for (const id of [...remembered.keys()]) {
-            if (!listed.has(id)) remembered.delete(id);
-          }
-        }
       }
       for (const session of this.sessions) {
         const progress: Progress = { step: 'exclusion' };
@@ -145,6 +151,23 @@ export class CoworkEventProducer {
     }
   }
 
+  /**
+   * Deletes the served mark of every session discovery did not list whose mark is older than the window it read: such a
+   * session can no longer be taken. A failure is logged and the run goes on.
+   */
+  private async pruneServedMarks(now: number, listed: Set<string>): Promise<void> {
+    try {
+      const windowStart = now - desktopAnalyticsBackfillDays() * DAY_MS;
+      for (const mark of await listCoworkServedMarks()) {
+        if (!listed.has(mark.cliSessionId) && mark.mtimeMs < windowStart) await forgetCoworkServedMark(mark.cliSessionId);
+      }
+    } catch (error) {
+      logger.warn('[cowork-producer] Served marks not pruned; retried at the next refresh', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private warnFailure(cliSessionId: string, step: string, error: unknown): void {
     const message = `${step}: ${error instanceof Error ? error.message : String(error)}`;
     if (this.lastFailure.get(cliSessionId) === message) return;
@@ -154,7 +177,8 @@ export class CoworkEventProducer {
 
   /**
    * The Cowork sessions of the window that have an inner transcript, metadata and transcript both under the local-agent
-   * sessions root, minus those Desktop exports OTel for itself;
+   * sessions root and a served mark or a cursor (a file that exists counts, readable or not), minus those Desktop
+   * exports OTel for itself;
    * `listed` — the id of every session discovered in the window, kept or not.
    */
   private async listSessions(now: number): Promise<{ sessions: CoworkSession[]; listed: Set<string> }> {
@@ -166,6 +190,8 @@ export class CoworkEventProducer {
       listed.add(cliSessionId);
       if (!isPathWithinDirectory(root, discovered.metadataPath)) continue;
       if (basename(discovered.transcriptPath) !== 'audit.jsonl' || !isSafeSessionId(cliSessionId)) continue;
+      // Served by this daemon, or already being collected: a session whose requests went elsewhere is not sent.
+      if (!existsSync(coworkServedMarkPath(cliSessionId)) && !existsSync(coworkCursorPath(cliSessionId))) continue;
       const projectsDir = join(dirname(discovered.transcriptPath), '.claude', 'projects', 'session');
       const innerTranscript = join(projectsDir, `${cliSessionId}.jsonl`);
       if (!existsSync(innerTranscript)) continue;
@@ -309,11 +335,12 @@ export class CoworkEventProducer {
   private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor): Promise<CoworkEnvelope> {
     const workingDirectory = discovered.workingDirectory;
     const profile = this.options.profile;
-    const [project, repository, repoRemote, cliVersion] = await Promise.all([
+    const [project, repository, repoRemote, branch, cliVersion] = await Promise.all([
       ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
         .then((config) => config.codeMieProject ?? ''),
       resolveRepositoryName(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
+      detectGitBranch(workingDirectory),
       getCurrentCliVersion().catch(() => null),
     ]);
     return {
@@ -321,8 +348,8 @@ export class CoworkEventProducer {
       project,
       repository,
       repoRemote,
+      ...(branch && { branch }),
       cliVersion: cliVersion ?? '',
-      title: discovered.title,
       entrypoint: cursor.events.entrypoint,
       clientVersion: cursor.events.clientVersion,
     };

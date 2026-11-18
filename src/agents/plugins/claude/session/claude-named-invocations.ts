@@ -88,22 +88,21 @@ export function extractOrderedNamedInvocations(
   const commandInvocations: Record<string, number> = {};
   const commandsInOrder: string[] = [];
 
-  // Count slash commands from a text payload, but only when it carries the CLI's
-  // `<command-message>` sibling — that distinguishes a real invocation from prose that
-  // merely quotes `<command-name>` (e.g. docs, specs, this very file).
-  const scanCommands = (text: string): void => {
+  // The command names in a text payload, but only when it carries the CLI's `<command-message>`
+  // sibling — that distinguishes a real invocation from prose that merely quotes `<command-name>`
+  // (e.g. docs, specs, this very file). Pure: callers decide what to do with the names.
+  const matchCommandNames = (text: string): string[] => {
     if (!text.includes('<command-message>')) {
-      return;
+      return [];
     }
+    const names: string[] = [];
     COMMAND_TAG.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = COMMAND_TAG.exec(text)) !== null) {
       const cmd = match[1].replace(/^\//, '').trim();
-      if (cmd) {
-        bump(commandInvocations, cmd);
-        commandsInOrder.push(cmd);
-      }
+      if (cmd) names.push(cmd);
     }
+    return names;
   };
 
   for (const raw of messages) {
@@ -123,7 +122,12 @@ export function extractOrderedNamedInvocations(
 
     // Real slash commands arrive as plain string content (the CLI shape).
     if (typeof content === 'string') {
-      if (isUser) scanCommands(content);
+      if (isUser) {
+        for (const cmd of matchCommandNames(content)) {
+          bump(commandInvocations, cmd);
+          commandsInOrder.push(cmd);
+        }
+      }
       continue;
     }
     if (!Array.isArray(content)) {
@@ -143,7 +147,10 @@ export function extractOrderedNamedInvocations(
           if (subtype) bump(agentInvocations, subtype);
         }
       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
-        scanCommands(item.text);
+        for (const cmd of matchCommandNames(item.text)) {
+          bump(commandInvocations, cmd);
+          commandsInOrder.push(cmd);
+        }
       }
     }
   }

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { logger } from '@/utils/logger.js';
 import { getDirname } from '@/utils/paths.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
-import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
+import { getCopilotConnectorsConfigPath, writeCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { CLI_HOOK_EVENT_NAMES } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 
 const mocks = vi.hoisted(() => ({ projectRoot: '' }));
@@ -21,6 +21,7 @@ import {
   CLI_HOOK_TIMEOUT_SECONDS,
   buildHookFileContent,
   getCopilotCliHookFilePath,
+  readCopilotCliHookInstall,
   removeCopilotCliOtlpConfig,
   writeCopilotCliOtlpConfig,
 } from '../copilot-cli-otlp.js';
@@ -91,6 +92,18 @@ describe('copilot-cli-otlp connector (temp COPILOT_HOME / CODEMIE_HOME)', () => 
     if (originalCopilotHome === undefined) delete process.env.COPILOT_HOME;
     else process.env.COPILOT_HOME = originalCopilotHome;
     await rm(testDir, { recursive: true, force: true });
+  });
+
+  it('reads back the script the written hook file runs, and nothing without a readable file', async () => {
+    await expect(readCopilotCliHookInstall()).resolves.toBeNull();
+
+    await writeCopilotCliOtlpConfig({ scope: 'user' });
+    await expect(readCopilotCliHookInstall()).resolves.toBe(
+      join(getDirname(import.meta.url), '../../../../../../bin/codemie.js')
+    );
+
+    await writeFile(getCopilotCliHookFilePath(), '{ not json');
+    await expect(readCopilotCliHookInstall()).resolves.toBeNull();
   });
 
   it('writes the hook file under $COPILOT_HOME/hooks and records a user-scope connector', async () => {
@@ -167,5 +180,44 @@ describe('copilot-cli-otlp connector (temp COPILOT_HOME / CODEMIE_HOME)', () => 
     await expect(writeCopilotCliOtlpConfig()).rejects.toThrow(/corrupt/);
 
     expect(await readFile(getCopilotConnectorsConfigPath(), 'utf-8')).toBe('{ not json');
+  });
+
+  describe('keepProjectList', () => {
+    async function storeTwoProjects(): Promise<unknown> {
+      await writeCopilotCliOtlpConfig({ scope: 'project' });
+      mocks.projectRoot = projectB;
+      await writeCopilotCliOtlpConfig({ scope: 'project' });
+      return { enabled: true, scope: 'project', paths: [await canonicalizePath(projectA), await canonicalizePath(projectB)] };
+    }
+
+    it('writes a stored list of two projects back as it is with no scope', async () => {
+      const stored = await storeTwoProjects();
+
+      await writeCopilotCliOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual(stored);
+    });
+
+    it('tracks all projects when nothing is stored', async () => {
+      await writeCopilotCliOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('resets a stored list with scope user, as without the option', async () => {
+      await storeTwoProjects();
+
+      await writeCopilotCliOtlpConfig({ keepProjectList: true, scope: 'user' });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('tracks all projects over a stored disabled record', async () => {
+      await writeCopilotConnectorScope('copilot-cli-otlp', { enabled: false });
+
+      await writeCopilotCliOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
   });
 });

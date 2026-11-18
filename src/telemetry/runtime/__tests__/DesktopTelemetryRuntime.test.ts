@@ -97,9 +97,11 @@ import { processStartedAt } from '@/utils/processes.js';
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { MetricsRetryExhaustedError } from '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js';
 import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
 import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
+import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -116,7 +118,11 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS
+  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -1187,7 +1193,7 @@ describe('DesktopTelemetryRuntime', () => {
       const { startTime } = readRecord(sessionId)!;
       // The CLI or an earlier attempt left counters; the resumed stretch starts clean
       const completedPath = join(sessionsDir(), `completed_${sessionId}.json`);
-      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, finalizeAttempts: 2, droppedAt: T0 }));
+      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, localFinalizeFailures: 2, droppedAt: T0, droppedReason: 'retry budget exhausted', deliveryFailingSince: T0 - HOUR_MS, deliveryRealAttempts: 2, deliveryAttemptedAt: T0 }));
       writeFileSync(join(sessionsDir(), `completed_${sessionId}_metrics.jsonl`), '');
 
       const daemon = await startDaemon(createAdapter());
@@ -1197,7 +1203,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
       const reopened = readRecord(sessionId)!;
       expect(reopened).toMatchObject({ status: 'active', ownerPid: process.pid, ownerStartedAt: processStartedAt(), startTime });
-      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'finalizeAttempts', 'droppedAt', 'endTime', 'reason']) {
+      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'localFinalizeFailures', 'droppedAt', 'droppedReason', 'deliveryFailingSince', 'deliveryRealAttempts', 'deliveryAttemptedAt', 'endTime', 'reason']) {
         expect(reopened).not.toHaveProperty(field);
       }
 
@@ -1305,7 +1311,7 @@ describe('DesktopTelemetryRuntime', () => {
         status: 'completed',
         reason: 'interrupted',
         endTime: T0 - 40 * 60_000,
-        deliveryAttempts: 1
+        deliveryRealAttempts: 1
       });
       const wrapperFiles = [wrapperActive, wrapperCompleted].map(id => join(sessionsDir(), `${id}.json`));
       const before = wrapperFiles.map(path => readFileSync(path, 'utf-8'));
@@ -1322,7 +1328,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSync.mock.calls.map(([sessionId]) => sessionId)).not.toContain(wrapperCompleted);
       expect(wrapperFiles.map(path => readFileSync(path, 'utf-8'))).toEqual(before);
       expect(readRecord(wrapperActive)).toMatchObject({ status: 'active' });
-      expect(readRecord(wrapperCompleted)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(readRecord(wrapperCompleted)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
     });
 
     it('finalizes an ownerless record idle past 72 h locally, sending nothing; a 71 h one stays', async () => {
@@ -1372,7 +1378,8 @@ describe('DesktopTelemetryRuntime', () => {
       await expect(pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1)).resolves.toBeUndefined();
 
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
-      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      // A failure no server verdict explains spends nothing
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryRealAttempts: 0 });
       expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
       const failedSends = mockSendSessionEnd.mock.calls.length;
       await pollTicks(daemon, 2);
@@ -1385,10 +1392,10 @@ describe('DesktopTelemetryRuntime', () => {
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
       const delivered = readRecord(sessionId)!;
       expect(delivered.endMetricSentAt).toEqual(expect.any(Number));
-      expect(delivered.deliveryAttempts).toBe(1);
+      expect(delivered.deliveryRealAttempts).toBe(0);
     });
 
-    it('spends one attempt per daemon start and renames unsent after the third', async () => {
+    it('spends no real attempt per daemon start on a failure no server verdict explains, and never drops the record for it', async () => {
       const sessionId = writeRecord('ext-1', {
         status: 'completed',
         reason: 'desktop-inactive-timeout',
@@ -1397,19 +1404,48 @@ describe('DesktopTelemetryRuntime', () => {
       });
       mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
-      for (let start = 1; start <= 3; start++) {
+      for (let start = 1; start <= 4; start++) {
         const runtime = await startRuntime(createAdapter());
         await runtime.stop();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(start);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
-      mockSendSessionEnd.mockClear();
+
+      vi.setSystemTime(T0 + 25 * HOUR_MS);
       const runtime = await startRuntime(createAdapter());
       await runtime.stop();
 
-      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+    });
+
+    it('an end metric the server refuses for good (a JSON 400) is terminal: skipped as rejected, stamped dropped, and the record leaves the queue', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      mockSendSessionEnd.mockRejectedValue(
+        new MetricsRetryExhaustedError(0, Object.assign(new Error('API returned 400: bad request'), { outcome: 'rejected' }))
+      );
+
+      const runtime = await startRuntime(createAdapter());
+      await runtime.stop();
+
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
-      expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      expect(readRecord(sessionId)).toMatchObject({
+        endMetricSkipped: 'rejected',
+        droppedReason: 'rejected by the server',
+        droppedAt: expect.any(Number)
+      });
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+      const refusals = mockSendSessionEnd.mock.calls.length;
+
+      // Never re-sent: a later start finds the record out of the queue
+      const next = await startRuntime(createAdapter());
+      await next.stop();
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(refusals);
     });
 
     it('never re-delivers a completed record without an owner', async () => {
@@ -1420,7 +1456,7 @@ describe('DesktopTelemetryRuntime', () => {
       await (runtime as any).redeliveryPass;
 
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1443,7 +1479,7 @@ describe('DesktopTelemetryRuntime', () => {
           endTime: T0 - 40 * 60_000,
           ownerPid: DEAD_PID
         });
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         expect(mockSync).not.toHaveBeenCalled();
         expect(mockSendSessionEnd).not.toHaveBeenCalled();
@@ -1451,7 +1487,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       it('leaves a completed record as it is at start and in a re-delivery pass, delivering one of this host', async () => {
         const completed = { status: 'completed' as const, reason: 'desktop-inactive-timeout', endTime: T0 - 40 * 60_000, ownerPid: DEAD_PID };
-        const foreign = writeRecord('ext-1', { ...completed, codemieUrl: 'https://other.example.com', deliveryAttempts: 1 });
+        const foreign = writeRecord('ext-1', { ...completed, codemieUrl: 'https://other.example.com', deliveryRealAttempts: 1 });
         const own = writeRecord('ext-2', { ...completed, codemieUrl: `${DAEMON_URL}/` });
         const foreignFile = join(sessionsDir(), `${foreign}.json`);
         const before = readFileSync(foreignFile, 'utf-8');
@@ -1569,7 +1605,7 @@ describe('DesktopTelemetryRuntime', () => {
         reason: 'desktop-inactive-timeout',
         endTime: T0 - 40 * 60_000,
         ownerPid: DEAD_PID,
-        deliveryAttempts: 1
+        deliveryRealAttempts: 1
       });
       const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
       const debug = vi.spyOn(logger, 'debug');
@@ -1579,7 +1615,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(debug).toHaveBeenCalledWith('[desktop-telemetry] Record held by another process; skipped', { sessionId });
     });
@@ -1647,7 +1683,7 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`, `completed_${sessionId}_conversation.jsonl`]);
       const record = readRecord(sessionId)!;
-      expect(record).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(record).toMatchObject({ status: 'completed' });
       expect(record).not.toHaveProperty('droppedAt');
     });
 
@@ -1721,20 +1757,20 @@ describe('DesktopTelemetryRuntime', () => {
 
     it('makes no request and spends no attempt at start while the analytics auth is marked invalid', async () => {
       await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
-      const undelivered = undeliveredRecord({ deliveryAttempts: 1 });
+      const undelivered = undeliveredRecord({ deliveryRealAttempts: 1 });
       const gone = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
 
       await startRuntime(createAdapter());
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(undelivered)).toMatchObject({ status: 'completed', deliveryAttempts: 1 });
+      expect(readRecord(undelivered)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
       expect(readRecord(gone)).toMatchObject({
         status: 'completed',
         reason: 'desktop-daemon-restart',
         endTime: T0 - 40 * 60_000
       });
-      expect(readRecord(gone)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(gone)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${undelivered}.json`, `${gone}.json`].sort());
     });
 
@@ -1750,7 +1786,7 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1759,19 +1795,19 @@ describe('DesktopTelemetryRuntime', () => {
       ['an SSO login page on 200', loginPage]
     ])('gives back the attempt whose end metric was answered with %s and marks the auth invalid', async (_, response) => {
       const fetchMock = answerEndMetricWith(response);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
       await startRuntime(createAdapter());
 
       expect(fetchMock).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('never renames a record whose attempt at the cap meets rejected credentials', async () => {
       const fetchMock = answerEndMetricWith(unauthorized);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 2 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 2 });
 
       for (let start = 1; start <= 3; start++) {
         // A re-login the server rejects again
@@ -1781,13 +1817,13 @@ describe('DesktopTelemetryRuntime', () => {
       }
 
       expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('sends nothing in a re-delivery pass while the mark is set, and delivers uncounted once it is cleared', async () => {
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
       await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
       const daemon = await startDaemon(createAdapter());
 
@@ -1803,8 +1839,58 @@ describe('DesktopTelemetryRuntime', () => {
       await (daemon as any).redeliveryPass;
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+
+    describe('the delivery budget on a live re-delivery pass (EPMCDME-17068)', () => {
+      const FAILING_SINCE = T0 - 25 * HOUR_MS;
+
+      it('drops a record after a counted failure at 25 h with 3 real attempts, marked retry budget exhausted', async () => {
+        // A JSON 404: the application's own verdict, a counted failure
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(fetchMock).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted', deliveryRealAttempts: 3 });
+        expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      });
+
+      it('keeps a record under 3 real attempts after a counted failure at 25 h, counting the pass', async () => {
+        answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      });
+
+      it('never drops a record whose end metric is answered 503, however old its failing clock', async () => {
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' }
+        }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(fetchMock).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedReason');
+      }, 60_000);
     });
 
     describe('a separate sync path', () => {
@@ -1817,7 +1903,7 @@ describe('DesktopTelemetryRuntime', () => {
         ['syncCodeMieUrl', SYNC_CODEMIE_URL]
       ])('sends nothing and spends no attempt while the analytics auth of its %s is marked invalid', async (_, baseUrl) => {
         await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', baseUrl);
-        const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
         const runtime = await startRuntime(createAdapter(), syncConfig);
         await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
@@ -1825,7 +1911,7 @@ describe('DesktopTelemetryRuntime', () => {
 
         expect(mockSync).not.toHaveBeenCalled();
         expect(mockSendSessionEnd).not.toHaveBeenCalled();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
         await runtime.stop();
       });
@@ -1843,13 +1929,13 @@ describe('DesktopTelemetryRuntime', () => {
 
     it('makes no request and spends no attempt without stored cookies', async () => {
       mockGetStoredCredentials.mockResolvedValue(null);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
 
       await startRuntime(createAdapter());
 
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -1857,7 +1943,7 @@ describe('DesktopTelemetryRuntime', () => {
       realSessionSyncer = true;
       const fetchMock = vi.fn(async () => unauthorized());
       vi.stubGlobal('fetch', fetchMock);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 1, endMetricSentAt: T0 - 30 * 60_000 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, endMetricSentAt: T0 - 30 * 60_000 });
       writeFileSync(join(sessionsDir(), `${sessionId}_metrics.jsonl`), JSON.stringify({
         recordId: 'record-1',
         sessionId,
@@ -1871,14 +1957,14 @@ describe('DesktopTelemetryRuntime', () => {
       await startRuntime(createAdapter());
 
       expect(fetchMock).toHaveBeenCalled();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
       expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
       expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
     });
 
-    it('never renames a record at the cap while there are no stored cookies, and renames it unsent once they are back', async () => {
+    it('keeps a record that spent its attempts while there are no stored cookies, and delivers it once they are back', async () => {
       mockGetStoredCredentials.mockResolvedValue(null);
-      const sessionId = undeliveredRecord({ deliveryAttempts: 3 });
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 3, deliveryFailingSince: T0 - 25 * HOUR_MS });
 
       const gated = await startRuntime(createAdapter());
       await gated.stop();
@@ -1887,16 +1973,16 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(3);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(3);
 
       mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
       await clearAnalyticsAuthStatus();
       const runtime = await startRuntime(createAdapter());
       await runtime.stop();
 
-      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
-      expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
     });
 
     it('flushes a gone daemon\'s record locally while the analytics auth is marked invalid, and sends it once cleared', async () => {
@@ -1911,7 +1997,7 @@ describe('DesktopTelemetryRuntime', () => {
       const runtime = await startRuntime(adapter);
 
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
       expect(mockSync).not.toHaveBeenCalled();
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
@@ -1989,11 +2075,8 @@ describe('DesktopTelemetryRuntime', () => {
       vi.setSystemTime(T1);
       appendMessages('ext-1', 1);
 
-      // The index succeeded, so this poll does not wait for the pass and meets its lock
+      // The first poll finalizes the record in its start-up pass, then reopens it once the pass released its lock
       await runtime.start();
-      await runtime.triggerPoll();
-      // Reopened by the triggered poll itself, before the chain's first poll
-      expect(readRecord(sessionId)).toMatchObject({ status: 'active', stretchStartTime: T1 });
       await (runtime as any).startupChain;
 
       expect(readRecord(sessionId)!.stretchStartTime).toBe(T1);
@@ -2167,6 +2250,286 @@ describe('DesktopTelemetryRuntime', () => {
         project: 'project-codemie-docs',
         startTime
       });
+    });
+  });
+
+  describe('collection while Desktop is connected to this daemon', () => {
+    const PORT = 4001;
+    /** The value Desktop writes over the key at its start; only Desktop opens it. */
+    const SEALED_KEY = '__sealed__:v1:QUJD';
+    /** The Desktop connection changes the runtime told the daemon of. */
+    let notices: Array<string | undefined>;
+    let desktopHome: string;
+    /** The real config reader over a temp Desktop base directory. */
+    const collecting: DesktopTelemetryRuntimeConfig = {
+      ...config,
+      readDesktopGateway: undefined,
+      onDesktopConnectedChange: async (since) => { notices.push(since); }
+    };
+
+    /** Desktop's applied config: a gateway at `url` with `key`, or none at all. */
+    function desktopPointsAt(url: string | null, key = 'codemie-proxy'): void {
+      const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+      rmSync(library, { recursive: true, force: true });
+      if (url === null) return;
+      mkdirSync(library, { recursive: true });
+      writeFileSync(join(library, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      writeFileSync(join(library, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway', inferenceGatewayBaseUrl: url, inferenceGatewayApiKey: key
+      }));
+    }
+
+    const startedSessions = () => mockSendSessionStart.mock.calls.map(([session]) => session.sessionId);
+
+    beforeEach(() => {
+      notices = [];
+      desktopHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-home-'));
+      vi.stubEnv('HOME', desktopHome);
+      vi.stubEnv('USERPROFILE', desktopHome);
+      vi.stubEnv('XDG_CONFIG_HOME', join(desktopHome, '.config'));
+      vi.stubEnv('LOCALAPPDATA', join(desktopHome, 'AppData', 'Local'));
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(desktopHome, { recursive: true, force: true });
+    });
+
+    it('connected: sessions are discovered and collected', async () => {
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    it.each([
+      ['the config removed', () => desktopPointsAt(null)],
+      ['another port', () => desktopPointsAt('http://127.0.0.1:4005')],
+      ['another key', () => desktopPointsAt(`http://127.0.0.1:${PORT}`, 'sk-user-own')],
+      ['a non-loopback URL', () => desktopPointsAt(`https://gateway.example.com:${PORT}`)],
+      ['a sealed key on another port', () => desktopPointsAt('http://127.0.0.1:4005', SEALED_KEY)],
+    ])('not connected (%s) at two polls in a row: the second discovers, runs and reconciles nothing, and a tracked session is still finalized', async (_case, disconnect) => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const run = vi.fn(async () => undefined);
+      // Idle long enough for a re-delivery to fall due before the session's inactivity does
+      const inactivityTimeoutMs = 2 * DESKTOP_REDELIVERY_INTERVAL_MS;
+      const runtime = new DesktopTelemetryRuntime(adapter, { ...collecting, inactivityTimeoutMs }, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      const sessionId = sessionIdFor('ext-1')!;
+      await (runtime as any).cowork.inFlight;
+      disconnect();
+      // The first not-connected read works as a connected poll
+      vi.setSystemTime(T0 + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      run.mockClear();
+      const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+
+      vi.setSystemTime(T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(index).not.toHaveBeenCalled();
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined]);
+
+      // The tracked session is still finalized on inactivity (its final flush rediscovers its own transcript)
+      vi.setSystemTime(T0 + inactivityTimeoutMs + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(run).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('connected with a sealed key on the daemon\'s port: collecting, the connection told, a session collected', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      const info = vi.spyOn(logger, 'info');
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(info).toHaveBeenCalledWith('[desktop-telemetry] Claude Desktop connected; collecting', { since: new Date(T0).toISOString() });
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('the named key turning sealed between two polls reads no "not connected" and keeps the activity gate', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, 'codemie-proxy.claude-desktop');
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const info = vi.spyOn(logger, 'info');
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 30_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(runtime, 1);
+
+      expect(info.mock.calls.filter(([message]) => String(message).includes('not connected'))).toEqual([]);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('a daemon started not connected reads no record until the first connected poll, which runs the start-up pass once', async () => {
+      desktopPointsAt(null);
+      const first = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await pollTicks(runtime, 2);
+
+      expect(index).not.toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+      expect(notices).toEqual([]);
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      await pollTicks(runtime, 1);
+      expect(index).toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+
+      // A dead daemon's record that appears later is no start-up pass's: the pass ran once
+      const later = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      await pollTicks(runtime, 2);
+      expect(readRecord(later)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+    });
+
+    it('connected again: a session idle since before skipped, a new one collected, one continued from before sent from the gate on', async () => {
+      const runtime = await startDaemon(createAdapter(), collecting);
+      desktopPointsAt(null);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 25_000);
+      openDesktopChat('ext-old', 1, Date.now());
+      openDesktopChat('ext-cont', 2, Date.now());
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + 30_000);
+      await runtime.triggerPoll();
+      const gate = T0 + 30_000;
+      vi.setSystemTime(T0 + 35_000);
+      appendMessages('ext-cont', 1);
+      openDesktopChat('ext-new', 1, Date.now());
+      vi.setSystemTime(T0 + 40_000);
+      await runtime.triggerPoll();
+
+      expect(startedSessions().sort()).toEqual(['agent-ext-cont', 'agent-ext-new']);
+      expect(readRecord(sessionIdFor('ext-cont')!)).toMatchObject({ startTime: gate });
+      expect(sentDeltas.filter(delta => delta.externalSessionId === 'ext-cont')).toEqual([{ externalSessionId: 'ext-cont', historyIndices: [2] }]);
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined, new Date(gate).toISOString()]);
+    });
+
+    it('connected from the first poll: a session updated between the daemon\'s start and that poll is collected', async () => {
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, T0 - HOUR_MS);
+      touchDesktopChat('ext-1');
+      vi.setSystemTime(T0 + 8_000);
+
+      await runtime.triggerPoll();
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a reader that throws counts as not connected and the poll goes on', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => { throw new Error('EACCES'); }
+      });
+
+      await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() before the first connected poll builds no index, discovers nothing and does not throw', async () => {
+      desktopPointsAt(null);
+      const adapter = createAdapter();
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(adapter, collecting);
+
+      await expect(runtime.stop()).resolves.toBeUndefined();
+
+      expect(index).not.toHaveBeenCalled();
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: the config flips while a session is being finalized: the finalization completes, the next poll discovers nothing', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const sessionId = sessionIdFor('ext-1')!;
+      let releaseEnd!: () => void;
+      mockSendSessionEnd.mockImplementationOnce(() => new Promise<void>(resolve => { releaseEnd = resolve; }));
+
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      const finalizing = runtime.triggerPoll();
+      await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
+      desktopPointsAt(null);
+      releaseEnd();
+      await finalizing;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+
+      // the first poll after the flip still collects; the second in a row is not connected
+      await pollTicks(runtime, 1);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      await pollTicks(runtime, 1);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['reads no gateway', 'none'],
+      ['throws', 'throw'],
+    ] as const)('one poll whose reader %s between two connected ones changes nothing', async (_case, miss) => {
+      let read: 'connected' | 'none' | 'throw' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => {
+          if (read === 'throw') throw new Error('EACCES');
+          return read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' };
+        }
+      });
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, Date.now());
+
+      read = miss;
+      await pollTicks(runtime, 1);
+      read = 'connected';
+      await pollTicks(runtime, 1);
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(3);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a connected read between two not-connected ones resets the count', async () => {
+      let read: 'connected' | 'none' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => (read === 'none' ? null : { port: PORT, apiKey: 'codemie-proxy' })
+      });
+
+      for (const next of ['none', 'connected', 'none'] as const) {
+        read = next;
+        await pollTicks(runtime, 1);
+      }
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(4);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
     });
   });
 });

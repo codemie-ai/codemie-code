@@ -44,10 +44,17 @@ export async function commandExists(command: string): Promise<boolean> {
  *
  * @param command - Command name to locate
  * @param timeoutMs - Kill the underlying `which`/`where.exe` child and resolve `null` if it
- *   hasn't exited by this deadline. Omit to run without a deadline (existing behavior).
+ *   hasn't exited by this deadline, or reject with `throwIfUnanswered`. Omit to run without a
+ *   deadline (existing behavior).
+ * @param options.throwIfUnanswered - Reject instead of resolving `null` when `which`/`where.exe`
+ *   gives no answer: it times out or fails to start. A non-zero exit still resolves `null`.
  * @returns Full path to command, or null if not found
  */
-export async function getCommandPath(command: string, timeoutMs?: number): Promise<string | null> {
+export async function getCommandPath(
+  command: string,
+  timeoutMs?: number,
+  options: { throwIfUnanswered?: boolean } = {}
+): Promise<string | null> {
   try {
     const isWindows = os.platform() === 'win32';
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
@@ -71,7 +78,8 @@ export async function getCommandPath(command: string, timeoutMs?: number): Promi
     }
 
     return null;
-  } catch {
+  } catch (error) {
+    if (options.throwIfUnanswered) throw error;
     return null;
   }
 }

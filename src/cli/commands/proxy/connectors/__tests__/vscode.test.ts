@@ -9,7 +9,12 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VS_CODE_CAPABILITY_TABLE, type VsCodeApiType } from '../vscode-models.js';
-import { writeVsCodeLanguageModelsConfigAtPath } from '../vscode.js';
+import {
+  getVsCodeLanguageModelsPath,
+  getVsCodeProductDir,
+  readVsCodeByokGateway,
+  writeVsCodeLanguageModelsConfigAtPath,
+} from '../vscode.js';
 import { ConfigurationError } from '@/utils/errors.js';
 
 const EXPECTED_MODEL_IDS = [
@@ -494,3 +499,64 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     });
   });
 });
+
+describe('readVsCodeByokGateway', () => {
+  let home: string;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'codemie-vscode-byok-reader-'));
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) vi.stubEnv(name, home);
+    originalFetch = globalThis.fetch;
+    mockCatalog(['gpt-4.1', 'claude-sonnet-5']);
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function writeModels(text: string, insiders = false): Promise<void> {
+    await mkdir(join(getVsCodeProductDir(insiders), 'User'), { recursive: true });
+    await writeFile(join(getVsCodeProductDir(insiders), 'User', 'chatLanguageModels.json'), text);
+  }
+
+  const provider = (...urls: string[]) => JSON.stringify([{
+    name: 'CodeMie',
+    vendor: 'customendpoint',
+    models: urls.map((url, index) => ({ id: `m${index}`, url })),
+  }]);
+
+  it('reads back the port its writer wrote, with no key', async () => {
+    await mkdir(getVsCodeProductDir(false), { recursive: true });
+    await writeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(false), 'http://127.0.0.1:52311', 'codemie-proxy');
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toEqual({ port: 52311 });
+  });
+
+  it('returns the first managed model port that differs from the daemon\'s', async () => {
+    await writeModels(provider('http://127.0.0.1:60122/v1/chat/completions', 'http://127.0.0.1:4001/v1/responses'));
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('reads the stable and the Insiders file each on its own', async () => {
+    await writeModels(provider('http://127.0.0.1:4002/v1/messages'), true);
+
+    await expect(readVsCodeByokGateway(60122, true)).resolves.toEqual({ port: 4002 });
+    await expect(readVsCodeByokGateway(60122, false)).resolves.toBeNull();
+  });
+
+  it.each([
+    ['a missing product directory', async () => undefined],
+    ['an unparsable file', async () => writeModels('[{')],
+    ['no managed provider', async () => writeModels(JSON.stringify([{ name: 'Other', vendor: 'customendpoint', models: [] }]))],
+    ['a non-loopback URL', async () => writeModels(provider('https://models.example.com:4001/v1/chat/completions'))],
+  ])('returns null for %s', async (_case, arrange) => {
+    await arrange();
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toBeNull();
+  });
+});
+

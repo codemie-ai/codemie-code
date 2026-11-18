@@ -184,18 +184,17 @@ describe('analytics advice', () => {
   it('status text ends with a plain sentence naming the channels these settings do not control; --json carries no such text', async () => {
     const lastLine = (): string => out().split('\n').at(-1) as string;
     await run(['status']);
-    expect(out().split('\n')).not.toContain('');
     expect(lastLine()).toBe(
-      'These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
+      '  These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
     );
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
     expect(lastLine()).toBe(
-      'These settings do not affect managed `codemie copilot-cli` launches and the daily analytics collector.'
+      '  These settings do not affect managed `codemie copilot-cli` launches and the daily analytics collector.'
     );
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
-    expect(lastLine()).toBe('These settings do not affect the daily analytics collector.');
+    expect(lastLine()).toBe('  These settings do not affect the daily analytics collector.');
     expect(out()).not.toContain('Not affected');
     logSpy.mockClear();
     await run(['status', '--json']);
@@ -203,15 +202,14 @@ describe('analytics advice', () => {
     expect(JSON.stringify(parsed)).not.toContain('do not affect');
   });
 
-  it('status --json reports tracked=false with reason hooks-not-installed when no hooks are installed (CR-006)', async () => {
+  it('status offers connect when no hooks are installed', async () => {
     await run(['status', '--json']);
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-    expect(parsed.hooksInstalled).toBe(false);
-    expect(parsed.current).toMatchObject({ tracked: false, reason: 'hooks-not-installed' });
+    expect(parsed.connectors[0].hooksInstalled).toBe(false);
+    expect(parsed.connectors[0]).not.toHaveProperty('current');
     logSpy.mockClear();
     await run(['status']);
-    expect(out()).toContain('not tracked (hooks-not-installed)');
-    expect(out()).toContain('  Run: codemie proxy connect --claude-code-otlp');
+    expect(out()).toContain('      Run: codemie proxy connect --claude-code-otlp');
     expect(out().match(/Run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });
@@ -262,51 +260,15 @@ describe('analytics advice', () => {
     vi.doUnmock('@/agents/core/copilot-analytics-gate.js');
   });
 
-  it('status text puts prose advice into the not-tracked reason (no Hint, no Run line); status --json keeps its shape', async () => {
-    await writeClaudeAllowlist(['/work/other']);
-    logSpy.mockClear();
-    await run(['status']);
-    expect(out()).not.toContain('Hint:');
-    expect(out()).not.toContain('Run:');
-    expect(out()).toMatch(/Current: .*not tracked \(not-in-allowlist: .*codemie proxy connect --claude-code-otlp --scope project\)/);
-    logSpy.mockClear();
-    await run(['status', '--json']);
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-    expect(Object.keys(parsed)).not.toContain('hint');
-    expect(Object.keys(parsed)).not.toContain('advice');
-  });
-
-  it('status text has neither a Hint nor a Run line when the connector is connected and the current directory is tracked', async () => {
-    await installClaudeHooks();
-    logSpy.mockClear();
-    await run(['status']);
-    expect(out()).toContain('tracked');
-    expect(out()).not.toContain('not tracked');
-    expect(out()).not.toContain('Hint:');
-    expect(out()).not.toContain('Run:');
-  });
-
-  it('status text puts a single runnable advice command on the Run line', async () => {
-    await installClaudeHooks();
-    await run(['exclude', process.cwd()]);
-    logSpy.mockClear();
-    await run(['status']);
-    expect(out().match(/Run:/g)).toHaveLength(1);
-    expect(out()).toMatch(/ {2}Run: codemie proxy analytics include /);
-    expect(out()).not.toContain('Hint:');
-  });
-
-  it('Copilot status text keeps a Project-scope miss as prose and offers connect only when the connector is not connected', async () => {
+  it('Copilot status text offers connect only when the connector is not connected', async () => {
     await writeCopilotScope('copilot-chat-otlp', { enabled: true, scope: 'project', paths: ['/work/other'] });
     logSpy.mockClear();
     await run(['status', '--copilot-chat-otlp']);
     expect(out()).not.toContain('Hint:');
     expect(out()).not.toContain('Run:');
-    expect(out()).toContain('--scope project');
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
-    expect(out()).toContain('  Run: codemie proxy connect --copilot-cli-otlp');
+    expect(out()).toContain('      Run: codemie proxy connect --copilot-cli-otlp');
     expect(out().match(/Run:/g)).toHaveLength(1);
     expect(out()).not.toContain('Hint:');
   });

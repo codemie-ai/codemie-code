@@ -81,7 +81,11 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: 300_000
+  inactivityTimeoutMs: 300_000,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
 };
 
 let codemieHome: string;
@@ -283,7 +287,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await startAndStopOnFakeClock();
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
@@ -293,17 +297,17 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
-    it('an end metric answered 503, then timed out on its retry, spends the attempt', async () => {
+    it('an end metric answered 503, then timed out on its retry, gives the attempt back', async () => {
       const sessionId = undelivered();
       endMetricMeets('503', 'timeout');
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
     });
 
     it('an end metric answered 429 with a JSON body gives the attempt back', async () => {
@@ -312,7 +316,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
     });
 
     it('an end metric answered 200 with success false spends the attempt', async () => {
@@ -321,16 +325,16 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
     });
 
-    it('a record at 2 attempts stays at 2 through three starts under a 503: never renamed, never dropped', async () => {
-      const sessionId = undelivered({ deliveryAttempts: 2 });
+    it('a record at 2 real attempts and a failing clock of 25 h stays at 2 through three starts under a 503: never renamed, never dropped', async () => {
+      const sessionId = undelivered({ deliveryRealAttempts: 2, deliveryFailingSince: T0 - 25 * HOUR_MS });
       endMetricMeets('503');
 
       for (let start = 0; start < 3; start++) await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
       expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
@@ -341,7 +345,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
       for (let start = 0; start < 4; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
       expect(existsSync(join(codemieHome, 'analytics-auth-status.json'))).toBe(false);
@@ -356,12 +360,12 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await onDaemonClock(() => runtime.triggerPoll());
       await runtime.stop();
       expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
-      expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
 
       for (let start = 0; start < 4; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)).not.toHaveProperty('deliveryAttempts');
+        expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
 
@@ -379,26 +383,26 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it('a try that timed out spends the attempt though its retries were refused', async () => {
+    it('a try that timed out gives the attempt back, as do its refused retries', async () => {
       const sessionId = undelivered();
       endMetricMeets('timeout', 'refused');
 
       await startAndStopOnFakeClock();
 
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(1);
+      expect(readRecord(sessionId)!.deliveryRealAttempts ?? 0).toBe(0);
       expect(recordFiles()).toEqual([`${sessionId}.json`]);
     });
 
     it('after two counted failures, starts under a refused connection stay at 2 and never rename it', async () => {
       const sessionId = undelivered();
-      endMetricMeets('timeout');
+      endMetricMeets('not-success');
       for (let start = 0; start < 2; start++) await startAndStopOnFakeClock();
-      expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
 
       endMetricMeets('refused');
       for (let start = 0; start < 2; start++) {
         await startAndStopOnFakeClock();
-        expect(readRecord(sessionId)!.deliveryAttempts).toBe(2);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
         expect(recordFiles()).toEqual([`${sessionId}.json`]);
       }
       // Each fake-clock step waits one real timer tick, about 15 ms on Windows: these four starts take some 30 s there
@@ -430,7 +434,7 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
 
     const started = runtime.start();
     await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
-    expect((runtime as any).isPolling).toBe(false);
+    // The first connected poll runs the pass and waits for it: the record is not reopened meanwhile
     expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart', endTime: T1 });
     resolveEndMetric();
     await started;
@@ -458,13 +462,13 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
     }));
     const oldest = [ids[2], ids[4]];
     const before = oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'));
-    // Fails each send, so the taken records stay live with their attempt spent
+    // Fails each send, so the taken records stay live (a failure no server verdict explains gives its attempt back)
     mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
 
     await startRuntime();
 
     expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
-    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryAttempts).toBe(1);
+    for (const id of ids.filter(id => !oldest.includes(id))) expect(readRecord(id)!.deliveryRealAttempts).toBe(0);
     expect(oldest.map(id => readFileSync(join(sessionsDir(), `${id}.json`), 'utf-8'))).toEqual(before);
   });
 
@@ -545,22 +549,67 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await runtime.stop();
     });
 
-    it('runs no poll and arms no timer after the pass when stop() came first', async () => {
+    it('runs no second poll and arms no timer after the pass when stop() came during it', async () => {
       const release = pendingEndMetric();
+      desktopActivity('ext-live', T0);
       const adapter = createAdapter();
       const runtime = new DesktopTelemetryRuntime(adapter, config);
       startedRuntimes.push(runtime);
       await runtime.start();
       await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
 
-      await runtime.stop();
-      // stop()'s own final poll
-      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+      let stopped = false;
+      const stopping = runtime.stop().then(() => { stopped = true; });
+      // stop() waits for the first poll, which still waits for its pass
+      // A macrotask turn: a stop() that did not wait would have resolved within it
+      await new Promise(resolve => setImmediate(resolve));
+      expect(stopped).toBe(false);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
       release();
+      await stopping;
+      const discoveriesAtStop = vi.mocked(adapter.discoverSessions).mock.calls.length;
       await (runtime as any).startupChain;
 
-      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+      // the first poll's discovery, stop()'s final poll and the finalization ran before stop() resolved; nothing after
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(discoveriesAtStop);
+      const live = recordFiles()
+        .map(name => JSON.parse(readFileSync(join(sessionsDir(), name), 'utf-8')) as Session)
+        .find(record => record.runtimeCheckpoint?.externalSessionId === 'ext-live');
+      expect(live).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop' });
       expect((runtime as any).timer).toBeUndefined();
+    });
+
+    it('edge: stop() with no poll in flight runs one final poll', async () => {
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+
+      await runtime.stop();
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('edge: a poll in flight that rejects: stop() still runs its final poll and finalizes', async () => {
+      desktopActivity('ext-live', T0);
+      const adapter = createAdapter();
+      let releasePoll!: () => void;
+      vi.mocked(adapter.discoverSessions).mockImplementationOnce(async () => {
+        await new Promise<void>(resolve => { releasePoll = resolve; });
+        throw new Error('metadata read failed');
+      });
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+      const inFlight = runtime.triggerPoll().catch(() => undefined);
+      await waitFor(() => releasePoll !== undefined);
+
+      const stopping = runtime.stop();
+      releasePoll();
+      await inFlight;
+      await stopping;
+
+      // only stop()'s final poll could track it: the poll in flight threw before tracking anything
+      const live = recordFiles()
+        .map(name => JSON.parse(readFileSync(join(sessionsDir(), name), 'utf-8')) as Session)
+        .find(record => record.runtimeCheckpoint?.externalSessionId === 'ext-live');
+      expect(live).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop' });
     });
 
     it('arms no timer when stop() came during the chain\'s first poll', async () => {
@@ -578,8 +627,9 @@ describe('DesktopTelemetryRuntime start-up pass', () => {
       await runtime.start();
       await pollReached;
 
-      await runtime.stop();
+      const stopping = runtime.stop();
       releasePoll();
+      await stopping;
       await (runtime as any).startupChain;
 
       expect((runtime as any).timer).toBeUndefined();

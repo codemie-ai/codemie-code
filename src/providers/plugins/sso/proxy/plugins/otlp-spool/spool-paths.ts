@@ -67,11 +67,21 @@ const ALL_SUFFIXES: readonly string[] = [STATUS_EXT, ...Object.values(STREAM_EXT
  * producer crashed before writing a status file is still discoverable.
  */
 export async function listSessionIds(): Promise<string[]> {
+  try {
+    return await listSessionIdsStrict();
+  } catch {
+    return [];
+  }
+}
+
+/** Like `listSessionIds`, but only a missing spool root is empty; any other read failure is thrown. */
+export async function listSessionIdsStrict(): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(spoolRoot());
-  } catch {
-    return []; // spool root may not exist yet
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []; // spool root may not exist yet
+    throw err;
   }
 
   const ids = new Set<string>();

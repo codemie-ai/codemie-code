@@ -4,18 +4,21 @@
  * `<spool>/<cliSessionId>.hooks.ndjson`. The spool write's `appendFile` is the one stubbed boundary; the forwarder's
  * send additionally stubs `fetch` and the daemon state it reads its destination from.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
-  writeFileSync,
+  appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
+  utimesSync, writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const spoolFault = vi.hoisted(() => ({ failures: 0 }));
+const unlinkFault = vi.hoisted(() => ({ before: undefined as ((path: string) => void) | undefined }));
 const readStateMock = vi.hoisted(() => vi.fn());
 
-// Real fs; `appendFile` on a spool hooks file can be told to reject (the bytes-landing step of appendSpool).
+// Real fs; `appendFile` on a spool hooks file can be told to reject (the bytes-landing step of appendSpool), and an
+// `unlink` can be told to let another process remove the file first.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -26,6 +29,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         return Promise.reject(new Error('ENOSPC: simulated spool write failure'));
       }
       return actual.appendFile(...args);
+    },
+    unlink: (...args: Parameters<typeof actual.unlink>): Promise<void> => {
+      unlinkFault.before?.(String(args[0]));
+      return actual.unlink(...args);
     },
   };
 });
@@ -41,6 +48,7 @@ import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
+import { markCoworkSessionServed } from '../cowork-served-mark.js';
 import { COWORK_ACCOUNT_SEGMENTS, coworkFixtureFile, installCoworkFixture } from './cowork-fixture.js';
 
 type WireEvent = Record<string, unknown>;
@@ -67,6 +75,9 @@ const FIRST_PROCESSING_TYPES = [
 
 let home: string;
 let codemieHome: string;
+let gitConfigDir: string;
+let emptyGitConfig: string;
+const savedGitEnv: Record<string, string | undefined> = {};
 
 function sessionDir(short = '1a2b3c4d'): string {
   return join(getClaudeDesktopLocalSessionsRoot(), ACCOUNT_DIR, short);
@@ -136,6 +147,16 @@ function addSecondSession(lastActivityAt: number): string {
   return inner;
 }
 
+/** The served mark the proxy daemon leaves beside a session's cursor. */
+function servedMarkPath(cliSessionId: string): string {
+  return join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork-served`);
+}
+
+function markServed(cliSessionId: string): void {
+  mkdirSync(dirname(servedMarkPath(cliSessionId)), { recursive: true });
+  writeFileSync(servedMarkPath(cliSessionId), '');
+}
+
 function writeProfile(project: string): void {
   const profile = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com', codeMieProject: project };
   writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: profile } }));
@@ -155,6 +176,29 @@ function warnings(): unknown[][] {
   return vi.mocked(logger.warn).mock.calls;
 }
 
+// A git hook exports GIT_DIR / GIT_WORK_TREE, which would point every git call here at the outer repository; the
+// developer's git config differs per machine.
+beforeAll(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('GIT_')) {
+      savedGitEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  }
+  gitConfigDir = mkdtempSync(join(tmpdir(), 'cowork-gitconfig-'));
+  emptyGitConfig = join(gitConfigDir, 'empty-gitconfig');
+  writeFileSync(emptyGitConfig, '');
+  process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+});
+
+afterAll(() => {
+  delete process.env.GIT_CONFIG_GLOBAL;
+  delete process.env.GIT_CONFIG_NOSYSTEM;
+  for (const [key, value] of Object.entries(savedGitEnv)) process.env[key] = value;
+  if (gitConfigDir) rmSync(gitConfigDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
 beforeEach(() => {
   // The native resolver also expands a Windows 8.3 short name, which the JS one leaves in the path.
   home = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-home-')));
@@ -172,11 +216,15 @@ beforeEach(() => {
   }
   installCoworkFixture(getClaudeDesktopBaseDir());
   writeProfile('synthetic-project');
+  // Both sessions were served by this daemon unless a test says otherwise
+  markServed(CLI);
+  markServed(CLI_2);
   vi.spyOn(logger, 'warn');
 });
 
 afterEach(async () => {
   spoolFault.failures = 0;
+  unlinkFault.before = undefined;
   vi.useRealTimers();
   vi.restoreAllMocks();
   await logger.close();
@@ -228,8 +276,15 @@ describe('CoworkEventProducer.run', () => {
     expect(usage.filter((event) => event['model'] === ROUTE).map((event) => [event['message_id'], event['model_raw']]))
       .toEqual([['msg_synthetic_A', 'claude-opus-5']]);
     expect(usage.filter((event) => event['agent_id'] === AGENT)).toHaveLength(2);
-    expect(lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event)
-      .toMatchObject({ session_title: 'Synthetic notes task', timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    const sessionStart = lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event;
+    expect(sessionStart).toMatchObject({ timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    // EPMCDME-17317: Desktop's own auto-title ("Synthetic notes task" in the fixture's metadata.json)
+    // must never reach the wire as session_title, even though Desktop set one.
+    expect(sessionStart).not.toHaveProperty('session_title');
+    for (const { event } of lines) {
+      expect(event).not.toHaveProperty('session_title');
+    }
+    expect(lines.filter((spoolLine) => spoolLine.event['git_branch'] !== '' || spoolLine.event['cwd'] !== 'Cowork')).toEqual([]);
     expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBe('synthetic-project');
   });
 
@@ -742,6 +797,339 @@ describe('CoworkEventProducer.run', () => {
     expect(events().filter((event) => event['type'] === 'agent.session.end')).toHaveLength(1);
     expect(warnings()).toEqual([]);
     expect(readFileSync(spoolPath(), 'utf-8')).toBe(written);
+  });
+
+  describe('the branch of the session\'s folder', () => {
+    const folders: string[] = [];
+
+    function git(cwd: string, ...args: string[]): void {
+      execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
+        cwd, stdio: 'pipe', timeout: 10_000,
+      });
+    }
+
+    /** A folder `<temp>/synthetic-parent/synthetic-folder`, selected as the fixture session's folder. */
+    function selectFolder(): string {
+      const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cowork-folder-')));
+      folders.push(root);
+      const folder = join(root, 'synthetic-parent', 'synthetic-folder');
+      mkdirSync(folder, { recursive: true });
+      writeMetadata(LOCAL, { userSelectedFolders: [folder] });
+      return folder;
+    }
+
+    function selectRepository(): string {
+      const folder = selectFolder();
+      git(folder, 'init', '-q', '-b', 'main');
+      git(folder, 'commit', '-q', '--allow-empty', '-m', 'synthetic');
+      git(folder, 'checkout', '-q', '-b', 'qa-17128-cw2');
+      return folder;
+    }
+
+    afterAll(() => {
+      for (const folder of folders) rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it('stamps every event with the folder\'s branch and every summary with it as branch_dominant', async () => {
+      selectRepository();
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+      expect(written.filter((event) => event['git_branch'] !== 'qa-17128-cw2')).toEqual([]);
+      expect(spooled().filter((spoolLine) => spoolLine.raw.includes('\\"git_branch\\":\\"HEAD\\"'))).toEqual([]);
+      const summaries = written.filter((event) => event['type'] === 'agent.session.summary');
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        expect(summary['branch_dominant']).toBe('qa-17128-cw2');
+        expect(summary).not.toHaveProperty('branch_counts');
+      }
+    });
+
+    it('edge: stamps an empty branch and no branch_dominant while the folder\'s HEAD is detached', async () => {
+      git(selectRepository(), 'checkout', '-q', '--detach');
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.filter((event) => event['git_branch'] !== '')).toEqual([]);
+      expect(written.filter((event) => event['type'] === 'agent.session.summary' && Object.prototype.hasOwnProperty.call(event, 'branch_dominant'))).toEqual([]);
+    });
+
+    it('edge: stamps an empty branch and the folder\'s two last segments for a folder outside Git', async () => {
+      selectFolder();
+
+      await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+      const written = events();
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.filter((event) => event['git_branch'] !== '' || event['cwd'] !== 'synthetic-parent/synthetic-folder')).toEqual([]);
+    });
+
+    it('edge: stamps the new lines with the branch the folder is on when they are read, and appends no line twice', async () => {
+      const folder = selectRepository();
+      const producer = newProducer();
+      await settle(producer, LAST_LINE_MS + 20_000);
+      const before = spooled().length;
+
+      git(folder, 'checkout', '-q', '-b', 'other');
+      appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000e1', '2026-11-10T10:00:40.000Z', 'One more synthetic question'));
+      appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000e2', '2026-11-10T10:00:45.000Z', 'msg_synthetic_E', [{ type: 'text', text: 'Answered.' }]));
+      await settle(producer, LAST_LINE_MS + 60_000);
+
+      const written = events();
+      const grown = written.slice(before);
+      expect(written.slice(0, before).filter((event) => event['git_branch'] !== 'qa-17128-cw2')).toEqual([]);
+      expect(grown.map((event) => event['event_id'])).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000e1`);
+      expect(grown.filter((event) => event['git_branch'] !== 'other')).toEqual([]);
+      expect(new Set(written.map((event) => event['event_id'])).size).toBe(written.length);
+    });
+  });
+});
+
+describe('CoworkEventProducer and the served mark', () => {
+  const cursorPath = (cliSessionId = CLI) => join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork.json`);
+
+  beforeEach(() => {
+    rmSync(servedMarkPath(CLI));
+  });
+
+  it('appends nothing for a session in the window with no mark and no cursor', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(existsSync(spoolPath())).toBe(false);
+    expect(existsSync(cursorPath())).toBe(false);
+  });
+
+  it('collects the same session from its first line once it has a mark', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    markServed(CLI);
+
+    await settle(newProducer(), LAST_LINE_MS + 40_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it('collects a session with a cursor and no mark as today', async () => {
+    markServed(CLI);
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+    rmSync(servedMarkPath(CLI));
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000e1', '2026-11-10T10:01:00.000Z', 'A synthetic follow-up'));
+
+    await settle(newProducer(), LAST_LINE_MS + 90_000);
+
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.prompt.submit']);
+  });
+
+  it('keeps a session marked for a new producer over the same home (a daemon restart)', async () => {
+    markServed(CLI);
+    await newProducer().run(LAST_LINE_MS + 20_000);
+
+    await settle(newProducer(), LAST_LINE_MS + 40_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it.each([
+    ['a mark file', () => writeFileSync(servedMarkPath(CLI), '\u0000not a mark')],
+    ['a cursor file', () => writeFileSync(cursorPath(), '{not json')],
+  ])('takes a session whose %s exists and cannot be parsed', async (_case, write) => {
+    mkdirSync(dirname(cursorPath()), { recursive: true });
+    write();
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it('edge: a mark written after the producer listed its sessions is taken at the next list refresh, not sooner', async () => {
+    const producer = newProducer();
+    const start = LAST_LINE_MS + 20_000;
+    await settle(producer, start);
+    markServed(CLI);
+
+    for (let at = start + 20_000; at < start + INACTIVITY_TIMEOUT_MS; at += 10_000) await producer.run(at);
+    const beforeRefresh = existsSync(spoolPath());
+    await settle(producer, start + INACTIVITY_TIMEOUT_MS);
+
+    expect(beforeRefresh).toBe(false);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+});
+
+describe('CoworkEventProducer and the pruning of served marks', () => {
+  /** A session discovery does not list: no Desktop session of the fixture has this id. */
+  const GONE = '9e3f4051-6c7d-4e8f-a01b-2c3d4e5f6071';
+  const GONE_2 = 'af405162-7d8e-4f90-b12c-3d4e5f607182';
+  const NOW = LAST_LINE_MS + 20_000;
+  const stateDir = () => join(codemieHome, 'analytics', 'state');
+  const markWarnings = () => warnings().filter(([message]) => message === '[cowork-served-mark] Served mark not removed');
+
+  function age(path: string, days: number, now = NOW): void {
+    const at = new Date(now - days * DAY_MS);
+    utimesSync(path, at, at);
+  }
+
+  function oldMark(cliSessionId: string, days = 15, now = NOW): void {
+    markServed(cliSessionId);
+    age(servedMarkPath(cliSessionId), days, now);
+  }
+
+  it('deletes a mark 15 days old of a session discovery does not list', async () => {
+    oldMark(GONE);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+  });
+
+  it('deletes a mark this process wrote, and the next request of the session writes it again', async () => {
+    await markCoworkSessionServed(GONE);
+    age(servedMarkPath(GONE), 15);
+
+    await newProducer().run(NOW);
+    const afterRun = existsSync(servedMarkPath(GONE));
+    await markCoworkSessionServed(GONE);
+
+    expect(afterRun).toBe(false);
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+  });
+
+  it('keeps a mark 15 days old of a listed session active yesterday, and collects the session', async () => {
+    const now = LAST_LINE_MS + DAY_MS;
+    oldMark(CLI, 15, now);
+
+    await settle(newProducer(), now);
+
+    expect(existsSync(servedMarkPath(CLI))).toBe(true);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it('keeps a mark 15 days old of a listed session the producer does not take (no inner transcript)', async () => {
+    rmSync(mainPath());
+    oldMark(CLI);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(CLI))).toBe(true);
+  });
+
+  it('keeps a mark 1 day old of a session discovery does not list', async () => {
+    oldMark(GONE, 1);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+  });
+
+  it('with CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS=14 keeps an unlisted mark 10 days old and deletes one 15 days old', async () => {
+    vi.stubEnv('CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS', '14');
+    oldMark(GONE, 10);
+    oldMark(GONE_2, 15);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(existsSync(servedMarkPath(GONE_2))).toBe(false);
+  });
+
+  it('keeps the cursor and the record of an unlisted session, byte for byte', async () => {
+    const cursor = join(stateDir(), `${GONE}.cowork.json`);
+    const record = join(stateDir(), `${GONE}.json`);
+    writeFileSync(cursor, '{"synthetic":"cursor"}');
+    writeFileSync(record, '{"synthetic":"record"}');
+    age(cursor, 15);
+    age(record, 15);
+
+    await newProducer().run(NOW);
+
+    expect(readFileSync(cursor, 'utf-8')).toBe('{"synthetic":"cursor"}');
+    expect(readFileSync(record, 'utf-8')).toBe('{"synthetic":"record"}');
+  });
+
+  it.each([
+    ['a corrupt preferences file', () => writeFileSync(join(codemieHome, 'claude-analytics.json'), '{not json')],
+    ['enabled: false', () => writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled: false }))],
+    ['OTLP_ALLOW_HOOKS_ONLY_FORWARD=false', () => vi.stubEnv('OTLP_ALLOW_HOOKS_ONLY_FORWARD', 'false')],
+  ])('deletes an unlisted mark 15 days old and appends nothing with %s', async (_case, closeGate) => {
+    closeGate();
+    oldMark(GONE);
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(existsSync(join(codemieHome, 'proxy', 'otlp-spool'))).toBe(false);
+  });
+
+  it('edge: with no state directory lists no mark, deletes nothing and warns nothing', async () => {
+    rmSync(stateDir(), { recursive: true });
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(stateDir())).toBe(false);
+    expect(warnings()).toEqual([]);
+  });
+
+  it('edge: a mark another process removes before the removal costs no warning, and the run goes on', async () => {
+    oldMark(GONE);
+    unlinkFault.before = (path) => {
+      if (path === servedMarkPath(GONE)) rmSync(path, { force: true });
+    };
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(warnings()).toEqual([]);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('edge: a removal that fails warns once and the listed session is collected', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    oldMark(GONE);
+    const producer = newProducer();
+    // Read-only for the run that refreshes the list; the next run processes the session, which writes its cursor there.
+    chmodSync(stateDir(), 0o555);
+    try {
+      await producer.run(NOW);
+    } finally {
+      chmodSync(stateDir(), 0o755);
+    }
+    await producer.run(NOW + 10_000);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(markWarnings()).toHaveLength(1);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('edge: a removal that fails at two refreshes in a row warns once', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    oldMark(GONE);
+    const producer = newProducer(async () => []);
+    chmodSync(stateDir(), 0o555);
+    try {
+      await producer.run(NOW);
+      await producer.run(NOW + INACTIVITY_TIMEOUT_MS);
+    } finally {
+      chmodSync(stateDir(), 0o755);
+    }
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(markWarnings()).toHaveLength(1);
+  });
+
+  it('edge: a second refresh over the same old mark deletes nothing and logs nothing', async () => {
+    oldMark(GONE);
+    const producer = newProducer();
+
+    await producer.run(NOW);
+    await producer.run(NOW + INACTIVITY_TIMEOUT_MS);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(warnings()).toEqual([]);
   });
 });
 

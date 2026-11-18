@@ -19,6 +19,14 @@ import { removeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
+import {
+  ANALYTICS_AGGREGATES,
+  aggregateListLines,
+  isMemberConfigured,
+  isMemberFound,
+  membersOf,
+  type AggregateId,
+} from './analytics-clients.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
@@ -34,6 +42,8 @@ export interface DisconnectOptions {
   targets: DisconnectTargets;
   scope?: 'user' | 'project';
   insiders?: boolean;
+  /** The analytics aggregates given; absent is none. */
+  aggregates?: readonly AggregateId[];
 }
 
 const DISCONNECT_TARGET_LIST = [
@@ -46,9 +56,11 @@ const DISCONNECT_TARGET_LIST = [
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
   `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   Copilot Chat OTLP (removes the CodeMie hook file + settings entry)`,
   `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Copilot CLI OTLP (removes the CodeMie hook file)`,
+  ...aggregateListLines((a) => [a.disconnectListLine]),
   '',
   'Example:',
   '  codemie proxy disconnect --claude-desktop --vscode-claude-code',
+  `  codemie proxy disconnect ${ANALYTICS_AGGREGATES[0].flag}`,
 ].join('\n');
 
 async function disconnectClaudeDesktop(): Promise<void> {
@@ -219,13 +231,40 @@ async function disconnectOmp(): Promise<void> {
   }
 }
 
+/**
+ * A copy of `targets` without the members an aggregate set that stay as they are: with scope `project` the
+ * machine-wide Claude Desktop and extension, and any member neither found nor configured.
+ */
+async function dropAggregateMembers(opts: DisconnectOptions): Promise<DisconnectTargets> {
+  if (!opts.aggregates?.length) return { ...opts.targets };
+  const run = { insiders: Boolean(opts.insiders) };
+  const members = [...membersOf(opts.aggregates)].filter((member) => opts.targets[member]);
+  const kept = await Promise.all(members.map(async (member) => {
+    if (opts.scope === 'project' && (member === 'claudeDesktop' || member === 'vscodeClaudeCode')) return false;
+    const [found, configured] = await Promise.all([isMemberFound(member, run), isMemberConfigured(member, run)]);
+    return found || configured;
+  }));
+  const targets: DisconnectTargets = { ...opts.targets };
+  members.forEach((member, i) => {
+    if (!kept[i]) targets[member] = false;
+  });
+  return targets;
+}
+
+/** Bare disconnect prints the target list; a run an aggregate left with nothing to remove prints one line. */
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
-  const { targets } = opts;
+  const given = opts.targets;
   if (
-    !targets.codexDesktop && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp &&
-    !targets.omp && !targets.claudeDesktop && !targets.vscodeClaudeCode
+    !given.codexDesktop && !given.claudeCodeOtlp && !given.copilotChatOtlp && !given.copilotCliOtlp &&
+    !given.omp && !given.claudeDesktop && !given.vscodeClaudeCode
   ) {
     console.log(DISCONNECT_TARGET_LIST);
+    return;
+  }
+
+  const targets = await dropAggregateMembers(opts);
+  if (!Object.values(targets).some(Boolean)) {
+    console.log('Nothing to disconnect. See: codemie proxy status');
     return;
   }
 

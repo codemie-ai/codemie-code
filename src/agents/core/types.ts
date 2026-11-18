@@ -731,6 +731,11 @@ export interface ResumeOwnershipInput {
 export interface ResumeOwnershipResult {
   supported: boolean;
   owned?: boolean;
+  /**
+   * Native agent session id the resume id resolved to. When set and different from the
+   * id the user passed (e.g. a CodeMie session id), the CLI passes this id to the agent instead.
+   */
+  nativeResumeId?: string;
   fallbackResumeCommand?: string;
   auditData?: Record<string, unknown>;
 }
@@ -741,7 +746,8 @@ export enum AgentAdapterType {
 }
 
 export interface OtlpAdapterDeps {
-  ensureOtlpProxy: (agentName: string) => Promise<void>;
+  /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
+  ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],

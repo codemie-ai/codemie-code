@@ -45,7 +45,7 @@
  * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see
  * `createInterceptor`'s guard, which only checks for SSO cookies, not client type) and expects an
  * OpenAI-shaped error instead. Left as-is for this PR (third review round, 2026-10-20); a
- * follow-up should branch on `context.config.clientType` the way the request normalizers do.
+ * follow-up should branch on the request's client (`context.agentName`).
  *
  * This plugin's own code never touches sso.auth-gate.ts or analytics-auth-status.ts — it only
  * calls their existing exported functions, reusing the shared lock file/marker those already
@@ -79,6 +79,16 @@ const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
 const LOOP_GUARD_WINDOW_MS = 120_000;
 const RENEWED_MESSAGE =
   'CodeMie SSO session was just renewed; this request used the previous credentials. Please re-send your prompt.';
+
+/**
+ * The text of the 401 for an expired SSO session. Shared with the proxy daemon's awaiting-login
+ * listener, so a client reads the same message whichever of the two answered.
+ */
+export function sessionExpiredMessage(outcome: DetachedLoginOutcome | undefined): string {
+  const login = describeLogin(outcome ?? 'failed');
+  // After a sign-in that just finished the text already says so; "session expired" would contradict it.
+  return outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`;
+}
 
 /**
  * Anthropic-shaped 401. The body must later become per-client (Codex expects an OpenAI-shaped
@@ -241,9 +251,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       );
     }
 
-    const login = describeLogin(outcome ?? 'failed');
-    // After a sign-in that just finished the text already says so; "session expired" would contradict it.
-    return syntheticUnauthorized(response, tools, outcome === 'signed-in-recently' ? login : `${EXPIRY_LEAD_IN} ${login}`);
+    return syntheticUnauthorized(response, tools, sessionExpiredMessage(outcome));
   }
 
   /**

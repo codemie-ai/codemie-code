@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -19,6 +19,7 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
@@ -32,6 +33,8 @@ const CLI_HOOK_FILE_NAME = 'codemie-copilot-cli-hooks.json';
 
 export interface WriteCopilotCliOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotCliOtlpResult {
@@ -68,6 +71,28 @@ function resolveHookEntry(eventName: string): { exec: string; args: string[]; ti
   };
 }
 
+/**
+ * The `bin/codemie.js` the Copilot CLI hook file's codemie entries run (the first entry whose `args` are
+ * `[<script>, 'hook', …]`), or null: no file, an unreadable one, no such entry. Never throws, writes nothing.
+ */
+export async function readCopilotCliHookInstall(): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(getCopilotCliHookFilePath(), 'utf-8')) as { hooks?: unknown };
+    const hooks = parsed.hooks;
+    if (!hooks || typeof hooks !== 'object') return null;
+    for (const entries of Object.values(hooks)) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const args: unknown = (entry as { args?: unknown } | null)?.args;
+        if (Array.isArray(args) && typeof args[0] === 'string' && args[1] === 'hook') return args[0];
+      }
+    }
+    return null;
+  } catch (error) {
+    logger.debug('[proxy] Copilot CLI hook file not readable', ...sanitizeLogArgs({ error: String(error) }));
+    return null;
+  }
+}
+
 /** Copilot CLI hook config: `version` must be the literal 1 and events live under `hooks`. */
 export function buildHookFileContent(): Record<string, unknown> {
   const hooks: Record<string, unknown> = {};
@@ -77,7 +102,10 @@ export function buildHookFileContent(): Record<string, unknown> {
   return { version: 1, hooks };
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotCliOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CLI_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }

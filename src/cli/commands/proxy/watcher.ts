@@ -5,7 +5,9 @@
  * IN-PROCESS on the same pinned port (Approach A). Unauthorized failures
  * (expired SSO session) cannot be fixed without an interactive login, so the
  * watcher records an unhealthy state once, keeps watching and offers the daemon
- * a recovery hook on each check rather than restarting in a loop. A large gap between timer ticks is treated as a sleep/wake
+ * a recovery hook on each check rather than restarting in a loop. Once its restarts
+ * are exhausted it records the give-up and keeps checking without restarting, so a
+ * later passing check records healthy again. A large gap between timer ticks is treated as a sleep/wake
  * event and triggers an immediate re-check.
  */
 import { logger } from '../../../utils/logger.js';
@@ -20,6 +22,12 @@ export interface WatcherCallbacks {
   onGiveUp: (reason: string) => Promise<void>;
   /** Called on every check that fails as unauthorized, so the owner can re-try once the user has signed in. */
   onUnauthorized?: () => Promise<void>;
+  /**
+   * True while the owner holds the port with a sign-in listener instead of the real proxy. The watcher then
+   * skips the deep check, which reaches that listener as an authenticated request and would start a
+   * browser sign-in on every tick, and only calls `onUnauthorized` to see whether a sign-in has landed.
+   */
+  isAwaitingLogin?: () => boolean;
 }
 
 export interface WatcherOptions {
@@ -34,6 +42,7 @@ export class ProxyWatcher {
   private stopped = false;
   private checking = false;
   private unauthorizedReported = false;
+  private restartsExhausted = false;
   private restartAttempts = 0;
   private lastTick = Date.now();
   private readonly intervalMs: number;
@@ -76,6 +85,11 @@ export class ProxyWatcher {
         );
       }
 
+      if (this.callbacks.isAwaitingLogin?.()) {
+        await this.recoverAfterSignIn();
+        return;
+      }
+
       const result = await checkProxyHealth({
         port: this.opts.port,
         gatewayKey: this.opts.gatewayKey,
@@ -84,6 +98,7 @@ export class ProxyWatcher {
 
       if (result.healthy) {
         this.restartAttempts = 0;
+        this.restartsExhausted = false;
         this.unauthorizedReported = false;
         await this.callbacks.onHealthy(result);
         return;
@@ -103,20 +118,17 @@ export class ProxyWatcher {
           this.stop();
           return;
         }
-        try {
-          await this.callbacks.onUnauthorized?.();
-        } catch (error) {
-          logger.error('[proxy-watcher] Recovery after sign-in failed', error);
-        }
+        await this.recoverAfterSignIn();
         return;
       }
 
+      if (this.restartsExhausted) return;
       if (this.restartAttempts >= this.maxRestartAttempts) {
+        this.restartsExhausted = true;
         await this.callbacks.onGiveUp(
           `Proxy did not recover after ${this.maxRestartAttempts} restart attempts. ` +
           `Last reason: ${result.reason ?? 'unknown'}`
         );
-        this.stop();
         return;
       }
 
@@ -136,6 +148,15 @@ export class ProxyWatcher {
       logger.error('[proxy-watcher] Tick failed', error);
     } finally {
       this.checking = false;
+    }
+  }
+
+  /** Lets the owner bring the real proxy back if the user has signed in; a failing hook never stops the watcher. */
+  private async recoverAfterSignIn(): Promise<void> {
+    try {
+      await this.callbacks.onUnauthorized?.();
+    } catch (error) {
+      logger.error('[proxy-watcher] Recovery after sign-in failed', error);
     }
   }
 }

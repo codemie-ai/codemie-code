@@ -4,13 +4,16 @@
  * the Cowork fixture and a temp ~/.codemie (CODEMIE_HOME) holding the profile; `fetch` is the stubbed boundary.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ClaudeDesktopTelemetryAdapter } from '@/telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js';
 import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { DesktopTelemetryRuntime } from '../../DesktopTelemetryRuntime.js';
+import { DesktopRepositoryResolver } from '../../DesktopRepositoryResolver.js';
+import { ClientAttributionPlugin } from '@/providers/plugins/sso/proxy/plugins/client-attribution.plugin.js';
+import type { ProxyContext } from '@/providers/plugins/sso/proxy/proxy-types.js';
 import type { DesktopTelemetryRuntimeConfig, LocalTelemetryAdapter } from '../../types.js';
 import { installCoworkFixture } from './cowork-fixture.js';
 
@@ -25,6 +28,10 @@ const config: DesktopTelemetryRuntimeConfig = {
   profile: 'cowork',
   pollIntervalMs: 10_000,
   inactivityTimeoutMs: 300_000,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
 };
 
 let home: string;
@@ -60,6 +67,9 @@ beforeEach(() => {
     throw new Error('no network in this test');
   }));
   installCoworkFixture(getClaudeDesktopBaseDir());
+  // The session was served by this daemon
+  mkdirSync(join(codemieHome, 'analytics', 'state'), { recursive: true });
+  writeFileSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-served`), '');
   const profile = (project: string) => ({
     provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com', codeMieProject: project,
   });
@@ -111,5 +121,27 @@ describe('DesktopTelemetryRuntime and the Cowork producer', () => {
     await pollTwice(runtime);
 
     expect(existsSync(join(codemieHome, 'proxy', 'otlp-spool'))).toBe(false);
+  });
+
+  it('a session the poll saw before its first request is Cowork: a shared-key request of it becomes claude-desktop and leaves its mark', async () => {
+    const mark = join(codemieHome, 'analytics', 'state', `${CLI}.cowork-served`);
+    rmSync(mark);
+    const resolver = new DesktopRepositoryResolver();
+    // Started before the session's last activity, so the poll tracks the session and publishes it to the resolver
+    vi.setSystemTime(LAST_LINE_MS - 60_000);
+    const runtime = new DesktopTelemetryRuntime(new ClaudeDesktopTelemetryAdapter(), { ...config, repositoryResolver: resolver });
+    vi.setSystemTime(LAST_LINE_MS + 20_000);
+    await runtime.triggerPoll();
+    const request: ProxyContext = {
+      requestId: 'r1', sessionId: 'unknown', agentName: 'codemie-daemon', method: 'POST', url: '/v1/messages',
+      headers: { 'x-claude-code-session-id': CLI }, requestBody: null, requestStartTime: 0,
+      metadata: { gatewayKeyValidated: true },
+    };
+
+    await new ClientAttributionPlugin().createInterceptor({ config: { targetApiUrl: 'http://127.0.0.1:9', desktopRepositoryResolver: resolver }, logger })
+      .handleRequest!(request, {} as never, {} as never, {} as never);
+
+    expect(request.agentName).toBe('claude-desktop');
+    expect(existsSync(mark)).toBe(true);
   });
 });

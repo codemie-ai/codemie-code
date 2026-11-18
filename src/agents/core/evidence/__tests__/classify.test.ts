@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classify, decide, type Evidence, type Policy } from '../classify.js';
+import { classify, decide, workConsentNeed, type Evidence, type Policy } from '../classify.js';
 import { routedViaCodemie } from '../routing.js';
 
 const policy: Policy = { organizations: ['Acme Corp', 'beta'], version: 'v1abc' };
@@ -77,5 +77,35 @@ describe('decide', () => {
     expect(decide(unavailable, consumer)).toBe('withhold');
     expect(decide(classify(ev(), policy), consumer)).toBe('forward');
     expect(decide(classify(ev({ organization: 'x' }), policy), consumer)).toBe('suppress');
+  });
+});
+
+describe('workConsentNeed (no work consent)', () => {
+  const sub = 'subscription';
+  it('personal always requires consent', () => {
+    expect(workConsentNeed(classify(ev({ organization: 'x' }), policy), undefined)).toBe('required');
+  });
+  it('codemie and corporate never need it', () => {
+    expect(workConsentNeed(classify(ev({ routed_via_codemie: true }), policy), sub)).toBe('none');
+    expect(workConsentNeed(classify(ev(), policy), sub)).toBe('none');
+  });
+  it('determinate unknown needs it only with subscription funding', () => {
+    expect(workConsentNeed(classify(ev({ organization: undefined }), policy), sub)).toBe('required');
+    expect(workConsentNeed(classify(ev({ organization: undefined }), policy), 'api_based')).toBe('none');
+  });
+  it('unproven routing under a usable policy: subscription required, otherwise none', () => {
+    const r = classify(ev({ organization: 'x', routing_proof: 'unproven' }), policy);
+    expect(r).toMatchObject({ class: 'unknown', status: 'indeterminate', basis: 'routing_unproven' });
+    expect(workConsentNeed(r, sub)).toBe('required');
+    expect(workConsentNeed(r, 'api_based')).toBe('none');
+  });
+  it('no usable policy: policy_unavailable or subscription is unresolved, otherwise none', () => {
+    const unavailable = classify(ev(), null);
+    expect(unavailable).toMatchObject({ status: 'indeterminate', basis: 'policy_unavailable' });
+    expect(workConsentNeed(unavailable, 'api_based')).toBe('unresolved');
+    const unproven = classify(ev({ routing_proof: 'unproven' }), null);
+    expect(unproven.basis).toBe('routing_unproven');
+    expect(workConsentNeed(unproven, sub)).toBe('unresolved');
+    expect(workConsentNeed(unproven, 'api_based')).toBe('none');
   });
 });

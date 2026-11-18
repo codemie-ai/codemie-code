@@ -83,6 +83,31 @@ describe('ProxyWatcher', () => {
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('did not recover after 3 restart attempts');
   });
 
+  it('keeps checking after it gave up on restarts, restarts nothing more, and reports the next passing check healthy', async () => {
+    mockedHealth.mockResolvedValue(UPSTREAM_DOWN);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, maxRestartAttempts: 3 },
+      cb
+    );
+
+    watcher.start();
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(cb.onGiveUp).toHaveBeenCalled();
+    cb.restart.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalled();
+  });
+
   it('records an unauthorized failure once, never restarts, and keeps watching for a later sign-in', async () => {
     mockedHealth.mockResolvedValue(UNAUTHORIZED);
     const onUnauthorized = vi.fn().mockResolvedValue(undefined);
@@ -102,6 +127,30 @@ describe('ProxyWatcher', () => {
     await vi.advanceTimersByTimeAsync(1000);
     watcher.stop();
 
+    expect(cb.onHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the deep check while the sign-in listener holds the port, and still offers the recovery hook', async () => {
+    let awaiting = true;
+    const onUnauthorized = vi.fn().mockResolvedValue(undefined);
+    const cb = { ...makeCallbacks(), onUnauthorized, isAwaitingLogin: () => awaiting };
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // A deep check would reach the listener as an authenticated request and start a browser sign-in.
+    expect(mockedHealth).not.toHaveBeenCalled();
+    expect(onUnauthorized).toHaveBeenCalledTimes(3);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    // The real proxy is back: normal deep checks resume.
+    awaiting = false;
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
     expect(cb.onHealthy).toHaveBeenCalledTimes(1);
   });
 

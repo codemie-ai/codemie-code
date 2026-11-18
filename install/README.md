@@ -2,7 +2,7 @@
 
 This directory contains source files for the CodeMie installers:
 
-- **CodeMie Connect** — a signed `.dmg` desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon, `.dmg`) and Windows (x64, `.exe`) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first.
 - **Script installers** — plain shell/PowerShell bootstrap scripts that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 ## Distribution Models
@@ -16,6 +16,7 @@ Two distribution models are supported:
 
 2. **CodeMie Connect** — a self-contained desktop app:
    - macOS: the `.dmg` from the [latest codemie-connect release](https://github.com/codemie-ai/codemie-connect/releases/latest)
+   - Windows: the `.exe` from the [latest codemie-connect release](https://github.com/codemie-ai/codemie-connect/releases/latest)
    - `install/manifest.json` tells installed apps which version is the latest and where to download it.
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require CodeMie Connect.
@@ -149,15 +150,25 @@ The macOS `.dmg` is CodeMie Connect, a signed and notarized macOS desktop app fo
 
 CodeMie Connect is built and released from a separate repository, [codemie-connect](https://github.com/codemie-ai/codemie-connect/releases).
 
-### Running CodeMie Connect
+### Running CodeMie Connect (macOS)
 
 Download the `.dmg` from the [latest release](https://github.com/codemie-ai/codemie-connect/releases/latest), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-### Log File
+### Log File (macOS)
 
 App output is written to `~/Library/Logs/CodeMie/codemie_wizard.log`. The log persists across runs.
 
-From 2.1.1 the app checks codemie-connect's latest release for updates. `install/manifest.json` stays here for 2.1.0, which reads it from this repo; it points to 2.1.1. App versions are independent of the `@codemieai/code` npm package version.
+## Windows Installation
+
+The Windows `.exe` is CodeMie Connect, a signed desktop app for **Windows x64** machines. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background.
+
+CodeMie Connect is built and released from a separate repository, [codemie-connect](https://github.com/codemie-ai/codemie-connect/releases).
+
+### Running CodeMie Connect (Windows)
+
+Download the `.exe` from the [latest release](https://github.com/codemie-ai/codemie-connect/releases/latest) and run it. It runs the same guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+
+From 2.1.1 the app checks codemie-connect's latest release for updates. `install/manifest.json` stays here for 2.1.0, which reads it from this repo; it points to 2.1.1 and now carries both the `darwin-aarch64` and `windows-x86_64` platform entries. App versions are independent of the `@codemieai/code` npm package version.
 
 ## Release Artifacts
 
