@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 8,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "New cowork-attribution module pins the session project once and gates the CodeMie funding declaration (coworkFundingSource: served mark plus matching pin plus non-none source) in the OTLP forwarder/evidence-send path; security-guide critical, no exact precedent, refusal paths need pinned tests." },
+    { "dimension": "file_change_estimate", "reason": "8 files per diffstat (3 source modules in cowork/forwarder, 3 test files, record.md); 715 insertions, 9 deletions." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk raised to L: security-sensitive funding/attribution declaration with no adequate existing pattern"
+  ],
+  "split_recommendation": null
+}
