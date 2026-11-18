@@ -1542,6 +1542,28 @@ describe('openSessionEndPass — backstop skip decision', () => {
   });
 });
 
+describe('openSessionEndPass — summary turns (EPMCDME-15582)', () => {
+  // TC EPMCDME-15582 coverage: one user prompt followed by a local /model command gives turns = 1,
+  // through the real SessionEnd entry point (openSessionEndPass), not openMainTranscriptPass.
+  it('reports turns = 1 for one prompt followed by a local /model command', async () => {
+    const sessionId = 'session-end-prompt-then-model-command';
+    const transcriptPath = writeTranscript(`${sessionId}.jsonl`, [
+      userLine('Reply with OK only.'),
+      usageLine({ uuid: 'a1', messageId: 'msg-1', outputTokens: 5 }),
+      caveatLine(),
+      userLine(commandText('model')),
+      userLine('<local-command-stdout>Set model to claude-opus-4-5</local-command-stdout>'),
+    ]);
+
+    const pass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
+    await pass.finalize(true);
+
+    const summaries = pass.events.filter((e) => e.type === 'agent.session.summary');
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].turns).toBe(1);
+  });
+});
+
 describe('commit-after-send: finalize(accepted)', () => {
   it('finalize(true) persists mainOffset and openRequests, so a second pass sees no new lines', async () => {
     const sessionId = 'session-finalize-accepted';
