@@ -19,6 +19,7 @@ const A_STATUS: RelatedCommand = { path: 'codemie proxy analytics status', purpo
 const A_ENABLE: RelatedCommand = { path: 'codemie proxy analytics enable', purpose: 'Resume analytics collection' };
 const A_DISABLE: RelatedCommand = { path: 'codemie proxy analytics disable', purpose: 'Stop analytics collection' };
 const DOCTOR: RelatedCommand = { path: 'codemie proxy doctor', purpose: 'Diagnose the proxy, clients and analytics delivery' };
+const CLIENTS: RelatedCommand = { path: 'codemie proxy clients', purpose: 'List clients and analytics connectors, and which are connected' };
 const SYNC_STATUS: RelatedCommand = { path: 'codemie analytics sync status', purpose: 'Show analytics sync status' };
 
 /**
@@ -26,7 +27,7 @@ const SYNC_STATUS: RelatedCommand = { path: 'codemie analytics sync status', pur
  * Hidden (deprecated/removed) nodes need no entry and must never be referenced.
  */
 export const RELATED: Record<string, RelatedEntry> = {
-  proxy: { related: [STATUS, DOCTOR, CONNECT, A_STATUS], next: {} },
+  proxy: { related: [STATUS, DOCTOR, CONNECT, CLIENTS, A_STATUS], next: {} },
   'proxy start': {
     related: [STATUS, { path: 'codemie proxy stop', purpose: 'Stop the proxy daemon' }, CONNECT],
     next: { default: 'codemie proxy status' },
@@ -48,11 +49,12 @@ export const RELATED: Record<string, RelatedEntry> = {
     ],
     next: { byOutcome: { stopped: 'codemie proxy start' } },
   },
-  'proxy doctor': { related: [STATUS, CONNECT, A_STATUS], next: {} },
-  'proxy connect': { related: [DISCONNECT, STATUS, A_STATUS], next: { default: 'codemie proxy status' } },
+  'proxy doctor': { related: [STATUS, CONNECT, CLIENTS, A_STATUS], next: {} },
+  'proxy clients': { related: [CONNECT, DISCONNECT, DOCTOR, A_STATUS], next: {} },
+  'proxy connect': { related: [DISCONNECT, CLIENTS, STATUS, A_STATUS], next: { default: 'codemie proxy status' } },
   'proxy connect desktop': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
   'proxy connect vscode': { related: [CONNECT, DISCONNECT, STATUS], next: { default: 'codemie proxy status' } },
-  'proxy disconnect': { related: [CONNECT, STATUS], next: { default: 'codemie proxy status' } },
+  'proxy disconnect': { related: [CONNECT, CLIENTS, STATUS], next: { default: 'codemie proxy status' } },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },
   'proxy analytics enable': { related: [A_STATUS, A_DISABLE], next: { default: 'codemie proxy analytics status' } },

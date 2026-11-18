@@ -5,22 +5,30 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 const readDaemonStatus = vi.fn();
-const readState = vi.fn();
 vi.mock('../daemon-manager.js', () => ({
   readDaemonStatus: (...args: unknown[]) => readDaemonStatus(...args),
-  readState: (...args: unknown[]) => readState(...args),
-  DEFAULT_GATEWAY_KEY: 'codemie-proxy',
 }));
 
 const collectClientNotices = vi.fn();
 const collectDesktopCollection = vi.fn();
-const clientRead = vi.fn();
 vi.mock('../analytics-delivery-lines.js', () => ({
   collectClientNotices: (...args: unknown[]) => collectClientNotices(...args),
   collectDesktopCollection: (...args: unknown[]) => collectDesktopCollection(...args),
-  CLIENT_CONFIGS: [
-    { client: 'vscode-claude-code', label: 'VS Code Claude Code extension', flag: '--vscode-claude-code', read: (...args: unknown[]) => clientRead(...args) },
-  ],
+}));
+
+/** The client-target table: one gateway client, connected unless a test says otherwise. */
+const clientConnected = vi.fn();
+const VSCODE_TARGET = {
+  id: 'vscode-claude-code',
+  flag: '--vscode-claude-code',
+  label: 'VS Code Claude Code extension',
+  carriesAnalytics: false,
+  isConnected: () => clientConnected(),
+  configLocation: () => '/settings.json',
+};
+vi.mock('../client-targets.js', () => ({
+  CLIENT_TARGETS: [VSCODE_TARGET],
+  readClientTargetStates: async () => [{ target: VSCODE_TARGET, connected: await clientConnected() }],
 }));
 
 const collectDeliveryHealth = vi.fn();
@@ -113,10 +121,9 @@ describe('composeProxyDoctor', () => {
     installFetch();
     healthBody = { status: 'ok', pid: STATE.pid, analytics: { credentials: 'ok' } };
     readDaemonStatus.mockResolvedValue({ running: true, state: STATE });
-    readState.mockResolvedValue(null);
     collectClientNotices.mockResolvedValue({ clientPortMismatch: [], clientSharedKey: [], hooksOfAnotherInstall: [], lines: [] });
     collectDesktopCollection.mockResolvedValue(null);
-    clientRead.mockResolvedValue({ port: STATE.port, key: 'named' });
+    clientConnected.mockResolvedValue(true);
     collectDeliveryHealth.mockResolvedValue({ status: 'healthy' });
     findOlderCliOnPath.mockResolvedValue(null);
     checkClaudeCodeOtlpEndpoint.mockResolvedValue(null);
@@ -193,7 +200,7 @@ describe('composeProxyDoctor', () => {
 
   it('nothing connected and daemon stopped: nothingConnected, no error, hint codemie proxy connect', async () => {
     readDaemonStatus.mockResolvedValue({ running: false, state: null });
-    clientRead.mockResolvedValue(null);
+    clientConnected.mockResolvedValue(false);
     claudeCollect.mockResolvedValue(claudeStatus());
 
     const report = await compose();

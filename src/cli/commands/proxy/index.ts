@@ -13,6 +13,7 @@ import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { createProxyDoctorCommand } from './doctor/command.js';
+import { createProxyClientsCommand } from './clients-command.js';
 import { composeProxyDoctor } from './doctor/compose.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -401,6 +402,7 @@ export function createProxyCommand(): Command {
   proxy.addCommand(inspect, { hidden: true });
   proxy.addCommand(createProxyAnalyticsCommand());
   proxy.addCommand(createProxyDoctorCommand());
+  proxy.addCommand(createProxyClientsCommand());
 
   return proxy;
 }

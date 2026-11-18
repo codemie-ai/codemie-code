@@ -1807,15 +1807,14 @@ describe('proxy status', () => {
   });
 
   /**
-   * The diagnostics `proxy status` printed before it became facts-only, built from the collectors that remain:
-   * `proxy doctor` reads the client, Desktop and PATH ones. Gives the lines and the JSON fields they made.
+   * The client and PATH notices and the Desktop collection `proxy doctor` reads, built from their collectors.
+   * Gives the notice lines and the JSON fields they make.
    */
-  async function diagnose(reply?: { credentials: 'ok' | 'stale' }): Promise<{ lines: string[]; payload: Record<string, unknown> }> {
+  async function diagnose(): Promise<{ lines: string[]; payload: Record<string, unknown> }> {
     const { checkStatus } = await import('../daemon-manager.js');
     const delivery = await import('../analytics-delivery-lines.js');
     const { findOlderCliOnPath, formatOlderCliWarning } = await import('../connect-orchestrator.js');
     const state = (await checkStatus()).state!;
-    const analytics = await delivery.collectVisibleDeliveryHealth(state, reply);
     const [desktop, clients, olderCli] = await Promise.all([
       delivery.collectDesktopCollection(state),
       delivery.collectClientNotices(state),
@@ -1823,14 +1822,7 @@ describe('proxy status', () => {
     ]);
     const lines: string[] = [];
     const payload: Record<string, unknown> = {};
-    if (desktop) {
-      lines.push(delivery.formatDesktopLine(desktop));
-      payload.desktop = desktop;
-    }
-    if (analytics) {
-      lines.push(...delivery.formatAnalyticsLines(analytics));
-      payload.analytics = analytics;
-    }
+    if (desktop) payload.desktop = desktop;
     lines.push(...clients.lines);
     if (clients.clientPortMismatch.length > 0) payload.clientPortMismatch = clients.clientPortMismatch;
     if (clients.clientSharedKey.length > 0) payload.clientSharedKey = clients.clientSharedKey;
@@ -1842,8 +1834,8 @@ describe('proxy status', () => {
     return { lines, payload };
   }
 
-  describe('Analytics lines (delivery collectors)', () => {
-    const analyticsState = {
+  describe('Desktop collection (the collector proxy doctor reads)', () => {
+    const desktopState = {
       pid: process.pid,
       port: 4001,
       url: 'http://127.0.0.1:4001',
@@ -1852,210 +1844,47 @@ describe('proxy status', () => {
       version: '0.17.0',
       startedAt: new Date().toISOString(),
     };
-    let reply: { credentials: 'ok' | 'stale' } | undefined;
 
-    async function analyticsLines(): Promise<string[]> {
-      return (await diagnose(reply)).lines;
-    }
-
-    async function analyticsPayload(): Promise<Record<string, unknown>> {
-      return (await diagnose(reply)).payload;
-    }
-
-    async function arrange(options: {
-      connectorActive: boolean;
-      delivery: { status: 'healthy' | 'unhealthy' | 'unknown'; reason?: string; pendingBytes?: number; incomplete?: boolean; sendFailure?: unknown };
-      reply?: { credentials: 'ok' | 'stale' };
-    }): Promise<void> {
+    async function arrangeDesktop(gatewayPort: number, state: Record<string, unknown>): Promise<void> {
       const { checkStatus } = await import('../daemon-manager.js');
-      const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      vi.mocked(checkStatus).mockResolvedValue({ running: true, state: analyticsState });
-      reply = options.reply;
-      vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(options.connectorActive);
-      vi.mocked(collectDeliveryHealth).mockResolvedValue(
-        options.delivery as Awaited<ReturnType<typeof collectDeliveryHealth>>
-      );
+      const { readDesktopGateway } = await import('../connectors/desktop.js');
+      vi.mocked(checkStatus).mockResolvedValue({
+        running: true,
+        state: { ...desktopState, ...state } as Awaited<ReturnType<typeof checkStatus>>['state'],
+      });
+      vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
     }
 
-    it('gives a green healthy line when a connector is active', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
+    it('gives collecting once the daemon noticed Desktop on its own port', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
 
-      const lines = await analyticsLines();
-
-      expect(lines).toEqual([`Analytics: ${chalk.green('healthy')}`]);
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, { credentials: 'ok' });
+      expect((await diagnose()).payload.desktop).toEqual({ connected: true, collecting: true });
     });
 
-    it.each([
-      ['credentials_expired', 'CodeMie sign-in has expired', 'codemie profile login'],
-      ['auth_rejected', 'CodeMie asked you to sign in again', 'codemie profile login'],
-      [
-        'identity_mismatch',
-        "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-        'codemie proxy restart',
-      ],
-    ])('gives a yellow unhealthy line and a run tip for %s', async (reason, label, run) => {
-      await arrange({
-        connectorActive: true,
-        delivery: { status: 'unhealthy', reason, pendingBytes: 10 },
-        reply: { credentials: 'stale' },
-      });
+    it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
+      await arrangeDesktop(4001, {});
 
-      const lines = await analyticsLines();
-
-      const index = lines.indexOf(`Analytics: ${chalk.yellow(`unhealthy (${label})`)}`);
-      expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]).toBe(`  ${label} — run: ${run}`);
-    });
-
-    it('gives a yellow unhealthy line and no Run tip for send_failed, which the user cannot act on', async () => {
-      await arrange({
-        connectorActive: true,
-        delivery: { status: 'unhealthy', reason: 'send_failed', pendingBytes: 10 },
-        reply: { credentials: 'ok' },
-      });
-
-      const lines = await analyticsLines();
-
-      expect(lines).toContain(`Analytics: ${chalk.yellow('unhealthy (last send to CodeMie failed, retrying)')}`);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
-    });
-
-    it('gives a dim unknown line with no Run tip when the daemon sent no analytics block', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'unknown', pendingBytes: 0 } });
-
-      const lines = await analyticsLines();
-
-      const index = lines.indexOf(`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`);
-      expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]?.trimStart().startsWith('Run:') ?? false).toBe(false);
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
-    });
-
-    it('gives a dim unknown line naming the unreadable local data, not a restart, when the spool is incomplete', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'unknown', incomplete: true }, reply: { credentials: 'ok' } });
-
-      const lines = await analyticsLines();
-
-      expect(lines).toContain(`Analytics: ${chalk.dim('unknown (local analytics data could not be read)')}`);
-      expect(lines.some((line) => line.includes('restart the proxy'))).toBe(false);
-    });
-
-    it('gives no line when nothing is connected, even if the spool holds unsent data', async () => {
-      await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
-
-      expect(await analyticsLines()).toEqual([]);
-      expect(await analyticsPayload()).not.toHaveProperty('analytics');
-    });
-
-    it('gives the delivery object when a connector is active', async () => {
-      await arrange({
-        connectorActive: true,
-        delivery: {
-          status: 'unhealthy',
-          reason: 'send_failed',
-          pendingBytes: 5,
-          sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
-        },
-        reply: { credentials: 'ok' },
-      });
-
-      expect((await analyticsPayload()).analytics).toEqual({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 5,
-        sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Desktop is not connected to this proxy yet',
       });
     });
 
-    describe('Desktop line', () => {
-      beforeEach(() => {
-        vi.stubEnv('TZ', 'America/New_York'); // the drop time prints in the local zone; November, after DST ended (EST, -05:00)
-      });
+    it('gives no Desktop collection for a daemon whose state has no version', async () => {
+      await arrangeDesktop(4001, { version: undefined, telemetryMode: 'claude-desktop', clientType: 'claude-desktop' });
 
-      afterEach(() => {
-        vi.unstubAllEnvs();
-      });
+      expect((await diagnose()).payload).not.toHaveProperty('desktop');
+    });
 
-      const dropAt = Date.parse('2026-11-11T10:00:00.000Z');
-      const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: dropAt, local: false };
+    it('names both ports when Desktop points at another port than the daemon listens on', async () => {
+      await arrangeDesktop(4001, { port: 4002, url: 'http://127.0.0.1:4002' });
 
-      async function arrangeDesktop(gatewayPort: number, state: Record<string, unknown>): Promise<void> {
-        await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
-        const { checkStatus } = await import('../daemon-manager.js');
-        const { readDesktopGateway } = await import('../connectors/desktop.js');
-        const { collectDeliveryHealth } = await import('../delivery-health.js');
-        vi.mocked(checkStatus).mockResolvedValue({
-          running: true,
-          state: { ...analyticsState, ...state } as Awaited<ReturnType<typeof checkStatus>>['state'],
-        });
-        vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
-        vi.mocked(collectDeliveryHealth).mockResolvedValue(
-          { status: 'healthy', pendingBytes: 0, latestDrop } as Awaited<ReturnType<typeof collectDeliveryHealth>>
-        );
-      }
-
-      const connectedSince = { desktopConnectedSince: '2026-11-16T10:00:00.000Z' };
-
-      it('gives collecting, then the Analytics and Last dropped lines', async () => {
-        await arrangeDesktop(4001, connectedSince);
-
-        expect(await analyticsLines()).toEqual([
-          '  Desktop: collecting',
-          `Analytics: ${chalk.green('healthy')}`,
-          '  Last dropped: cli_analytics_disabled (hooks, 2026-11-11 05:00:00 -05:00)',
-        ]);
-      });
-
-      it('gives desktop and analytics.latestDrop', async () => {
-        await arrangeDesktop(4001, connectedSince);
-
-        const payload = await analyticsPayload();
-
-        expect(payload.desktop).toEqual({ connected: true, collecting: true });
-        expect((payload.analytics as { latestDrop: unknown }).latestDrop).toEqual(latestDrop);
-      });
-
-      it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
-        await arrangeDesktop(4001, {});
-
-        const { lines, payload } = await diagnose(reply);
-
-        expect(lines).toContain(chalk.yellow('  Desktop: NOT collecting — Desktop is not connected to this proxy yet'));
-        expect(payload.desktop).toEqual({
-          connected: true,
-          collecting: false,
-          reason: 'Desktop is not connected to this proxy yet',
-        });
-      });
-
-      it('gives no Desktop line for a daemon whose state has no version', async () => {
-        await arrangeDesktop(4001, { version: undefined, telemetryMode: 'claude-desktop', clientType: 'claude-desktop' });
-
-        const { lines, payload } = await diagnose(reply);
-
-        expect(lines.some((line) => line.includes('Desktop:'))).toBe(false);
-        expect(payload).not.toHaveProperty('desktop');
-      });
-
-      it('names both ports when Desktop points at another port than the daemon listens on', async () => {
-        await arrangeDesktop(4001, { port: 4002, url: 'http://127.0.0.1:4002' });
-
-        const { lines, payload } = await diagnose(reply);
-
-        expect(lines).toContain(chalk.yellow(
-          '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 4002; ' +
-          'run: codemie proxy connect --claude-desktop'
-        ));
-        expect(payload.desktop).toEqual({
-          connected: true,
-          collecting: false,
-          reason: 'Claude Desktop points at port 4001, the proxy listens on 4002',
-          remedy: 'run: codemie proxy connect --claude-desktop',
-        });
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Claude Desktop points at port 4001, the proxy listens on 4002',
+        remedy: 'run: codemie proxy connect --claude-desktop',
       });
     });
   });
@@ -2288,10 +2117,8 @@ describe('proxy status', () => {
       expect(lines.some((line) => line.includes('Codex desktop'))).toBe(false);
     });
 
-    it('names Desktop on another port by its Desktop line alone, beside the analytics lines', async () => {
+    it('names Desktop on another port by its Desktop collection alone, with no client notice line', async () => {
       const { readDesktopGateway } = await import('../connectors/desktop.js');
-      const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
       const { getClaudeDesktopBaseDir } = await import('@/telemetry/clients/claude-desktop/claude-desktop.paths.js');
       const libDir = join(getClaudeDesktopBaseDir(), 'configLibrary');
       await writeFileAt(join(libDir, '_meta.json'), JSON.stringify({ appliedId: 'cfg' }));
@@ -2301,17 +2128,16 @@ describe('proxy status', () => {
         inferenceGatewayApiKey: 'codemie-proxy.claude-desktop',
       }));
       vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
-      vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(true);
-      vi.mocked(collectDeliveryHealth).mockResolvedValue({ status: 'healthy', pendingBytes: 0 });
 
-      const lines = await status();
+      const { lines, payload } = await diagnose();
 
-      expect(lines).toContain(`Analytics: ${chalk.green('healthy')}`);
-      expect(lines).toContain(yellow(
-        '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 60122; ' +
-        'run: codemie proxy connect --claude-desktop'
-      ));
-      expect(lines.filter((line) => line.includes('Claude Desktop'))).toHaveLength(1);
+      expect(payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Claude Desktop points at port 4001, the proxy listens on 60122',
+        remedy: 'run: codemie proxy connect --claude-desktop',
+      });
+      expect(lines.some((line) => line.includes('Claude Desktop'))).toBe(false);
     });
 
     it('names a Desktop config holding the shared key', async () => {
@@ -2362,24 +2188,18 @@ describe('proxy status', () => {
           'on the daemon\'s port, Desktop noticed',
           60122,
           { desktopConnectedSince: '2026-11-16T10:00:00.000Z' },
-          '  Desktop: collecting',
           { connected: true, collecting: true },
         ],
         [
           'on the daemon\'s port, not noticed yet',
           60122,
           {},
-          chalk.yellow('  Desktop: NOT collecting — Desktop is not connected to this proxy yet'),
           { connected: true, collecting: false, reason: 'Desktop is not connected to this proxy yet' },
         ],
         [
           'on another port',
           4123,
           {},
-          chalk.yellow(
-            '  Desktop: NOT collecting — Claude Desktop points at port 4123, the proxy listens on 60122; ' +
-            'run: codemie proxy connect --claude-desktop'
-          ),
           {
             connected: true,
             collecting: false,
@@ -2387,26 +2207,26 @@ describe('proxy status', () => {
             remedy: 'run: codemie proxy connect --claude-desktop',
           },
         ],
-      ])('%s: the Desktop line and no key line', async (_case, port, extra, line, desktop) => {
+      ])('%s: the Desktop collection and no key line', async (_case, port, extra, desktop) => {
         await sealedDesktop(port, extra);
 
         const lines = await status();
         const payload = await statusJson();
 
-        expect(lines).toContain(line);
         expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
         expect(payload.desktop).toEqual(desktop);
         expect(payload).not.toHaveProperty('clientSharedKey');
       });
 
-      it('edge: the daemon of an older CLI: no key line and no Desktop line', async () => {
+      it('edge: the daemon of an older CLI: no key line and no Desktop collection', async () => {
         await sealedDesktop(60122, { version: undefined });
 
         const lines = await status();
+        const payload = await statusJson();
 
         expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
-        expect(lines.some((printed) => printed.includes('Desktop:'))).toBe(false);
-        expect(await statusJson()).not.toHaveProperty('clientSharedKey');
+        expect(payload).not.toHaveProperty('desktop');
+        expect(payload).not.toHaveProperty('clientSharedKey');
       });
     });
 

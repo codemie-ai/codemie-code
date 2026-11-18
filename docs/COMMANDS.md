@@ -96,6 +96,7 @@ codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.cod
 codemie proxy connect --omp              # Give oh-my-pi the live CodeMie model catalog
 codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy doctor --verbose   # Diagnose the proxy, with Desktop sessions and sync state
+codemie proxy clients --json     # List every client and analytics connector: connected or not, config location, scope
 ```
 
 `codemie proxy connect --claude-desktop` does more than write the gateway config. While Claude Desktop's applied config points at the running daemon — whichever command started it — the daemon discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie under the client label `claude-desktop`.

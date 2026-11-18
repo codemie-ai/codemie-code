@@ -15,7 +15,7 @@ import { logger } from '@/utils/logger.js';
 import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
-import { DEFAULT_GATEWAY_KEY, readDaemonStatus, readState, type DaemonState } from '../daemon-manager.js';
+import { readDaemonStatus, type DaemonState } from '../daemon-manager.js';
 import {
   checkProxyHealth,
   DEEP_TIMEOUT_MS,
@@ -24,7 +24,8 @@ import {
   SHALLOW_TIMEOUT_MS,
   type ProxyHealthResult,
 } from '../health-check.js';
-import { CLIENT_CONFIGS, collectClientNotices, collectDesktopCollection, type ClientConfig } from '../analytics-delivery-lines.js';
+import { collectClientNotices, collectDesktopCollection } from '../analytics-delivery-lines.js';
+import { CLIENT_TARGETS, readClientTargetStates, type ClientTarget, type ClientTargetState } from '../client-targets.js';
 import { collectDeliveryHealth, DELIVERY_REASONS, unknownHint } from '../delivery-health.js';
 import { findOlderCliOnPath } from '../connect-orchestrator.js';
 import { checkClaudeCodeOtlpEndpoint } from '../connectors/claude-code-otlp-endpoint.js';
@@ -36,7 +37,7 @@ import type { inspectDesktopProxy } from '../inspect-desktop.js';
  * - `daemon`: the daemon state and its pid-checked `/health`
  * - `auth`: CodeMie sign-in, from `/health` and, when allowed, the authenticated probe
  * - `upstream`: whether the authenticated probe reached CodeMie
- * - `clients`: client configs (port, key) and hooks of another install
+ * - `clients`: the connected targets of the client-target table, client configs (port, key) and hooks of another install
  * - `delivery`: analytics delivery to CodeMie
  * - `desktop`: Claude Desktop collection
  * - `claude-code-otlp`: Claude Code's native OTLP endpoint against the live daemon
@@ -165,21 +166,9 @@ async function collectConnectors(): Promise<ConnectorEntry[]> {
   }));
 }
 
-/** The client configs that point at a local CodeMie gateway, whether or not a daemon runs. */
-async function listConfiguredClients(state: DaemonState | null): Promise<ClientConfig[]> {
-  const probe: DaemonState = state ?? (await readState()) ?? {
-    pid: 0,
-    port: 0,
-    url: '',
-    profile: '',
-    gatewayKey: DEFAULT_GATEWAY_KEY,
-    startedAt: '',
-  };
-  const configured: ClientConfig[] = [];
-  for (const config of CLIENT_CONFIGS) {
-    if (await config.read(probe)) configured.push(config);
-  }
-  return configured;
+/** The connected targets of the client-target table, in table order. */
+function connectedTargets(states: ClientTargetState[] | null): ClientTarget[] {
+  return (states ?? []).filter((state) => state.connected).map((state) => state.target);
 }
 
 function connectorSections(entries: ConnectorEntry[]): Sections {
@@ -252,12 +241,15 @@ async function cliPathSections(): Promise<Sections> {
 }
 
 function labelOfFlag(flag: string): string {
-  return CLIENT_CONFIGS.find((config) => config.flag === flag)?.label ?? flag;
+  return CLIENT_TARGETS.find((target) => target.flag === flag)?.label ?? flag;
 }
 
-async function clientSections(state: DaemonState, configured: ClientConfig[] | null, nothingConnected: boolean): Promise<Sections> {
+async function clientSections(state: DaemonState, targets: ClientTargetState[] | null, nothingConnected: boolean): Promise<Sections> {
   const notices = await collectClientNotices(state);
   const sections: Sections = [];
+  for (const failed of (targets ?? []).filter((entry) => entry.error !== undefined)) {
+    sections.push({ id: 'clients', status: 'warn', message: `${failed.target.label} check failed: ${failed.error}` });
+  }
   for (const mismatch of notices.clientPortMismatch) {
     sections.push({
       id: 'clients',
@@ -290,8 +282,9 @@ async function clientSections(state: DaemonState, configured: ClientConfig[] | n
     });
   }
   if (sections.length > 0) return sections;
-  if (configured && configured.length > 0) {
-    return [{ id: 'clients', status: 'ok', message: `Clients connected: ${configured.map((c) => c.label).join(', ')}` }];
+  const connected = connectedTargets(targets);
+  if (connected.length > 0) {
+    return [{ id: 'clients', status: 'ok', message: `Clients connected: ${connected.map((target) => target.label).join(', ')}` }];
   }
   return [{
     id: 'clients',
@@ -458,7 +451,7 @@ async function authSections(state: DaemonState, reply: AnalyticsHealthReply | un
   }];
 }
 
-function stoppedSections(nothingConnected: boolean, configured: ClientConfig[] | null): Sections {
+function stoppedSections(nothingConnected: boolean, targets: ClientTargetState[] | null): Sections {
   if (nothingConnected) {
     return [{
       id: 'daemon',
@@ -467,7 +460,8 @@ function stoppedSections(nothingConnected: boolean, configured: ClientConfig[] |
       hint: renderHint({ reason: 'nothing is connected to the proxy', command: CONNECT_COMMAND }),
     }];
   }
-  const clients = configured ?? [];
+  // Hook-based connectors start the proxy on their next event; every other connected target needs it running.
+  const clients = connectedTargets(targets).filter((target) => !target.readHookInstall);
   const startHint = renderHint({ reason: 'the proxy is stopped', command: START_COMMAND });
   return clients.length > 0
     ? [{
@@ -552,21 +546,22 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
   }
   if (!running) state = null;
 
-  const [connectors, configured] = await Promise.all([
+  const [connectors, targets] = await Promise.all([
     collectConnectors(),
-    listConfiguredClients(state).catch((error: unknown): null => {
+    readClientTargetStates().catch((error: unknown): null => {
       sections.push({ id: 'clients', status: 'error', message: `Client configs check failed: ${errorText(error)}` });
       return null;
     }),
   ]);
   const anyConnector = connectors.some((entry) => entry.status && isConnected(entry.status));
-  const nothingConnected = configured !== null && configured.length === 0 && !anyConnector &&
+  const nothingConnected = targets !== null && connectedTargets(targets).length === 0 && !anyConnector &&
+    !targets.some((entry) => entry.error !== undefined) &&
     !connectors.some((entry) => entry.error !== undefined);
   const claudeScope = connectors.find((entry) => entry.status && 'hooksInstalled' in entry.status)?.scope;
 
   if (!state) {
     if (!sections.some((s) => s.id === 'daemon')) {
-      sections.push(...stoppedSections(nothingConnected, configured));
+      sections.push(...stoppedSections(nothingConnected, targets));
     }
     sections.push(...connectorSections(connectors));
     sections.push(...(await guarded('cli-path', 'CLI path', cliPathSections)));
@@ -580,9 +575,9 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
       return [...result.sections, ...(await guarded('auth', 'Sign-in', () => authSections(live, result.reply, opts.authProbe)))];
     });
     sections.push(...contact);
-    const analyticsActive = anyConnector || (configured ?? []).some((config) => config.flag === '--claude-desktop');
+    const analyticsActive = anyConnector || connectedTargets(targets).some((target) => target.carriesAnalytics);
     const rest = await Promise.all([
-      guarded('clients', 'Clients', () => clientSections(live, configured, nothingConnected)),
+      guarded('clients', 'Clients', () => clientSections(live, targets, nothingConnected)),
       analyticsActive ? guarded('delivery', 'Analytics delivery', () => deliverySections(live, verifiedReply)) : Promise.resolve([]),
       guarded('desktop', 'Claude Desktop', () => desktopSections(live)),
       guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claudeScope)),

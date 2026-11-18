@@ -51,7 +51,7 @@ const DISCONNECT_TARGET_LIST = [
   '  codemie proxy disconnect --claude-desktop --vscode-claude-code',
 ].join('\n');
 
-async function disconnectClaudeDesktop(): Promise<void> {
+export async function disconnectClaudeDesktop(): Promise<void> {
   try {
     const result = await removeDesktopConfig();
 
@@ -74,7 +74,7 @@ async function disconnectClaudeDesktop(): Promise<void> {
   }
 }
 
-async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<void> {
+export async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<void> {
   try {
     const result = await removeVsCodeClaudeCodeConfig(insiders);
 
@@ -94,7 +94,7 @@ async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<void> {
   }
 }
 
-async function disconnectCodexDesktop(): Promise<void> {
+export async function disconnectCodexDesktop(): Promise<void> {
   try {
     const result = await removeCodexDesktopConfig();
 
@@ -118,7 +118,7 @@ async function disconnectCodexDesktop(): Promise<void> {
   }
 }
 
-async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<void> {
+export async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
     const result = await removeClaudeCodeOtlpConfig({ scope });
 
@@ -145,7 +145,7 @@ async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<voi
   }
 }
 
-async function disconnectCopilotChatOtlp(scope?: 'user' | 'project'): Promise<void> {
+export async function disconnectCopilotChatOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
     const result = await removeCopilotChatOtlpConfig({ scope });
 
@@ -174,7 +174,7 @@ async function disconnectCopilotChatOtlp(scope?: 'user' | 'project'): Promise<vo
   }
 }
 
-async function disconnectCopilotCliOtlp(scope?: 'user' | 'project'): Promise<void> {
+export async function disconnectCopilotCliOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
     const result = await removeCopilotCliOtlpConfig({ scope });
 
@@ -203,7 +203,7 @@ async function disconnectCopilotCliOtlp(scope?: 'user' | 'project'): Promise<voi
   }
 }
 
-async function disconnectOmp(): Promise<void> {
+export async function disconnectOmp(): Promise<void> {
   try {
     const result = await removeOmpExtension();
     if (!result.removed) {

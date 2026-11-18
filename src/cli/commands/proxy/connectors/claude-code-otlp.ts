@@ -856,36 +856,40 @@ export async function addClaudeCodeOtlpProject(projectPath: string): Promise<voi
   logger.info('[proxy] Added project to Claude Code analytics allowlist', ...sanitizeLogArgs({ settingsPath, paths }));
 }
 
-/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
-export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
-  let existing: ClaudeSettings;
-  try {
-    existing = await readSettingsFile(getClaudeSettingsPath());
-  } catch {
-    return false;
-  }
-  return Object.values(existing.hooks ?? {}).some(
-    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
-  );
-}
-
 /**
- * The absolute `codemie` the first codemie hook command in `~/.claude/settings.json` runs — a shim, a
- * `codemie.cmd`, or the script of a `node` + script pair — or null: no settings, unreadable ones, no codemie hook,
- * or a bare `codemie hook …` resolved through `PATH` when it runs. Never throws, writes nothing.
+ * The first hook command in `~/.claude/settings.json` that carries codemie's own marker, or null: no settings,
+ * unreadable ones, no codemie hook. The one reading behind Claude Code's connected predicate
+ * ({@link hasClaudeCodeOtlpHooks}) and the install its hooks run ({@link readClaudeCodeHookInstall}). Never throws.
  */
-export async function readClaudeCodeHookInstall(): Promise<string | null> {
+async function readCodemieHookCommand(): Promise<string | null> {
   let existing: ClaudeSettings;
   try {
     existing = await readSettingsFile(getClaudeSettingsPath());
   } catch {
     return null;
   }
-  const command = Object.values(existing.hooks ?? {})
+  return Object.values(existing.hooks ?? {})
     .flatMap((groups) => (Array.isArray(groups) ? groups : []))
     .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
     .filter(isHookEntry)
-    .find(isCodemieCommand)?.command;
+    .find(isCodemieCommand)?.command ?? null;
+}
+
+/**
+ * Claude Code's one connected predicate: true iff any hooks entry in `~/.claude/settings.json` carries codemie's
+ * own command. Never throws.
+ */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  return (await readCodemieHookCommand()) !== null;
+}
+
+/**
+ * The absolute `codemie` the first codemie hook command in `~/.claude/settings.json` runs — a shim, a
+ * `codemie.cmd`, or the script of a `node` + script pair — or null: not connected ({@link hasClaudeCodeOtlpHooks}),
+ * or a bare `codemie hook …` resolved through `PATH` when it runs. Never throws, writes nothing.
+ */
+export async function readClaudeCodeHookInstall(): Promise<string | null> {
+  const command = await readCodemieHookCommand();
   const paths = command ? parseHookCommandHead(command)?.paths : undefined;
   const last = paths?.[paths.length - 1];
   return last !== undefined && isAbsoluteCodemiePath(last) ? last : null;

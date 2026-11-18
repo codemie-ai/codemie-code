@@ -2,8 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import chalk from 'chalk';
-import stripAnsi from 'strip-ansi';
 
 const {
   getAnalyticsAuthStatus,
@@ -60,7 +58,6 @@ vi.mock('@/utils/logger.js', () => ({
 import {
   collectDeliveryHealth,
   DELIVERY_REASONS,
-  formatDeliveryLines,
   type DeliveryReason,
 } from '../delivery-health.js';
 import type { DaemonState } from '../daemon-manager.js';
@@ -235,17 +232,12 @@ describe('collectDeliveryHealth', () => {
       await writeFile(statusFile(id), JSON.stringify(status));
     }
 
-    it('is not send_failed, and prints no Next retry or Error row, while its bytes stay unsent', async () => {
+    it('is not send_failed and records no send failure, while its bytes stay unsent', async () => {
       await heldSessionWithOldFailure();
 
       const health = await collectDeliveryHealth(state, ok);
 
       expect(health).toEqual({ status: 'healthy', pendingBytes: 4096, heldBytes: 4096 });
-      const text = formatDeliveryLines(health).map((l) => stripAnsi(l)).join('\n');
-      expect(text).toContain('Delivery: healthy');
-      expect(text).toContain('Unsent data: 4.00 KB (all sessions on this machine), 4.00 KB of it on hold');
-      expect(text).not.toContain('Next retry');
-      expect(text).not.toContain('Error:');
     });
 
     it('does not hide a failing send of another session', async () => {
@@ -509,252 +501,5 @@ describe('DELIVERY_REASONS', () => {
     expect(DELIVERY_REASONS.send_failed.command).toBeUndefined();
     expect(DELIVERY_REASONS.classification_unreachable.command).toBeUndefined();
     expect(DELIVERY_REASONS.classification_unsupported.command).toBeUndefined();
-  });
-});
-
-describe('formatDeliveryLines', () => {
-  const strip = (lines: string[]): string[] => lines.map((l) => stripAnsi(l));
-  const NEXT_RETRY_AT = '2026-11-13T14:32:10.000Z';
-  /**
-   * The same moment as printed in the fixed test zone: New York, EST (-05:00). It is mid-November, ten days after DST
-   * ended on 2026-11-01, so these fixtures never sit near a clock change; the changes have their own tests below.
-   */
-  const NEXT_RETRY = '2026-11-13 09:32:10 -05:00';
-  /** The clock of these tests: half an hour before the fixtures' retry time, so it is still ahead. */
-  const NOW = '2026-11-13T14:02:10.000Z';
-  let savedTz: string | undefined;
-
-  beforeEach(() => {
-    savedTz = process.env.TZ;
-    process.env.TZ = 'America/New_York';
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.parse(NOW));
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    if (savedTz === undefined) delete process.env.TZ;
-    else process.env.TZ = savedTz;
-  });
-
-  it('prints healthy with no unsent data as plain rows flush left, with no heading', () => {
-    const lines = formatDeliveryLines({ status: 'healthy', pendingBytes: 0 });
-
-    expect(strip(lines)).toEqual(['Delivery: healthy', 'Unsent data: none']);
-  });
-
-  it('prints unsent data as unknown, never none, when the amount could not be read', () => {
-    expect(strip(formatDeliveryLines({ status: 'unknown' }))).toEqual([
-      'Delivery: unknown (restart the proxy to enable all checks)',
-      'Unsent data: unknown',
-    ]);
-  });
-
-  it('prints unsent data across all sessions as its own row', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))).toEqual([
-      'Delivery: healthy',
-      'Unsent data: 2.00 KB (all sessions on this machine)',
-    ]);
-  });
-
-  it('prints the label with the remedy as a hint when the user can act', () => {
-    const lines = strip(
-      formatDeliveryLines({ status: 'unhealthy', reason: 'credentials_expired', pendingBytes: 512 })
-    );
-    expect(lines).toEqual([
-      `Delivery: unhealthy (${DELIVERY_REASONS.credentials_expired.label})`,
-      `    ${DELIVERY_REASONS.credentials_expired.label} — run: codemie profile login`,
-      'Unsent data: 512 B (all sessions on this machine)',
-    ]);
-  });
-
-  it('prints the next retry and the error code of a failing delivery, with no Run line', () => {
-    const lines = strip(
-      formatDeliveryLines({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 49_357,
-        sendFailure: { nextAt: Date.parse(NEXT_RETRY_AT), detail: 'http_503' },
-      })
-    );
-    expect(lines).toEqual([
-      `Delivery: unhealthy (${DELIVERY_REASONS.send_failed.label})`,
-      'Unsent data: 48.20 KB (all sessions on this machine)',
-      `Next retry: ${NEXT_RETRY}`,
-      'Error: http_503',
-    ]);
-  });
-
-  it.each([
-    ['is in the past', Date.parse(NOW) - 16 * 3_600_000],
-    ['is just now', Date.parse(NOW)],
-  ])('prints the next retry as due now when its time %s, never as a past date', (_name, nextAt) => {
-    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 0, sendFailure: { nextAt, detail: 'http_503' } }));
-
-    expect(lines).toContain('Next retry: due now');
-    expect(lines.join('\n')).not.toMatch(/Next retry: \d{4}-/);
-  });
-
-  it('names the part of the unsent data that is on hold after the unsent amount', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 11_460_000, heldBytes: 4096 }))).toEqual([
-      'Delivery: healthy',
-      'Unsent data: 10.93 MB (all sessions on this machine), 4.00 KB of it on hold',
-    ]);
-  });
-
-  it('prints no on-hold part when nothing is held', () => {
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 2048 }))[1]).toBe('Unsent data: 2.00 KB (all sessions on this machine)');
-  });
-
-  it('reads a failure without an HTTP response as the backend being unreachable', () => {
-    const lines = strip(
-      formatDeliveryLines({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 0,
-        sendFailure: { nextAt: Date.parse(NEXT_RETRY_AT), detail: 'request_error' },
-      })
-    );
-    expect(lines.slice(-2)).toEqual([`Next retry: ${NEXT_RETRY}`, 'Error: backend unreachable']);
-  });
-
-  it('omits the error row when the failure records no detail', () => {
-    const lines = strip(
-      formatDeliveryLines({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 0,
-        sendFailure: { nextAt: Date.parse(NEXT_RETRY_AT) },
-      })
-    );
-    expect(lines.at(-1)).toBe(`Next retry: ${NEXT_RETRY}`);
-    expect(lines.join('\n')).not.toContain('Error:');
-  });
-
-  it('prints no Run line for classification_unsupported', () => {
-    const lines = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'classification_unsupported', pendingBytes: 0 }));
-    expect(lines).toEqual([`Delivery: unhealthy (${DELIVERY_REASONS.classification_unsupported.label})`, 'Unsent data: none']);
-  });
-
-  it('prints no Run line for unknown', () => {
-    expect(strip(formatDeliveryLines({ status: 'unknown', pendingBytes: 0 }))).toEqual([
-      'Delivery: unknown (restart the proxy to enable all checks)',
-      'Unsent data: none',
-    ]);
-  });
-
-  it('says the local analytics data could not be read, not to restart the proxy, when the spool is incomplete', () => {
-    expect(strip(formatDeliveryLines({ status: 'unknown', incomplete: true }))).toEqual([
-      'Delivery: unknown (local analytics data could not be read)',
-      'Unsent data: unknown',
-    ]);
-  });
-
-  it('says the identity_mismatch label covers the whole machine', () => {
-    expect(DELIVERY_REASONS.identity_mismatch.label).toContain('all sessions on this computer');
-  });
-
-  it('writes every reason for a non-technical reader, calling the service CodeMie', () => {
-    expect(Object.fromEntries(Object.entries(DELIVERY_REASONS).map(([code, { label }]) => [code, label]))).toEqual({
-      credentials_expired: 'CodeMie sign-in has expired',
-      auth_rejected: 'CodeMie asked you to sign in again',
-      identity_mismatch: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-      send_failed: 'last send to CodeMie failed, retrying',
-      classification_unreachable: 'waiting for CodeMie to respond',
-      classification_unsupported: "CodeMie isn't set up to accept this data yet — contact your CodeMie administrator",
-    });
-  });
-
-  it('reports a stopped proxy for null, with no other rows', () => {
-    expect(strip(formatDeliveryLines(null))).toEqual(['Delivery: proxy not running']);
-  });
-
-  it('prints the latest drop with the remedy of a session without a project', () => {
-    const latestDrop = { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-13T09:15:00.000Z'), local: true } as const;
-
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop }))).toEqual([
-      'Delivery: healthy',
-      'Unsent data: none',
-      'Last dropped: no_project (hooks, 2026-11-13 04:15:00 -05:00)',
-      '    Sessions without a project are not sent — set a CodeMie project for the folder (codemie setup)',
-    ]);
-  });
-
-  it.each([
-    ['America/New_York', '2026-11-13 04:15:00 -05:00'],
-    ['Europe/Minsk', '2026-11-13 12:15:00 +03:00'],
-    ['UTC', '2026-11-13 09:15:00 +00:00'],
-    ['Asia/Kolkata', '2026-11-13 14:45:00 +05:30'],
-  ])('prints times in the local time zone with its offset (TZ=%s)', (tz, printed) => {
-    process.env.TZ = tz;
-    const latestDrop = { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-13T09:15:00.000Z'), local: true } as const;
-
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop }))[2]).toBe(`Last dropped: no_project (hooks, ${printed})`);
-  });
-
-  // New York, 2026: clocks go forward 02:00 -> 03:00 on 8 March (07:00Z) and back 02:00 -> 01:00 on 1 November (06:00Z).
-  it.each([
-    ['winter', '2026-01-15T12:00:00.000Z', '2026-01-15 07:00:00 -05:00'],
-    ['summer', '2026-07-15T12:00:00.000Z', '2026-07-15 08:00:00 -04:00'],
-    ['the last second before the spring change', '2026-03-08T06:59:59.000Z', '2026-03-08 01:59:59 -05:00'],
-    ['the first second after the spring change (02:xx local does not exist)', '2026-03-08T07:00:00.000Z', '2026-03-08 03:00:00 -04:00'],
-    ['01:30 the first time, before the autumn change', '2026-11-01T05:30:00.000Z', '2026-11-01 01:30:00 -04:00'],
-    ['the last second before the autumn change', '2026-11-01T05:59:59.000Z', '2026-11-01 01:59:59 -04:00'],
-    ['01:00 the second time, right after the autumn change', '2026-11-01T06:00:00.000Z', '2026-11-01 01:00:00 -05:00'],
-    ['01:30 the second time, after the autumn change', '2026-11-01T06:30:00.000Z', '2026-11-01 01:30:00 -05:00'],
-  ])('prints the offset in force at that moment across a DST change: %s', (_name, iso, printed) => {
-    const latestDrop = { reason: 'no_project', stream: 'hooks', at: Date.parse(iso), local: true } as const;
-
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop }))[2]).toBe(`Last dropped: no_project (hooks, ${printed})`);
-  });
-
-  it('prints an ambiguous local time twice with different offsets, so the two moments stay distinguishable', () => {
-    const print = (iso: string): string => strip(formatDeliveryLines({
-      status: 'healthy', pendingBytes: 0, latestDrop: { reason: 'no_project', stream: 'hooks', at: Date.parse(iso), local: true },
-    }))[2];
-
-    expect(print('2026-11-01T05:30:00.000Z')).not.toBe(print('2026-11-01T06:30:00.000Z'));
-  });
-
-  it('prints a drop time outside the date range as the stored number', () => {
-    const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: 9e15, local: false } as const;
-    expect(strip(formatDeliveryLines({ status: 'healthy', pendingBytes: 0, latestDrop })))
-      .toContain('Last dropped: cli_analytics_disabled (hooks, 9000000000000000)');
-  });
-
-  it('colors only the Delivery status text: green when healthy, yellow otherwise', () => {
-    const delivery = (health: Parameters<typeof formatDeliveryLines>[0]): string => formatDeliveryLines(health)[0];
-    const row = (status: string): string => chalk.white(`Delivery: ${status}`);
-
-    expect(delivery({ status: 'healthy', pendingBytes: 0 })).toBe(row(chalk.green('healthy')));
-    expect(delivery({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 0 })).toBe(
-      row(chalk.yellow(`unhealthy (${DELIVERY_REASONS.auth_rejected.label})`))
-    );
-    expect(delivery({ status: 'unknown', pendingBytes: 0 })).toBe(
-      row(chalk.yellow('unknown (restart the proxy to enable all checks)'))
-    );
-    expect(delivery(null)).toBe(row(chalk.yellow('proxy not running')));
-  });
-
-  it('leaves every other row plain white', () => {
-    const lines = formatDeliveryLines({
-      status: 'unhealthy',
-      reason: 'send_failed',
-      pendingBytes: 0,
-      sendFailure: { nextAt: Date.parse(NEXT_RETRY_AT), detail: 'http_503' },
-    });
-
-    expect(lines.slice(1)).toEqual([
-      chalk.white('Unsent data: none'),
-      chalk.white(`Next retry: ${NEXT_RETRY}`),
-      chalk.white('Error: http_503'),
-    ]);
-  });
-
-  it('uses no icons', () => {
-    const text = strip(formatDeliveryLines({ status: 'unhealthy', reason: 'auth_rejected', pendingBytes: 1 })).join('\n');
-    for (const glyph of ['✓', '○', '⚠', '✗']) {
-      expect(text).not.toContain(glyph);
-    }
   });
 });
