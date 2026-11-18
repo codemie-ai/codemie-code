@@ -179,7 +179,12 @@ real Claude Desktop UI; synthetic input.
     recreated by the next served request and pruned only when the session is no longer listed and older than the backfill
     window (`CoworkEventProducer` prune), so a listed session does not lose it mid-session.
   - (d) *Project that cannot travel as a header (non-Latin-1):* the same project is also dropped from the legacy Project
-    header at baseline; funding is not declared on a missing header (unchanged baseline behavior, tested).
+    header at baseline; funding is not declared on a missing header (unchanged baseline behavior, tested). The backend's
+    shared-project name rule (`ProjectService.validate_shared_project_name`: `^[a-z0-9][a-z0-9_-]*$`, origin/main
+    `9f19b3b3a3`) also excludes such names as destinations.
+  - (e) *Fresh session with no resolvable project:* not sent at all. A legacy-mode (unrecorded) session with hook events and
+    no project is `unbound` and its backlog is discarded locally as `no_project` (`session-project.ts`, `spool-io.ts`),
+    as at baseline and for native sessions; no row exists, so none is `unknown`. AC1 is about a session that is sent.
 - A fresh served session with no project at all sends no Project header (unchanged from baseline), so it is not stored
   as funded or unfunded.
 - The first project is the one resolved from the working directory known at first processing; discovery caches that for one
