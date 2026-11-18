@@ -266,21 +266,20 @@
   {
     "id": "cmd-proxy-analytics-claude-code",
     "category": "Proxy & IDE",
-    "message": "Want Claude Code usage in analytics? `codemie proxy connect --claude-code-otlp` installs its hooks; add `--scope project` to limit it to the current repository.",
+    "message": "Want Claude usage in analytics? `codemie proxy connect --claude-otlp` sets up Claude Code, the VS Code extension and Claude Desktop; add `--scope project` to limit it to the current repository.",
     "command": "proxy",
     "commands": [
-      "codemie proxy connect --claude-code-otlp",
-      "codemie proxy connect --claude-code-otlp --scope project"
+      "codemie proxy connect --claude-otlp",
+      "codemie proxy connect --claude-otlp --scope project"
     ]
   },
   {
     "id": "cmd-proxy-analytics-copilot",
     "category": "Proxy & IDE",
-    "message": "GitHub Copilot CLI or VS Code Copilot Chat in your analytics? `codemie proxy connect --copilot-cli-otlp` and `--copilot-chat-otlp` connect them.",
+    "message": "GitHub Copilot CLI or VS Code Copilot Chat in your analytics? `codemie proxy connect --copilot-otlp` connects every Copilot client found.",
     "command": "proxy",
     "commands": [
-      "codemie proxy connect --copilot-cli-otlp",
-      "codemie proxy connect --copilot-chat-otlp"
+      "codemie proxy connect --copilot-otlp"
     ]
   },
   {

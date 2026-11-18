@@ -36,7 +36,15 @@ Each form below still works until its removal date and prints a one-line notice 
 | `codemie proxy connect --force` | `codemie proxy connect --restart-daemon --overwrite` | 2026-12-31 |
 | `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
 | `codemie analytics --include-external` | `codemie analytics --include-external always` | 2026-12-31 |
+| `codemie proxy connect --claude-code-otlp` | `codemie proxy connect --claude-otlp` (also connects Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
+| `codemie proxy connect --copilot-chat-otlp` | `codemie proxy connect --copilot-otlp` (connects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy connect --copilot-cli-otlp` | `codemie proxy connect --copilot-otlp` (connects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy disconnect --claude-code-otlp` | `codemie proxy disconnect --claude-otlp` (also removes the proxy route of Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
+| `codemie proxy disconnect --copilot-chat-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
+| `codemie proxy disconnect --copilot-cli-otlp` | `codemie proxy disconnect --copilot-otlp` (disconnects both Copilot Chat and Copilot CLI) | 2026-12-31 |
 <!-- deprecation-table:end -->
+
+The per-client analytics flags of `codemie proxy connect` and `codemie proxy disconnect` are replaced by the vendor flags, which are not one-to-one: `--claude-otlp` also connects (or disconnects) Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot clients. Every fix hint the CLI prints now names the vendor flag. `codemie proxy analytics` keeps `--claude-code-otlp`, `--copilot-cli-otlp` and `--copilot-chat-otlp` as connector filters.
 
 `--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. `--restart-daemon` now only replaces the proxy and `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
 

@@ -90,7 +90,7 @@ describe('analytics advice', () => {
     await run(['include', '/work/a', '--claude-code-otlp']);
     expect(out()).toContain('NOT tracked');
     expect(out()).toContain('hooks are not installed');
-    expect(out()).toContain('codemie proxy connect --claude-code-otlp');
+    expect(out()).toContain('codemie proxy connect --claude-otlp');
     expect(out()).not.toMatch(/is tracked/);
     expect(process.exitCode).toBeUndefined();
   });
@@ -209,7 +209,7 @@ describe('analytics advice', () => {
     expect(parsed.connectors[0]).not.toHaveProperty('current');
     logSpy.mockClear();
     await run(['status']);
-    expect(out()).toContain('      Not connected — run: codemie proxy connect --claude-code-otlp');
+    expect(out()).toContain('      Not connected — run: codemie proxy connect --claude-otlp');
     expect(out().match(/run:/g)).toHaveLength(2); // connect + the doctor pointer
     expect(out()).not.toContain('Hint:');
   });
@@ -227,7 +227,7 @@ describe('analytics advice', () => {
     await run(['include', '/work/a', '--copilot-cli-otlp']);
     expect(out()).toContain('NOT tracked');
     expect(out()).toContain('not connected');
-    expect(out()).toContain('codemie proxy connect --copilot-cli-otlp');
+    expect(out()).toContain('codemie proxy connect --copilot-otlp');
   });
 
   it("Copilot: include outside the connector's Project scope adds it to the connector's own list (D13)", async () => {
@@ -269,7 +269,7 @@ describe('analytics advice', () => {
     expect(out().match(/run:/g)).toHaveLength(1); // only the doctor pointer
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
-    expect(out()).toContain('      Not connected — run: codemie proxy connect --copilot-cli-otlp');
+    expect(out()).toContain('      Not connected — run: codemie proxy connect --copilot-otlp');
     expect(out().match(/run:/g)).toHaveLength(2);
     expect(out()).not.toContain('Hint:');
   });

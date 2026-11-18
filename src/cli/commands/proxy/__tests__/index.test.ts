@@ -2290,10 +2290,10 @@ describe('proxy status', () => {
       await copilotCliHooks(script);
 
       expect(await status()).toContain(yellow(
-        `  Copilot CLI hooks: run another install (${script}) — run: codemie proxy connect --copilot-cli-otlp`
+        `  Copilot CLI hooks: run another install (${script}) — run: codemie proxy connect --copilot-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
-        { connector: 'copilot-cli-otlp', path: script, flag: '--copilot-cli-otlp' },
+        { connector: 'copilot-cli-otlp', path: script, flag: '--copilot-otlp' },
       ]);
 
       await copilotCliHooks(ownScript);
@@ -2321,10 +2321,10 @@ describe('proxy status', () => {
       }));
 
       expect(await status()).toContain(yellow(
-        `  Copilot Chat hooks: run another install (${script}) — run: codemie proxy connect --copilot-chat-otlp`
+        `  Copilot Chat hooks: run another install (${script}) — run: codemie proxy connect --copilot-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
-        { connector: 'copilot-chat-otlp', path: script, flag: '--copilot-chat-otlp' },
+        { connector: 'copilot-chat-otlp', path: script, flag: '--copilot-otlp' },
       ]);
     });
 
@@ -2349,7 +2349,7 @@ describe('proxy status', () => {
         '  Codex desktop: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect --codex-desktop'
       ));
       expect(lines).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-otlp`
       ));
     });
 
@@ -2358,7 +2358,7 @@ describe('proxy status', () => {
       await claudeCodeHooks(`${hookPath(shim)} hook --agent claude-code-otlp`);
 
       expect(await status()).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-otlp`
       ));
     });
 
@@ -2370,7 +2370,7 @@ describe('proxy status', () => {
 
       expect(await status()).toContain(yellow(
         `  Claude Code hooks: run another install (${shim}) — ` +
-        'put this install first on PATH, then run: codemie proxy connect --claude-code-otlp'
+        'put this install first on PATH, then run: codemie proxy connect --claude-otlp'
       ));
     });
 

@@ -614,25 +614,25 @@ an alias or function in your interactive shell does not configure the scheduler.
 
 ### Claude Code OTLP analytics
 
-To turn analytics on for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The flag below sets up Claude Code alone; `--claude-otlp` takes the same options.
+To turn analytics on for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension and Claude Desktop — run `codemie proxy connect --claude-otlp` (for Copilot Chat and Copilot CLI, `codemie proxy connect --copilot-otlp`); see [Analytics for every client of a vendor](docs/COMMANDS.md#analytics-for-every-client-of-a-vendor). The per-client flags `--claude-code-otlp`, `--copilot-chat-otlp` and `--copilot-cli-otlp` of `connect` and `disconnect` are deprecated for these two (removal on 2026-12-31); they keep working until then and print a notice.
 
 Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
 
 ```bash
-# Every Claude client found on this machine (Claude Code, the VS Code extension, Claude Desktop)
+# Every Claude client found on this machine (Claude Code, the VS Code extension, Claude Desktop). Asks for confirmation first.
 codemie proxy connect --claude-otlp
 
-# Track every project (the default; same as --scope user). Asks for confirmation first.
-codemie proxy connect --claude-code-otlp
+# Track every project (resets any project list)
+codemie proxy connect --claude-otlp --scope user
 
 # Track only the current project; run from its root (explicit opt-in)
-codemie proxy connect --claude-code-otlp --scope project
+codemie proxy connect --claude-otlp --scope project
 
 # Unattended or CI run: skip the confirmation prompt
-codemie proxy connect --claude-code-otlp --yes
+codemie proxy connect --claude-otlp --yes
 
 # Optional: use the preview profile for this command only
-codemie proxy connect --claude-code-otlp --scope project --profile preview
+codemie proxy connect --claude-otlp --scope project --profile preview
 ```
 
 | Option | Description |
@@ -644,16 +644,17 @@ codemie proxy connect --claude-code-otlp --scope project --profile preview
 | `--overwrite` | Discard an invalid project allowlist so setup can continue, and replace conflicting Claude Code settings; valid allowlists are not changed. |
 | `--verbose` | Show detailed command output. |
 
-Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--yes` writes the Global scope and replaces any listed projects; with `--scope project --yes` the current project is added and existing entries are kept. Under `--claude-otlp` an omitted `--scope` keeps the listed projects instead.
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, a first connect tracks every project and an existing project list is kept; `--scope user` resets the list, and `--scope project --yes` adds the current project and keeps the other entries.
 
 Disconnect a project or remove the integration entirely:
 
 ```bash
 # Stop tracking the current project
-codemie proxy disconnect --claude-code-otlp --scope project
+codemie proxy disconnect --claude-otlp --scope project
 
-# Remove the Claude Code hooks, OTel environment variables, and project allowlist
-codemie proxy disconnect --claude-code-otlp
+# Remove the Claude Code hooks, OTel environment variables and project allowlist,
+# and the proxy route of Claude Desktop and the VS Code Claude Code extension
+codemie proxy disconnect --claude-otlp
 ```
 
 Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
@@ -674,7 +675,7 @@ codemie proxy doctor
 
 `disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
 
-`include`/`enable` undo `exclude`/`disable`; in Project scope `include` also adds the project to each connector's own tracked list. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-code-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
+`include`/`enable` undo `exclude`/`disable`; in Project scope `include` also adds the project to each connector's own tracked list. After they run, the command says whether the project is collected right now and, if not, which command to run (for example `connect --claude-otlp --scope project`). These controls cover the hook pipeline: the daily analytics collector and the session sync that `codemie claude` runs through its own plugin hooks are separate and not affected. A "which command do I use?" table is in the Commands Documentation below.
 
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
 

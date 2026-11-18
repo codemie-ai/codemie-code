@@ -21,6 +21,7 @@ import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/c
 import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { DEFAULT_GATEWAY_KEY, readState, type DaemonState } from './daemon-manager.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId, type ConnectorScopeRead } from './analytics-connectors.js';
+import { vendorFlag } from './flag-list.js';
 import { getDesktopBaseDir, moveDesktopToNamedKey } from './connectors/desktop.js';
 import {
   getVsCodeClaudeCodeSettingsPath,
@@ -133,7 +134,8 @@ function analyticsTarget(
 ): ClientTarget {
   return {
     id,
-    flag: `--${id}`,
+    // The per-connector flag is deprecated: the vendor flag connects it (`--claude-otlp`, `--copilot-otlp`).
+    flag: vendorFlag(`--${id}`),
     label,
     // Claude Code: `hasClaudeCodeOtlpHooks`, its one connected predicate; Copilot: the connector scope is enabled.
     isConnected: () => analyticsConnector(id).isActive(),

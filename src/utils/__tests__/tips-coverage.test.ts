@@ -7,8 +7,8 @@ const REQUIRED: Array<{ topic: string; prefix: string }> = [
   { topic: 'proxy analytics include', prefix: 'codemie proxy analytics include' },
   { topic: 'proxy analytics exclude', prefix: 'codemie proxy analytics exclude' },
   { topic: 'proxy analytics consent', prefix: 'codemie proxy analytics consent' },
-  { topic: 'Claude Code connector', prefix: 'codemie proxy connect --claude-code-otlp' },
-  { topic: 'Copilot connector', prefix: 'codemie proxy connect --copilot-cli-otlp' },
+  { topic: 'Claude connectors', prefix: 'codemie proxy connect --claude-otlp' },
+  { topic: 'Copilot connectors', prefix: 'codemie proxy connect --copilot-otlp' },
   { topic: 'proxy clients', prefix: 'codemie proxy clients' },
   { topic: 'analytics sync', prefix: 'codemie analytics sync' },
 ];

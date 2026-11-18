@@ -30,6 +30,7 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { ANALYTICS_CONNECTORS, listActiveAnalyticsConnectors, type AnalyticsConnector } from './analytics-connectors.js';
+import { vendorFlags } from './flag-list.js';
 
 export type AnalyticsConnectorId =
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
@@ -233,7 +234,7 @@ export async function selectTargetConnectors(verb: AnalyticsVerb, opts: Connecto
     throw new ConfigurationError(
       renderHint({
         reason: 'No analytics connector is connected',
-        command: `codemie proxy connect ${CONNECTOR_FLAGS.join(' | ')}`,
+        command: `codemie proxy connect ${vendorFlags(CONNECTOR_FLAGS).join(' | ')}`,
       })
     );
   }

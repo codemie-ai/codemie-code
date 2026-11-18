@@ -9,7 +9,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
-import { formatFlagRows } from '../flag-list.js';
+import { formatFlagRows, vendorFlag, vendorFlags } from '../flag-list.js';
 import { CONNECT_TARGET_LIST } from '../connect-orchestrator.js';
 import { DISCONNECT_TARGET_LIST } from '../disconnect-orchestrator.js';
 
@@ -36,6 +36,16 @@ describe('formatFlagRows', () => {
   });
 });
 
+describe('vendorFlag', () => {
+  it('maps each deprecated per-connector flag to its vendor flag and leaves other flags alone', () => {
+    expect(vendorFlag('--claude-code-otlp')).toBe('--claude-otlp');
+    expect(vendorFlag('--copilot-chat-otlp')).toBe('--copilot-otlp');
+    expect(vendorFlag('--copilot-cli-otlp')).toBe('--copilot-otlp');
+    expect(vendorFlag('--claude-desktop')).toBe('--claude-desktop');
+    expect(vendorFlags(['--claude-desktop', '--copilot-chat-otlp', '--copilot-cli-otlp'])).toEqual(['--claude-desktop', '--copilot-otlp']);
+  });
+});
+
 describe.each([
   ['connect', CONNECT_TARGET_LIST],
   ['disconnect', DISCONNECT_TARGET_LIST],
@@ -56,8 +66,9 @@ describe.each([
     }
   });
 
-  it('lists the copilot-chat-otlp and claude-otlp flags', () => {
-    expect(rows.some((row) => row.startsWith('  --copilot-chat-otlp '))).toBe(true);
+  it('lists the vendor flags and no deprecated per-connector flag, in rows or examples', () => {
     expect(rows.some((row) => row.startsWith('  --claude-otlp '))).toBe(true);
+    expect(rows.some((row) => row.startsWith('  --copilot-otlp '))).toBe(true);
+    expect(list).not.toMatch(/--claude-code-otlp|--copilot-chat-otlp|--copilot-cli-otlp/);
   });
 });

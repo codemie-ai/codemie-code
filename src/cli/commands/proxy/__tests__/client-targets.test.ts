@@ -249,7 +249,7 @@ describe('client-target table', () => {
     const out = await runClients(['--json']);
     const rows = (JSON.parse(out) as { clients: ClientRow[] }).clients;
     const claude = rows.find((row) => row.id === 'claude-code-otlp');
-    expect(claude).toMatchObject({ connected: true, analytics: true, scope: 'project', flag: '--claude-code-otlp' });
+    expect(claude).toMatchObject({ connected: true, analytics: true, scope: 'project', flag: '--claude-otlp' });
     expect(rows.find((row) => row.id === 'copilot-cli-otlp')).toMatchObject({ connected: false, analytics: true });
     expect(rows.find((row) => row.id === 'copilot-cli-otlp')?.scope).toBeUndefined();
     expect(rows.every((row) => typeof row.configLocation === 'string' && row.configLocation.length > 0)).toBe(true);

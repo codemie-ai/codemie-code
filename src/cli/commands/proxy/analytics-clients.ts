@@ -18,7 +18,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { renderHint } from '@/utils/hint.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId } from './analytics-connectors.js';
 import { CLAUDE_CODE_OTLP_LABEL } from './claude-code-otlp-flow.js';
-import type { FlagRow } from './flag-list.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag, type FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
@@ -52,8 +52,6 @@ export interface AnalyticsAggregate {
   disconnectListLine: string;
 }
 
-const CLAUDE_OTLP_FLAG = '--claude-otlp';
-
 export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
   {
     id: 'claude-otlp',
@@ -62,7 +60,7 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
     members: ['claudeDesktop', 'vscodeClaudeCode', 'claudeCodeOtlp'],
     connectDescription:
       'Analytics for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension, ' +
-      'Claude Desktop (same as --claude-desktop --vscode-claude-code --claude-code-otlp); routes Claude Desktop and ' +
+      'Claude Desktop (Claude Code analytics plus --claude-desktop --vscode-claude-code); routes Claude Desktop and ' +
       `the extension through the CodeMie proxy, and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} removes that route`,
     disconnectDescription:
       'Turn off analytics for every Claude client and remove the CodeMie proxy route of Claude Desktop and the ' +
@@ -72,12 +70,11 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
   },
   {
     id: 'copilot-otlp',
-    flag: '--copilot-otlp',
+    flag: COPILOT_OTLP_FLAG,
     option: 'copilotOtlp',
     members: ['copilotChatOtlp', 'copilotCliOtlp'],
     connectDescription:
-      'Analytics for every Copilot client found on this machine — Copilot Chat, Copilot CLI ' +
-      '(same as --copilot-chat-otlp --copilot-cli-otlp)',
+      'Analytics for every Copilot client found on this machine — Copilot Chat and Copilot CLI',
     disconnectDescription: 'Turn off analytics for Copilot Chat and Copilot CLI',
     connectListLine: 'Analytics for every Copilot client found: Copilot Chat, Copilot CLI',
     disconnectListLine: 'Every Copilot client (Copilot Chat and Copilot CLI analytics)',
@@ -119,9 +116,12 @@ export const MEMBER_FLAGS: Record<AnalyticsMember, string> = {
   copilotCliOtlp: `--${COPILOT_CLI_OTLP_AGENT_NAME}`,
 };
 
-/** The flag that names `member`: its aggregate's when an aggregate given holds it, else its own. */
+/**
+ * The flag that names `member` in a printed command: its aggregate's when an aggregate given holds it, else its own
+ * flag's vendor flag (a per-connector analytics flag is deprecated for its vendor flag).
+ */
 export function memberFlag(member: AnalyticsMember, members: ReadonlySet<AnalyticsMember>): string {
-  return members.has(member) ? aggregateFlagOf(member) : MEMBER_FLAGS[member];
+  return members.has(member) ? aggregateFlagOf(member) : vendorFlag(MEMBER_FLAGS[member]);
 }
 
 /** `flags` led by the flags of the aggregates given, which stand in for their members' flags. */

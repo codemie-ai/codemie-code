@@ -196,7 +196,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('proxy status OTLP endpoint mismatch (
       expectExit(result, 0);
       expect(result.stdout, describeRun(result)).toContain(ISSUES_LINE);
       expect(result.stdout).not.toContain('does not match');
-      expect(doctorOtlp()?.hint).toContain('codemie proxy connect --claude-code-otlp');
+      expect(doctorOtlp()?.hint).toContain('codemie proxy connect --claude-otlp');
     });
   });
 

@@ -297,7 +297,7 @@ describe('composeProxyDoctor', () => {
 
     const otlp = report.sections.find((s) => s.id === 'claude-code-otlp');
     expect(otlp?.status).toBe('error');
-    expect(otlp?.hint).toContain('codemie proxy connect --claude-code-otlp --scope project');
+    expect(otlp?.hint).toContain('codemie proxy connect --claude-otlp --scope project');
   });
 
   it('never includes the gateway key in the report', async () => {
@@ -366,7 +366,7 @@ describe('composeProxyDoctor', () => {
 
       const invalid = sections.find((s) => s.message.includes('tracked-project list'));
       expect(invalid?.status).toBe('warn');
-      expect(invalid?.hint).toContain('— run: codemie proxy connect --claude-code-otlp --overwrite');
+      expect(invalid?.hint).toContain('— run: codemie proxy connect --claude-otlp --overwrite');
     });
 
     it('corrupt preferences warn naming the preferences file', async () => {
@@ -384,7 +384,7 @@ describe('composeProxyDoctor', () => {
       const unreadable = connectorSections(await compose()).find((s) => s.message.startsWith('Copilot CLI'));
 
       expect(unreadable?.status).toBe('warn');
-      expect(unreadable?.hint).toContain('codemie proxy connect --copilot-cli-otlp');
+      expect(unreadable?.hint).toContain('codemie proxy connect --copilot-otlp');
     });
 
     it('paused collection is info with the enable command', async () => {
@@ -425,7 +425,7 @@ describe('composeProxyDoctor', () => {
       const report = await compose();
 
       const hooks = report.sections.find((s) => s.message.includes('hooks run another install'));
-      expect(hooks?.hint).toContain('— run: codemie proxy connect --claude-code-otlp --scope project');
+      expect(hooks?.hint).toContain('— run: codemie proxy connect --claude-otlp --scope project');
     });
 
     it('a failed client check carries a command hint', async () => {

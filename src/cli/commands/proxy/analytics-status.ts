@@ -23,6 +23,7 @@ import {
 } from '@/agents/core/copilot-analytics-preferences.js';
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { renderHint } from '@/utils/hint.js';
+import { vendorFlag } from './flag-list.js';
 
 interface ConnectorSection {
   connectorId: string;
@@ -66,7 +67,7 @@ async function renderConnectorSection(section: ConnectorSection): Promise<string
   const rows: ReportRow[] = [
     {
       message: `${section.headline.label}: ${section.headline.value}`,
-      ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: `codemie proxy connect --${section.connectorId}` }) } : {}),
+      ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: `codemie proxy connect ${vendorFlag(`--${section.connectorId}`)}` }) } : {}),
     },
     { message: `Scope: ${SCOPE_TEXT[section.scope]}` },
   ];

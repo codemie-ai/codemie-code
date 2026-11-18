@@ -149,7 +149,7 @@ describe('proxy connect — unified command, deprecated flags and removed aliase
       const { connectTargets } = await import('../connect-orchestrator.js');
       const { createProxyCommand } = await import('../index.js');
 
-      await createProxyCommand().parseAsync(['connect', '--claude-code-otlp', '--silent'], { from: 'user' });
+      await createProxyCommand().parseAsync(['connect', '--claude-otlp', '--silent'], { from: 'user' });
 
       expect(connectTargets).toHaveBeenCalledWith(expect.objectContaining({ yes: true }));
       const lines = stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
@@ -204,6 +204,67 @@ describe('proxy connect — unified command, deprecated flags and removed aliase
 
 // The real CLI mounts `proxy` under a root `program`. The removed aliases must fail naming their replacement
 // under that nesting too, with any options (here `--profile x`), never with a Commander "unknown option" error.
+describe('deprecated per-connector analytics flags on proxy connect / disconnect', () => {
+  let stderr: ReturnType<typeof vi.spyOn>;
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    stderr.mockRestore();
+  });
+
+  const notices = (): string[] => stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
+
+  it.each([
+    ['connect', '--claude-code-otlp', 'claudeCodeOtlp', 'codemie proxy connect --claude-otlp', 'Claude Desktop'],
+    ['connect', '--copilot-chat-otlp', 'copilotChatOtlp', 'codemie proxy connect --copilot-otlp', 'Copilot CLI'],
+    ['connect', '--copilot-cli-otlp', 'copilotCliOtlp', 'codemie proxy connect --copilot-otlp', 'Copilot Chat'],
+    ['disconnect', '--claude-code-otlp', 'claudeCodeOtlp', 'codemie proxy disconnect --claude-otlp', 'Claude Desktop'],
+    ['disconnect', '--copilot-chat-otlp', 'copilotChatOtlp', 'codemie proxy disconnect --copilot-otlp', 'Copilot CLI'],
+    ['disconnect', '--copilot-cli-otlp', 'copilotCliOtlp', 'codemie proxy disconnect --copilot-otlp', 'Copilot Chat'],
+  ])('proxy %s %s still works, prints one notice naming %s', async (sub, flag, target, replacement, alsoNamed) => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync([sub, flag], { from: 'user' });
+
+    const called = sub === 'connect' ? connectTargets : disconnectTargets;
+    expect(called).toHaveBeenCalledWith(expect.objectContaining({ targets: expect.objectContaining({ [target]: true }) }));
+    const lines = notices();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`Deprecated: codemie proxy ${sub} ${flag}`);
+    expect(lines[0]).toContain(replacement);
+    expect(lines[0]).toContain(alsoNamed);
+    expect(lines[0]).toContain('2026-12-31');
+  });
+
+  it('the vendor flags print no notice', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    await createProxyCommand().parseAsync(['connect', '--claude-otlp', '--copilot-otlp'], { from: 'user' });
+    expect(notices()).toEqual([]);
+  });
+
+  it('hides the per-connector flags from connect and disconnect help', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    for (const name of ['connect', 'disconnect']) {
+      const cmd = proxy.commands.find((c) => c.name() === name);
+      for (const flag of ['--claude-code-otlp', '--copilot-chat-otlp', '--copilot-cli-otlp']) {
+        expect(cmd?.options.find((o) => o.long === flag)?.hidden, `${name} ${flag}`).toBe(true);
+      }
+      expect(cmd?.helpInformation()).not.toMatch(/--claude-code-otlp|--copilot-chat-otlp|--copilot-cli-otlp/);
+    }
+  });
+});
+
 describe('removed `connect desktop` / `connect vscode` aliases', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;

@@ -12,16 +12,12 @@ import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId, type ConnectorScopeRead } from './analytics-connectors.js';
 import { ANALYTICS_AGGREGATES } from './analytics-clients.js';
+import { vendorFlag, vendorFlags } from './flag-list.js';
 import { buildScopeDropLines, promptScopeDropConfirmation } from './prompts/analytics-confirmation.js';
 import type { ConnectTargets, TargetResult } from './connect-orchestrator.js';
 
 /** The targets `--scope` and `--yes` apply to, as named in their ignored-flag notes. */
-const ANALYTICS_TARGET_FLAGS = [
-  ...ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag),
-  `--${CLAUDE_CODE_OTLP_AGENT_NAME}`,
-  `--${COPILOT_CHAT_OTLP_AGENT_NAME}`,
-  `--${COPILOT_CLI_OTLP_AGENT_NAME}`,
-].join(' / ');
+const ANALYTICS_TARGET_FLAGS = ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag).join(' / ');
 
 /** `--scope` and `--yes` apply only to analytics connector targets: say so when neither is selected. */
 export function warnIgnoredAnalyticsFlags(targets: ConnectTargets, scope: AllowlistScope | undefined, yes: boolean): void {
@@ -98,7 +94,7 @@ export async function confirmScopeDrops(
   if (drops.length === 0) return baselines;
 
   if (!yes && isNonInteractiveEnvironment()) {
-    const flags = drops.map(({ target }) => `--${target.id}`).join(' ');
+    const flags = vendorFlags(drops.map(({ target }) => `--${target.id}`)).join(' ');
     console.error(chalk.red(`✗ ${renderHint({
       reason: 'Confirmation needed to drop tracked projects',
       command: `codemie proxy connect ${flags} --scope user --yes`,
@@ -134,7 +130,7 @@ export async function runIfScopeUnchanged(
     const message = 'its tracked project list changed after confirmation';
     console.log(chalk.yellow(`  ${renderHint({
       reason: `${target.label} skipped: ${message}`,
-      command: `codemie proxy connect --${target.id}`,
+      command: `codemie proxy connect ${vendorFlag(`--${target.id}`)}`,
     })}`));
     return { label: target.label, ok: false, error: message };
   }

@@ -72,7 +72,7 @@ import {
   withAggregateFlags,
   type AggregateId,
 } from './analytics-clients.js';
-import { formatFlagRows } from './flag-list.js';
+import { formatFlagRows, vendorFlags } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -354,9 +354,6 @@ export const CONNECT_TARGET_LIST = [
     ['--codex-desktop', 'Codex desktop app (writes ~/.codex/config.toml)'],
     ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
     ...aggregateListRows((a) => a.connectListLine),
-    [`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Claude Code (analytics hooks + OTel settings)'],
-    [`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'VS Code Copilot Chat (hooks-only analytics, no OTel)'],
-    [`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Native GitHub Copilot CLI (hooks-only analytics, no OTel)'],
   ]),
   '',
   'Examples:',
@@ -366,9 +363,6 @@ export const CONNECT_TARGET_LIST = [
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   ...aggregateConnectExamples(),
-  `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CHAT_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CLI_OTLP_AGENT_NAME}`,
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -396,7 +390,7 @@ function describeTargets(t: ConnectTargets, aggregates: readonly AggregateId[]):
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
   if (t.omp) { flags.push('--omp'); labels.push('oh-my-pi'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
-  return { label, commandExample: `codemie proxy connect ${withAggregateFlags(flags, aggregates).join(' ')}` };
+  return { label, commandExample: `codemie proxy connect ${vendorFlags(withAggregateFlags(flags, aggregates)).join(' ')}` };
 }
 
 async function rollbackDaemon(): Promise<void> {

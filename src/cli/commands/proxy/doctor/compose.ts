@@ -47,6 +47,7 @@ import {
 } from './sections.js';
 import { deliverySections } from './delivery-sections.js';
 import { PROXY_DOCTOR_GROUPS } from './groups.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG } from '../flag-list.js';
 
 /**
  * Stable section ids. An id repeats when a section has several findings (one entry per finding).
@@ -363,7 +364,7 @@ function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: Fi
         status: 'info',
         message: 'None connected',
         ...(nothingConnected ? {} : {
-          hint: renderHint({ reason: 'no analytics collected', action: `run: ${CONNECT_COMMAND} --claude-otlp (or --copilot-otlp)` }),
+          hint: renderHint({ reason: 'no analytics collected', action: `run: ${CONNECT_COMMAND} ${CLAUDE_OTLP_FLAG} (or ${COPILOT_OTLP_FLAG})` }),
         }),
       };
     case 'delivery':

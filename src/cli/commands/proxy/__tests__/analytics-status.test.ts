@@ -235,7 +235,7 @@ describe('analytics-status', () => {
       expect(lines.slice(0, 4)).toEqual([
         'Claude:',
         '  Hooks: not installed',
-        '      Not connected — run: codemie proxy connect --claude-code-otlp',
+        '      Not connected — run: codemie proxy connect --claude-otlp',
         '  Scope: not set up',
       ]);
       expect(lines.join('\n').match(/run:/g)).toHaveLength(1);
@@ -296,7 +296,7 @@ describe('analytics-status', () => {
       expect(lines).toEqual([
         'Copilot CLI:',
         '  Connected: no',
-        '      Not connected — run: codemie proxy connect --copilot-cli-otlp',
+        '      Not connected — run: codemie proxy connect --copilot-otlp',
         '  Scope: not set up',
         '  Collection: disabled',
         '  Excluded: none',

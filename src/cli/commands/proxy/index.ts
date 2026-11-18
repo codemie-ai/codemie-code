@@ -74,6 +74,67 @@ const CONNECT_SILENT_DEPRECATION: DeprecationEntry = {
   removeOn: DEPRECATION_REMOVE_ON,
 };
 
+const CLAUDE_OTLP_CONNECT = 'codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension)';
+const COPILOT_OTLP_CONNECT = 'codemie proxy connect --copilot-otlp (it connects both Copilot Chat and Copilot CLI)';
+const CLAUDE_OTLP_DISCONNECT = 'codemie proxy disconnect --claude-otlp (it also removes the proxy route of Claude Desktop and the VS Code Claude Code extension)';
+const COPILOT_OTLP_DISCONNECT = 'codemie proxy disconnect --copilot-otlp (it disconnects both Copilot Chat and Copilot CLI)';
+
+/** A per-connector analytics flag of `proxy connect` / `proxy disconnect`, deprecated for its vendor flag. */
+interface ConnectorFlagDeprecation {
+  flag: string;
+  /** The parsed option name (`claudeCodeOtlp`, …). */
+  option: 'claudeCodeOtlp' | 'copilotChatOtlp' | 'copilotCliOtlp';
+  entry: DeprecationEntry;
+  description: string;
+}
+
+function connectorFlagDeprecation(
+  sub: 'connect' | 'disconnect',
+  agentName: string,
+  option: ConnectorFlagDeprecation['option'],
+  replacement: string,
+  description: string
+): ConnectorFlagDeprecation {
+  const flag = `--${agentName}`;
+  return {
+    flag,
+    option,
+    entry: { kind: 'deprecated', old: `codemie proxy ${sub} ${flag}`, replacement, removeOn: DEPRECATION_REMOVE_ON },
+    description,
+  };
+}
+
+const CONNECT_CONNECTOR_FLAGS: readonly ConnectorFlagDeprecation[] = [
+  connectorFlagDeprecation('connect', CLAUDE_CODE_OTLP_AGENT_NAME, 'claudeCodeOtlp', CLAUDE_OTLP_CONNECT,
+    'Configure Claude Code analytics hooks and OTLP settings'),
+  connectorFlagDeprecation('connect', COPILOT_CHAT_OTLP_AGENT_NAME, 'copilotChatOtlp', COPILOT_OTLP_CONNECT,
+    'Configure VS Code Copilot Chat analytics (hooks-only, no OTel; Stable/default profile)'),
+  connectorFlagDeprecation('connect', COPILOT_CLI_OTLP_AGENT_NAME, 'copilotCliOtlp', COPILOT_OTLP_CONNECT,
+    'Configure native GitHub Copilot CLI analytics (hooks-only, no OTel)'),
+];
+
+const DISCONNECT_CONNECTOR_FLAGS: readonly ConnectorFlagDeprecation[] = [
+  connectorFlagDeprecation('disconnect', CLAUDE_CODE_OTLP_AGENT_NAME, 'claudeCodeOtlp', CLAUDE_OTLP_DISCONNECT,
+    'Remove Claude Code analytics hooks, OTLP settings and project allowlist'),
+  connectorFlagDeprecation('disconnect', COPILOT_CHAT_OTLP_AGENT_NAME, 'copilotChatOtlp', COPILOT_OTLP_DISCONNECT,
+    'Remove Copilot Chat analytics hook file, settings entry and project scope'),
+  connectorFlagDeprecation('disconnect', COPILOT_CLI_OTLP_AGENT_NAME, 'copilotCliOtlp', COPILOT_OTLP_DISCONNECT,
+    'Remove Copilot CLI analytics hook file and project scope'),
+];
+
+/** Adds the deprecated per-connector flags, hidden from help; they keep working until their removal. */
+function addConnectorFlags(command: Command, flags: readonly ConnectorFlagDeprecation[]): Command {
+  for (const { entry, flag, description } of flags) command.addOption(deprecatedOption(entry, flag, description));
+  return command;
+}
+
+/** One notice per deprecated per-connector flag typed; a vendor flag that implies the option prints none. */
+function deprecateConnectorFlags(command: Command, flags: readonly ConnectorFlagDeprecation[]): void {
+  for (const { option, entry } of flags) {
+    if (command.getOptionValueSource(option) === 'cli') deprecate(entry);
+  }
+}
+
 const CONNECT_DESKTOP_REMOVAL: DeprecationEntry = {
   kind: 'removed',
   old: 'codemie proxy connect desktop',
@@ -278,25 +339,24 @@ export function createProxyCommand(): Command {
     .option('--overwrite', 'Replace client config CodeMie did not write (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list)')
     .addOption(deprecatedOption(CONNECT_FORCE_DEPRECATION, '--force', 'Same as --restart-daemon --overwrite'))
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
-    .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
-    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
-    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Configure VS Code Copilot Chat analytics (hooks-only, no OTel; Stable/default profile)')
-    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Configure native GitHub Copilot CLI analytics (hooks-only, no OTel)')
+    .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)');
+  addConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS)
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')} / --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others. With ${AGGREGATE_FLAGS.join(' or ')} and no --scope, an existing project list is kept.`,
+        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others. With ${AGGREGATE_FLAGS.join(' or ')} and no --scope, an existing project list is kept.`,
       )
       .choices(['user', 'project']),
     )
     .option(
       '--yes',
-      `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')} / --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME})`,
+      `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')})`,
     )
     .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
     .action(async (opts: UnifiedConnectOptions) => {
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
       if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
+      deprecateConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS);
       await connectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
@@ -323,10 +383,8 @@ export function createProxyCommand(): Command {
       printNext('proxy connect', connectOutcome(opts));
     });
 
-  addAggregateOptions(
-    proxy.command('disconnect').description('Remove CodeMie proxy configuration from a client'),
-    'disconnectDescription',
-  )
+  const disconnect = proxy.command('disconnect').description('Remove CodeMie proxy configuration from a client');
+  addAggregateOptions(disconnect, 'disconnectDescription')
     .option('--claude-desktop', 'Remove the CodeMie gateway config and managed MCP servers from Claude Desktop')
     .option('--vscode', 'Remove the CodeMie provider from VS Code BYOK (chatLanguageModels.json); your own models stay')
     .option('--vscode-claude-code', 'Remove the CodeMie ANTHROPIC_BASE_URL/token from the VS Code Claude Code extension settings.json')
@@ -334,14 +392,12 @@ export function createProxyCommand(): Command {
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
     .option('--omp', 'Remove the CodeMie model catalog extension from oh-my-pi')
     .option('--all', 'Disconnect every connected client and analytics connector (see `codemie proxy clients`)')
-    .option('--stop', 'Also stop the proxy daemon after disconnecting (it keeps running otherwise)')
-    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
-    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Remove Copilot Chat analytics hook file, settings entry and project scope')
-    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Remove Copilot CLI analytics hook file and project scope')
+    .option('--stop', 'Also stop the proxy daemon after disconnecting (it keeps running otherwise)');
+  addConnectorFlags(disconnect, DISCONNECT_CONNECTOR_FLAGS)
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')} / --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
+        `Tracking scope for ${AGGREGATE_FLAGS.join(' / ')}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
       )
       .choices(['user', 'project']),
     )
@@ -359,6 +415,7 @@ export function createProxyCommand(): Command {
       insiders?: boolean;
       scope?: 'user' | 'project';
     }) => {
+      deprecateConnectorFlags(disconnect, DISCONNECT_CONNECTOR_FLAGS);
       if (opts.all) {
         if (opts.scope) {
           console.log(chalk.yellow('Note: --scope has no effect with --all (every connector is disconnected at user scope).'));

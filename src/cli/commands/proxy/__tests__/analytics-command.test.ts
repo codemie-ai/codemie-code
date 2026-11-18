@@ -360,7 +360,7 @@ describe('createProxyAnalyticsCommand', () => {
       const output = plainOutput();
       expect(output).toContain('Copilot CLI:');
       expect(output).not.toContain('Claude:');
-      expect(output).not.toContain('codemie proxy connect --claude-code-otlp');
+      expect(output).not.toContain('codemie proxy connect --claude-otlp');
     });
 
     it('shows only the tool a flag selects even when others are connected', async () => {
@@ -472,7 +472,7 @@ describe('createProxyAnalyticsCommand', () => {
       expect(process.exitCode).toBe(1);
       const err = stripVTControlCharacters(errSpy.mock.calls.flat().join('\n'));
       expect(err).toContain('codemie proxy connect');
-      for (const flag of ['--claude-code-otlp', '--copilot-cli-otlp', '--copilot-chat-otlp']) {
+      for (const flag of ['--claude-otlp', '--copilot-otlp']) {
         expect(err).toContain(flag);
       }
       expect(await fileExists(getCopilotAnalyticsPreferencesPath())).toBe(false);

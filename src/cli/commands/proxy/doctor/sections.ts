@@ -15,6 +15,7 @@ import { findOlderCliOnPath } from '../connect-orchestrator.js';
 import { checkClaudeCodeOtlpEndpoint } from '../connectors/claude-code-otlp-endpoint.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorStatus, type ConnectorScopeRead } from '../analytics-connectors.js';
 import type { ProxyDoctorSection, ProxyDoctorSectionId } from './compose.js';
+import { CLAUDE_OTLP_FLAG, vendorFlag } from '../flag-list.js';
 
 export const CONNECT_COMMAND = 'codemie proxy connect';
 export const LOGIN_COMMAND = 'codemie profile login';
@@ -97,7 +98,7 @@ export function scopeFlags(scope: ConnectorScopeRead | undefined): string {
 
 /** The `connect` command that repairs a target; an analytics connector's repeats its current scope. */
 function repairCommand(flag: string, id: string, connectors: ConnectorEntry[]): string {
-  return `${CONNECT_COMMAND} ${flag}${scopeFlags(connectors.find((entry) => entry.id === id)?.scope)}`;
+  return `${CONNECT_COMMAND} ${vendorFlag(flag)}${scopeFlags(connectors.find((entry) => entry.id === id)?.scope)}`;
 }
 
 export function connectorSections(entries: ConnectorEntry[]): Sections {
@@ -105,7 +106,9 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
   let anyConnected = false;
   for (const entry of entries) {
     const label = CONNECTOR_LABELS[entry.id] ?? entry.id;
+    /** The connector filter of `proxy analytics`; a `connect` hint names its vendor flag. */
     const flag = `--${entry.id}`;
+    const connectFlag = vendorFlag(flag);
     if (entry.error !== undefined) {
       sections.push({
         id: 'connectors',
@@ -126,7 +129,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
         message: `${label} analytics: the connector settings cannot be read, so nothing is collected`,
         hint: renderHint({
           reason: 'unreadable connector settings',
-          action: `fix or delete ${getCopilotConnectorsConfigPath()}, then run: ${CONNECT_COMMAND} ${flag}`,
+          action: `fix or delete ${getCopilotConnectorsConfigPath()}, then run: ${CONNECT_COMMAND} ${connectFlag}`,
         }),
       });
       continue;
@@ -138,7 +141,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
         id: 'connectors',
         status: 'warn',
         message: `${label} analytics: the tracked-project list in ${getClaudeSettingsPath()} is invalid`,
-        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${flag} --overwrite` }),
+        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${connectFlag} --overwrite` }),
       });
     } else {
       const scopeText = scope.scope === 'project'
@@ -279,7 +282,7 @@ export async function claudeOtlpSections(state: DaemonState, claudeScope: Connec
       '. After repairing, start a new Claude Code session.',
     hint: renderHint({
       reason: 'Claude Code exports to another proxy',
-      command: `${CONNECT_COMMAND} --claude-code-otlp${scopeFlags(claudeScope)}`,
+      command: `${CONNECT_COMMAND} ${CLAUDE_OTLP_FLAG}${scopeFlags(claudeScope)}`,
     }),
   }];
 }
