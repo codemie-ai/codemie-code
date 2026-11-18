@@ -40,14 +40,23 @@ export interface CopilotSurface {
  * A home inside a WSL distro always yields a WSL label — a WSL session is never Desktop,
  * since the desktop app does not run there.
  */
-export function resolveSurface(clientName: string | undefined, wslDistro?: string): CopilotSurface {
+export function resolveSurface(
+  clientName: string | undefined,
+  wslDistro?: string,
+  /**
+   * True when the desktop app's own `data.db` claims this session (see `desktop-sessions.ts`).
+   * Takes precedence over `client_name`, which is absent on some installs — without it every
+   * Desktop session silently reads as CLI.
+   */
+  isDesktopSession = false
+): CopilotSurface {
   const client = clientName?.trim().toLowerCase();
   if (wslDistro) {
     return client === CLIENT_VSCODE_AGENT_HOST
       ? { agentName: 'copilot-cli', surface: `VS Code (WSL:${wslDistro})` }
       : { agentName: 'copilot-cli', surface: `Copilot CLI (WSL:${wslDistro})` };
   }
-  const agentName = resolveCopilotAgentKey(client) as CopilotAgentKey;
+  const agentName = (isDesktopSession ? 'copilot-desktop' : resolveCopilotAgentKey(client)) as CopilotAgentKey;
   if (agentName === 'copilot-desktop') {
     return { agentName, surface: 'Copilot Desktop' };
   }

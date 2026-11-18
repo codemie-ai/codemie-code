@@ -72,6 +72,19 @@ export interface CopilotUsageRow {
   billedNanoAiu?: number;
   /** Credits VS Code reports GitHub actually billed for the turn (`copilotCredits`). */
   reportedCredits?: number;
+  /**
+   * Copilot's premium-request multiplier for the call (`request_multiplier` in the store).
+   * Real stores carry 15 for the overwhelming majority of rows and 1 for the rest, so a
+   * premium-request total computed as "one request per call" is wrong by more than an order of
+   * magnitude. Carried rather than applied: how it combines with the seat's allowance is a
+   * billing question, not a parsing one.
+   */
+  requestMultiplier?: number;
+  /**
+   * Premium-request cost Copilot charged for this call (`data.usage.cost` on a
+   * `session.usage_record`). The events-side counterpart of {@link requestMultiplier}.
+   */
+  premiumRequestCost?: number;
 }
 
 /** Closed set of reasons a scan produced nothing, so health never carries free text. */

@@ -33,8 +33,17 @@ import {
   type CopilotUsageRow,
 } from './types.js';
 
-/** Event types worth parsing. A line without one of these never reaches `JSON.parse`. */
-const EVENT_MARKERS = ['session.usage_record', 'session.shutdown'] as const;
+/**
+ * Event types worth parsing. A line without one of these never reaches `JSON.parse`.
+ *
+ * `session.start` is included for its `data.context` block — the only place a transcript names
+ * the working directory, repository and branch. Without it, events-sourced rows carried no
+ * branch at all and `--branch` could never match one (verified against 127 real transcripts).
+ *
+ * `session.usage_checkpoint` is deliberately NOT read: its running totals would double-count
+ * the per-call `session.usage_record` rows, which on real data cover every call.
+ */
+const EVENT_MARKERS = ['session.usage_record', 'session.shutdown', 'session.start'] as const;
 
 /** Longest line parsed; a longer one is a pathological transcript, not a usage record. */
 const MAX_LINE_LENGTH = 1024 * 1024;
@@ -100,6 +109,29 @@ interface SessionContext {
   surface: string;
 }
 
+/** Where the work happened, from a `session.start` event's `data.context`. */
+interface SessionPlace {
+  workingDirectory?: string;
+  repository?: string;
+  branch?: string;
+}
+
+/** `data.context` of a `session.start`, keeping only the location fields. */
+function placeFrom(event: Record<string, unknown>): SessionPlace {
+  const data = event.data;
+  const context = isRecord(data) ? data.context : undefined;
+  if (!isRecord(context)) {
+    return {};
+  }
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value ? value : undefined;
+  return {
+    ...(text(context.cwd) ? { workingDirectory: text(context.cwd) } : {}),
+    ...(text(context.repository) ? { repository: text(context.repository) } : {}),
+    ...(text(context.branch) ? { branch: text(context.branch) } : {}),
+  };
+}
+
 /** One `session.usage_record` → one billed row, the same granularity as a store row. */
 function usageRecordRow(
   event: Record<string, unknown>,
@@ -119,6 +151,8 @@ function usageRecordRow(
   const initiator = usage.initiator;
   const eventId = typeof event.id === 'string' && event.id ? event.id : `${context.sessionId}:${index}`;
   const nanoAiu = nanoAiuFrom(usage);
+  // Copilot charges premium requests, not tokens; `cost` is what this call was charged.
+  const premiumCost = usage.cost;
 
   return {
     sessionId: context.sessionId,
@@ -136,6 +170,9 @@ function usageRecordRow(
     durationMs: toCount(usage.duration),
     apiCalls: 1,
     ...(nanoAiu !== undefined ? { billedNanoAiu: nanoAiu } : {}),
+    ...(typeof premiumCost === 'number' && Number.isFinite(premiumCost)
+      ? { premiumRequestCost: premiumCost }
+      : {}),
   };
 }
 
@@ -199,6 +236,7 @@ async function scanSessionFile(
   const rollup: CopilotUsageRow[] = [];
   let index = 0;
   let lastTsMs = 0;
+  let place: SessionPlace = {};
 
   const stream = createReadStream(file, { encoding: 'utf-8' });
   const reader = createInterface({ input: stream, crlfDelay: Infinity });
@@ -224,6 +262,11 @@ async function scanSessionFile(
       }
       lastTsMs = parseTimestamp(event.timestamp) ?? lastTsMs;
 
+      if (event.type === 'session.start') {
+        // A resumed session starts more than once; the newest context block wins.
+        place = { ...place, ...placeFrom(event) };
+        continue;
+      }
       if (event.type === 'session.usage_record') {
         const row = usageRecordRow(event, context, index++);
         if (row) {
@@ -246,6 +289,11 @@ async function scanSessionFile(
 
   // Per-call records win; the rollup is only the ceiling for a session that has none.
   const chosen = perCall.length > 0 ? perCall : rollup;
+  // `session.start` can appear after the first usage record in a resumed transcript, so the
+  // location is applied once the whole file has been read rather than per row as it is built.
+  for (const row of chosen) {
+    Object.assign(row, place);
+  }
   const kept = chosen.filter((row) => row.tsMs >= floorMs);
   health.rowsSkipped += chosen.length - kept.length;
   health.rowsRead += kept.length;
@@ -260,6 +308,8 @@ export interface EventsScanOptions {
   wslDistro?: string;
   /** Sessions already read from the store; skipped here so nothing is counted twice. */
   excludeSessionIds?: ReadonlySet<string>;
+  /** Sessions the desktop app owns, from its own `data.db`. */
+  desktopSessionIds?: ReadonlySet<string>;
 }
 
 /**
@@ -305,7 +355,7 @@ export async function scanSessionEvents(opts: EventsScanOptions): Promise<Copilo
     health.filesSeen += 1;
 
     const clientName = await readClientName(opts.home, sessionId, opts.wslDistro);
-    const { agentName, surface } = resolveSurface(clientName, opts.wslDistro);
+    const { agentName, surface } = resolveSurface(clientName, opts.wslDistro, opts.desktopSessionIds?.has(sessionId));
     const produced = await scanSessionFile(
       file,
       { sessionId, agentName, surface },
