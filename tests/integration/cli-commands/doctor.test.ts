@@ -49,6 +49,14 @@ describe('Doctor Command', () => {
     expect(doctorResult.output).toMatch(/uv/i);
   });
 
+  it('should report the Claude launch config under Installed Agents', () => {
+    // No standalone prompt-cache section: launch config is nested under each installed agent.
+    expect(doctorResult.output).not.toMatch(/Claude Prompt Cache/);
+    if (/Claude Code \(/.test(doctorResult.output)) {
+      expect(doctorResult.output).toMatch(/ENABLE_PROMPT_CACHING_1H\s*= /);
+    }
+  });
+
   it('should execute without crashing', () => {
     // Doctor may return non-zero exit code if no profile configured
     // but it should still run and not crash

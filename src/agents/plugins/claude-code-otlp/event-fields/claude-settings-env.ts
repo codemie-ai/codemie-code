@@ -36,24 +36,39 @@ export function settingsLayerPaths(
   ];
 }
 
-type Layer = Record<string, unknown> | 'absent' | 'unreadable';
+/** One settings file Claude Code may read: where it is, whether it could be read, and what it holds. */
+export interface ClaudeSettingsLayer {
+  path: string;
+  /** `absent`: no such file. `unreadable`: it exists but is not a readable JSON object. */
+  state: 'ok' | 'absent' | 'unreadable';
+  settings?: Record<string, unknown>;
+}
 
-async function readLayer(file: string): Promise<Layer> {
+async function readLayer(file: string): Promise<ClaudeSettingsLayer> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf-8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unreadable';
+    return { path: file, state: code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unreadable' };
   }
   try {
     const parsed: unknown = JSON.parse(raw);
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : 'unreadable';
+      ? { path: file, state: 'ok', settings: parsed as Record<string, unknown> }
+      : { path: file, state: 'unreadable' };
   } catch {
-    return 'unreadable';
+    return { path: file, state: 'unreadable' };
   }
+}
+
+/** Every settings layer in `settingsLayerPaths` order (lowest to highest precedence), read once. Never writes. */
+export function readClaudeSettingsLayers(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): Promise<ClaudeSettingsLayer[]> {
+  return Promise.all(settingsLayerPaths(cwd, env, platform).map(readLayer));
 }
 
 /** A missing file is no override; an unreadable/malformed one (or a non-object `env`) is unknown, never "absent". */
@@ -62,13 +77,13 @@ export async function readClaudeSettingsEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): Promise<ClaudeSettingsEnv> {
-  const layers = await Promise.all(settingsLayerPaths(cwd, env, platform).map(readLayer));
+  const layers = await readClaudeSettingsLayers(cwd, env, platform);
   const merged: Record<string, unknown> = {};
   let complete = true;
   let apiKeyHelper = false;
-  for (const layer of layers) {
-    if (layer === 'absent') continue;
-    if (layer === 'unreadable') {
+  for (const { state, settings: layer } of layers) {
+    if (state === 'absent') continue;
+    if (state === 'unreadable' || !layer) {
       complete = false;
       continue;
     }

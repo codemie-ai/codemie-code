@@ -28,6 +28,8 @@ Quality-gate commands (lint, type-check, build, CI) are defined in `.ai-run/guid
 | Plugins | kebab.plugin.ts | `claude.plugin.ts` |
 | Tests | *.test.ts | `registry.test.ts` |
 
+Exception: health checks in `src/cli/commands/doctor/checks/` are named after the class they export, in PascalCase (`NodeVersionCheck.ts`, `AgentsCheck.ts`), with tests as `<ClassName>.test.ts`. A new check follows the directory, not the kebab-case rule; do not rename one file on its own.
+
 ---
 
 ## Type Annotations

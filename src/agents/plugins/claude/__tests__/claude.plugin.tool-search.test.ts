@@ -11,15 +11,25 @@
  *   3. Claude Code self-disables tool search behind any non-first-party ANTHROPIC_BASE_URL, which
  *      CodeMie always is, so it must be forced rather than left unset.
  *
- * Both are scoped to providers whose gateway is known to round-trip the tool-search payload. A
- * gateway that receives `tool_reference` blocks it cannot carry answers HTTP 400 rather than
- * degrading, so an unverified provider keeps the conservative values.
+ * Claude's default hook sets the conservative, gateway-safe values for every provider: a gateway
+ * that receives `tool_reference` blocks it cannot carry answers HTTP 400 rather than degrading.
+ * A provider whose connection does carry the payload declares the permissive values for the agent
+ * in its own `agentHooks.<agent>.env` (sso, litellm, anthropic-subscription). These tests run the
+ * launch order: provider env first (only where unset), then Claude's default `beforeRun`.
  *
  * @group unit
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ClaudePluginMetadata } from '../claude.plugin.js';
+import { applyProviderAgentEnv } from '@/agents/core/launch-env.js';
+// Registers the real provider templates, with their declared agent env.
+import '@/providers/plugins/sso/sso.template.js';
+import '@/providers/plugins/litellm/litellm.template.js';
+import '@/providers/plugins/anthropic-subscription/anthropic-subscription.template.js';
+import '@/providers/plugins/bedrock/bedrock.template.js';
+import '@/providers/plugins/ollama/ollama.template.js';
+import '@/providers/plugins/jwt/jwt.template.js';
 
 vi.mock('fs/promises');
 vi.mock('fs');
@@ -34,11 +44,34 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — tool-search env', () => {
   });
 
   async function runBeforeRun(
-    env: Record<string, string> = {}
+    env: Record<string, string> = {},
+    agentName = 'claude'
   ): Promise<Record<string, string>> {
+    applyProviderAgentEnv(env, agentName);
     await ClaudePluginMetadata.lifecycle?.beforeRun?.(env as never);
     return env;
   }
+
+  describe('on a provider that declares tool search for the agent', () => {
+    it.each(['ai-run-sso', 'litellm', 'anthropic-subscription'])('%s enables tool search and allows betas', async (provider) => {
+      const env = await runBeforeRun({ CODEMIE_PROVIDER: provider });
+      expect(env.ENABLE_TOOL_SEARCH).toBe('true');
+      expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('0');
+    });
+
+    it.each(['ai-run-sso', 'litellm', 'anthropic-subscription'])('%s declares the same for claude-acp', async (provider) => {
+      const env = await runBeforeRun({ CODEMIE_PROVIDER: provider }, 'claude-acp');
+      expect(env.ENABLE_TOOL_SEARCH).toBe('true');
+      expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('0');
+    });
+
+    it('only ai-run-sso turns the auto mode server review off', async () => {
+      expect((await runBeforeRun({ CODEMIE_PROVIDER: 'ai-run-sso' })).CLAUDE_CODE_AUTO_MODE_SERVER).toBe('0');
+      for (const provider of ['litellm', 'anthropic-subscription', 'bedrock', 'ollama', 'bearer-auth']) {
+        expect((await runBeforeRun({ CODEMIE_PROVIDER: provider })).CLAUDE_CODE_AUTO_MODE_SERVER, provider).toBeUndefined();
+      }
+    });
+  });
 
   describe('on a verified provider', () => {
     it('enables tool search on the CodeMie SSO proxy', async () => {
@@ -65,7 +98,7 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — tool-search env', () => {
   });
 
   describe('on an unverified provider', () => {
-    it.each(['bedrock', 'ollama', 'anthropic-subscription', 'bearer-auth'])(
+    it.each(['bedrock', 'ollama', 'bearer-auth'])(
       'keeps tool search and betas off for %s, whose gateway may reject tool_reference blocks',
       async (provider) => {
         const env = await runBeforeRun({ CODEMIE_PROVIDER: provider });

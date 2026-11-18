@@ -33,7 +33,8 @@ export function createDoctorCommand(): Command {
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
     .option('--reset-version-warnings', 'Show agent version recommendations again on next launch')
-    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean }) => {
+    .option('--profile <name>', 'Show agent launch config for this profile instead of the active one')
+    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean; profile?: string }) => {
       if (options.resetVersionWarnings) {
         const { removed } = await VersionWarningStore.clear();
         console.log(chalk.blueBright(`Cleared version warnings — ${removed} marker(s) removed.\n`));
@@ -99,7 +100,7 @@ export function createDoctorCommand(): Command {
         new AwsCliCheck(),
         new AIConfigCheck(),
         new JWTAuthCheck(),
-        new AgentsCheck(),
+        new AgentsCheck({ profile: options.profile }),
         new WorkflowsCheck(),
         new FrameworksCheck()
       ];

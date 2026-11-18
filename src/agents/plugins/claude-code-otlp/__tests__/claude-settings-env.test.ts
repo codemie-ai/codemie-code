@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { managedSettingsPaths, readClaudeSettingsEnv, settingsLayerPaths } from '../event-fields/claude-settings-env.js';
+import { managedSettingsPaths, readClaudeSettingsEnv, readClaudeSettingsLayers, settingsLayerPaths } from '../event-fields/claude-settings-env.js';
 
 describe('claude settings env layers (CR-006)', () => {
   let root: string;
@@ -62,6 +62,23 @@ describe('claude settings env layers (CR-006)', () => {
   it('an unreadable path that is not "missing" (a directory) is incomplete', async () => {
     mkdirSync(join(root, 'proj', '.claude', 'settings.json'), { recursive: true });
     expect((await readClaudeSettingsEnv(root, env(), 'linux')).complete).toBe(false);
+  });
+
+  it('readClaudeSettingsLayers reports every layer, lowest to highest, with its path and state', async () => {
+    put('user/settings.json', JSON.stringify({ promptCacheTtl: '1h', env: { A: 'u' } }));
+    put('proj/.claude/settings.local.json', '{nope');
+
+    const layers = await readClaudeSettingsLayers(root, env(), 'linux');
+
+    expect(layers.map((l) => l.path)).toEqual(settingsLayerPaths(root, env(), 'linux'));
+    expect(layers.length).toBeGreaterThanOrEqual(4);
+    expect(layers[0]).toEqual({
+      path: join(root, 'user', 'settings.json'),
+      state: 'ok',
+      settings: { promptCacheTtl: '1h', env: { A: 'u' } },
+    });
+    expect(layers[1]).toEqual({ path: join(root, 'proj', '.claude', 'settings.json'), state: 'absent' });
+    expect(layers[2]).toEqual({ path: join(root, 'proj', '.claude', 'settings.local.json'), state: 'unreadable' });
   });
 
   it('uses only the managed settings file of the running platform', () => {
