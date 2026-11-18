@@ -10,6 +10,7 @@ import {
   isDesktopConnectedTo,
   isDesktopPointedAtLocalProxy,
   readDesktopGatewayConfig,
+  readDesktopGatewayState,
 } from '../claude-desktop.gateway.js';
 
 let baseDir: string;
@@ -94,6 +95,36 @@ describe('readDesktopGatewayConfig', () => {
   it('is null on an unsupported platform, never throwing', async () => {
     Object.defineProperty(process, 'platform', { value: 'aix', configurable: true });
     await expect(readDesktopGatewayConfig()).resolves.toBeNull();
+  });
+});
+
+describe('readDesktopGatewayState', () => {
+  it('gives a loopback gateway, naming a gateway', async () => {
+    await writeLibrary({ appliedId: 'a' }, gateway());
+    await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({
+      gateway: { port: 4001, apiKey: 'codemie-proxy' },
+      namesGateway: true,
+    });
+  });
+
+  it('names a gateway for a non-loopback one, with no gateway of its own', async () => {
+    await writeLibrary({ appliedId: 'a' }, gateway({ inferenceGatewayBaseUrl: 'https://gateway.example.com:4001' }));
+    await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: true });
+  });
+
+  it.each([
+    ['no _meta.json', async () => {}],
+    ['_meta.json without appliedId', () => writeLibrary({ entries: [] })],
+    ['an applied entry without inferenceProvider', () => writeLibrary({ appliedId: 'a' }, { managedMcpServers: '[]' })],
+    ['appliedId naming a missing file', () => writeLibrary({ appliedId: 'a' })],
+  ])('names no gateway with %s', async (_case, arrange) => {
+    await arrange();
+    await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: false });
+  });
+
+  it('takes an unparsable _meta.json for a gateway, never throwing', async () => {
+    await writeFile(join(baseDir, 'configLibrary', '_meta.json'), '{not json');
+    await expect(readDesktopGatewayState(baseDir)).resolves.toEqual({ gateway: null, namesGateway: true });
   });
 });
 

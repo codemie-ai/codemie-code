@@ -1,7 +1,7 @@
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
-import { reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
+import { RECONCILE_PER_START, readLiveRecord, reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import type {
   DesktopTelemetryRuntimeConfig,
@@ -26,7 +26,11 @@ import { ReconcileLockHeldError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { CoworkRunner, type CoworkProducer } from '@/telemetry/runtime/cowork/CoworkRunner.js';
-import { isDesktopConnectedTo, readDesktopGatewayConfig } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
+import {
+  isDesktopConnectedTo,
+  readDesktopGatewayState,
+  type DesktopGatewayState
+} from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
 
@@ -58,6 +62,8 @@ export class DesktopTelemetryRuntime {
   private startupChain?: Promise<void>;
   /** Whether the last poll found Desktop connected to this daemon; undefined before the first poll. */
   private desktopConnected?: boolean;
+  /** Whether the last poll's config read found Desktop's config naming a gateway; true when that read threw. */
+  private desktopNamesGateway = true;
   /** Consecutive "not connected" reads while connected: one alone (a config read mid-write, say) is not a change. */
   private notConnectedReads = 0;
   /**
@@ -67,6 +73,11 @@ export class DesktopTelemetryRuntime {
   private collectingSince = this.startedAt;
   private stopped = false;
   private redeliveryPass?: Promise<void>;
+  /**
+   * CodeMie session ids of the records this process finalized or passed over that were left undelivered, oldest
+   * remembered first: a not-connected poll, which lists no session store, re-delivers them by id.
+   */
+  private readonly undeliveredIds = new Set<string>();
   /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
   private readonly cowork?: CoworkRunner;
 
@@ -138,9 +149,10 @@ export class DesktopTelemetryRuntime {
 
   /**
    * One poll. Only while Desktop's applied config points at this daemon (its port and key) does it discover and
-   * collect sessions and run the re-delivery; otherwise it reads that config, runs the Cowork producer for the sessions
-   * it is already collecting, so they get their end and final summary, and finalizes the sessions already tracked on
-   * inactivity: no new session is taken and the session pipeline discovers nothing.
+   * collect new sessions and run the listing re-delivery. Otherwise it runs the Cowork producer for the sessions it is
+   * already collecting, so they get their end and final summary; follows the sessions already tracked while Desktop's
+   * config names no gateway; finalizes the tracked sessions on inactivity; and re-delivers by id the records this
+   * process could not send. No new session is taken, no session index is built and the session store is not listed.
    */
   private async poll(): Promise<void> {
     if (this.isPolling) {
@@ -156,7 +168,9 @@ export class DesktopTelemetryRuntime {
       const connected = await this.checkDesktopConnected(now);
       if (!connected) {
         if (!this.stopped) this.cowork?.startIfIdle(now, false);
+        await this.followTracked();
         await this.finalizeInactive(now);
+        this.startRedeliveryByIdIfDue(now);
         return;
       }
       // The first connected poll after the start builds the index, then finalizes and delivers what a previous daemon
@@ -170,7 +184,7 @@ export class DesktopTelemetryRuntime {
         } catch (error) {
           logger.error('[desktop-telemetry] Session index failed; built after the start-up pass', error);
         }
-        this.startupPass = this.delivery.reconcileRecords(true).catch((error) => {
+        this.startupPass = this.delivery.reconcileRecords(true).then((ids) => this.remember(ids)).catch((error) => {
           logger.error('[desktop-telemetry] Start-up scan failed:', error);
         });
       }
@@ -221,8 +235,12 @@ export class DesktopTelemetryRuntime {
    */
   private async checkDesktopConnected(now: number): Promise<boolean> {
     let connected = false;
+    this.desktopNamesGateway = true;
     try {
-      const gateway = await (this.config.readDesktopGateway ?? readDesktopGatewayConfig)();
+      const { gateway, namesGateway }: DesktopGatewayState = this.config.readDesktopGateway
+        ? await this.config.readDesktopGateway().then(read => ({ gateway: read, namesGateway: read !== null }))
+        : await readDesktopGatewayState();
+      this.desktopNamesGateway = namesGateway;
       connected = isDesktopConnectedTo(gateway, this.config.gatewayKey, this.config.port);
     } catch (error) {
       logger.warn('[desktop-telemetry] Claude Desktop config not read; not collecting this poll', {
@@ -254,6 +272,45 @@ export class DesktopTelemetryRuntime {
     return connected;
   }
 
+  /**
+   * A not-connected poll's follow of the sessions already tracked, over the window of a connected poll: only a
+   * discovered session whose external id is tracked is polled, and nothing new is taken.
+   */
+  private async followTracked(): Promise<void> {
+    // After a disconnect Desktop may still send this session's requests through this daemon, so a session being
+    // collected is followed until it is quiet. When Desktop's config names another gateway, that gateway serves the
+    // session — another CodeMie proxy collects it itself — so it is not followed. Nothing new is taken.
+    if (this.trackedSessions.size === 0 || this.desktopNamesGateway) return;
+    let discoveredSessions: LocalTelemetryDiscoveredSession[];
+    try {
+      discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
+    } catch (error) {
+      logger.error('[desktop-telemetry] Discovery of the tracked sessions failed; finalized on inactivity', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+    for (const discovered of discoveredSessions) {
+      if (!this.trackedSessions.has(discovered.externalSessionId)) continue;
+      try {
+        await this.pollSession(discovered, false);
+      } catch (error) {
+        logger.error('[desktop-telemetry] Session poll failed; retried at the next poll', {
+          externalSessionId: discovered.externalSessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+
+  /** Remembers the ids as the most recently left undelivered. */
+  private remember(sessionIds: readonly string[]): void {
+    for (const sessionId of sessionIds) {
+      this.undeliveredIds.delete(sessionId);
+      this.undeliveredIds.add(sessionId);
+    }
+  }
+
   /** The index of this host's records: a record of another CodeMie host belongs to that host's daemon. */
   private indexSessions(): Promise<Map<string, string>> {
     return this.sessionStore.indexSessionsByExternalId(
@@ -262,7 +319,10 @@ export class DesktopTelemetryRuntime {
     );
   }
 
-  /** Finalizes every tracked session idle past the inactivity timeout; a failure is retried at the next poll. */
+  /**
+   * Finalizes every tracked session idle past the inactivity timeout; a failure is retried at the next poll. A record
+   * still live after its finalization (its send failed) is remembered for the re-delivery by id.
+   */
   private async finalizeInactive(now: number): Promise<void> {
     for (const [externalSessionId, tracked] of this.trackedSessions) {
       const inactiveForMs = now - tracked.lastSeenActivityAt;
@@ -278,6 +338,7 @@ export class DesktopTelemetryRuntime {
       try {
         await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout', tracked.lastSeenActivityAt);
         this.trackedSessions.delete(externalSessionId);
+        if (await readLiveRecord(tracked.codemieSessionId)) this.remember([tracked.codemieSessionId]);
       } catch (error) {
         logger.error('[desktop-telemetry] Inactive session finalization failed; retried at the next poll', {
           externalSessionId,
@@ -290,20 +351,47 @@ export class DesktopTelemetryRuntime {
 
   /** Starts a re-delivery pass every {@link DESKTOP_REDELIVERY_INTERVAL_MS} unless one is running; each pass sends at most `RECONCILE_PER_START` records. */
   private startRedeliveryIfDue(now: number): void {
-    // Not awaited: a pass whose sends hang must not stall the polls
-    if (!this.redeliveryPass && now - this.lastRedeliveryAt >= DESKTOP_REDELIVERY_INTERVAL_MS) {
-      this.lastRedeliveryAt = now;
-      this.redeliveryPass = this.delivery.reconcileRecords(false)
-        .catch((error) => {
-          logger.error('[desktop-telemetry] Re-delivery pass failed:', error);
-        })
-        .finally(() => {
-          this.redeliveryPass = undefined;
-        });
-    }
+    this.startPassIfDue(now, '[desktop-telemetry] Re-delivery pass failed:', async () => {
+      this.remember(await this.delivery.reconcileRecords(false));
+      for (const sessionId of this.undeliveredIds) {
+        if (!(await readLiveRecord(sessionId))) this.undeliveredIds.delete(sessionId);
+      }
+    });
   }
 
-  private async pollSession(discovered: LocalTelemetryDiscoveredSession): Promise<void> {
+  /**
+   * A not-connected poll's re-delivery of the remembered ids, on the interval and the one-pass rule of
+   * {@link startRedeliveryIfDue}: at most {@link RECONCILE_PER_START} ids a pass, the most recently remembered first,
+   * so its sends stay bounded as a listing pass's are. The ids it delivered or found no longer undelivered leave the
+   * memory.
+   */
+  private startRedeliveryByIdIfDue(now: number): void {
+    if (this.undeliveredIds.size === 0) return;
+    this.startPassIfDue(now, '[desktop-telemetry] Re-delivery by id failed:', async () => {
+      const ids = [...this.undeliveredIds].reverse().slice(0, RECONCILE_PER_START);
+      const stillUndelivered = await this.delivery.redeliverById(ids);
+      for (const sessionId of ids) {
+        if (!stillUndelivered.includes(sessionId)) this.undeliveredIds.delete(sessionId);
+      }
+    });
+  }
+
+  /** Starts `pass` as the re-delivery pass when none runs and the interval has passed; its failure is logged as `failureText`. */
+  private startPassIfDue(now: number, failureText: string, pass: () => Promise<void>): void {
+    // Not awaited: a pass whose sends hang must not stall the polls
+    if (this.redeliveryPass || now - this.lastRedeliveryAt < DESKTOP_REDELIVERY_INTERVAL_MS) return;
+    this.lastRedeliveryAt = now;
+    this.redeliveryPass = pass()
+      .catch((error) => {
+        logger.error(failureText, error);
+      })
+      .finally(() => {
+        this.redeliveryPass = undefined;
+      });
+  }
+
+  /** `takeNew: false` takes no new record: a tracked session whose record is gone or foreign leaves the tracking. */
+  private async pollSession(discovered: LocalTelemetryDiscoveredSession, takeNew = true): Promise<void> {
     const knownSessionIds = this.knownSessionIds!;
     const tracked = this.trackedSessions.get(discovered.externalSessionId);
     // Taken before parsing, so a write that lands mid-processing is picked up next tick.
@@ -327,8 +415,13 @@ export class DesktopTelemetryRuntime {
 
     const session = await this.ensureSession(
       discovered,
-      tracked?.codemieSessionId ?? knownSessionIds.get(discovered.externalSessionId)
+      tracked?.codemieSessionId ?? knownSessionIds.get(discovered.externalSessionId),
+      takeNew
     );
+    if (session === null) {
+      this.trackedSessions.delete(discovered.externalSessionId);
+      return;
+    }
     if (!session || session === 'idle') {
       this.reopenLockFailed ||= !session;
       return;
@@ -348,18 +441,23 @@ export class DesktopTelemetryRuntime {
   }
 
   /**
-   * The record of a discovered session: the known one re-tracked under its reconcile lock, else a new one.
-   * Undefined when its lock stays held past {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}; `idle` when it is `completed` with no newer activity.
+   * The record of a discovered session: the known one re-tracked under its reconcile lock, else a new one — or, with
+   * `takeNew` false, null and nothing created. Undefined when its lock stays held past
+   * {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}; `idle` when it is `completed` with no newer activity.
    */
   private async ensureSession(
     discovered: LocalTelemetryDiscoveredSession,
-    knownSessionId?: string
-  ): Promise<Session | 'idle' | undefined> {
+    knownSessionId?: string,
+    takeNew = true
+  ): Promise<Session | 'idle' | undefined | null> {
     if (knownSessionId) {
       const retracked = await this.retrackUnderLock(knownSessionId, discovered);
       if (retracked !== null) {
         return retracked;
       }
+    }
+    if (!takeNew) {
+      return null;
     }
 
     const attribution = await detectAttribution(discovered.workingDirectory, this.config.profile);

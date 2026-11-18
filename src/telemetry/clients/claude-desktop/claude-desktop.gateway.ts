@@ -66,22 +66,42 @@ export function desktopGatewayOfEntry(config: unknown): DesktopGateway | null {
   return isSealedKey(apiKey) ? { port, sealed: true } : { port, apiKey };
 }
 
+/** Desktop's applied config as one read tells it: its CodeMie gateway, and whether it names a gateway at all. */
+export interface DesktopGatewayState {
+  gateway: DesktopGateway | null;
+  /**
+   * The applied entry's inference provider is a gateway, whatever its URL; false with no `_meta.json`, no usable
+   * `appliedId`, no applied entry file or another provider; true when the config could not be read otherwise (what
+   * cannot be read is not taken for "no gateway").
+   */
+  namesGateway: boolean;
+}
+
+/**
+ * Desktop's applied config (`configLibrary/_meta.json` → `<appliedId>.json`) from one read: its gateway as
+ * {@link readDesktopGatewayConfig} gives it, and whether it names a gateway. Never throws.
+ */
+export async function readDesktopGatewayState(baseDir?: string): Promise<DesktopGatewayState> {
+  try {
+    const libDir = join(baseDir ?? getClaudeDesktopBaseDir(), 'configLibrary');
+    const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
+    const appliedId = appliedConfigId(meta);
+    if (!appliedId) return { gateway: null, namesGateway: false };
+    const entry: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
+    return { gateway: desktopGatewayOfEntry(entry), namesGateway: isRecord(entry) && entry.inferenceProvider === 'gateway' };
+  } catch (error) {
+    logger.debug('[claude-desktop] Claude Desktop gateway not readable', ...sanitizeLogArgs(error));
+    return { gateway: null, namesGateway: (error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT' };
+  }
+}
+
 /**
  * The gateway of Desktop's applied config (`configLibrary/_meta.json` → `<appliedId>.json`), as
  * `desktopGatewayOfEntry` reads it, else null: no applied config or an unsafe `appliedId`, another config,
  * anything unreadable, an unsupported platform. Never throws.
  */
 export async function readDesktopGatewayConfig(baseDir?: string): Promise<DesktopGateway | null> {
-  try {
-    const libDir = join(baseDir ?? getClaudeDesktopBaseDir(), 'configLibrary');
-    const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
-    const appliedId = appliedConfigId(meta);
-    if (!appliedId) return null;
-    return desktopGatewayOfEntry(JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8')));
-  } catch (error) {
-    logger.debug('[claude-desktop] Claude Desktop gateway not readable', ...sanitizeLogArgs(error));
-    return null;
-  }
+  return (await readDesktopGatewayState(baseDir)).gateway;
 }
 
 /**
