@@ -84,7 +84,7 @@ codemie proxy analytics consent revoke     # withdraw it
 
 ```bash
 codemie proxy disconnect --all             # everything `proxy clients` shows as connected
-codemie proxy disconnect --all --stop      # and stop the daemon
+codemie proxy stop                         # and stop the daemon
 ```
 
 `--all` continues past a failing target, reports each, and exits non-zero if any failed.
@@ -112,7 +112,7 @@ Deprecated forms still work until the removal date and print one notice line on 
 | `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
 | `codemie proxy analytics connect-folder` | `codemie proxy analytics consent grant` | 2026-12-31 |
 | `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
-| `codemie proxy connect --force` | `codemie proxy connect --restart-daemon --overwrite` | 2026-12-31 |
+| `codemie proxy connect --force` | `codemie proxy connect --overwrite` / `codemie proxy restart` | 2026-12-31 |
 | `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
 | `codemie analytics --include-external` | `codemie analytics --include-external always` | 2026-12-31 |
 | `codemie proxy connect --claude-code-otlp` | `codemie proxy connect --claude-otlp` (also connects Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |

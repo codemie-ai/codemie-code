@@ -2,6 +2,7 @@
  * `proxy disconnect --all`.
  * @group unit
  */
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface FakeTarget {
@@ -68,25 +69,16 @@ describe('disconnectAll', () => {
     expect(stopDaemon).not.toHaveBeenCalled();
   });
 
-  it('stops the daemon only with --stop', async () => {
+  it('never stops the daemon; while it runs, names codemie proxy stop', async () => {
     targets.push({ id: 'b', label: 'Beta', connected: true, disconnect: async () => {} });
     const { disconnectAll } = await import('../disconnect-all.js');
 
-    await disconnectAll({ stop: true });
+    await disconnectAll();
 
-    expect(stopDaemon).toHaveBeenCalledOnce();
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.map((c) => stripVTControlCharacters(String(c[0])))).toContain(
+      'The proxy is still running — run: codemie proxy stop');
     expect(process.exitCode).toBeUndefined();
-  });
-
-  it('a failed stop is reported and exits 1', async () => {
-    targets.push({ id: 'b', label: 'Beta', connected: true, disconnect: async () => {} });
-    stopDaemon.mockRejectedValue(new Error('kill failed'));
-    const { disconnectAll } = await import('../disconnect-all.js');
-
-    await disconnectAll({ stop: true });
-
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to stop proxy'));
-    expect(process.exitCode).toBe(1);
   });
 
   it('a target whose connected check failed is reported as not disconnected and exits 1', async () => {
@@ -118,7 +110,7 @@ describe('disconnectAll', () => {
 
     expect(remove).not.toHaveBeenCalled();
     expect(second).toEqual({ disconnected: [], failed: [] });
-    expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('Nothing connected'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Nothing connected'));
     expect(process.exitCode).toBeUndefined();
   });
 });

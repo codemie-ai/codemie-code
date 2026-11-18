@@ -119,7 +119,7 @@ export interface ConnectOptions {
   targets: ConnectTargets;
   profile?: string;
   insiders?: boolean;
-  /** Replace a running daemon even when it matches and is healthy (`--restart-daemon`). */
+  /** Replace a running daemon even when it matches and is healthy: the deprecated `--force` only. */
   restartDaemon?: boolean;
   /** Replace client config CodeMie did not write (`--overwrite`). */
   overwrite?: boolean;
@@ -475,7 +475,7 @@ export async function ensureDaemon(
 
   if (running && (!matches || older || unhealthy || restartDaemon)) {
     if (restartDaemon) {
-      logger.status('Restarting the proxy (--restart-daemon)...');
+      logger.status('Restarting the proxy...');
     } else if (older) {
       logger.status('Restarting proxy: it was started by an older CodeMie CLI...');
     } else if (!matches) {

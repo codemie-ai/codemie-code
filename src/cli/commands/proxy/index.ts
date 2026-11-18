@@ -11,7 +11,7 @@ import { printNext } from '../../related-commands.js';
 import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
-import { disconnectAll, stopDaemonAfterDisconnect } from './disconnect-all.js';
+import { disconnectAll } from './disconnect-all.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { createProxyDoctorCommand } from './doctor/command.js';
 import { createProxyClientsCommand } from './clients-command.js';
@@ -63,7 +63,9 @@ const INSPECT_DESKTOP_DEPRECATION: DeprecationEntry = {
 const CONNECT_FORCE_DEPRECATION: DeprecationEntry = {
   kind: 'deprecated',
   old: 'codemie proxy connect --force',
-  replacement: 'codemie proxy connect --restart-daemon --overwrite',
+  replacement:
+    'codemie proxy connect --overwrite to replace client config CodeMie did not write, ' +
+    'and codemie proxy restart to restart the daemon,',
   removeOn: DEPRECATION_REMOVE_ON,
 };
 
@@ -175,7 +177,6 @@ interface UnifiedConnectOptions extends AggregateOptions {
   omp?: boolean;
   overwrite?: boolean;
   profile?: string;
-  restartDaemon?: boolean;
   scope?: AllowlistScope;
   silent?: boolean;
   verbose?: boolean;
@@ -335,9 +336,8 @@ export function createProxyCommand(): Command {
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
     .option('--profile <name>', 'Profile whose credentials to use')
-    .option('--restart-daemon', 'Stop any running proxy and start a fresh one, even if it looks healthy')
     .option('--overwrite', 'Replace client config CodeMie did not write (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list)')
-    .addOption(deprecatedOption(CONNECT_FORCE_DEPRECATION, '--force', 'Same as --restart-daemon --overwrite'))
+    .addOption(deprecatedOption(CONNECT_FORCE_DEPRECATION, '--force', 'Same as --overwrite plus a daemon restart (codemie proxy restart)'))
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)');
   addConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS)
@@ -371,7 +371,7 @@ export function createProxyCommand(): Command {
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
         // `--force` keeps both meanings during its deprecation period.
-        restartDaemon: Boolean(opts.restartDaemon || opts.force),
+        restartDaemon: Boolean(opts.force),
         overwrite: Boolean(opts.overwrite || opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
@@ -391,8 +391,7 @@ export function createProxyCommand(): Command {
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
     .option('--omp', 'Remove the CodeMie model catalog extension from oh-my-pi')
-    .option('--all', 'Disconnect every connected client and analytics connector (see `codemie proxy clients`)')
-    .option('--stop', 'Also stop the proxy daemon after disconnecting (it keeps running otherwise)');
+    .option('--all', 'Disconnect every connected client and analytics connector (see `codemie proxy clients`)');
   addConnectorFlags(disconnect, DISCONNECT_CONNECTOR_FLAGS)
     .addOption(
       new Option(
@@ -411,7 +410,6 @@ export function createProxyCommand(): Command {
       codexDesktop?: boolean;
       omp?: boolean;
       all?: boolean;
-      stop?: boolean;
       insiders?: boolean;
       scope?: 'user' | 'project';
     }) => {
@@ -420,11 +418,11 @@ export function createProxyCommand(): Command {
         if (opts.scope) {
           console.log(chalk.yellow('Note: --scope has no effect with --all (every connector is disconnected at user scope).'));
         }
-        await disconnectAll({ stop: opts.stop });
+        await disconnectAll();
         printNext('proxy disconnect', 'all');
         return;
       }
-      const ran = await disconnectTargets({
+      await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
           copilotChatOtlp: Boolean(opts.copilotChatOtlp),
@@ -439,9 +437,7 @@ export function createProxyCommand(): Command {
         insiders: Boolean(opts.insiders),
         aggregates: aggregatesGiven(opts),
       });
-      // A usage error (no target) must not stop the daemon every other client relies on.
-      if (opts.stop && ran) await stopDaemonAfterDisconnect();
-      printNext('proxy disconnect', opts.stop && ran ? 'stopped' : undefined);
+      printNext('proxy disconnect');
     });
 
   // Removed aliases: hidden stubs that accept any options and fail naming the replacement.

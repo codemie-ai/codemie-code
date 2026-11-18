@@ -636,7 +636,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(spawnDaemon).toHaveBeenCalled();
   });
 
-  it('restarts on --restart-daemon even when a matching daemon is running (skips health check)', async () => {
+  it('restartDaemon (the deprecated --force) restarts even a matching running daemon (skips health check)', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
@@ -653,7 +653,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
     expect(checkProxyHealth).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith('Restarting the proxy (--restart-daemon)...');
+    expect(status).toHaveBeenCalledWith('Restarting the proxy...');
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
     status.mockRestore();
   });
@@ -3596,7 +3596,7 @@ describe('targets that once needed another identity, over one daemon', () => {
     expect(process.exitCode).toBe(0);
   });
 
-  it('--restart-daemon replaces the daemon only: a foreign omp extension is not overwritten', async () => {
+  it('restartDaemon alone replaces the daemon only: a foreign omp extension is not overwritten', async () => {
     await arrangeFresh();
     const { writeOmpExtension } = await import('../connectors/omp.js');
     vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });

@@ -2,40 +2,35 @@
  * `codemie proxy disconnect --all` — disconnect every target `proxy clients` reports as connected.
  *
  * Kept out of `disconnect-orchestrator.ts`: `client-targets.ts` imports the orchestrator, so the reverse import
- * would cycle. A failing target never stops the others; the daemon keeps running unless `stop` is set.
+ * would cycle. A failing target never stops the others; the daemon keeps running (`codemie proxy stop` stops it).
  */
 import chalk from 'chalk';
 
 import { logger } from '@/utils/logger.js';
 import { readClientTargetStates } from './client-targets.js';
-import { checkStatus, stopDaemon } from './daemon-manager.js';
-import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
+import { renderHint } from '@/utils/hint.js';
+import { checkStatus } from './daemon-manager.js';
+
+/** While the daemon runs, one line naming `codemie proxy stop`; a failed status read prints nothing. */
+async function namedStillRunning(): Promise<void> {
+  try {
+    const { running } = await checkStatus();
+    if (running) console.log(renderHint({ reason: 'The proxy is still running', command: 'codemie proxy stop' }));
+  } catch (error) {
+    logger.debug('[disconnect-all] daemon status read failed:', error);
+  }
+}
 
 export interface DisconnectAllResult {
   disconnected: string[];
   failed: string[];
 }
 
-/** `--stop`: stops the daemon after a disconnect; a failure is reported and sets the exit code. */
-export async function stopDaemonAfterDisconnect(): Promise<void> {
-  try {
-    const stopped = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
-      const { running } = await checkStatus();
-      if (running) await stopDaemon();
-      return running;
-    });
-    console.log(stopped ? chalk.green('✓ Proxy stopped') : chalk.dim('Proxy is not running.'));
-  } catch (error) {
-    console.error(chalk.red(`✗ Failed to stop proxy — ${error instanceof Error ? error.message : String(error)}`));
-    process.exitCode = 1;
-  }
-}
-
 /**
  * Disconnects every connected target, reports each, sets `process.exitCode = 1` when any failed. A target whose
  * connected check failed may still be connected: it is reported as not disconnected, never skipped silently.
  */
-export async function disconnectAll(opts: { stop?: boolean } = {}): Promise<DisconnectAllResult> {
+export async function disconnectAll(): Promise<DisconnectAllResult> {
   const result: DisconnectAllResult = { disconnected: [], failed: [] };
   const states = await readClientTargetStates();
   const unchecked = states.filter((state) => state.error !== undefined);
@@ -73,6 +68,6 @@ export async function disconnectAll(opts: { stop?: boolean } = {}): Promise<Disc
     process.exitCode = priorExitCode;
   }
 
-  if (opts.stop) await stopDaemonAfterDisconnect();
+  await namedStillRunning();
   return result;
 }

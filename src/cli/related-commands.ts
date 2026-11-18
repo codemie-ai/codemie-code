@@ -58,8 +58,8 @@ export const RELATED: Record<string, RelatedEntry> = {
   },
   'proxy disconnect': {
     related: [CONNECT, CLIENTS, STATUS],
-    // `all`: `--all` ran; `stopped`: `--stop` also stopped the daemon. Either way, what is left is the client list.
-    next: { default: 'codemie proxy status', byOutcome: { all: 'codemie proxy clients', stopped: 'codemie proxy clients' } },
+    // `all`: `--all` ran; what is left is the client list.
+    next: { default: 'codemie proxy status', byOutcome: { all: 'codemie proxy clients' } },
   },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },

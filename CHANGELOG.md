@@ -8,7 +8,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 - One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
 - `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
-- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route. Both take `--scope`, `--yes`, `--overwrite`, `--restart-daemon`, `--insiders` and `--profile` as the per-client flags do; without `--scope`, a connector limited to named projects keeps its list. The per-client flags keep working
+- `codemie proxy connect --claude-otlp` turns analytics on for every Claude client (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route. Both take `--scope`, `--yes`, `--overwrite`, `--insiders` and `--profile` as the per-client flags do; without `--scope`, a connector limited to named projects keeps its list. The per-client flags keep working
 - `codemie proxy clients` shows, for each of the five analytics clients (Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat, Copilot CLI) that is not connected, `not connected` or `not found`, each with the command that connects it (`--claude-otlp` / `--copilot-otlp`); `--json` carries `found` and `hint` on those entries
 
 ### Changed
@@ -34,7 +34,7 @@ Each form below still works until its removal date and prints a one-line notice 
 | `codemie proxy inspect desktop` | `codemie proxy doctor --verbose` | 2026-12-31 |
 | `codemie proxy analytics connect-folder` | `codemie proxy analytics consent grant` | 2026-12-31 |
 | `codemie proxy analytics disconnect-folder` | `codemie proxy analytics consent revoke` | 2026-12-31 |
-| `codemie proxy connect --force` | `codemie proxy connect --restart-daemon --overwrite` | 2026-12-31 |
+| `codemie proxy connect --force` | `codemie proxy connect --overwrite` / `codemie proxy restart` | 2026-12-31 |
 | `codemie proxy connect --silent` | `codemie proxy connect --yes` | 2026-12-31 |
 | `codemie analytics --include-external` | `codemie analytics --include-external always` | 2026-12-31 |
 | `codemie proxy connect --claude-code-otlp` | `codemie proxy connect --claude-otlp` (also connects Claude Desktop and the VS Code Claude Code extension) | 2026-12-31 |
@@ -47,7 +47,7 @@ Each form below still works until its removal date and prints a one-line notice 
 
 The per-client analytics flags of `codemie proxy connect` and `codemie proxy disconnect` are replaced by the vendor flags, which are not one-to-one: `--claude-otlp` also connects (or disconnects) Claude Desktop and the VS Code Claude Code extension, and `--copilot-otlp` covers both Copilot clients. Every fix hint the CLI prints now names the vendor flag. `codemie proxy analytics` keeps `--claude-code-otlp`, `--copilot-cli-otlp` and `--copilot-chat-otlp` as connector filters.
 
-`--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. `--restart-daemon` now only replaces the proxy and `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
+`--force` keeps both meanings until its removal: it replaces a running proxy and overwrites client config CodeMie did not write. To replace the proxy use `codemie proxy restart` (`--profile <name>` for another profile); `--overwrite` only replaces foreign config (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list).
 
 ### Removed
 

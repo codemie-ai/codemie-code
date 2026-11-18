@@ -13,7 +13,6 @@ vi.mock('../disconnect-orchestrator.js', () => ({
 
 vi.mock('../disconnect-all.js', () => ({
   disconnectAll: vi.fn().mockResolvedValue({ disconnected: [], failed: [] }),
-  stopDaemonAfterDisconnect: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../connect-orchestrator.js', () => ({
@@ -97,32 +96,49 @@ describe('proxy connect — unified command, deprecated flags and removed aliase
     );
   });
 
-  it('maps --yes, --restart-daemon and --overwrite onto the connect options', async () => {
+  it('maps --yes and --overwrite onto the connect options; the daemon is not forced to restart', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
 
-    await createProxyCommand().parseAsync(
-      ['connect', '--claude-code-otlp', '--yes', '--restart-daemon', '--overwrite'],
-      { from: 'user' }
-    );
+    await createProxyCommand().parseAsync(['connect', '--claude-otlp', '--yes', '--overwrite'], { from: 'user' });
 
     expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({ yes: true, restartDaemon: true, overwrite: true })
+      expect.objectContaining({ yes: true, restartDaemon: false, overwrite: true })
     );
   });
 
-  it('--restart-daemon alone replaces the daemon without overwriting foreign config', async () => {
+  it.each([
+    ['connect', ['connect', '--omp', '--restart-daemon'], '--restart-daemon'],
+    ['disconnect', ['disconnect', '--claude-desktop', '--stop'], '--stop'],
+    ['disconnect --all', ['disconnect', '--all', '--stop'], '--stop'],
+  ])('%s: the removed %j is an unknown option and nothing runs', async (_name, args, flag) => {
     const { connectTargets } = await import('../connect-orchestrator.js');
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { disconnectAll } = await import('../disconnect-all.js');
     const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    let stderr = '';
+    for (const cmd of [proxy, ...proxy.commands]) {
+      cmd.exitOverride().configureOutput({ writeErr: (text) => { stderr += text; }, writeOut: () => {} });
+    }
 
-    await createProxyCommand().parseAsync(['connect', '--omp', '--restart-daemon'], { from: 'user' });
+    await expect(proxy.parseAsync(args, { from: 'user' })).rejects.toMatchObject({ code: 'commander.unknownOption' });
 
-    expect(connectTargets).toHaveBeenCalledWith(
-      expect.objectContaining({ restartDaemon: true, overwrite: false })
-    );
+    expect(stderr).toContain(`unknown option '${flag}'`);
+    expect(connectTargets).not.toHaveBeenCalled();
+    expect(disconnectTargets).not.toHaveBeenCalled();
+    expect(disconnectAll).not.toHaveBeenCalled();
   });
 
-  it('deprecated --force acts as --restart-daemon --overwrite and prints one notice naming both', async () => {
+  it('connect and disconnect help name neither --restart-daemon nor --stop', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    for (const name of ['connect', 'disconnect']) {
+      expect(proxy.commands.find((c) => c.name() === name)?.helpInformation()).not.toMatch(/--restart-daemon|--stop/);
+    }
+  });
+
+  it('deprecated --force acts as a daemon restart plus --overwrite and prints one notice naming both replacements', async () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -135,9 +151,10 @@ describe('proxy connect — unified command, deprecated flags and removed aliase
       );
       const lines = stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toContain('codemie proxy connect --force');
-      expect(lines[0]).toContain('--restart-daemon');
-      expect(lines[0]).toContain('--overwrite');
+      expect(lines[0]).toBe(
+        'Deprecated: codemie proxy connect --force — use codemie proxy connect --overwrite to replace client config ' +
+        'CodeMie did not write, and codemie proxy restart to restart the daemon, instead (removal on 2026-12-31)'
+      );
     } finally {
       stderr.mockRestore();
     }
@@ -574,36 +591,6 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
     }));
   });
 
-  it('`disconnect <target> --stop` stops the daemon once; without --stop it does not', async () => {
-    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
-    const { stopDaemonAfterDisconnect } = await import('../disconnect-all.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(disconnectTargets).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-
-    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop', '--stop'], { from: 'user' });
-    expect(stopDaemonAfterDisconnect).toHaveBeenCalledTimes(1);
-
-    vi.mocked(stopDaemonAfterDisconnect).mockClear();
-    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop'], { from: 'user' });
-    expect(stopDaemonAfterDisconnect).not.toHaveBeenCalled();
-  });
-
-  it('`disconnect --stop` with no target is a usage error and leaves the daemon running', async () => {
-    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
-    const { stopDaemonAfterDisconnect } = await import('../disconnect-all.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(disconnectTargets).mockImplementationOnce(async () => {
-      process.exitCode = 1;
-      return false;
-    });
-    try {
-      await createProxyCommand().parseAsync(['disconnect', '--stop'], { from: 'user' });
-      expect(stopDaemonAfterDisconnect).not.toHaveBeenCalled();
-    } finally {
-      process.exitCode = undefined;
-    }
-  });
-
   describe('Next line', () => {
     const original = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     let written: string[];
@@ -749,11 +736,11 @@ describe('proxy connect / disconnect --claude-otlp and --copilot-otlp', () => {
     expect(call).toEqual(expect.objectContaining({ aggregates: [], scope: undefined }));
   });
 
-  it('connect --claude-otlp forwards --yes, --overwrite, --restart-daemon, --insiders and --profile', async () => {
-    const call = await connectWith(['--claude-otlp', '--yes', '--overwrite', '--restart-daemon', '--insiders', '--profile', 'work']);
+  it('connect --claude-otlp forwards --yes, --overwrite, --insiders and --profile', async () => {
+    const call = await connectWith(['--claude-otlp', '--yes', '--overwrite', '--insiders', '--profile', 'work']);
 
     expect(call).toEqual(expect.objectContaining({
-      yes: true, overwrite: true, restartDaemon: true, insiders: true, profile: 'work',
+      yes: true, overwrite: true, restartDaemon: false, insiders: true, profile: 'work',
     }));
   });
 
