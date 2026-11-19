@@ -153,20 +153,37 @@ export async function decideVsCodeRoute(insiders: boolean, seams: ClaudeClientCo
   return (await detectClaudeLogin(seams)) === 'logged-out' ? 'route' : 'skip';
 }
 
-async function hasAppliedConfig(desktop3pDir: string): Promise<boolean> {
+/**
+ * Desktop has an applied config of another model provider: the applied entry names an `inferenceProvider`, or there
+ * is an `appliedId` whose entry cannot be read (an unsafe name, a missing file, unparseable JSON). An entry with no
+ * provider, such as what `disconnect` leaves when the user's own MCP servers remain, routes nothing and does not
+ * count. No `_meta.json` or no `appliedId` is no applied config.
+ */
+async function hasAppliedProviderConfig(desktop3pDir: string): Promise<boolean> {
+  const libDir = join(desktop3pDir, 'configLibrary');
+  let meta: unknown;
   try {
-    const meta: unknown = JSON.parse(await readFile(join(desktop3pDir, 'configLibrary', '_meta.json'), 'utf-8'));
-    return appliedConfigId(meta) !== undefined || (isRecord(meta) && meta.appliedId !== undefined);
+    meta = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
   } catch {
     return false;
+  }
+  if (!isRecord(meta) || meta.appliedId === undefined) return false;
+  const appliedId = appliedConfigId(meta);
+  if (!appliedId) return true;
+  try {
+    const entry: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
+    return !isRecord(entry) || entry.inferenceProvider !== undefined;
+  } catch {
+    return true;
   }
 }
 
 /**
  * What `--claude-otlp` does to Claude Desktop's model route: a config that points at the local proxy with the daemon's
- * key is refreshed, another applied config (a loopback gateway with another key included) is left alone, and with
- * none applied Desktop is routed only when it has no first-party data directory. With no applied config Desktop
- * cannot run on a gateway, so a first-party directory means its own Claude account. `deploymentMode` in
+ * key is refreshed, another applied config of a model provider (a loopback gateway with another key included) is left
+ * alone, and with none applied (an applied entry with no provider included) Desktop is routed only when it has no
+ * first-party data directory. With no applied provider config Desktop cannot run on a gateway, so a first-party
+ * directory means its own Claude account. `deploymentMode` in
  * `Claude-3p/claude_desktop_config.json` is not read: Desktop writes it while it runs on a gateway and keeps it after
  * the user goes back to their own account.
  */
@@ -177,7 +194,7 @@ export async function decideDesktopRoute(seams: ClaudeClientConfigSeams = {}): P
     const key = seams.gatewayKey ?? (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
     return isDesktopPointedAtLocalProxy(state.gateway, key) ? 'refresh' : 'skip-other-gateway';
   }
-  if (state.namesGateway || (await hasAppliedConfig(desktop3pDir))) return 'skip-other-gateway';
+  if (state.namesGateway || (await hasAppliedProviderConfig(desktop3pDir))) return 'skip-other-gateway';
 
   const desktop1pDir = seams.desktop1pDir ?? getClaudeDesktopFirstPartyDir();
   return existsSync(desktop1pDir) ? 'skip-1p' : 'route';

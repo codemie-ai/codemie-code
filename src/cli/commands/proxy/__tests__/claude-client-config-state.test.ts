@@ -3,7 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecResult } from '@/utils/exec.js';
@@ -180,6 +180,50 @@ describe('claude-client-config-state', () => {
     it('skips a Desktop that uses its own Claude account', async () => {
       await mkdir(desktop1pDir, { recursive: true });
       expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('skip-1p');
+    });
+
+    describe('connect, disconnect, connect with a user MCP server in the applied entry', () => {
+      const USER_SERVER = { name: 'my-server', url: 'https://mcp.example.com/sse' };
+
+      async function connectedThenDisconnected(): Promise<void> {
+        const lib = join(desktop3pDir, 'configLibrary');
+        await mkdir(lib, { recursive: true });
+        await writeFile(join(lib, '_meta.json'), JSON.stringify({ appliedId: 'cfg-1', entries: [{ id: 'cfg-1', name: 'CodeMie Proxy' }] }));
+        await writeFile(join(lib, 'cfg-1.json'), JSON.stringify({
+          inferenceProvider: 'gateway',
+          inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+          inferenceGatewayApiKey: 'codemie-proxy.claude-desktop',
+          managedMcpServers: JSON.stringify([USER_SERVER]),
+        }));
+        expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir, gatewayKey: 'codemie-proxy' })).toBe('refresh');
+
+        const { removeDesktopConfig } = await import('../connectors/desktop.js');
+        const removed = await removeDesktopConfig(desktop3pDir, join(scratch, 'managed-state.json'));
+        expect(removed).toMatchObject({ removed: true, deletedConfigFile: false });
+        // What disconnect leaves: the applied entry with the user's server only.
+        const left: unknown = JSON.parse(await readFile(join(lib, 'cfg-1.json'), 'utf-8'));
+        expect(left).not.toHaveProperty('inferenceProvider');
+        expect(left).toHaveProperty('managedMcpServers');
+      }
+
+      it('routes Desktop again without a first-party directory', async () => {
+        await connectedThenDisconnected();
+        expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir, gatewayKey: 'codemie-proxy' })).toBe('route');
+      });
+
+      it('names its own Claude account with a first-party directory', async () => {
+        await connectedThenDisconnected();
+        await mkdir(desktop1pDir, { recursive: true });
+        expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir, gatewayKey: 'codemie-proxy' })).toBe('skip-1p');
+      });
+    });
+
+    it('skips an applied entry of another provider that is not a gateway, and one that is not an object', async () => {
+      await applyConfig({ inferenceProvider: 'vertex' });
+      await mkdir(desktop1pDir, { recursive: true });
+      expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('skip-other-gateway');
+      await writeFile(join(desktop3pDir, 'configLibrary', 'cfg-1.json'), '[]');
+      expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('skip-other-gateway');
     });
 
     it('skips a Desktop back on its own account after gateway use (a stale 3p deployment mode, no applied config)', async () => {
