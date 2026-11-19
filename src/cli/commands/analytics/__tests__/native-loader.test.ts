@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
+import { AgentRegistry } from '../../../../agents/registry.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
 // hoisting transform actually lifts it above the static `native-loader.js` import above).
@@ -831,5 +832,97 @@ describe('loadNativeSessions codex child dedup', () => {
     };
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['parent-uuid']);
+  });
+});
+
+/**
+ * Without `--include-external`, a Claude-family log with no ownership marker is tagged
+ * `native-external` and then dropped by SessionsSource. The loader must not pay for parsing it.
+ */
+describe('loadNativeSessions — external sessions not wanted', () => {
+  const filter = undefined;
+  let parsed: string[];
+
+  const claudeLog = (sessionId: string) =>
+    ({
+      sessionId,
+      agentName: 'claude',
+      metadata: {},
+      messages: [{ type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      metrics: { tools: {} },
+    }) as never;
+
+  // A has an ownership marker, B has none, C belongs to an analytics-only agent.
+  const deps: NativeLoaderDeps = {
+    trackedLogPaths: () => new Set<string>(),
+    discover: async () => [
+      { agentName: 'claude', descriptor: { sessionId: 'A', filePath: '/logs/A.jsonl', createdAt: 1, agentName: 'claude' } },
+      { agentName: 'claude', descriptor: { sessionId: 'B', filePath: '/logs/B.jsonl', createdAt: 2, agentName: 'claude' } },
+      { agentName: 'reader-only', descriptor: { sessionId: 'C', filePath: '/logs/C.jsonl', createdAt: 3, agentName: 'reader-only' } },
+    ],
+    parse: async (_agent, _filePath, sessionId) => {
+      parsed.push(sessionId);
+      return claudeLog(sessionId);
+    },
+    realPath: (p) => p,
+    hasOwnershipMarker: (filePath) => filePath === '/logs/A.jsonl',
+  };
+
+  // Codex parent P has no marker; its rollout names child thread K, which has one.
+  const codexDeps: NativeLoaderDeps = {
+    trackedLogPaths: () => new Set<string>(),
+    discover: async () => [
+      { agentName: 'codex', descriptor: { sessionId: 'P', filePath: '/logs/P.jsonl', createdAt: 1, agentName: 'codex' } },
+      { agentName: 'codex', descriptor: { sessionId: 'K', filePath: '/logs/K.jsonl', createdAt: 2, agentName: 'codex' } },
+    ],
+    parse: async (_agent, _filePath, sessionId) => {
+      parsed.push(sessionId);
+      return {
+        sessionId,
+        agentName: 'codex',
+        metadata: {},
+        messages:
+          sessionId === 'P'
+            ? [{ type: 'response_item', payload: { type: 'function_call', name: 'wait_agent', arguments: '{"targets":["K"]}' } }]
+            : [{ type: 'event_msg', payload: { type: 'task_complete' } }],
+        metrics: { tools: {} },
+      } as never;
+    },
+    realPath: (p) => p,
+    hasOwnershipMarker: (filePath) => filePath === '/logs/K.jsonl',
+  };
+
+  beforeEach(() => {
+    parsed = [];
+    // The statically imported registry: the one the statically imported loader calls.
+    vi.spyOn(AgentRegistry, 'getAgent').mockImplementation(
+      (name: string) => (name === 'reader-only' ? { metadata: { analyticsOnly: true } } : undefined) as never
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not parse a Claude log CodeMie did not start when external sessions are not wanted', async () => {
+    const out = await loadNativeSessions(filter, deps, { includeExternal: false });
+
+    expect(parsed).toEqual(['A', 'C']); // B is never opened
+    expect(out.map((s) => s.sessionId).sort()).toEqual(['A', 'C']);
+  });
+
+  it('still parses everything when external sessions are wanted or the option is omitted', async () => {
+    await loadNativeSessions(filter, deps, { includeExternal: true });
+    await loadNativeSessions(filter, deps);
+
+    expect(parsed).toEqual(['A', 'B', 'C', 'A', 'B', 'C']);
+  });
+
+  it('keeps the Codex and Pi family passes unchanged when external sessions are not wanted', async () => {
+    const out = await loadNativeSessions(filter, codexDeps, { includeExternal: false });
+    const outIds = out.map((s) => s.sessionId);
+
+    expect(parsed).toContain('P'); // still parsed: it links K to its parent
+    expect(outIds).not.toContain('K'); // K stays counted inside P, as today
   });
 });

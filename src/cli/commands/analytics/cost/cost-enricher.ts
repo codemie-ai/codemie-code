@@ -762,6 +762,8 @@ export async function enrichCosts(
       totalCostUSD += cost.costUSD;
       pricedSessions += 1;
     }
+    // Priced: nothing reads this log again, so let it be collected before the next one.
+    entry.parsed = null;
   }
 
   return {

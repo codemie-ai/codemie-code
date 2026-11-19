@@ -16,7 +16,7 @@ export class SessionsSource implements AnalyticsSource {
     // ALL usage. Deduped against tracked logs inside the loader.
     try {
       const { loadNativeSessions } = await import('../native-loader.js');
-      const natives = (await loadNativeSessions(opts.filter))
+      const natives = (await loadNativeSessions(opts.filter, undefined, { includeExternal: Boolean(opts.includeExternal) }))
         .filter((s) => loader.sessionMatchesFilter(s, opts.filter))
         .filter((s) => opts.includeExternal || s.startEvent?.data.provider !== 'native-external');
       rawSessions.push(...natives);
