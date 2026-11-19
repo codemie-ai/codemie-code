@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { runInNewContext } from 'vm';
 import { buildTrace } from '../../view/trace.js';
 import { buildSummary } from '../../view/summary.js';
-import { dispatch, payload, record } from '../../view/__tests__/record-fixture.js';
+import { dispatch, payload, record, tokens } from '../../view/__tests__/record-fixture.js';
 import type { ReportSessionRecord } from '../types.js';
 
 const appSource = readFileSync(fileURLToPath(new URL('../client/app.js', import.meta.url)), 'utf-8');
@@ -35,6 +35,12 @@ const traceEntries = runInNewContext(
   `${sliceOf('function traceEntries(s) {', '// Every link selects an invocation entry')} traceEntries`,
   {}
 ) as (s: unknown) => AppTraceEntry[];
+// VIEWS.efficiency's "Avg context / call" (the Overview's effAvgCtx is the same expression).
+const efficiencyAvgCtx = (fs: unknown[]): number =>
+  runInNewContext(
+    `${sliceOf('function sum(arr, f) {', 'function groupBy(arr, keyFn) {')} ${sliceOf('var totalCacheRead = sum(fs', 'var worst = 0, worstS = null;')} avgCtx`,
+    { fs }
+  ) as number;
 const successRate = runInNewContext(
   `${sliceOf('function sum(arr, f) {', '// ---- filter state')} successRate`,
   {}
@@ -85,6 +91,20 @@ describe('view parity with the HTML report', () => {
       expect(view.map((e) => e.issue)).toEqual(app.map((e) => e.issue || null));
       // Labels differ only by the report's "kind · " prefix.
       expect(view.map((e) => `${e.kind} · ${e.label}`)).toEqual(app.map((e) => e.label));
+    }
+  });
+
+  it('summary context per turn equals the report\'s "Avg context / call", sessions without cache reads included', () => {
+    const sets = [
+      sessions,
+      [record({ turns: 10, tokens: tokens(1_000, 10_000) }), record({ sessionId: 'no-cache', turns: 90, tokens: tokens(0, 10_000) })],
+      [record({ turns: 0, tokens: tokens(0, 0) })],
+      [],
+    ];
+    for (const set of sets) {
+      const summary = buildSummary(payload(set), {}, { compare: false, now: Date.UTC(2026, 10, 19) });
+
+      expect(summary.efficiency.contextPerTurn).toBe(efficiencyAvgCtx(JSON.parse(JSON.stringify(set))));
     }
   });
 

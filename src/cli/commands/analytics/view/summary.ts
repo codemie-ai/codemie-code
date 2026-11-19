@@ -219,9 +219,6 @@ function efficiencyOf(records: readonly ReportSessionRecord[], totals: SummaryTo
   const totalCost = totals.costUSD;
   const dead = records.filter((s) => s.costUSD > 0 && (s.filesChanged || 0) === 0 && s.netLines === 0);
   const deadCost = sum(dead, (s) => s.costUSD);
-  // Context per turn counts only sessions that read the cache at all.
-  const cached = records.filter((s) => (s.tokens?.cacheRead ?? 0) > 0);
-  const cachedTurns = sum(cached, (s) => s.turns);
   const turns = records.map((s) => s.turns || 0).sort((a, b) => a - b);
   const mid = Math.floor(turns.length / 2);
   const median = !turns.length ? 0 : turns.length % 2 ? turns[mid] : Math.round((turns[mid - 1] + turns[mid]) / 2);
@@ -239,7 +236,8 @@ function efficiencyOf(records: readonly ReportSessionRecord[], totals: SummaryTo
   return {
     costPerFileUSD: totals.filesChanged ? totalCost / totals.filesChanged : null,
     toolSuccessRate: totals.toolSuccessRate,
-    contextPerTurn: cachedTurns ? sum(cached, (s) => s.tokens.cacheRead) / cachedTurns : 0,
+    // "Avg context / call": every session's cache reads over every session's turns.
+    contextPerTurn: totals.turns ? totals.tokens.cacheRead / totals.turns : 0,
     cacheReadCostShare: totalCost > 0 ? totals.cacheReadCostUSD / totalCost : 0,
     dead: {
       sessions: dead.length,

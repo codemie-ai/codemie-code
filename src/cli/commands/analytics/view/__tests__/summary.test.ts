@@ -144,7 +144,7 @@ describe('buildSummary', () => {
     expect(d.top.map((r) => r.sessionId)).toEqual(['dead-9', 'dead-8', 'dead-7', 'dead-6', 'dead-5', 'dead-4', 'dead-3', 'dead-2']);
   });
 
-  it('computes context per turn only over sessions with cache reads', () => {
+  it('computes context per turn as the report does: all cache reads over all turns', () => {
     const sessions = [
       record({ sessionId: 'a', turns: 10, tokens: tokens(1_000, 10_000), costUSD: 1, cacheReadCostUSD: 0.25 }),
       record({ sessionId: 'no-cache', turns: 90, tokens: tokens(0, 10_000) }),
@@ -153,7 +153,7 @@ describe('buildSummary', () => {
 
     const { efficiency } = buildSummary(payload(sessions), NOV, opts);
 
-    expect(efficiency.contextPerTurn).toBe((1_000 + 3_000) / (10 + 10)); // not / 110
+    expect(efficiency.contextPerTurn).toBe((1_000 + 0 + 3_000) / (10 + 90 + 10)); // the session without cache reads counts too
     expect(efficiency.heavy.map((r) => [r.sessionId, r.contextPerTurn, r.bloatPct])).toEqual([
       ['c', 300, 50],
       ['a', 100, 25],
