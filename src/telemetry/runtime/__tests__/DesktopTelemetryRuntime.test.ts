@@ -3029,4 +3029,245 @@ describe('DesktopTelemetryRuntime', () => {
       });
     });
   });
+
+  describe('the Claude analytics switch', () => {
+    const setSwitch = (enabled: boolean, collectionGeneration?: number): void => {
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled, collectionGeneration }));
+    };
+    const sendsSoFar = () => ({
+      starts: mockSendSessionStart.mock.calls.length,
+      ends: mockSendSessionEnd.mock.calls.length,
+      syncs: mockSync.mock.calls.length
+    });
+
+    it('off: nothing is discovered, recorded or sent, the Cowork producer still runs, and stop() sends no end metric', async () => {
+      setSwitch(false);
+      openDesktopChat('ext-1', 2, T0);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, { run });
+
+      await runtime.triggerPoll();
+      await pollTicks(runtime, 3);
+      await (runtime as any).cowork.inFlight;
+      await runtime.stop();
+
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(persistedRecords()).toEqual([]);
+      expect(run).toHaveBeenCalled();
+      expect(run.mock.calls.every(([, connected]) => connected === true)).toBe(true);
+    });
+
+    it('closes a chat tracked while on locally when switched off, and never uploads it after enabling', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      expect(mockSendSessionStart).toHaveBeenCalledOnce();
+      vi.clearAllMocks();
+
+      setSwitch(false);
+      await pollTicks(daemon, 1);
+
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(false);
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-analytics-disabled' });
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+      vi.setSystemTime(Date.now() + DESKTOP_REDELIVERY_INTERVAL_MS);
+      await daemon.triggerPoll();
+      await (daemon as any).redeliveryPass;
+
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(false);
+    });
+
+    it('enable after a disabled period is forward-only: content written while off is never synced', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1] }]);
+      sentDeltas.length = 0;
+
+      setSwitch(false);
+      await pollTicks(daemon, 1);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+      const enabledAt = Date.now();
+      // The chat idle since the enable is skipped
+      expect(sentDeltas).toEqual([]);
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
+
+      vi.setSystemTime(enabledAt + 1_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(adapter.applyBaseline).toHaveBeenCalledOnce();
+      expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(enabledAt);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [3] }]);
+    });
+
+    it('a daemon started disabled and then enabled is an edge: a chat that existed before is not backfilled', async () => {
+      setSwitch(false);
+      openDesktopChat('ext-1', 2, T0);
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+      const enabledAt = Date.now();
+      vi.setSystemTime(enabledAt + 1_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(enabledAt);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
+    });
+
+    it('a corrupt file sends nothing, and a corrupt-to-valid flap while previously on is no edge', async () => {
+      const adapter = createAdapter();
+      const warn = vi.spyOn(logger, 'warn');
+      const daemon = await startDaemon(adapter);
+      const collectingSince = (daemon as any).collectingSince;
+
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), '{not json');
+      vi.setSystemTime(Date.now() + 1_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(daemon, 2);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(warn.mock.calls.filter(([message]) => String(message).includes('preferences file unreadable'))).toHaveLength(1);
+
+      setSwitch(true);
+      openDesktopChat('ext-2', 1, Date.now());
+      await pollTicks(daemon, 1);
+
+      expect((daemon as any).collectingSince).toBe(collectingSince);
+      expect((daemon as any).analyticsSwitch.forwardOnlyFrom).toBeUndefined();
+      expect(sendsSoFar().starts).toBe(1);
+    });
+
+    it('stays closed after enabling until the local close of the live records succeeds', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      sentDeltas.length = 0;
+      const close = vi.spyOn(DesktopSessionDelivery.prototype, 'closeLiveRecordsLocally')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false);
+
+      setSwitch(false);
+      await pollTicks(daemon, 1);
+      setSwitch(true);
+      vi.setSystemTime(Date.now() + 1_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      expect(close).toHaveBeenCalledTimes(2);
+      expect(sentDeltas).toEqual([]);
+      expect((daemon as any).analyticsSwitch.forwardOnlyFrom).toBeUndefined();
+
+      await pollTicks(daemon, 1);
+      expect(close).toHaveBeenCalledTimes(3);
+      expect((daemon as any).analyticsSwitch.forwardOnlyFrom).toBeDefined();
+      expect((daemon as any).analyticsSwitch.closePending).toBe(false);
+    });
+
+    it('moves a known record holding an older pending baseline to the enable time', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+      const sessionId = sessionIdFor('ext-1')!;
+      sentDeltas.length = 0;
+
+      setSwitch(false);
+      await pollTicks(daemon, 1);
+      const completedPath = join(sessionsDir(), `completed_${sessionId}.json`);
+      const closed = JSON.parse(readFileSync(completedPath, 'utf-8')) as Session;
+      closed.runtimeCheckpoint!.baselineCutoffMs = T0 - 1_000;
+      writeFileSync(completedPath, JSON.stringify(closed));
+      appendMessages('ext-1', 1);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+      const enabledAt = Date.now();
+      vi.setSystemTime(enabledAt + 1_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(adapter.applyBaseline).toHaveBeenCalledOnce();
+      expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(enabledAt);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [3] }]);
+    });
+
+    describe('a toggle no poll observed', () => {
+      it('is forward-only when analytics were switched off and on between two polls', async () => {
+        openDesktopChat('ext-1', 2, T0);
+        const adapter = createAdapter();
+        const daemon = await startDaemon(adapter);
+        sentDeltas.length = 0;
+
+        vi.setSystemTime(Date.now() + 1_000);
+        appendMessages('ext-1', 1);
+        setSwitch(true, 2);
+        await pollTicks(daemon, 1);
+        const observedAt = Date.now();
+        expect(sentDeltas).toEqual([]);
+
+        vi.setSystemTime(observedAt + 1_000);
+        appendMessages('ext-1', 1);
+        await pollTicks(daemon, 1);
+
+        expect(adapter.applyBaseline).toHaveBeenCalledOnce();
+        expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(observedAt);
+        expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [3] }]);
+      });
+
+      it('is forward-only when it happened while the daemon was down', async () => {
+        openDesktopChat('ext-1', 2, T0);
+        const adapter = createAdapter();
+        await startDaemon(adapter);
+        sentDeltas.length = 0;
+
+        vi.setSystemTime(Date.now() + 1_000);
+        appendMessages('ext-1', 1);
+        setSwitch(true, 2);
+        vi.setSystemTime(Date.now() + 1_000);
+        const restarted = await startDaemon(adapter);
+        const firstPollAt = Date.now();
+        expect(sentDeltas).toEqual([]);
+
+        vi.setSystemTime(firstPollAt + 1_000);
+        appendMessages('ext-1', 1);
+        await pollTicks(restarted, 1);
+
+        expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(firstPollAt);
+        expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [3] }]);
+      });
+
+      it('skips what the start-up finalization of a gone daemon\'s record would flush from the disabled period', async () => {
+        vi.setSystemTime(T0 + 5_000);
+        openDesktopChat('ext-1', 2, T0);
+        writeRecord('ext-1', {
+          ownerPid: DEAD_PID,
+          ownerStartedAt: T0 - 2 * HOUR_MS,
+          runtimeCheckpoint: {
+            externalSessionId: 'ext-1',
+            transcriptPath: transcriptPathFor('ext-1'),
+            lastDiscoveredAt: T0 - 1_000,
+            lastSeenActivityAt: T0 - 1_000,
+            collectionGeneration: 0
+          }
+        });
+        setSwitch(true, 2);
+        const adapter = createAdapter();
+
+        await startRuntime(adapter);
+
+        expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(T0 + 5_000);
+        expect(sentDeltas).toEqual([]);
+      });
+    });
+  });
 });

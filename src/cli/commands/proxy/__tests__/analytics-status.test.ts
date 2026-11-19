@@ -130,7 +130,7 @@ describe('analytics-status', () => {
   });
 
   describe('formatClaudeAnalyticsStatus', () => {
-    const SENTENCE = 'These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.';
+    const SENTENCE = 'These settings do not affect Claude Desktop chats (exclusions are not applied to them), the daily analytics collector and the session sync that `codemie claude` runs itself.';
     const base: ClaudeAnalyticsStatus = {
       hooksInstalled: true,
       scope: 'user',

@@ -11,6 +11,8 @@ export interface RuntimeCheckpoint {
    * instead of being backfilled; the marker is cleared once that baseline is applied.
    */
   baselineCutoffMs?: number;
+  /** The analytics `collectionGeneration` the record was last created or synced under; absent on records that predate it. */
+  collectionGeneration?: number;
 }
 
 export function getRuntimeCheckpoint(session: Session): RuntimeCheckpoint | undefined {
