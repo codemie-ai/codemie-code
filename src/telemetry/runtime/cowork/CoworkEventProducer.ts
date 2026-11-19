@@ -367,7 +367,7 @@ export class CoworkEventProducer {
    */
   private async pinAttribution(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string): Promise<CoworkAttribution> {
     const known = await loadCoworkAttribution(cliSessionId);
-    if (known) return known;
+    if (known?.project) return known;
     const found = await withSessionLock(cliSessionId, () => readStatusState(cliSessionId));
     if (found.kind === 'unreadable') throw new AnalyticsSourceError('Session status is unreadable; retrying without pinning');
     const bound = found.kind === 'ok' ? found.status.project : undefined;
@@ -391,7 +391,7 @@ export class CoworkEventProducer {
     const profile = this.options.profile;
     const config = await ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined);
     const project = config.codeMieProject ?? '';
-    if (!project) return { project, projectSource: 'none' };
+    if (!project) throw new AnalyticsSourceError('Session project is unresolved; retrying before pinning or appending');
     // A failing lookup propagates: the caller retries it rather than pinning a guessed or unknown source for good.
     const { projectOrigin } = await ConfigLoader.resolveProfileIdentity(workingDirectory, config.name);
     // The project may sit on the selected profile record itself, outside any workspace.

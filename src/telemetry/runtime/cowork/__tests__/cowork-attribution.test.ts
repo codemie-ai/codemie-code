@@ -44,6 +44,13 @@ afterEach(() => {
 });
 
 describe('the attribution pin', () => {
+  it('replaces an old empty pin once a real project is available, and never writes a new empty pin', async () => {
+    await expect(saveCoworkAttribution(ID, { project: '', projectSource: 'none' })).rejects.toThrow('unresolved');
+    expect(await loadCoworkAttribution(ID)).toBeNull();
+    writeFileSync(attributionFile(), JSON.stringify({ project: '', projectSource: 'none' }));
+    expect(await saveCoworkAttribution(ID, { project: 'recovered', projectSource: 'profile' })).toEqual({ project: 'recovered', projectSource: 'profile' });
+    expect(await loadCoworkAttribution(ID)).toEqual({ project: 'recovered', projectSource: 'profile' });
+  });
   it('removes a partially written temp file when the write fails', async () => {
     fault.partialWrite = true;
     await expect(saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' })).rejects.toMatchObject({ code: 'ENOSPC' });
@@ -88,6 +95,7 @@ describe('the attribution pin', () => {
     ['not JSON', '{nope'],
     ['of another shape', '{"project":1,"projectSource":"profile"}'],
     ['with an unknown source', '{"project":"p","projectSource":"elsewhere"}'],
+    ['with an empty project from an older version', '{"project":"","projectSource":"none"}'],
   ])('is null when the file is %s', async (_case, content) => {
     if (content !== undefined) writeFileSync(attributionFile(), content);
 

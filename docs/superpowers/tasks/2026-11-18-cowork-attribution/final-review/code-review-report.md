@@ -13,7 +13,7 @@
 - EPMCDME-17385 AC1-AC4: pass (pin before the first append, write-once, restart and folder changes, native unchanged).
 - EPMCDME-17410 AC1: `partial`, only through (1) the single user-accepted upgrade edge case below, (2) a session with no served
   mark (no proof of the route), (3) a project that cannot travel as a header, and (4) a fresh session with no project, which
-  is not sent at all (discarded locally as `no_project`, as at baseline and for native sessions).
+  is not sent until a project resolves (the second reviewer follow-up below replaces the earlier local-discard behavior).
 - EPMCDME-17410 AC2: the overview cards (`api_cost_usd`/`subscription_cost_usd`) were verified on a local backend with
   synthetic Cowork input; the Cost view reads `total_cost_usd`; the `/cost` funding buckets still show Cowork as `unknown` and
   no cli-analytics UI component reads them. Not verified on a real macOS Desktop session or on the current backend `origin/main`
@@ -114,3 +114,24 @@ The new Desktop connection state and tracked-session finalization still invoke t
 paths. Focused Cowork, forwarder and producer-attribution suites: exit 0, 6 files passed, **223 passed / 2 skipped**.
 `tsc --noEmit` and `git diff --check` passed. Reviewed implementation `eee936ee` maps to `d6376154`, reviewed range end
 `ad955b7e` maps to `1de0c4f0`, and reviewer remediation `2b9b450b` maps to `b9cc0d98`.
+
+### Second reviewer follow-up and rebase onto `fb2d699b` (2026-11-19)
+
+Rebased `a402b869` onto main `fb2d699b` without conflicts; all 20 existing patches remain identical by range-diff.
+The new main changes client configuration, adds the first-party Desktop path helper, and extends exec options; no
+task-source conflict resolution was necessary. Reviewed implementation `eee936ee` maps to `1c2dd2a9`, review range end
+`ad955b7e` to `bd84b08c`, and prior reviewer remediation `2b9b450b` to `3d365a56`.
+
+- Comment 4631084536 confirmed: resolving no project previously persisted an empty pin. Now processing retries before
+  pinning, append or cursor advancement. Empty pins from an older version are treated as invalid and can be replaced
+  once resolution succeeds. Tests verify no initial consumption and full transcript processing after config recovery.
+- Comment 4631084527 is not confirmed for the stated first-party account switch: discovery reads only `Claude-3p`,
+  while first-party sessions use `Claude`. A same-session-ID regression writes personal usage only in the first-party
+  tree and verifies that disconnected finalization emits no personal prompt or usage. This is a synthetic filesystem
+  isolation test, not live Desktop proof. Continued writes to the original third-party transcript via another gateway
+  remain unverified and require a concrete reproducer. No new scope exception is accepted. Clearing headers alone is
+  insufficient because the backend retains a session's existing classification; no unsafe blanket clearing was added.
+
+Final scoped Cowork, forwarder and producer-attribution checks: exit 0, 6 files passed, **226 passed / 2 skipped**.
+Typecheck, scoped ESLint and diff whitespace checks passed. Historical skill artifacts retain their original scope;
+the source delta and reviewer response above do not claim a new skill verdict or live account-switch acceptance.

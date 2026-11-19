@@ -16,11 +16,12 @@ import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { coworkServedMarkPath } from './cowork-served-mark.js';
 import { withSessionLock } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-lock.js';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 
 export type CoworkProjectSource = 'linked_folder' | 'profile' | 'none';
 
 export interface CoworkAttribution {
-  /** The project every event of the session is stamped with; `''` = none resolved (nothing is sent). */
+  /** The non-empty project every event is stamped with. Unresolved projects are retried, never pinned. */
   project: string;
   /** Where the project came from, as the backend's `Project-Source` header. */
   projectSource: CoworkProjectSource;
@@ -43,7 +44,7 @@ async function readPin(cliSessionId: string): Promise<CoworkAttribution | 'corru
   }
   try {
     const parsed = JSON.parse(text) as Partial<CoworkAttribution> | null;
-    if (typeof parsed?.project !== 'string' || typeof parsed.projectSource !== 'string' || !SOURCES.includes(parsed.projectSource)) return 'corrupt';
+    if (typeof parsed?.project !== 'string' || !parsed.project || typeof parsed.projectSource !== 'string' || !SOURCES.includes(parsed.projectSource)) return 'corrupt';
     return { project: parsed.project, projectSource: parsed.projectSource };
   } catch {
     return 'corrupt';
@@ -70,6 +71,7 @@ export async function loadCoworkAttribution(cliSessionId: string): Promise<Cowor
  * Returns the pin now in effect.
  */
 export async function saveCoworkAttribution(cliSessionId: string, attribution: CoworkAttribution): Promise<CoworkAttribution> {
+  if (!attribution.project) throw new AnalyticsSourceError('An unresolved project must not be pinned');
   return withSessionLock(cliSessionId, async () => {
     const path = attributionPath(cliSessionId);
     await mkdir(dirname(path), { recursive: true });

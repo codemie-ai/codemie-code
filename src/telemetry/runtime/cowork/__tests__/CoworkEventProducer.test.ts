@@ -47,7 +47,7 @@ import { logger } from '@/utils/logger.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
-import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { getClaudeDesktopBaseDir, getClaudeDesktopFirstPartyDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
 import { markCoworkSessionServed } from '../cowork-served-mark.js';
 import { COWORK_ACCOUNT_SEGMENTS, coworkFixtureFile, installCoworkFixture } from './cowork-fixture.js';
@@ -405,16 +405,15 @@ describe('CoworkEventProducer.run', () => {
     expect(promptIds()).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000e1`);
   });
 
-  it('appends without a project name or a project binding when no project is resolved, and logs nothing about it', async () => {
+  it('appends nothing and saves no cursor or pin while the project is unresolved', async () => {
     rmSync(join(codemieHome, 'codemie-cli.config.json'));
 
     await settle(newProducer(), LAST_LINE_MS + 20_000);
 
-    const written = events();
-    expect(written).toHaveLength(FIRST_PROCESSING_TYPES.length);
-    expect(written.filter((event) => 'codemie_project_name' in event)).toEqual([]);
-    expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBeUndefined();
-    expect(warnings()).toEqual([]);
+    expect(events()).toEqual([]);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(false);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-attribution.json`))).toBe(false);
+    expect(warnings()).toHaveLength(1);
   });
 
   it('appends nothing and saves no cursor while the local config cannot be loaded, and appends the full set once after it is fixed', async () => {
@@ -967,6 +966,22 @@ describe('CoworkEventProducer while Desktop is not connected', () => {
   const ENDED_AT = '2026-11-10T10:00:30.000Z';
   const RESUMED_AT = Date.parse('2026-11-10T10:20:05.000Z');
   const UNPARSABLE_CURSOR = '[cowork-producer] Unparsable cursor; the session is read again from its start';
+
+  it('does not read personal-account transcripts from the first-party directory, even with the same session id', async () => {
+    vi.stubEnv('APPDATA', join(home, 'AppData', 'Roaming'));
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = events().length;
+    const personalBase = getClaudeDesktopFirstPartyDir();
+    installCoworkFixture(personalBase);
+    const personalMain = join(personalBase, 'local-agent-mode-sessions', ACCOUNT_DIR, '1a2b3c4d', '.claude', 'projects', 'session', `${CLI}.jsonl`);
+    appendFileSync(personalMain, userLine('personal-prompt', '2026-11-10T10:20:00.000Z', 'Personal-account work'));
+    appendFileSync(personalMain, assistantLine('personal-answer', '2026-11-10T10:20:05.000Z', 'msg_personal', [{ type: 'text', text: 'Personal response' }]));
+    await settle(producer, RESUMED_AT + INACTIVITY_TIMEOUT_MS + 20_000, false);
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(events().some((event) => event['message_id'] === 'msg_personal')).toBe(false);
+    expect(events().some((event) => event['prompt_body'] === 'Personal-account work')).toBe(false);
+  });
 
   function appendTurn(): void {
     appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d1', '2026-11-10T10:20:00.000Z', 'One more synthetic question'));
@@ -1529,17 +1544,21 @@ describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)',
     expect(status().projectConflict).toBeUndefined();
   });
 
-  it('a session first resolved without any project stays without one when a project appears later (nothing is sent under a late project)', async () => {
+  it('retries an initially unresolved project without losing the transcript when configuration recovers', async () => {
     rmSync(join(codemieHome, 'codemie-cli.config.json'));
     const producer = newProducer();
     await settle(producer, FIRST);
+    expect(events()).toEqual([]);
+    expect(existsSync(attributionPath())).toBe(false);
     writeProfile('late-project');
 
     await producer.run(END);
     await producer.run(END + 10_000);
 
-    expect(events().filter((event) => 'codemie_project_name' in event)).toEqual([]);
-    expect(status().project).toBeUndefined();
+    expect(events().length).toBeGreaterThan(0);
+    for (const event of events()) expect(event['codemie_project_name']).toBe('late-project');
+    expect(status().project).toBe('late-project');
+    expect(events().some((event) => event['type'] === 'agent.session.end')).toBe(true);
   });
 
   it('does not pin or append over an unreadable legacy status, and recovers the original binding on retry', async () => {
