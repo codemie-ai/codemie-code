@@ -379,11 +379,11 @@ describe('proxy connect --claude-desktop', () => {
 
     const command = createProxyCommand();
     await expect(
-      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith('  Run: codemie profile login');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('  Sign in first — run: codemie profile login');
     expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('--url'));
     vi.mocked(ConfigLoader.getActiveProfileName).mockReset();
   });

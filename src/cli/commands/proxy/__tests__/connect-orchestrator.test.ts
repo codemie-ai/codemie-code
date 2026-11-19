@@ -1979,7 +1979,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(failure).toBeGreaterThan(-1);
       const errors = vi.mocked(console.error).mock;
       const ssoError = errors.calls.findIndex(([message]) =>
-        stripAnsi(String(message)).startsWith("✗ No SSO credentials found for profile 'p'."));
+        stripAnsi(String(message)).startsWith("✗ No active CodeMie session for profile 'p'."));
       expect(ssoError).toBeGreaterThan(-1);
       expect(logs.invocationCallOrder[failure]).toBeLessThan(errors.invocationCallOrder[ssoError]);
     });
@@ -3750,6 +3750,8 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigurationError } = await import('../../../../utils/errors.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
 
@@ -3771,12 +3773,12 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('p');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('p');
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
 
     expect((thrown as Error).message).toBe(
-      "No active CodeMie session for profile 'p'.\n  Run: codemie profile login"
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login"
     );
   });
 
@@ -3784,12 +3786,12 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('other');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
 
     expect((thrown as Error).message).toBe(
-      "No active CodeMie session for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
   });
 
@@ -3802,7 +3804,7 @@ describe('assertSsoCredentials', () => {
     const thrown = await assertSsoCredentials(BASE_URL, 'p').catch((e: unknown) => e);
 
     expect((thrown as Error).message).toBe(
-      "No active CodeMie session for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
   });
 

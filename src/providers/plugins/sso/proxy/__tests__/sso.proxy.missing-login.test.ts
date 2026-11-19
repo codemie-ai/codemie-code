@@ -8,9 +8,14 @@ vi.mock('../../../../core/codemie-auth-helpers.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../core/codemie-auth-helpers.js')>()),
   getStoredPlatformCredentials: vi.fn().mockResolvedValue(null),
 }));
-vi.mock('../../../../core/registry.js', () => ({
-  ProviderRegistry: { getProvider: vi.fn().mockReturnValue({ name: 'ai-run-sso', authType: 'sso' }) },
-}));
+vi.mock('../../../../core/registry.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../../core/registry.js')>();
+  vi.spyOn(original.ProviderRegistry, 'getProvider').mockReturnValue({
+    name: 'ai-run-sso',
+    authType: 'sso',
+  } as ReturnType<typeof original.ProviderRegistry.getProvider>);
+  return original;
+});
 
 const API_URL = 'https://codemie.lab.epam.com/code-assistant-api';
 
