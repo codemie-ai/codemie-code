@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17411_desktop-analytics-disable",
+  "head": "c60ed8d8041f37e0cda1c53a8a3e4c93c8e11a9c",
+  "runner": "npm",
+  "started_at": "2026-11-19T09:22:09Z",
+  "completed_at": "2026-11-19T09:24:23Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 29266,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30992,
+      "command": "npx eslint --max-warnings=0 src/agents/core/session/types.ts src/cli/commands/proxy/__tests__/analytics-advice.test.ts src/cli/commands/proxy/__tests__/analytics-command.test.ts src/cli/commands/proxy/__tests__/analytics-hints.test.ts src/cli/commands/proxy/__tests__/analytics-status.test.ts src/cli/commands/proxy/analytics-command.ts src/cli/commands/proxy/analytics-hints.ts src/cli/commands/proxy/analytics-status.ts src/cli/commands/proxy/analytics-targets.ts src/telemetry/runtime/DesktopSessionDelivery.ts src/telemetry/runtime/DesktopSessionMetrics.ts src/telemetry/runtime/DesktopTelemetryRuntime.ts src/telemetry/runtime/__tests__/DesktopSessionDelivery.test.ts src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts src/telemetry/runtime/__tests__/analytics-switch.test.ts src/telemetry/runtime/analytics-switch.ts src/telemetry/runtime/checkpoints.ts",
+      "exit_code": 0,
+      "notes": "scoped to changed src/**/*.ts since merge_base"
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 62148,
+      "command": "npx vitest run src/telemetry/runtime/__tests__/analytics-switch.test.ts src/telemetry/runtime/__tests__/DesktopSessionDelivery.test.ts src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.start.test.ts src/telemetry/runtime/__tests__/desktop-session.test.ts src/cli/commands/proxy/__tests__/analytics-advice.test.ts src/cli/commands/proxy/__tests__/analytics-command.test.ts src/cli/commands/proxy/__tests__/analytics-hints.test.ts src/cli/commands/proxy/__tests__/analytics-status.test.ts",
+      "exit_code": 0,
+      "notes": "scoped to 9 affected unit test files; 331 tests passed"
+    },
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run license-check",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run build",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "unit-full",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npx vitest run --project cli",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "commitlint",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    },
+    {
+      "id": "ci",
+      "source": "ci",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "user-scoped; covered by CI"
+    }
+  ],
+  "failures": {}
+}

@@ -1,0 +1,118 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved after one fix-up (CR-001/002 fixed, CR-003 extracted; 507 lines accepted by user)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix CR-001 via collectionGeneration stamped in record checkpoint, CR-002 via max(baseline, forwardOnlyFrom), CR-003 by extracting switch handling into a collaborator"
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved after one fix-up (CR-001/002 fixed, CR-003 extracted; 507 lines accepted by user)"
+    }
+  ],
+  "reviewed_head": "c60ed8d8041f37e0cda1c53a8a3e4c93c8e11a9c",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Acceptance was not run (no spec), so confidence is low; 1 lens ran (edge-case) plus standards, and two edge findings are reachability-unconfirmed (capped at major). 5 candidates dismissed as by-design or harmless (corrupt-file fail-closed, collectingSince=now on enable, ownerless completed record, mid-flight delivery race, stale gateway hint); 0 deferred. Standards: DesktopTelemetryRuntime.ts grew 496 to 568 lines.",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 3,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "line": 239,
+      "title": "Toggle while daemon down or between polls uploads disabled-period content",
+      "problem": "The off edge exists only in the in-memory analyticsState. If analytics are turned off and back on while the daemon is down, or between two polls, no off edge is seen: no forward-only baseline is set and the start-up reconcile (or normal polling) delivers chat content written while analytics were disabled.",
+      "impact": "Violates the 'disable stops everything, enable is forward-only' decision for the daemon-restart and fast-toggle cases; chat content written while disabled can be uploaded. Reachability of the daemon-down path was not fully confirmed, so graded major.",
+      "recommendation": "Persist the disable time (for example disabledAt in claude-analytics.json) and, at daemon start and on every poll, rebase known records and the activity gate on it so an unobserved off-then-on still becomes forward-only.",
+      "status": "fixed",
+      "fix": {
+        "change": "Records carry the collectionGeneration they were last synced under; a record stamped with another generation (daemon down, or off+on between polls) is rebased forward-only on retrack and at the start-up flush, and a generation change seen while on is treated as an enable edge.",
+        "test": "DesktopTelemetryRuntime.test.ts 'a toggle no poll observed' (3 tests) and analytics-switch.test.ts checkpoint fields"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "line": 530,
+      "title": "Forward-only rebase skipped when older baseline pending",
+      "problem": "retrackSession rebases a known record on forwardOnlyFrom only when runtimeCheckpoint.baselineCutoffMs is undefined. A record that still holds an older unapplied baselineCutoffMs (for example kept because subagentsIncomplete, or after a crash) keeps it and is never moved to the enable time.",
+      "impact": "Content written while analytics were off, after the older baseline, is applied and uploaded after re-enable. The condition is narrow and its reachability was unconfirmed, so graded major.",
+      "recommendation": "Rebase when the pending baselineCutoffMs is older than forwardOnlyFrom (use the later of the two) instead of only when it is undefined.",
+      "status": "fixed",
+      "fix": {
+        "change": "Rebase on retrack when the pending baselineCutoffMs is absent or older than the cutoff, using the later of the two.",
+        "test": "DesktopTelemetryRuntime.test.ts 'moves a known record holding an older pending baseline to the enable time'"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "title": "DesktopTelemetryRuntime.ts exceeds the 500-line limit",
+      "problem": "code-quality.md requires files under 500 lines; this change adds about 72 lines (analytics switch state, checkAnalyticsSwitch, trackedActivity, forward-only rebase) and takes the file from 496 to 568 lines.",
+      "impact": "The documented file-size rule is newly broken by this change and the class keeps accreting responsibilities.",
+      "recommendation": "Move the analytics-switch edge handling (checkAnalyticsSwitch, trackedActivity and its state fields) into a small collaborator such as analytics-switch.ts or a sibling class so the file returns under 500 lines.",
+      "status": "fixed",
+      "fix": {
+        "change": "Switch state, check, close, rebase decision and generation logic extracted into the AnalyticsSwitch class in analytics-switch.ts. DesktopTelemetryRuntime.ts went from 568 to 507 lines; the remaining 7 over the 500 limit is accepted by user decision, with no pre-existing code moved.",
+        "test": "n/a (behaviour covered by the existing switch tests, now through the collaborator)"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "git-workflow.md exists but the review range has zero commits (HEAD equals diff_base; change is uncommitted), so there are no commit subjects to check"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "imports, logging, return types and function sizes conform; but the 500-line file limit is broken: DesktopTelemetryRuntime.ts grew from 496 to 568 lines"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no credentials logged, no new path-from-user-input or injection path; corrupt/off analytics switch fails closed"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Acceptance was not run (no spec), so confidence is low; 1 lens ran (edge-case) plus standards, and two edge findings are reachability-unconfirmed (capped at major). 5 candidates dismissed as by-design or harmless (corrupt-file fail-closed, collectingSince=now on enable, ownerless completed record, mid-flight delivery race, stale gateway hint); 0 deferred. Standards: DesktopTelemetryRuntime.ts grew 496 to 568 lines.",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}
