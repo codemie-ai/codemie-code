@@ -15,6 +15,7 @@ export const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
   tool_input: MAX_TOOL_FIELD_CHARS,
   tool_response: MAX_TOOL_FIELD_CHARS,
   error: MAX_TOOL_FIELD_CHARS,
+  error_message: MAX_TOOL_FIELD_CHARS,
   description: MAX_TOOL_FIELD_CHARS,
 };
 

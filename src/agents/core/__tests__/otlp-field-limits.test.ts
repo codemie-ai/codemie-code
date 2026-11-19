@@ -39,6 +39,14 @@ describe('maskAndBoundFields', () => {
     expect(String(out['tool_input'])).not.toContain('ghp_');
   });
 
+  it('masks error_message before cutting it', () => {
+    const secret = 'sk-' + 'A1b2C3d4E5'.repeat(3);
+    const out = maskAndBoundFields({ error_message: `${'x'.repeat(MAX_TOOL_FIELD_CHARS - 10)} ${secret}` });
+
+    expect(String(out['error_message'])).not.toContain('sk-');
+    expect(String(out['error_message']).length).toBeLessThanOrEqual(MAX_TOOL_FIELD_CHARS);
+  });
+
   it('leaves identifier fields untouched and does not add absent text fields', () => {
     const out = maskAndBoundFields({ session_id: 'abc-123', tool_use_id: 'call_1', agent_id: 'agent-0001' });
 
