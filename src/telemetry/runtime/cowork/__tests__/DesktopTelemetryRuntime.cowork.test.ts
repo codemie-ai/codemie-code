@@ -31,7 +31,7 @@ const config: DesktopTelemetryRuntimeConfig = {
   // Desktop connected to this daemon on every poll
   port: 4001,
   gatewayKey: 'codemie-proxy',
-  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
+  readDesktopGateway: async () => ({ gateway: { port: 4001, apiKey: 'codemie-proxy' }, namesGateway: true })
 };
 
 let home: string;
@@ -107,7 +107,7 @@ describe('DesktopTelemetryRuntime and the Cowork producer', () => {
 
   it('a session being collected gets its end and final summary while Desktop is not connected', async () => {
     let gateway: { port: number; apiKey: string } | null = { port: 4001, apiKey: 'codemie-proxy' };
-    const runtime = new DesktopTelemetryRuntime(new ClaudeDesktopTelemetryAdapter(), { ...config, readDesktopGateway: async () => gateway });
+    const runtime = new DesktopTelemetryRuntime(new ClaudeDesktopTelemetryAdapter(), { ...config, readDesktopGateway: async () => (gateway ? { gateway, namesGateway: true } : { gateway: null, namesGateway: false }) });
     await pollTwice(runtime);
     expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(true);
 
