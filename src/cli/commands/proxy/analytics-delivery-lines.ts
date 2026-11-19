@@ -4,7 +4,10 @@ import { dirname } from 'node:path';
 import type { DaemonState } from './daemon-manager.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { CLIENT_TARGETS, type ClientGatewaySpec } from './client-targets.js';
+import { CLAUDE_OTLP_FLAG } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { getClaudeAnalyticsPreferencesPath } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
+import { readClaudeAnalyticsSwitch } from '@/telemetry/runtime/analytics-switch.js';
 import { findActiveCli, findFirstManifest, resolvePackage } from '@/utils/active-cli.js';
 import { getDirname, isSamePath } from '@/utils/paths.js';
 import { isWindows } from '@/utils/platform.js';
@@ -14,12 +17,14 @@ export interface DesktopCollection {
   collecting: boolean;
   reason?: string;
   remedy?: string;
+  /** Not collecting because analytics were switched off (`proxy analytics disable`): a choice, not a fault. */
+  analyticsDisabled?: true;
 }
 
 /**
  * Whether the daemon collects what Claude Desktop sends, when Desktop is pointed at a local proxy: collecting once
- * the daemon has noticed Desktop connected to it (`desktopConnectedSince`); null when Desktop has no CodeMie
- * gateway, or the daemon is one of an older CLI (its state has no `version`).
+ * the daemon has noticed Desktop connected to it (`desktopConnectedSince`) and analytics are on; null when Desktop has
+ * no CodeMie gateway, or the daemon is one of an older CLI (its state has no `version`).
  */
 export async function collectDesktopCollection(state: DaemonState): Promise<DesktopCollection | null> {
   if (!state.version) return null;
@@ -27,8 +32,25 @@ export async function collectDesktopCollection(state: DaemonState): Promise<Desk
   return gateway ? describeDesktopCollection(state, gateway.port) : null;
 }
 
-function describeDesktopCollection(state: DaemonState, gatewayPort: number): DesktopCollection {
+async function describeDesktopCollection(state: DaemonState, gatewayPort: number): Promise<DesktopCollection> {
   if (state.desktopConnectedSince) {
+    const analytics = await readClaudeAnalyticsSwitch();
+    if (analytics === 'off') {
+      return {
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: `run: codemie proxy analytics enable ${CLAUDE_OTLP_FLAG}`,
+      };
+    }
+    if (analytics === 'corrupt') {
+      return {
+        connected: true,
+        collecting: false,
+        reason: `the analytics preferences file is unreadable (fix or delete ${getClaudeAnalyticsPreferencesPath()})`,
+      };
+    }
     return { connected: true, collecting: true };
   }
   if (gatewayPort !== state.port) {

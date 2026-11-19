@@ -72,6 +72,16 @@ describe('proxy inspect desktop', () => {
     });
   });
 
+  it('names analytics-disabled for a session while the analytics switch is off', async () => {
+    await desktopSession('after', AFTER);
+    await mkdir(join(home, '.codemie'), { recursive: true });
+    await writeFile(join(home, '.codemie', 'claude-analytics.json'), JSON.stringify({ enabled: false }));
+
+    expect(await reasonsBySession(state({ version: '0.17.0', desktopConnectedSince: CONNECTED_AT }))).toEqual({
+      local_after: ['analytics-disabled'],
+    });
+  });
+
   it('says desktop-not-connected for a daemon with a version that has not noticed Desktop', async () => {
     await desktopSession('after', AFTER);
 

@@ -262,7 +262,7 @@ export async function desktopSections(state: DaemonState): Promise<Sections> {
   const command = desktop.remedy?.replace(/^run:\s*/, '');
   return [{
     id: 'desktop',
-    status: 'warn',
+    status: desktop.analyticsDisabled ? 'info' : 'warn',
     message: `Claude Desktop: not collecting — ${desktop.reason ?? 'unknown reason'}`,
     ...(command && { hint: renderHint({ reason: 'Desktop is not collecting', command }) }),
   }];
