@@ -3037,3 +3037,65 @@ describe('proxy restart', () => {
     });
   });
 });
+
+describe('proxy connect: which Claude client routes were typed', () => {
+  const connectTargets = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    vi.resetModules();
+    connectTargets.mockClear();
+    vi.doMock('../connect-orchestrator.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../connect-orchestrator.js')>()),
+      connectTargets,
+    }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../connect-orchestrator.js');
+    vi.restoreAllMocks();
+  });
+
+  async function connectWith(...args: string[]): Promise<{ explicitRoutes?: unknown; targets: Record<string, boolean> }> {
+    const { createProxyCommand } = await import('../index.js');
+    await createProxyCommand().parseAsync(['connect', ...args], { from: 'user' });
+    expect(connectTargets).toHaveBeenCalledTimes(1);
+    return (connectTargets.mock.calls[0] as unknown as [{ explicitRoutes?: unknown; targets: Record<string, boolean> }])[0];
+  }
+
+  it('--claude-otlp implies both clients but types neither', async () => {
+    const options = await connectWith('--claude-otlp');
+    expect(options.targets).toMatchObject({ claudeDesktop: true, vscodeClaudeCode: true });
+    expect(options.explicitRoutes).toEqual({ claudeDesktop: false, vscodeClaudeCode: false });
+  });
+
+  it('a typed --claude-desktop or --vscode-claude-code is explicit, with or without --claude-otlp', async () => {
+    expect((await connectWith('--claude-desktop')).explicitRoutes).toEqual({ claudeDesktop: true, vscodeClaudeCode: false });
+    connectTargets.mockClear();
+    expect((await connectWith('--claude-otlp', '--vscode-claude-code')).explicitRoutes)
+      .toEqual({ claudeDesktop: false, vscodeClaudeCode: true });
+  });
+});
+
+describe('proxy connect help of the routing flags', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function description(long: string): Promise<string> {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    return connect?.options.find((option) => option.long === long)?.description ?? '';
+  }
+
+  it('--claude-desktop says it routes the model requests through the proxy', async () => {
+    const text = await description('--claude-desktop');
+    expect(text).toContain('through the proxy');
+    expect(text).toContain('model');
+    expect(text).toContain('MCP');
+  });
+
+  it('--vscode-claude-code says it routes the extension through the proxy', async () => {
+    expect(await description('--vscode-claude-code')).toContain('through the proxy');
+  });
+});
