@@ -66,11 +66,12 @@ export class AgentCLI {
 
   /**
    * Silent flag definition. Agents whose native CLI already uses `-s`
-   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
-   * so `-s` is forwarded to the agent untouched.
+   * (codex: --sandbox <mode>, gemini: --sandbox, opencode: -s = --session)
+   * keep only the long form so `-s` is forwarded to the agent untouched.
+   * `opencode-acp` is a different adapter name and keeps `-s` as silent.
    */
   private getSilentFlags(): string {
-    const agentsWithNativeShortS = ['codex', 'gemini'];
+    const agentsWithNativeShortS = ['codex', 'gemini', 'opencode'];
     return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
   }
 
