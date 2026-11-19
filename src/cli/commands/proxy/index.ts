@@ -12,6 +12,7 @@ import { startProxy, type ProxyStartOptions } from './start.js';
 import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { disconnectAll } from './disconnect-all.js';
+import { resetMcpAuth, RESET_NEXT_STEPS } from './reset-mcp-auth-orchestrator.js';
 import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { createProxyDoctorCommand } from './doctor/command.js';
 import { createProxyClientsCommand } from './clients-command.js';
@@ -209,7 +210,9 @@ function aggregatesGiven(opts: AggregateOptions): AggregateId[] {
 
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
-  proxy.description('Manage the CodeMie local gateway proxy daemon');
+  proxy
+    .description('Manage the CodeMie local gateway proxy daemon')
+    .addHelpText('after', `\nAfter 'reset-mcp-auth':\n${RESET_NEXT_STEPS}`);
 
   // ── proxy start ─────────────────────────────────────────────────────────────
   proxy
@@ -443,6 +446,17 @@ export function createProxyCommand(): Command {
   // Removed aliases: hidden stubs that accept any options and fail naming the replacement.
   connect.addCommand(removedCommand(CONNECT_DESKTOP_REMOVAL, 'desktop'));
   connect.addCommand(removedCommand(CONNECT_VSCODE_REMOVAL, 'vscode'));
+
+  // Not part of `disconnect`: `--claude-otlp` expands to Claude Desktop, and an analytics disconnect must keep its sign-ins.
+  // The restart and Reconnect steps show in this command's own `--help` and, for AC9, at the end of `proxy --help`.
+  proxy
+    .command('reset-mcp-auth')
+    .description('Clear the saved MCP sign-ins of a client so they can be redone')
+    .option('--claude-desktop', 'Clear the saved MCP sign-ins from Claude Desktop (the custom3pMcpOAuth entry of its config.json)')
+    .addHelpText('after', `\n${RESET_NEXT_STEPS}`)
+    .action(async (opts: { claudeDesktop?: boolean }) => {
+      await resetMcpAuth({ claudeDesktop: Boolean(opts.claudeDesktop) });
+    });
 
   const inspect = new Command('inspect');
   inspect.description('Inspect proxy integrations and telemetry state');

@@ -61,6 +61,8 @@ export const RELATED: Record<string, RelatedEntry> = {
     // `all`: `--all` ran; what is left is the client list.
     next: { default: 'codemie proxy status', byOutcome: { all: 'codemie proxy clients' } },
   },
+  // No `next`: the command prints its own restart and Reconnect steps.
+  'proxy reset-mcp-auth': { related: [CONNECT, DISCONNECT, CLIENTS], next: {} },
   'proxy analytics': { related: [A_STATUS, A_ENABLE, A_DISABLE], next: {} },
   'proxy analytics status': { related: [A_ENABLE, A_DISABLE, SYNC_STATUS], next: {} },
   'proxy analytics enable': { related: [A_STATUS, A_DISABLE], next: { default: 'codemie proxy analytics status' } },

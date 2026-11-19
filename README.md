@@ -739,6 +739,11 @@ codemie proxy disconnect --copilot-otlp
 
 `--claude-otlp` and `--copilot-otlp` disconnect every client of the vendor, as the clients' own flags do together: `--claude-otlp` removes the Claude Code analytics and the CodeMie proxy route of Claude Desktop and the extension. A client with nothing to remove prints `<client>: nothing to disconnect.` and does not fail the command; the extension's route is removed from both VS Code and VS Code Insiders. With `--scope project` only the current project leaves the analytics project list — Claude Desktop and the extension stay connected.
 
+If Claude Desktop cannot refresh an MCP sign-in, `codemie proxy reset-mcp-auth --claude-desktop` removes the saved MCP sign-ins (the `custom3pMcpOAuth` entry) from `config.json` in Claude Desktop's `Claude-3p` directory and leaves every other setting, the gateway config and the proxy daemon alone. It prints the names of the servers it cleared. After it runs:
+
+> Fully quit Claude Desktop, start it again, then press Reconnect on each MCP server under Customize → Connectors.
+> If the sign-ins come back, quit Claude Desktop, run this command again, then start Claude Desktop.
+
 > **Removed:** the old subcommand aliases for Claude Desktop and VS Code now fail; use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode`.
 
 ## Connect the Codex desktop app via CodeMie Proxy
