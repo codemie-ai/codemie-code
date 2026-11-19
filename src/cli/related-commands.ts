@@ -104,6 +104,7 @@ export const RELATED: Record<string, RelatedEntry> = {
     next: {},
   },
   'analytics otel': { related: [{ path: 'codemie analytics', purpose: 'Show session analytics' }, SYNC_STATUS], next: {} },
+  'analytics view': { related: [{ path: 'codemie analytics --export <format>', purpose: 'Write the JSON export (--export json) that view reads' }], next: {} },
   'analytics sync': {
     related: [
       SYNC_STATUS,
