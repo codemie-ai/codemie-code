@@ -35,6 +35,8 @@ export async function installRequiredPiPackages(
       result = await exec(cliCommand, ['install', pkg], {
         cwd,
         timeout,
+        // pi is a .cmd shim on Windows, which needs a shell to spawn (as with npm/npx in processes.ts)
+        shell: process.platform === 'win32',
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
