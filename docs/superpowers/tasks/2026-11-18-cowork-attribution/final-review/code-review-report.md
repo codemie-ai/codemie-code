@@ -135,3 +135,14 @@ task-source conflict resolution was necessary. Reviewed implementation `eee936ee
 Final scoped Cowork, forwarder and producer-attribution checks: exit 0, 6 files passed, **226 passed / 2 skipped**.
 Typecheck, scoped ESLint and diff whitespace checks passed. Historical skill artifacts retain their original scope;
 the source delta and reviewer response above do not claim a new skill verdict or live account-switch acceptance.
+
+### Ubuntu deadline-test failure (2026-11-19)
+
+CI run `44560678188`, Ubuntu job `135689802666`, failed only the unqueued-record deadline test (`10575 < 10500`).
+Its stopwatch began before discovery and reconcile-lock I/O, while production establishes the 10-second deadline only
+after those operations, at the actual attempt. A synthetic 600 ms discovery delay reproduced the old assertion failure
+deterministically (`10775 < 10500`, exit 1). The test now observes the deadline passed to the real rename consumer and
+freezes fake time at that deadline. It still requires the held lock to wait until the deadline, less than 500 ms overrun,
+and intact live session files; no production code or timeout allowance changed.
+Three sibling deadline cases passed; the entire affected file passed locally on Windows: **93 passed / 7 skipped**,
+exit 0. Typecheck, scoped ESLint and diff whitespace checks passed. Ubuntu confirmation belongs to the next CI run.
