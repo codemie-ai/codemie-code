@@ -95,6 +95,12 @@ describe('claude-client-config-state', () => {
       expect(await decideVsCodeRoute(false, { exec, resolveClaudeBinary: binary })).toBe(expected);
     });
 
+    it('reads the route state with the given gateway key', async () => {
+      vi.mocked(readVsCodeClaudeCodeRouteState).mockResolvedValue('foreign');
+      await decideVsCodeRoute(true, { gatewayKey: 'custom-key', resolveClaudeBinary: binary });
+      expect(readVsCodeClaudeCodeRouteState).toHaveBeenCalledWith('custom-key', true);
+    });
+
     it('does not ask the login state when the route state already decides', async () => {
       vi.mocked(readVsCodeClaudeCodeRouteState).mockResolvedValue('ours');
       const exec = execReturning('{}');

@@ -18,6 +18,7 @@ import { logger } from '@/utils/logger.js';
 import { resolveHomeDir } from '@/utils/paths.js';
 import { getCommandPath } from '@/utils/processes.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { DEFAULT_GATEWAY_KEY, readState } from './daemon-manager.js';
 import { readVsCodeClaudeCodeRouteState } from './connectors/vscode-claude-code.js';
 
 export type ClaudeLoginState = 'logged-out' | 'configured';
@@ -32,6 +33,8 @@ export interface ClaudeClientConfigSeams {
   claudeJsonPath?: string;
   desktop3pDir?: string;
   desktop1pDir?: string;
+  /** The gateway key of the daemon whose route counts as ours; default: the recorded daemon's, else the shared default. */
+  gatewayKey?: string;
 }
 
 const AUTH_STATUS_TIMEOUT_MS = 5000;
@@ -115,11 +118,12 @@ export async function detectClaudeLogin(seams: ClaudeClientConfigSeams = {}): Pr
 }
 
 /**
- * What `--claude-otlp` does to the VS Code extension's model route: our own route is refreshed, another route is left
- * alone, and no route is written only for a user without a Claude login.
+ * What `--claude-otlp` does to the VS Code extension's model route: our own route (a loopback gateway with the daemon's
+ * key) is refreshed, another route, a loopback gateway with another key included, is left alone, and no route is written only for a user without a Claude login.
  */
 export async function decideVsCodeRoute(insiders: boolean, seams: ClaudeClientConfigSeams = {}): Promise<VsCodeRouteDecision> {
-  const state = await readVsCodeClaudeCodeRouteState(insiders);
+  const key = seams.gatewayKey ?? (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  const state = await readVsCodeClaudeCodeRouteState(key, insiders);
   if (state === 'ours') return 'refresh';
   if (state === 'foreign') return 'skip';
   return (await detectClaudeLogin(seams)) === 'logged-out' ? 'route' : 'skip';

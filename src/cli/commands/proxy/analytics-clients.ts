@@ -60,8 +60,9 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
     members: ['claudeDesktop', 'vscodeClaudeCode', 'claudeCodeOtlp'],
     connectDescription:
       'Analytics for every Claude client, found on this machine or not — Claude Code, the VS Code Claude Code extension, ' +
-      'Claude Desktop; the extension and Desktop are routed through the proxy only when they are not configured yet ' +
-      `(--vscode-claude-code / --claude-desktop route them explicitly), and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} removes that route`,
+      'Claude Desktop; the extension and Desktop are routed through the proxy, so their requests use your CodeMie budget, ' +
+      'only when they are not configured yet ' +
+      `(--vscode-claude-code / --claude-desktop route them explicitly), and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} gives them back their Claude login`,
     disconnectDescription:
       'Turn off analytics for every Claude client and remove the CodeMie proxy route of Claude Desktop and the ' +
       'VS Code Claude Code extension',

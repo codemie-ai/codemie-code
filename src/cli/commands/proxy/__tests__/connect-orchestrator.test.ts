@@ -1657,9 +1657,9 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     describe('the route decision of --claude-otlp', () => {
       const EXTENSION_SKIP =
         '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
-      const BILLING = '  Its model requests now go through the gateway, not your Claude login.';
+      const BILLING = '  Its model requests now use your CodeMie budget (profile p), not your Claude login.';
       const DESKTOP_SWITCH =
-        'Desktop analytics needs the gateway; to switch it: ' +
+        'Desktop analytics needs the gateway; to switch it (its requests then use your CodeMie budget): ' +
         'codemie proxy connect --claude-desktop';
 
       async function decisions(vscode: 'route' | 'refresh' | 'skip', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {
@@ -1757,7 +1757,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
         expect(w.writeDesktopConfig).not.toHaveBeenCalled();
         expect(printed()).toContain(prefix + DESKTOP_SWITCH);
-        expect(printed().some((line) => line.includes('go through the gateway'))).toBe(false);
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
       });
 
       it('a skipped Desktop under a profile with no CodeMie URL is not a failure', async () => {
@@ -1821,7 +1821,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
         await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
-        expect(printed().some((line) => line.includes('go through the gateway'))).toBe(false);
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
       });
 
       it.each([
@@ -1854,7 +1854,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
         expect(state.decideVsCodeRoute).not.toHaveBeenCalled();
         expect(state.decideDesktopRoute).not.toHaveBeenCalled();
-        expect(printed().some((line) => line.includes('go through the gateway'))).toBe(false);
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
       });
     });
 
@@ -1957,7 +1957,25 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(spawnDaemon).not.toHaveBeenCalled();
     });
 
-    it('the confirmation declined: the analytics writer not called, Desktop and the extension written', async () => {
+    it('the confirmation declined: nothing the aggregate set is written, and the run ends', async () => {
+      await withFreshDaemon();
+      await onMachine('desktop', 'vscode', 'claude');
+      const w = await writers();
+      const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+      vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
+      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
+      expect(spawnDaemon).not.toHaveBeenCalled();
+      expect(printed()).toContain('Claude Desktop and VS Code Claude Code extension: not routed through the proxy.');
+    });
+
+    it('the confirmation declined, a client typed by its own flag: only that client is routed', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'vscode', 'claude');
       const w = await writers();
@@ -1965,11 +1983,12 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], explicitRoutes: { claudeDesktop: true } });
 
       expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
       expect(w.writeDesktopConfig).toHaveBeenCalled();
-      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+      expect(printed()).toContain('VS Code Claude Code extension: not routed through the proxy.');
     });
 
     it('--copilot-otlp with no scope keeps the lists; with scope user it resets them', async () => {
@@ -2233,7 +2252,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       for (const flag of ['--claude-desktop', '--vscode-claude-code', '--claude-code-otlp']) expect(remedy).not.toContain(flag);
     });
 
-    it('--claude-otlp, no CodeMie URL, the confirmation declined: the Desktop line, exit code 1, the extension alone written', async () => {
+    it('--claude-otlp, no CodeMie URL, the confirmation declined: the Desktop line, exit code 1, nothing written', async () => {
       await withFreshDaemon();
       await setupHappyMocks({ codeMieUrl: undefined });
       await onMachine('desktop', 'claude');
@@ -2248,7 +2267,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(process.exitCode).toBe(1);
       expect(w.writeDesktopConfig).not.toHaveBeenCalled();
       expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
-      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
     });
 
     it('--claude-otlp, the CodeMie hooks in place and no application found: the writers run again', async () => {

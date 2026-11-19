@@ -165,15 +165,15 @@ interface ClaudeRoutePlan {
   refreshHints: string[];
 }
 
-/** The line printed under a client's `configured` line once its model requests go through the proxy. */
-export function routeBillingLine(): string {
-  return `  Its model requests now go through the gateway, not your Claude login.`;
+/** The line printed under a client's `configured` line once its model requests go through the proxy: who pays now. */
+export function routeBillingLine(profile: string): string {
+  return `  Its model requests now use your CodeMie budget (profile ${profile}), not your Claude login.`;
 }
 
 const EXTENSION_SKIP_LINE =
   '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
 const DESKTOP_SWITCH_HINT =
-  'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
+  'Desktop analytics needs the gateway; to switch it (its requests then use your CodeMie budget): codemie proxy connect --claude-desktop';
 
 function disconnectToLoginHint(flag: string): string {
   return `To use your Claude login instead: codemie proxy disconnect ${flag}`;
@@ -223,6 +223,27 @@ async function resolveClaudeRoutes(
     }
   }
   return plan;
+}
+
+/**
+ * A declined (or cancelled) analytics confirmation under `--claude-otlp`: the confirmation named the clients that would
+ * be routed, so none of them is, whether it is routed anew or refreshed. A client typed by its own flag is still
+ * routed. Clears their targets in `activeTargets`, and says so.
+ */
+function dropDeclinedClaudeRoutes(
+  activeTargets: ConnectTargets,
+  members: ReadonlySet<AnalyticsMember>,
+  explicitRoutes: ExplicitRoutes | undefined,
+  plan: ClaudeRoutePlan,
+): void {
+  const routable: (keyof ExplicitRoutes)[] = ['claudeDesktop', 'vscodeClaudeCode'];
+  const dropped = routable.filter((member) => {
+    if (!plan.routed.includes(member) || !members.has(member) || explicitRoutes?.[member]) return false;
+    activeTargets[member] = false;
+    return true;
+  });
+  if (dropped.length === 0) return;
+  console.log(chalk.yellow(`${dropped.map((member) => MEMBER_LABELS[member]).join(' and ')}: not routed through the proxy.`));
 }
 
 function printClaudeRoutePlan(plan: ClaudeRoutePlan): void {
@@ -708,7 +729,7 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       })
     );
     console.log(chalk.green('✓ Claude Desktop configured'));
-    console.log(chalk.yellow(routeBillingLine()));
+    console.log(chalk.yellow(routeBillingLine(state.profile)));
     const managedSettingsWarning = describeManagedSettingsOverride();
     if (managedSettingsWarning) {
       console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
@@ -804,7 +825,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRe
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
-    console.log(chalk.yellow(routeBillingLine()));
+    console.log(chalk.yellow(routeBillingLine(state.profile)));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
@@ -1158,11 +1179,18 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         // The list is checked before the prompt opens, so the prompt never named the profile.
         if (confirmationWillBeShown) printProfileLine();
       }));
-      // The prompt printed the profile line; the route lines come after it.
-      if (confirmationWillBeShown) printClaudeRoutePlan(routePlan);
+      // `false` is a decline or a cancelled prompt; a falsy `undefined` is the analytics failing on its own (an invalid
+      // project list), which leaves the other clients to be configured.
+      const declined = confirmed === false;
+      // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
+      // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
+      if (confirmationWillBeShown && !declined) printClaudeRoutePlan(routePlan);
       if (!confirmed) {
         activeTargets.claudeCodeOtlp = false;
-        if (confirmed === false) console.log(chalk.yellow('Claude Code analytics was not enabled.'));
+        if (declined) {
+          console.log(chalk.yellow('Claude Code analytics was not enabled.'));
+          dropDeclinedClaudeRoutes(activeTargets, members, opts.explicitRoutes, routePlan);
+        }
         if (!hasAnyTarget(activeTargets)) return failBeforeDispatch();
       }
     }

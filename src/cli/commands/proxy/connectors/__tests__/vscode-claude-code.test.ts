@@ -494,6 +494,8 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
   });
 });
 
+const KEY = 'codemie-proxy';
+
 describe('readVsCodeClaudeCodeRouteState', () => {
   let home: string;
 
@@ -516,31 +518,48 @@ describe('readVsCodeClaudeCodeRouteState', () => {
   }
 
   it('is none without a product directory', async () => {
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('none');
   });
 
   it('is none without settings or without a route entry', async () => {
     await writeSettings(null);
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('none');
     await writeSettings({ 'claudeCode.environmentVariables': [{ name: 'MY_VAR', value: 'x' }] });
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('none');
   });
 
-  it('is ours for a loopback ANTHROPIC_BASE_URL', async () => {
+  it.each([
+    ['the shared key', 'codemie-proxy'],
+    ['the extension\'s own key', 'codemie-proxy.vscode-claude-code'],
+  ])('is ours for a loopback ANTHROPIC_BASE_URL with %s', async (_label, token) => {
     await writeSettings({
-      'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' }],
+      'claudeCode.environmentVariables': [
+        { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+        { name: 'ANTHROPIC_AUTH_TOKEN', value: token },
+      ],
     });
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('ours');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('ours');
+  });
+
+  it.each([
+    ['another key', [{ name: 'ANTHROPIC_AUTH_TOKEN', value: 'my-local-gateway-key' }]],
+    ['a key of another client name', [{ name: 'ANTHROPIC_AUTH_TOKEN', value: 'codemie-proxy.not-a-client' }]],
+    ['no key', []],
+  ])('is foreign for a loopback ANTHROPIC_BASE_URL with %s', async (_label, token) => {
+    await writeSettings({
+      'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'http://localhost:11434' }, ...token],
+    });
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('foreign');
   });
 
   it('is foreign for another ANTHROPIC_BASE_URL or an ANTHROPIC_AUTH_TOKEN alone', async () => {
     await writeSettings({
       'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'https://gateway.example.com' }],
     });
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('foreign');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('foreign');
     await writeSettings({
       'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_AUTH_TOKEN', value: 'secret' }],
     });
-    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('foreign');
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('foreign');
   });
 });

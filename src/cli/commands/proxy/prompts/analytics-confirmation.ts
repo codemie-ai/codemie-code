@@ -119,7 +119,7 @@ function joinLabels(labels: string[]): string {
 }
 
 function routedClientsNote(clients: string[]): string {
-  return `${joinLabels(clients)} will be routed through the proxy, not your Claude login.`;
+  return `${joinLabels(clients)} will be routed through the proxy: its requests use your CodeMie budget, not your Claude login.`;
 }
 
 /** The `CodeMie URL:` line (only when configured) and the `Repository:` line (project scope only), shown below `Using profile:`. */

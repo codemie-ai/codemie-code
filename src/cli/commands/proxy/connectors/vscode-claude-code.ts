@@ -342,16 +342,22 @@ export type VsCodeClaudeCodeRouteState = 'none' | 'ours' | 'foreign';
 
 /**
  * The model route in the extension's `claudeCode.environmentVariables`: `ours` for a loopback `ANTHROPIC_BASE_URL`
- * (what `connect` writes), `foreign` for any other `ANTHROPIC_BASE_URL` or any `ANTHROPIC_AUTH_TOKEN` entry, `none`
- * otherwise, with no product directory or with unreadable settings included. Never throws, writes nothing.
+ * whose `ANTHROPIC_AUTH_TOKEN` the daemon of gateway key `key` accepts, the shared key or the extension's own (what
+ * `connect` writes); `foreign` for any other `ANTHROPIC_BASE_URL` (a loopback gateway with another key included) or any
+ * `ANTHROPIC_AUTH_TOKEN` entry; `none` otherwise, with no product directory or with unreadable settings included.
+ * Never throws, writes nothing.
  */
-export async function readVsCodeClaudeCodeRouteState(insiders = false): Promise<VsCodeClaudeCodeRouteState> {
+export async function readVsCodeClaudeCodeRouteState(key: string, insiders = false): Promise<VsCodeClaudeCodeRouteState> {
   try {
     const { settings } = await readSettings(getVsCodeClaudeCodeSettingsPath(insiders));
     const envVars = settings['claudeCode.environmentVariables'];
     if (!Array.isArray(envVars)) return 'none';
     const baseUrl = managedEnvVarValue(envVars, ANTHROPIC_BASE_URL_KEY);
-    if (baseUrl !== undefined) return loopbackPortOf(baseUrl) !== null ? 'ours' : 'foreign';
+    if (baseUrl !== undefined) {
+      if (loopbackPortOf(baseUrl) === null) return 'foreign';
+      const token = managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY);
+      return gatewayKeyReading(typeof token === 'string' ? `Bearer ${token}` : undefined, key) === 'refused' ? 'foreign' : 'ours';
+    }
     return managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY) !== undefined ? 'foreign' : 'none';
   } catch (error) {
     logger.debug('[proxy] VS Code Claude Code route not readable', ...sanitizeLogArgs({ insiders, error: String(error) }));
