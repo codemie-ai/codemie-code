@@ -337,6 +337,28 @@ export async function readVsCodeClaudeCodeGateway(key: string, insiders = false)
   }
 }
 
+/** Who owns the model route of the extension: nobody, CodeMie (loopback base URL) or the user (any other). */
+export type VsCodeClaudeCodeRouteState = 'none' | 'ours' | 'foreign';
+
+/**
+ * The model route in the extension's `claudeCode.environmentVariables`: `ours` for a loopback `ANTHROPIC_BASE_URL`
+ * (what `connect` writes), `foreign` for any other `ANTHROPIC_BASE_URL` or any `ANTHROPIC_AUTH_TOKEN` entry, `none`
+ * otherwise, with no product directory or with unreadable settings included. Never throws, writes nothing.
+ */
+export async function readVsCodeClaudeCodeRouteState(insiders = false): Promise<VsCodeClaudeCodeRouteState> {
+  try {
+    const { settings } = await readSettings(getVsCodeClaudeCodeSettingsPath(insiders));
+    const envVars = settings['claudeCode.environmentVariables'];
+    if (!Array.isArray(envVars)) return 'none';
+    const baseUrl = managedEnvVarValue(envVars, ANTHROPIC_BASE_URL_KEY);
+    if (baseUrl !== undefined) return loopbackPortOf(baseUrl) !== null ? 'ours' : 'foreign';
+    return managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY) !== undefined ? 'foreign' : 'none';
+  } catch (error) {
+    logger.debug('[proxy] VS Code Claude Code route not readable', ...sanitizeLogArgs({ insiders, error: String(error) }));
+    return 'none';
+  }
+}
+
 /**
  * Reverse {@link writeVsCodeClaudeCodeConfigAtPath}: drop the CodeMie-managed
  * `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt`

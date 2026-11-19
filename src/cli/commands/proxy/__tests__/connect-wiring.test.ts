@@ -711,11 +711,15 @@ describe('proxy connect / disconnect --claude-otlp and --copilot-otlp', () => {
     }));
   });
 
-  it('connect --claude-otlp --claude-desktop is the same call as connect --claude-otlp', async () => {
+  it('connect --claude-otlp --claude-desktop is the same call as connect --claude-otlp, but types Desktop explicitly', async () => {
     const alone = await connectWith(['--claude-otlp']);
     vi.clearAllMocks();
 
-    expect(await connectWith(['--claude-otlp', '--claude-desktop'])).toEqual(alone);
+    expect(alone).toMatchObject({ explicitRoutes: { claudeDesktop: false, vscodeClaudeCode: false } });
+    expect(await connectWith(['--claude-otlp', '--claude-desktop'])).toEqual({
+      ...alone,
+      explicitRoutes: { claudeDesktop: true, vscodeClaudeCode: false },
+    });
   });
 
   it.each([['user'], ['project']])('connect --claude-otlp --scope %s hands the typed scope', async (scope) => {
@@ -811,7 +815,7 @@ describe('proxy connect / disconnect --claude-otlp and --copilot-otlp', () => {
       expect(option(command, '--claude-otlp')).toBeDefined();
       expect(option(command, '--copilot-otlp')).toBeDefined();
     }
-    expect(option('connect', '--claude-otlp')?.description).toContain('through the CodeMie proxy');
+    expect(option('connect', '--claude-otlp')?.description).toContain('through the proxy');
     expect(option('connect', '--claude-otlp')?.description).toContain('codemie proxy disconnect --claude-otlp removes that route');
     expect(option('disconnect', '--claude-otlp')?.description).toContain('remove the CodeMie proxy route');
     expect(option('connect', '--scope')?.description).toContain('an existing project list is kept');

@@ -47,6 +47,7 @@ import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig, type ConnectorGateway } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
+import { decideDesktopRoute, decideVsCodeRoute } from './claude-client-config-state.js';
 import { readConfiguredOtlpPort } from './connectors/claude-code-otlp-endpoint.js';
 import {
   discoverCodexModels,
@@ -70,6 +71,7 @@ import {
   failDesktopWithoutCodeMieUrl,
   memberFlag,
   membersNotFound,
+  MEMBER_LABELS,
   membersOf,
   notInstalledLine,
   type AnalyticsMember,
@@ -140,6 +142,94 @@ export interface ConnectOptions {
   yes?: boolean;
   /** The analytics aggregates given; absent is none. */
   aggregates?: readonly AggregateId[];
+  /**
+   * The clients whose own flag (`--claude-desktop` / `--vscode-claude-code`) was typed, as against implied by an
+   * aggregate: they are routed through the proxy whatever they are configured with. Absent is none typed.
+   */
+  explicitRoutes?: ExplicitRoutes;
+}
+
+/** The Claude clients whose route through the proxy was asked for by their own flag. */
+export interface ExplicitRoutes {
+  claudeDesktop?: boolean;
+  vscodeClaudeCode?: boolean;
+}
+
+/** The model-route outcome of `--claude-otlp` for the clients it set and no own flag set. */
+interface ClaudeRoutePlan {
+  /** Clients whose model requests go through the CodeMie proxy: a first route and a refreshed one. */
+  routed: AnalyticsMember[];
+  /** Clients left as configured, with the line that says so; their target is cleared. */
+  skipped: { member: AnalyticsMember; line: string }[];
+  /** For a refreshed route: the way back to the client's own login. */
+  refreshHints: string[];
+}
+
+/** The line printed under a client's `configured` line once its model requests go through the proxy. */
+export function routeBillingLine(): string {
+  return `  Its model requests now go through the gateway, not your Claude login.`;
+}
+
+const EXTENSION_SKIP_LINE =
+  '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+const DESKTOP_SWITCH_HINT =
+  'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
+
+function disconnectToLoginHint(flag: string): string {
+  return `To use your Claude login instead: codemie proxy disconnect ${flag}`;
+}
+
+/**
+ * The route decision of `--claude-otlp`: for Claude Desktop and the VS Code extension it set (not typed by their own
+ * flag), what each is configured with today decides whether its model requests move to the gateway. A client
+ * to leave alone has its target cleared in `activeTargets`, so no later step sees it. Reads files and runs
+ * `claude auth status`; writes nothing.
+ */
+async function resolveClaudeRoutes(
+  activeTargets: ConnectTargets,
+  aggregates: readonly AggregateId[],
+  explicitRoutes: ExplicitRoutes | undefined,
+  insiders: boolean,
+): Promise<ClaudeRoutePlan> {
+  const plan: ClaudeRoutePlan = { routed: [], skipped: [], refreshHints: [] };
+  const members = membersOf(aggregates);
+
+  if (members.has('vscodeClaudeCode') && activeTargets.vscodeClaudeCode && !explicitRoutes?.vscodeClaudeCode) {
+    const decision = await decideVsCodeRoute(insiders);
+    if (decision === 'skip') {
+      activeTargets.vscodeClaudeCode = false;
+      plan.skipped.push({ member: 'vscodeClaudeCode', line: EXTENSION_SKIP_LINE });
+    } else {
+      plan.routed.push('vscodeClaudeCode');
+      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--vscode-claude-code'));
+    }
+  }
+
+  if (members.has('claudeDesktop') && activeTargets.claudeDesktop && !explicitRoutes?.claudeDesktop) {
+    let decision: Awaited<ReturnType<typeof decideDesktopRoute>> = 'route';
+    try {
+      decision = await decideDesktopRoute();
+    } catch (error) {
+      // An unsupported platform: the writer reports it as it always did.
+      logger.debug('[proxy] Claude Desktop route decision failed', ...sanitizeLogArgs({ error: String(error) }));
+    }
+    if (decision === 'skip-1p' || decision === 'skip-other-gateway') {
+      activeTargets.claudeDesktop = false;
+      const why = decision === 'skip-1p' ? 'uses your own Claude account' : 'it uses another gateway';
+      plan.skipped.push({ member: 'claudeDesktop', line: `– Claude Desktop: skipped — ${why}. ${DESKTOP_SWITCH_HINT}` });
+    } else {
+      plan.routed.push('claudeDesktop');
+      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--claude-desktop'));
+    }
+  }
+  return plan;
+}
+
+function printClaudeRoutePlan(plan: ClaudeRoutePlan): void {
+  for (const { member, line } of plan.skipped) {
+    console.log(member === 'vscodeClaudeCode' ? chalk.green(line) : chalk.yellow(line));
+  }
+  for (const hint of plan.refreshHints) console.log(chalk.dim(hint));
 }
 
 /**
@@ -360,8 +450,8 @@ export const CONNECT_TARGET_LIST = [
     ...aggregateListRows((a) => a.connectListLine),
   ]),
   '',
-  `  Note: ${CLAUDE_OTLP_FLAG} also routes Claude Desktop and the VS Code extension through the proxy; ` +
-    `disconnect ${CLAUDE_OTLP_FLAG} removes that route.`,
+  `  Note: ${CLAUDE_OTLP_FLAG} routes Claude Desktop and the VS Code extension through the proxy ` +
+    `only when they are not configured yet; disconnect ${CLAUDE_OTLP_FLAG} removes that route.`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -618,6 +708,7 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       })
     );
     console.log(chalk.green('✓ Claude Desktop configured'));
+    console.log(chalk.yellow(routeBillingLine()));
     const managedSettingsWarning = describeManagedSettingsOverride();
     if (managedSettingsWarning) {
       console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
@@ -713,6 +804,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRe
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
+    console.log(chalk.yellow(routeBillingLine()));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
@@ -974,7 +1066,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   // An aggregate wires every member, found or not; one whose application is not found is named after the run.
   const activeTargets: ConnectTargets = { ...targets };
-  const notFound = await membersNotFound(targets, aggregates, { insiders });
+  const routePlan = await resolveClaudeRoutes(activeTargets, aggregates, opts.explicitRoutes, insiders);
+  const notFound = await membersNotFound(activeTargets, aggregates, { insiders });
   const members = membersOf(aggregates);
   // A member an aggregate set keeps its stored project list when --scope is omitted.
   const keptLists = new Set<AnalyticsTargetKey>(
@@ -1031,6 +1124,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
           codeMieUrl: config.codeMieUrl
             ? resolveProfileCodeMieUrl(config.baseUrl, config.codeMieUrl)
             : undefined,
+          routedClients: routePlan.routed.map((member) => MEMBER_LABELS[member]),
         }
       : undefined;
     const printProfileLine = () => console.log(verbose
@@ -1043,7 +1137,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     // one is skipped when that prompt will be shown to avoid printing it twice. The
     // non-interactive-without-`--yes` case already threw above.
     const confirmationWillBeShown = Boolean(activeTargets.claudeCodeOtlp) && !opts.yes;
-    if (!confirmationWillBeShown) printProfileLine();
+    if (!confirmationWillBeShown) {
+      printProfileLine();
+      printClaudeRoutePlan(routePlan);
+    }
 
     await verifySsoCredentials(
       config.baseUrl,
@@ -1061,6 +1158,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         // The list is checked before the prompt opens, so the prompt never named the profile.
         if (confirmationWillBeShown) printProfileLine();
       }));
+      // The prompt printed the profile line; the route lines come after it.
+      if (confirmationWillBeShown) printClaudeRoutePlan(routePlan);
       if (!confirmed) {
         activeTargets.claudeCodeOtlp = false;
         if (confirmed === false) console.log(chalk.yellow('Claude Code analytics was not enabled.'));

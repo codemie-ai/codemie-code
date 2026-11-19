@@ -15,6 +15,11 @@ export interface AnalyticsConfirmationOptions {
   allowlist: AllowlistState;
   /** Analytics project name of the current project; set only for project scope, where it is shown. */
   repositoryName?: string;
+  /**
+   * Labels of the Claude clients this run routes through the proxy; a note names them. Nothing is added when empty
+   * or absent.
+   */
+  routedClients?: string[];
 }
 
 const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot be read and will be replaced.';
@@ -100,9 +105,21 @@ export function buildAnalyticsConfirmationMessage(options: AnalyticsConfirmation
   if (options.allowlist.kind === 'invalid') {
     lines.push('', ...wrapText(INVALID_ALLOWLIST_NOTE, getWrapWidth()));
   }
+  if (options.routedClients && options.routedClients.length > 0) {
+    lines.push('', ...wrapText(routedClientsNote(options.routedClients), getWrapWidth()));
+  }
   lines.push('');
 
   return lines.join('\n');
+}
+
+/** `A`, `A and B`, `A, B and C`. */
+function joinLabels(labels: string[]): string {
+  return labels.length <= 1 ? (labels[0] ?? '') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+function routedClientsNote(clients: string[]): string {
+  return `${joinLabels(clients)} will be routed through the proxy, not your Claude login.`;
 }
 
 /** The `CodeMie URL:` line (only when configured) and the `Repository:` line (project scope only), shown below `Using profile:`. */

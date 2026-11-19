@@ -13,6 +13,7 @@ import {
   getVsCodeClaudeCodeSettingsPath,
   moveVsCodeClaudeCodeToNamedKey,
   readVsCodeClaudeCodeGateway,
+  readVsCodeClaudeCodeRouteState,
   removeVsCodeClaudeCodeConfigAtPath,
   writeVsCodeClaudeCodeConfigAtPath,
 } from '../vscode-claude-code.js';
@@ -490,5 +491,56 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
 
     expect((await lstat(settingsPath())).isSymbolicLink()).toBe(true);
     expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy.vscode-claude-code'));
+  });
+});
+
+describe('readVsCodeClaudeCodeRouteState', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'codemie-vscode-claude-code-route-'));
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) vi.stubEnv(name, home);
+    vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function writeSettings(settings: Record<string, unknown> | null): Promise<void> {
+    const dir = join(vscodeModule.getVsCodeProductDir(false), 'User');
+    await mkdir(dir, { recursive: true });
+    if (settings) await writeFile(join(dir, 'settings.json'), JSON.stringify(settings));
+  }
+
+  it('is none without a product directory', async () => {
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+  });
+
+  it('is none without settings or without a route entry', async () => {
+    await writeSettings(null);
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+    await writeSettings({ 'claudeCode.environmentVariables': [{ name: 'MY_VAR', value: 'x' }] });
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('none');
+  });
+
+  it('is ours for a loopback ANTHROPIC_BASE_URL', async () => {
+    await writeSettings({
+      'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' }],
+    });
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('ours');
+  });
+
+  it('is foreign for another ANTHROPIC_BASE_URL or an ANTHROPIC_AUTH_TOKEN alone', async () => {
+    await writeSettings({
+      'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'https://gateway.example.com' }],
+    });
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('foreign');
+    await writeSettings({
+      'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_AUTH_TOKEN', value: 'secret' }],
+    });
+    expect(await readVsCodeClaudeCodeRouteState(false)).toBe('foreign');
   });
 });
