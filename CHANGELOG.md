@@ -10,7 +10,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
-- `codemie analytics` without `--include-external` no longer parses the logs of agent sessions CodeMie did not start before leaving them out, so it takes much less time and memory (`--last 7d` could run out of memory). The cost step also lets go of each log once it is priced. The output is unchanged
+- `codemie analytics` without `--include-external` no longer parses the logs of agent sessions CodeMie did not start before leaving them out, so it takes much less time and memory (`--last 7d` could run out of memory). The output is unchanged; runs with `--include-external` are unaffected
 
 ## [0.17.0] - 2026-11-19
 

@@ -918,11 +918,52 @@ describe('loadNativeSessions — external sessions not wanted', () => {
     expect(parsed).toEqual(['A', 'B', 'C', 'A', 'B', 'C']);
   });
 
-  it('keeps the Codex and Pi family passes unchanged when external sessions are not wanted', async () => {
+  // Two Pi transcripts: one CodeMie started (marker), one it did not.
+  const piTranscript = (sessionId: string) =>
+    ({
+      sessionId,
+      agentName: 'Pi',
+      metadata: { projectPath: '/Users/taylor/projects/garden-planner' },
+      messages: [
+        { type: 'session', id: 'hdr', parentId: null, timestamp: '2026-11-10T09:00:00.000Z', version: 3, cwd: '/Users/taylor/projects/garden-planner' },
+        { type: 'message', id: 'u1', parentId: null, timestamp: '2026-11-10T09:00:05.000Z', message: { role: 'user', content: [{ type: 'text', text: 'Plan the beds' }], timestamp: Date.parse('2026-11-10T09:00:05.000Z') } },
+        { type: 'message', id: 'a1', parentId: null, timestamp: '2026-11-10T09:00:10.000Z', message: { role: 'assistant', content: [], model: 'kimi-k2.7-code', timestamp: Date.parse('2026-11-10T09:00:10.000Z') } },
+      ],
+    }) as never;
+  const piDeps: NativeLoaderDeps = {
+    trackedLogPaths: () => new Set<string>(),
+    discover: async () => [
+      { agentName: 'pi', descriptor: { sessionId: 'pi-owned', filePath: '/logs/pi-owned.jsonl', createdAt: 1, agentName: 'pi' } },
+      { agentName: 'pi', descriptor: { sessionId: 'pi-unowned', filePath: '/logs/pi-unowned.jsonl', createdAt: 2, agentName: 'pi' } },
+    ],
+    parse: async (_agent, _filePath, sessionId) => {
+      parsed.push(sessionId);
+      return piTranscript(sessionId);
+    },
+    realPath: (p) => p,
+    hasOwnershipMarker: (filePath) => filePath === '/logs/pi-owned.jsonl',
+  };
+
+  const idsAndProviders = (out: Awaited<ReturnType<typeof loadNativeSessions>>) =>
+    out.map((s) => [s.sessionId, s.startEvent?.data.provider]);
+
+  it('keeps the Codex family pass unchanged when external sessions are not wanted', async () => {
     const out = await loadNativeSessions(filter, codexDeps, { includeExternal: false });
     const outIds = out.map((s) => s.sessionId);
 
     expect(parsed).toContain('P'); // still parsed: it links K to its parent
-    expect(outIds).not.toContain('K'); // K stays counted inside P, as today
+    expect(outIds).toEqual(['P']); // P is still returned (tagged native-external); K stays counted inside P
+    expect(idsAndProviders(out)).toEqual(idsAndProviders(await loadNativeSessions(filter, codexDeps)));
+  });
+
+  it('keeps the Pi family pass unchanged when external sessions are not wanted', async () => {
+    const out = await loadNativeSessions(filter, piDeps, { includeExternal: false });
+
+    expect(parsed).toEqual(['pi-owned', 'pi-unowned']); // both parsed, the unowned one too
+    expect(idsAndProviders(out)).toEqual([
+      ['pi-owned', 'native'],
+      ['pi-unowned', 'native-external'],
+    ]);
+    expect(idsAndProviders(out)).toEqual(idsAndProviders(await loadNativeSessions(filter, piDeps)));
   });
 });

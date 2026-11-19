@@ -127,24 +127,6 @@ describe('enrichCosts', () => {
     expect(c.agentSessionFile).toBe('/home/.codemie/sessions/s1-fallback.jsonl');
   });
 
-  it('prices each session in turn even when they hold the same parsed log object (freeing drops the reference, not the log)', async () => {
-    const sharedLog = {
-      sessionId: 'x', agentName: 'claude', metadata: {},
-      messages: [{ message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }],
-    };
-    const raws = [
-      { sessionId: 'first', startEvent: { agentName: 'claude', data: { startTime: 1000 } }, deltas: [] },
-      { sessionId: 'second', startEvent: { agentName: 'claude', data: { startTime: 2000 } }, deltas: [] },
-    ] as never[];
-
-    const { index, summary } = await enrichCosts(raws, { ...baseDeps, parseNative: async () => sharedLog as never });
-
-    expect(index.get('first')!.costUSD).toBeCloseTo(3, 6);
-    expect(index.get('second')!.costUSD).toBeCloseTo(3, 6);
-    expect(summary.pricedSessions).toBe(2);
-    expect(sharedLog.messages).toHaveLength(1);
-  });
-
   it('omits agentSessionFile when no native log was located', async () => {
     const { index } = await enrichCosts(raw, { ...baseDeps, loadAgentSessionFile: async () => null });
     expect(index.get('s1')!.hadLog).toBe(false);
