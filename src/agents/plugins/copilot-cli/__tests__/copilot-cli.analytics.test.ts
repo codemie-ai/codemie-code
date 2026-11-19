@@ -573,6 +573,18 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(toolTotal(rows)).toBe(1);
   });
 
+  it('keeps a trailing prompt with no turn and no tool activity as one supplement delta', async () => {
+    const base = [start('n1'), user(10), assistant(20)];
+    const file = writeNative('n1', base);
+    await run(file);
+    writeNative('n1', [...base, user(30)]);
+    await run(file);
+    await run(file);
+    const rows = read(`${sid}_metrics.jsonl`);
+    expect(rows.map((r) => r.recordId)).toEqual([`${sid}-turn-0`, `${sid}-supplement-1`]);
+    expect(rows.reduce((n, r) => n + (r.userPrompts?.length ?? 0), 0)).toBe(2);
+  });
+
   it('stamps a supplement delta with the window start when no transcript record lies before the window end', async () => {
     const file = writeNative('n1', [start('n1', 100), user(110), assistant(120), toolStart('c1', 130), toolDone('c1', 140)]);
     const parsed = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).parseSessionFile(file, sid);
