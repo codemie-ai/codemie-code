@@ -1,0 +1,80 @@
+{
+ "schema": 1,
+ "branch": "EPMCDME-15955_fix-opencode-session-resume",
+ "head": "b7834d04673e41e54dbf2ee973f5639af779cc2f",
+ "runner": "npm",
+ "started_at": "2026-11-19T12:38:17.647Z",
+ "completed_at": "2026-11-19T12:38:17.647Z",
+ "status": "BLOCKED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "license",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 14238,
+   "command": "npm run license-check",
+   "exit_code": 0
+  },
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 49051,
+   "command": "npm run lint",
+   "exit_code": 0
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 19783,
+   "command": "npm run typecheck",
+   "exit_code": 0
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 34543,
+   "command": "npm run build",
+   "exit_code": 0
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 651681,
+   "command": "npx vitest run --project unit",
+   "exit_code": 1
+  },
+  {
+   "id": "integration",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 259225,
+   "command": "npx vitest run --project cli",
+   "exit_code": 1
+  },
+  {
+   "id": "secrets",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 9799,
+   "command": "npm run validate:secrets",
+   "exit_code": 0
+  },
+  {
+   "id": "commitlint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 2948,
+   "command": "npm run commitlint:last",
+   "exit_code": 0
+  }
+ ],
+ "failures": {
+  "unit": "    285|     await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).re…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/26]⎯\n\n FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts > moveVsCodeClaudeCodeToNamedKey > moves a settings file that is a symbolic link through the link, and a second move leaves it\nError: EPERM: operation not permitted, symlink 'C:\\Users\\MACIEJ~1\\AppData\\Local\\Temp\\codemie-vscode-claude-code-move-roQWfb\\dotfiles-settings.json' -> 'C:\\Users\\MACIEJ~1\\AppData\\Local\\Temp\\codemie-vscode-claude-code-move-roQWfb\\Code\\User\\settings.json'\n ❯ src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts:486:5\n    484|     await writeFile(target, olderConnectSettings('codemie-proxy'));\n    485|     await mkdir(join(vscodeModule.getVsCodeProductDir(false), 'User'),…\n    486|     await symlink(target, settingsPath());\n       |     ^\n    487|\n    488|     expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/26]⎯\n\n FAIL  |unit| src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts > resolveJobCommand > resolves a symlinked entry to its realpath and builds argv the startup gate recognizes\nError: EPERM: operation not permitted, symlink 'C:\\Users\\MACIEJ~1\\AppData\\Local\\Temp\\codemie-job-cmd-BR075K\\codemie.js' -> 'C:\\Users\\MACIEJ~1\\AppData\\Local\\Temp\\codemie-job-cmd-BR075K\\codemie-shim'\n ❯ src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts:125:5\n    123|     const link = join(dir, 'codemie-shim');\n    124|     await writeFile(target, '');\n    125|     await symlink(target, link);\n       |     ^\n    126|     process.argv[1] = link;\n    127|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/26]⎯\n\n FAIL  |unit| src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.credentials-refresh.test.ts > OtlpInterceptor — credential refresh > tick() retries stale credentials and forwards sessions with the refreshed ones\nAssertionError: expected \"vi.fn()\" to be called with arguments: [ 's1', { cookies: { …(1) }, …(1) } ]\n\nNumber of calls: 0\n\n ❯ src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.credentials-refresh.test.ts:149:36\n    147|     expect(resolveFreshCredentialsMock).toHaveBeenCalledWith(config);\n    148|     expect(clearCredentialsStaleMock).toHaveBeenCalledTimes(1);\n    149|     expect(processSessionTickMock).toHaveBeenCalledWith('s1', freshCre…\n       |                                    ^\n    150|   });\n    151| });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/26]⎯\n\n\n Test Files  12 failed | 628 passed (640)\n      Tests  25 failed | 11930 passed | 75 skipped (12030)\n   Start at  13:22:18\n   Duration  647.42s (transform 183.23s, setup 0ms, import 700.97s, tests 2329.07s, environment 217ms)\n\n",
+  "integration": "- Checking JWT Authentication...\n- Checking CodeMie Code...\n- Checking Claude Code...\n- Checking OpenCode CLI...\n- Checking OpenCode ACP...\n- Checking OpenAI Codex CLI...\n- Checking GitHub Copilot CLI...\n- Checking Repository & Workflows...\n- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n- Checking Proxy...\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/analytics-secret-egress.test.ts > analytics pipeline: secrets in JSON OTLP and hook events\nError: Hook timed out in 10000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/analytics-secret-egress.test.ts:278:3\n    276|   }\n    277|\n    278|   beforeAll(async () => {\n       |   ^\n    279|     process.env.CODEMIE_PROJECT = PROJECT;\n    280|     // A real repository whose origin URL embeds a token: branch and r…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |cli| tests/integration/cli-commands/workflow.test.ts > Workflow Commands\nError: Hook timed out in 10000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/workflow.test.ts:22:3\n     20|   let workflowResult: CommandResult;\n     21|\n     22|   beforeAll(() => {\n       |   ^\n     23|     workflowResult = cli.runSilent('workflow list');\n     24|   });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  2 failed | 45 passed | 1 skipped (48)\n      Tests  374 passed | 25 skipped (399)\n   Start at  13:33:10\n   Duration  255.14s (transform 57.84s, setup 0ms, import 94.45s, tests 1230.81s, environment 34ms)\n\n"
+ }
+}

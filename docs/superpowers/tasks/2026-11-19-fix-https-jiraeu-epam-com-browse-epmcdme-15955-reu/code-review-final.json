@@ -1,0 +1,188 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": false,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001 fixed by rewording commits (history-only, trees identical, commitlint clean); no automated check round - empty check diff. CR-002 fix-later."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001 fix-now, CR-002 fix-later (accept all recommended)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001 fixed by rewording commits (history-only, trees identical, commitlint clean); no automated check round - empty check diff. CR-002 fix-later."
+    }
+  ],
+  "reviewed_head": "b7834d04673e41e54dbf2ee973f5639af779cc2f",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Check round not run: the fix-up for CR-001 was a history-only commit-message rewording, so the frozen check diff is empty (sdlc-diff freeze check: no changes in scope) and an empty diff safe-fails a code/mixed check round. Manual evidence instead: git diff 066224983d60 HEAD is empty (identical trees), commitlint passes on all 4 reworded commits. The user approved gate code-review.check on that evidence.",
+  "confidence": "high",
+  "check_confidence": "low",
+  "risk_flags": [],
+  "open": 1,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects violate commitlint scope and ticket convention",
+      "problem": "Three commits use scope 'opencode', which is not in commitlint.config.cjs scope-enum (cli, agents, providers, assistants, config, proxy, workflows, ci, analytics, utils, deps, tests, skills, kimi). All 4 subjects also carry [EPMCDME-15955] in the subject, which git-workflow.md Anti-Patterns says belongs in the body footer.",
+      "impact": "commitlint rejects these subjects at commit-msg and squash history would carry non-conforming messages; blocks the workflow.",
+      "recommendation": "Reword the commits to an allowed scope such as agents (e.g. fix(agents): recognise -s <id> in resume detection), remove the bracketed key from subjects and add a 'Refs: EPMCDME-15955' footer.",
+      "status": "unverified",
+      "fix": {
+        "change": "Reworded 4 commit subjects to scope agents, dropped ticket from subject, added Refs: EPMCDME-15955 footer",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/opencode/opencode.plugin.ts",
+      "line": 628,
+      "title": "Combined -sses_x form not detected for resume",
+      "problem": "extractNativeResumeId uses flagValue(args, ['--session','-s']), which does not match the attached short form `-sses_x`; resume handling is skipped though opencode resumes natively.",
+      "impact": "Narrow trigger (uncommon attached short-form); workaround is `-s ses_x` or `--session`. Reachability not further confirmed.",
+      "recommendation": "Optionally also match /^-s(ses_\\S+)/ in extractNativeResumeId.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "B1: opencode only: -s not registered as silent, forwarded untouched with value, cwd unchanged",
+      "status": "pass",
+      "notes": "getSilentFlags list includes opencode; test asserts args"
+    },
+    {
+      "kind": "spec",
+      "item": "B2: --silent long form still enables silent for opencode",
+      "status": "pass",
+      "notes": "new test case"
+    },
+    {
+      "kind": "spec",
+      "item": "B3: every other launcher keeps -s as silent incl. opencode-acp and codemie-code",
+      "status": "pass",
+      "notes": "exact-name list"
+    },
+    {
+      "kind": "spec",
+      "item": "B4: extractNativeResumeId recognises -s <id> and sets CODEMIE_RESUME_SESSION_ID",
+      "status": "pass",
+      "notes": "flagValue(args, ['--session','-s'])"
+    },
+    {
+      "kind": "spec",
+      "item": "B5: runs without -s, --resume, --session, --continue, --task behave as before",
+      "status": "pass",
+      "notes": "no change; regression row added"
+    },
+    {
+      "kind": "spec",
+      "item": "B6: docs/COMMANDS.md states launcher split, opencode -s resumes, codemie-code separate ticket",
+      "status": "pass",
+      "notes": "line 440 updated"
+    },
+    {
+      "kind": "spec",
+      "item": "B7: update comments; leave codemie-code helper",
+      "status": "pass",
+      "notes": "comments rewritten; codemie-code untouched"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: silent-flag test restructure",
+      "status": "pass",
+      "notes": "AgentCLI-silent-flag.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: real opencode plugin keeps -s ses_x",
+      "status": "pass",
+      "notes": "opencode-session-flag.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: Windows quoting of ses_ id unquoted",
+      "status": "pass",
+      "notes": "source-text based rather than exercising real join"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: AgentCLI-resume -s populates CODEMIE_RESUME_SESSION_ID",
+      "status": "pass",
+      "notes": "two rows added"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: spawn call carries no cwd override",
+      "status": "pass",
+      "notes": "inspects source text"
+    },
+    {
+      "kind": "spec",
+      "item": "D4: one manual Windows resume before closing",
+      "status": "pending-stage-7",
+      "notes": "manual evidence only"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "fail",
+      "notes": "4 subjects checked. Scope 'opencode' (3 commits) not in scope-enum; all 4 carry [EPMCDME-15955] in subject instead of body footer."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Changes follow the guide: comments explain why, no console.log, no any, no new imports."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No credential handling, path construction, logging or command execution added."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Commit subjects violate git-workflow/commitlint (scope 'opencode' not in scope-enum; ticket key in subject) — 1 blocking. 1 advisory (combined -sses_x form), 1 dismissed (bare -s no longer silent is intended); 0 deferred; no lens failed.",
+    "confidence": "high",
+    "risk_flags": []
+  },
+  "advisory_status": []
+}

@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Make codemie-opencode forward native `-s <session-id>` to OpenCode instead of treating -s as --silent, keep --silent and other launchers unchanged, recognise native -s for resume tracking, update docs and tests (codemie-code only).",
+  "generated": "2026-11-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 16,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches AgentCLI (shared Commander parser used by all 14 codemie-* bins), the opencode plugin (extractNativeResumeId / enrichArgs) and possibly the codemie-code and opencode-acp plugins that share the resume helper, plus COMMANDS.md. Core shared parser raises this from M to L."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utility (AgentCLI parser shared by every agent launcher)"
+  ],
+  "split_recommendation": null
+}
