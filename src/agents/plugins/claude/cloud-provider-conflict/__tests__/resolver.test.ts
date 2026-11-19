@@ -162,11 +162,12 @@ describe('resolveProviderConflict', () => {
       expect((await resolve('connect-desktop', { paths: { desktopApplied: abs('desktop/none.json') } })).verdict).toBe('none');
     });
 
-    it('treats an unparseable Desktop applied file as unknown naming the file', async () => {
+    it('skips an unparseable Desktop applied file, which the connect writer replaces', async () => {
       const applied = put('desktop/applied.json', '{not json');
       const r = await resolve('connect-desktop', { paths: { desktopApplied: applied } });
-      expect(r.verdict).toBe('unknown');
-      expect(r.unknownReason).toContain(applied);
+      expect(r.verdict).toBe('none');
+      expect(r.unknownReason).toBeUndefined();
+      expect(layerAt(r, 'applied.json')).toMatchObject({ scope: 'desktop-applied', state: 'malformed', inEffect: false });
     });
 
     it('treats a Desktop managed settings file turning Bedrock on as a managed conflict', async () => {
@@ -528,11 +529,12 @@ describe('resolveProviderConflict', () => {
 
     it('ranks managed-on over unknown over editable-on', async () => {
       put('user/settings.json', ON);
-      const applied = put('desktop/applied.json', '{bad');
-      let r = await resolve('connect-desktop', { paths: { desktopApplied: applied } });
+      const applied = put('desktop/applied.json', { inferenceProvider: 'bedrock' });
+      const managed = put('desktop/managed.json', '{bad');
+      let r = await resolve('connect-desktop', { paths: { desktopApplied: applied, desktopManaged: managed } });
       expect(r.verdict).toBe('unknown');
 
-      const managed = put('desktop/managed.json', { inferenceProvider: 'bedrock' });
+      put('desktop/managed.json', { inferenceProvider: 'bedrock' });
       r = await resolve('connect-desktop', { paths: { desktopApplied: applied, desktopManaged: managed } });
       expect(r.verdict).toBe('conflict-managed');
     });

@@ -259,11 +259,19 @@ async function readVscodeLayer(provider: CloudProviderDescriptor, file: string):
   return makeLayer({ ...base, state: 'ok' }, flag, flagKey, collectKeys(provider, env, undefined, '', flag));
 }
 
+/**
+ * Malformed files that select nothing: Claude Code skips a malformed settings file, and the connect writer
+ * replaces an unparseable Desktop applied config with the gateway (it falls back to `{}`).
+ */
+function skipsWhenMalformed(scope: ConflictScope): boolean {
+  return CLAUDE_SETTINGS_FILE_SCOPES.includes(scope) || scope === 'desktop-applied';
+}
+
 /** Highest layer that defines the flag decides; an unreadable layer reached first means cannot tell. */
 function decide(chain: ConflictLayer[]): Decision {
   for (const layer of chain) {
     if (layer.state === 'absent') continue;
-    if (layer.state === 'malformed' && CLAUDE_SETTINGS_FILE_SCOPES.includes(layer.scope)) continue;
+    if (layer.state === 'malformed' && skipsWhenMalformed(layer.scope)) continue;
     if (layer.state === 'malformed' || layer.state === 'unreadable') {
       const where = sanitizeDisplayText(layer.path);
       return { kind: 'unknown', reason: `${where}: cannot be read, so it is unknown whether ${sanitizeDisplayText(layer.flagKey)} is set there` };

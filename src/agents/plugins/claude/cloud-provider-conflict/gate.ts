@@ -15,11 +15,13 @@ import {
   type ConflictPaths,
   type ConflictResolution,
   type ConflictRunners,
+  type ConflictScope,
   type ResolveConflictInput,
 } from './resolver.js';
 import { applySwitch, emptySwitchResult, type SwitchDeps, type SwitchResult } from './switcher.js';
 import { flagState } from '@/agents/core/evidence/routing.js';
 import { logger } from '@/utils/logger.js';
+import { sanitizeDisplayText } from '@/utils/project-binding.js';
 
 /**
  * Opaque to callers: hand it back to `applyConsented`. A consent token carries the resolve input the user
@@ -79,10 +81,10 @@ function warnShellFlag(provider: CloudProviderDescriptor, env: NodeJS.ProcessEnv
   if (typeof raw === 'string' && raw !== '' && flagState(raw) !== 'off') logger.notice(shellFlagMessage(provider));
 }
 
-/** True when the only layers deciding the provider are the inherited shell environment, which cannot be switched. */
-function onlyShellEnv(resolution: ConflictResolution): boolean {
+/** True when every layer deciding the provider has the given scope. */
+function onlyDecidedBy(resolution: ConflictResolution, scope: ConflictScope): boolean {
   const deciding = resolution.layers.filter((l) => l.inEffect);
-  return deciding.length > 0 && deciding.every((l) => l.scope === 'env');
+  return deciding.length > 0 && deciding.every((l) => l.scope === scope);
 }
 
 /** Outcomes decided before anything is read: a Bedrock profile, an install without a profile, analytics only. */
@@ -99,8 +101,12 @@ function outcomeBeforeReading(input: DetectAndAskInput, provider: CloudProviderD
   return null;
 }
 
-/** What a resolution decides without a question: proceed or stop. Null means the user is asked. */
-function outcomeWithoutAsking(findings: ConflictFindings, canPrompt: boolean): GateOutcome | null {
+/**
+ * What a resolution decides without a question: proceed or stop. Null means the user is asked. `consent` is
+ * the token a yes would give; it is handed back unasked when only the Desktop applied config selects the
+ * provider, because the connect writer replaces that file's provider keys anyway: the switch only backs it up.
+ */
+function outcomeWithoutAsking(findings: ConflictFindings, canPrompt: boolean, consent: ConsentToken): GateOutcome | null {
   const { resolution, provider } = findings;
   switch (resolution.verdict) {
     case 'none':
@@ -112,9 +118,17 @@ function outcomeWithoutAsking(findings: ConflictFindings, canPrompt: boolean): G
     case 'conflict-editable':
       break;
   }
-  if (onlyShellEnv(resolution)) {
+  if (onlyDecidedBy(resolution, 'env')) {
     logger.notice(shellFlagMessage(provider));
     return inert();
+  }
+  if (onlyDecidedBy(resolution, 'desktop-applied')) {
+    for (const layer of resolution.layers.filter((l) => l.inEffect)) {
+      logger.notice(
+        `${sanitizeDisplayText(layer.path)} sets Claude Desktop to ${provider.displayName}; this connect backs it up and switches it to the CodeMie gateway.`
+      );
+    }
+    return { kind: 'proceed', token: consent };
   }
   return canPrompt ? null : stop('non-interactive', findings);
 }
@@ -145,12 +159,13 @@ export async function detectAndAsk(input: DetectAndAskInput): Promise<GateOutcom
   const resolution = await resolveProviderConflict(plan);
   for (const warning of resolution.warnings) logger.notice(warning);
   const findings: ConflictFindings = { resolution, flow: input.flow, provider };
-  const decided = outcomeWithoutAsking(findings, input.canPrompt);
+  const consent: ConsentToken = { plan, deps: input.switchDeps ?? {} };
+  const decided = outcomeWithoutAsking(findings, input.canPrompt, consent);
   if (decided) return decided;
 
   const choice = await askSwitchOrCancel(findings, input.prompt);
   if (choice === 'cancel') return stop('cancel', findings);
-  return { kind: 'proceed', token: { plan, deps: input.switchDeps ?? {} } };
+  return { kind: 'proceed', token: consent };
 }
 
 /**
