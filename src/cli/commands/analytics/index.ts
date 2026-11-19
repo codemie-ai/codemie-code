@@ -123,7 +123,14 @@ export function createAnalyticsCommand(): Command {
  * subcommand's own description says who runs it and what it changes (story AC, "Command
  * surface"). `.enablePositionalOptions()` mirrors the parent command so a subcommand's own
  * option (e.g. `install --include-external`) is never swallowed by an identically-named
- * option on `analytics` or on `sync` itself (D14).
+ * option on `analytics` or on `sync` itself (D14). This only holds when every ancestor is
+ * positional too: the root program in `src/cli/program.ts` must keep
+ * `.enablePositionalOptions()`, or `analytics` receives the options without `sync install`
+ * in front and takes `--include-external` as its own boolean.
+ *
+ * Every subcommand takes options only, so each sets `.allowExcessArguments(false)`: a stray
+ * word (such as an option value left behind by a mis-parse) fails the command instead of
+ * being silently ignored.
  */
 function createSyncCommand(): Command {
   const sync = new Command('sync')
@@ -151,6 +158,7 @@ function createSyncCommand(): Command {
  * never pulls in the guided wizard's prompter or the webhook client. */
 function createSyncBootstrapCommand(): Command {
   return new Command('bootstrap')
+    .allowExcessArguments(false)
     .description(
       'Lead: choose where your team delivers reports (Teams webhook, git repository, or both), set it up, then print the install command for your team (installs nothing on this machine)'
     )
@@ -177,6 +185,7 @@ function createSyncBootstrapCommand(): Command {
  * install runner so loading `codemie analytics` never pulls in the scheduler module. */
 function createSyncInstallCommand(): Command {
   return new Command('install')
+    .allowExcessArguments(false)
     .description('Developer: register the daily delivery job on this machine')
     .option(
       '--webhook <url>',
@@ -200,6 +209,7 @@ function createSyncInstallCommand(): Command {
  * current settings, and the outcome of the last run. */
 function createSyncStatusCommand(): Command {
   return new Command('status')
+    .allowExcessArguments(false)
     .description('Developer: show whether the delivery job is installed and its last outcome')
     .action(async () => {
       const { runStatus, createRealStatusDeps } = await import('./sync/status.js');
@@ -213,6 +223,7 @@ function createSyncStatusCommand(): Command {
  * `run` without it. */
 function createSyncRunCommand(): Command {
   return new Command('run')
+    .allowExcessArguments(false)
     .description(
       'Developer or the daily scheduled job: send the pending analytics report to the configured webhook and/or team git repository now'
     )
@@ -228,6 +239,7 @@ function createSyncRunCommand(): Command {
  * git target's working copy are kept. */
 function createSyncUninstallCommand(): Command {
   return new Command('uninstall')
+    .allowExcessArguments(false)
     .description('Developer: remove the delivery job and its settings from this machine')
     .action(async () => {
       const { runUninstall, createRealUninstallDeps } = await import('./sync/uninstall.js');
