@@ -4,8 +4,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-19
+
 ### Added
 
+- `codemie proxy reset-mcp-auth --claude-desktop` clears Claude Desktop's saved MCP sign-ins so each server can be signed in again
 - One proxy daemon serves Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK and oh-my-pi at the same time: each client has its own key (`codemie-proxy.<client>`) and its requests are labelled and handled as its own
 - `codemie proxy status` shows the CLI version of the daemon and names a client that points at another port or still holds the shared key, with the command that fixes it
 - `codemie proxy connect --claude-otlp` turns analytics on for every Claude client (Claude Code, the VS Code Claude Code extension, Claude Desktop) and routes Claude Desktop and the extension through the CodeMie proxy when they are not configured yet; `--copilot-otlp` does the same for Copilot Chat and Copilot CLI; `codemie proxy disconnect` takes both flags, and `--claude-otlp` removes that route. Both take `--scope`, `--yes`, `--overwrite`, `--insiders` and `--profile` as the per-client flags do; without `--scope`, a connector limited to named projects keeps its list. The per-client flags keep working
@@ -70,6 +73,15 @@ Each form below fails with a message naming its replacement and exits non-zero.
 The removal of the deprecated forms and the dropping of the removed-form stubs on 2026-12-31 is tracked in the pull request removal checklist, which lists each form and the date; the release owner tracks it from there.
 
 The same tables, with worked use cases, are in [docs/PROXY-AND-ANALYTICS.md](docs/PROXY-AND-ANALYTICS.md).
+
+### Fixed
+
+- Claude Code OTLP settings written for an earlier daemon port are pointed at the current one
+- A Claude Desktop or Cowork session that was being collected is finished when Claude Desktop is disconnected, instead of being left open
+- A session discarded because its folders belong to different CodeMie projects is shown as the latest drop
+- `codemie proxy connect` reuses a daemon that is already running and writes linked client configs through the link
+- Local-only commands are no longer counted as session turns
+- Claude Desktop's automatic title is no longer sent as the session title
 
 ## [0.16.10] - 2026-11-17
 
