@@ -114,10 +114,12 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
     build(recordId, turn.timestamp ?? lastRecordAt ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0, true)
   );
 
-  // Activity with no turn of this run to ride on (it arrived after every turn was written) is kept
+  // Activity or prompts with no turn of this run to ride on (they arrived after every turn was written) are kept
   // as a clearly-identified supplement delta, stamped inside the run window: the run's last transcript
-  // record, else the window's start, so the writer never drops it as another run's.
-  if (runTurns.length === 0 && hasActivity(pending)) {
+  // record, else the window's start, so the writer never drops it as another run's. Prompts alone only
+  // count once the session has a persisted delta, so a session that never got an assistant turn writes nothing.
+  const trailingPrompts = pendingPrompts.length > 0 && existing.length > 0;
+  if (runTurns.length === 0 && (hasActivity(pending) || trailingPrompts)) {
     const inWindowAt = lastRecordAt !== undefined && lastRecordAt >= window.startTime ? lastRecordAt : undefined;
     const stamp = inWindowAt ?? (Number.isFinite(window.startTime) ? window.startTime : Date.now());
     deltas.push(build(`${agentSessionId}-supplement-${existing.length}`, stamp, undefined, undefined, true, false));
