@@ -450,7 +450,7 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
     try {
       const result = await exec(this.metadata.cliCommand, ['--version'], VERSION_PROBE_OPTIONS);
       const match = result.stdout.trim().match(/(\d+\.\d+\.\d+)/);
-      return match ? match[1] : result.stdout.trim() || null;
+      return match ? match[1] : null;
     } catch (error) {
       logger.debug(`Version probe failed for ${this.metadata.cliCommand}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
