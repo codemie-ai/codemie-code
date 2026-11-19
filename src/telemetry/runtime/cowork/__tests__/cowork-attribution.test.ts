@@ -7,7 +7,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution } from '../cowork-attribution.js';
 import { markCoworkSessionServed } from '../cowork-served-mark.js';
-import { coworkFundingHeaders } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.js';
+import { producerAttributionHeaders } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.js';
+import { publishProducerAttribution } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/producer-attribution.js';
+
+const fault = vi.hoisted(() => ({ partialWrite: false }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    link: vi.fn(async () => { throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' }); }),
+    writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      if (fault.partialWrite && String(args[0]).endsWith('.tmp')) {
+        fault.partialWrite = false;
+        await actual.writeFile(args[0], 'partial');
+        throw Object.assign(new Error('Disk full'), { code: 'ENOSPC' });
+      }
+      return actual.writeFile(...args);
+    },
+  };
+});
 
 const ID = '7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
 let codemieHome: string;
@@ -26,6 +44,12 @@ afterEach(() => {
 });
 
 describe('the attribution pin', () => {
+  it('removes a partially written temp file when the write fails', async () => {
+    fault.partialWrite = true;
+    await expect(saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' })).rejects.toMatchObject({ code: 'ENOSPC' });
+    expect(readdirSync(join(codemieHome, 'analytics', 'state'))).toEqual([]);
+    expect(await loadCoworkAttribution(ID)).toBeNull();
+  });
   it('reads back what was saved', async () => {
     await saveCoworkAttribution(ID, { project: 'p', projectSource: 'linked_folder' });
 
@@ -71,12 +95,12 @@ describe('the attribution pin', () => {
   });
 });
 
-describe('the funding headers (coworkFundingHeaders)', () => {
+describe('producer attribution headers from the spool boundary', () => {
   it('declare funding with the Project header for a served, pinned session', async () => {
     await markCoworkSessionServed(ID);
     await saveCoworkAttribution(ID, { project: 'p', projectSource: 'profile' });
-
-    const headers = await coworkFundingHeaders(ID, 'p');
+    await publishProducerAttribution(ID, { project: 'p', projectSource: 'profile', routedViaCodemie: true });
+    const headers = await producerAttributionHeaders(ID, 'p');
 
     expect(headers).toMatchObject({ 'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project': 'p' });
   });
@@ -84,8 +108,8 @@ describe('the funding headers (coworkFundingHeaders)', () => {
   it('declare nothing when the project cannot travel as a raw header (never funding without a Project header)', async () => {
     await markCoworkSessionServed(ID);
     await saveCoworkAttribution(ID, { project: 'проект', projectSource: 'profile' });
-
-    expect(await coworkFundingHeaders(ID, 'проект')).toBeUndefined();
+    await publishProducerAttribution(ID, { project: 'проект', projectSource: 'profile', routedViaCodemie: true });
+    expect(await producerAttributionHeaders(ID, 'проект')).toBeUndefined();
   });
 });
 

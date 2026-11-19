@@ -31,7 +31,8 @@ import { readNewLines } from '@/agents/plugins/claude-code-otlp/transcript/trans
 import { hooksOnlyForwardAllowed } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { withSessionLock } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-lock.js';
-import { readStatus } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js';
+import { readStatusState } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js';
+import { publishProducerAttribution } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/producer-attribution.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
@@ -42,7 +43,7 @@ import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
 import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
-import { loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
+import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
 import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
@@ -247,6 +248,11 @@ export class CoworkEventProducer {
 
     progress.step = 'cursor';
     let cursor = await loadCoworkCursor(session.cliSessionId);
+    // Upgrade pending delivery without replaying transcript bytes, including sessions already ended by an older producer.
+    if (cursor) {
+      const attribution = await loadCoworkAttribution(session.cliSessionId);
+      if (attribution) await this.publishAttribution(session.cliSessionId, attribution.project);
+    }
     // While Desktop is not connected only a session being collected is read. One with no readable cursor is not; one
     // whose end is sent is not read again: a cursor is kept after the end, so the session could be continued through
     // another gateway long afterwards.
@@ -327,6 +333,7 @@ export class CoworkEventProducer {
 
     progress.step = 'context';
     const { project: pinned } = await this.pinAttribution(discovered, cliSessionId);
+    await this.publishAttribution(cliSessionId, pinned);
     const envelope = await this.envelope(discovered, cliSessionId, next, pinned);
     const project = envelope.project ? [envelope.project] : undefined;
     if (end) {
@@ -361,7 +368,9 @@ export class CoworkEventProducer {
   private async pinAttribution(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string): Promise<CoworkAttribution> {
     const known = await loadCoworkAttribution(cliSessionId);
     if (known) return known;
-    const bound = await withSessionLock(cliSessionId, () => readStatus(cliSessionId)).then((status) => status?.project);
+    const found = await withSessionLock(cliSessionId, () => readStatusState(cliSessionId));
+    if (found.kind === 'unreadable') throw new AnalyticsSourceError('Session status is unreadable; retrying without pinning');
+    const bound = found.kind === 'ok' ? found.status.project : undefined;
     // A lookup failure (not an answer) propagates before anything is appended or pinned: the session is resolved again at
     // its next processing, so a transient failure never fixes an unknown origin for good.
     const { project, projectSource } = await this.resolveProject(discovered.workingDirectory);
@@ -369,6 +378,12 @@ export class CoworkEventProducer {
       ? { project: bound, projectSource: 'none' }
       : { project: bound ?? project, projectSource };
     return saveCoworkAttribution(cliSessionId, pin);
+  }
+
+  /** Only the producer interprets its routing proof; shared forwarding consumes the resulting spool metadata. */
+  private async publishAttribution(cliSessionId: string, project: string): Promise<void> {
+    const projectSource = await coworkFundingSource(cliSessionId, project);
+    if (projectSource) await publishProducerAttribution(cliSessionId, { project, projectSource, routedViaCodemie: true });
   }
 
   /** The existing working-directory, config and profile-fallback rules, plus where the project came from. */

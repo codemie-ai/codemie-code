@@ -12,7 +12,7 @@ import { stopIntentPending } from './stop-intent.js';
 import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import { publicationMode, type PublicationMode } from './publication-mode.js';
-import { coworkFundingSource } from '@/telemetry/runtime/cowork/cowork-attribution.js';
+import { readStatus } from './session-status.js';
 
 /** Project the session is bound to; the backend gates analytics on it. */
 export const PROJECT_HEADER = 'X-CodeMie-Project';
@@ -95,23 +95,20 @@ export function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record
 }
 
 /**
- * Headers of a Cowork session the daemon served: the session is declared routed through CodeMie (so the backend stores
- * `subscription_type: codemie`), with its pinned project and source so the backend keeps it in that project. No
- * contract and no consent header, so nothing a native session needs consent for is asserted. `undefined` = the session
- * may not claim it (no served mark, no pin for this project, or a project that cannot travel as a raw header): the
- * caller then sends the legacy Project header alone.
+ * Unrecorded producer evidence persisted through the shared spool boundary. No producer discovery, contract or consent
+ * is inferred here. Missing/mismatched metadata and a project that cannot travel as a header retain legacy behavior.
  */
-export async function coworkFundingHeaders(sessionId: string, project: string): Promise<Record<string, string> | undefined> {
-  const projectSource = await coworkFundingSource(sessionId, project);
-  if (!projectSource) return undefined;
+export async function producerAttributionHeaders(sessionId: string, project: string): Promise<Record<string, string> | undefined> {
+  const attribution = (await readStatus(sessionId))?.producerAttribution;
+  if (!attribution || attribution.project.toLowerCase() !== project.toLowerCase()) return undefined;
   const { headers } = buildAttributionHeaders({
     destination: 'analytics',
     sessionId,
-    routedViaCodemie: true,
+    routedViaCodemie: attribution.routedViaCodemie,
     subscriptionType: 'codemie',
     routingUnproven: false,
     project,
-    projectSource,
+    projectSource: attribution.projectSource,
   });
   return headers[PROJECT_HEADER] ? headers : undefined;
 }

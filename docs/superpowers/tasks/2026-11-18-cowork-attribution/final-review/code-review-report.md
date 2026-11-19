@@ -69,3 +69,39 @@ processing/end paths; conflict-discard reporting (#839) changes loss recording, 
 Focused command: `node node_modules/vitest/vitest.mjs run src/telemetry/runtime/cowork src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/spool-io.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/session-project.test.ts`.
 Result: exit 0, 7 files passed, 311 tests passed / 2 skipped. `tsc --noEmit` and `git diff --check` passed.
 No task source edits or conflict resolutions were needed; the existing source review and actual complexity remain applicable.
+
+## PR reviewer remediation (2026-11-19)
+
+Reviewer comments on `5227cf37` were checked against the actual callers and affected contract. The historical skill verdict
+above remains scoped to its recorded revision; this additional delta was independently reviewed and checked as follows:
+
+- An unreadable legacy spool status now stops processing before pinning or appending. A regression covers failure followed
+  by recovery of the original binding, including a changed folder project.
+- Pin publication uses the daemon's existing session lock and atomic temp-file rename, without hard links. Concurrent
+  writes retain the first valid pin; corrupt JSON can be replaced; other read errors preserve the file. The temp write
+  is inside cleanup, and an injected partial write/ENOSPC test checks that no temp file survives. Writer tests run with
+  hard links mocked unsupported. The daemon is the sole supported writer; no cross-process lock is claimed.
+- Cowork routing proof is interpreted only by the producer. A new shared spool boundary publishes validated, optional
+  `SessionStatus.producerAttribution` metadata before append. Generic forwarding reads this metadata through the canonical
+  header builder; it performs no Cowork file lookup and imports no telemetry runtime. Recorded/evidence guards retain
+  precedence. Missing, malformed or mismatched metadata retains legacy behavior.
+- Explicit forwarder positive and recorded-session negative tests complement existing producer-through-forwarder coverage.
+  Status roundtrip tests cover metadata persistence, malformed evidence and immutable project binding before first append.
+
+### State lifecycles and compatibility
+
+The separate producer pin is retained deliberately. `SessionStatus` tracks delivery and may be swept; the producer cursor
+advances only after successful append and may be rebuilt. The immutable project must already exist before either append
+or cursor advancement and survive delivery cleanup. The pin contains only that producer decision; spool metadata is its
+delivery copy. New producers bootstrap metadata from existing pins, including pending ended sessions while Desktop is
+disconnected, without replaying events. Old statuses remain readable without metadata. Downgrading to an older CLI keeps
+the existing NDJSON/cursor formats readable, but that older version retains its own legacy attribution behavior and can
+drop the unknown metadata field on status writes; the new producer restores it from the pin when collection resumes.
+The separately approved old-daemon/P1-to-P2 upgrade limitation above is unchanged.
+
+### Scoped verification
+
+`vitest run src/telemetry/runtime/cowork` plus spool `producer-attribution`, `forwarder`, `forwarder-contract`,
+`evidence-lifecycle`, `spool-io` and `session-status-atomic` suites: exit 0, **10 files passed, 326 passed / 2 skipped**.
+`tsc --noEmit` and scoped ESLint passed. The new tests use real temp-file producer/spool state and mocked HTTP; the earlier
+local-backend runs remain evidence for the previous wire-identical headers, not a newly repeated backend run.

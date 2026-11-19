@@ -10,11 +10,12 @@
  */
 
 import { existsSync } from 'node:fs';
-import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { coworkServedMarkPath } from './cowork-served-mark.js';
+import { withSessionLock } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-lock.js';
 
 export type CoworkProjectSource = 'linked_folder' | 'profile' | 'none';
 
@@ -63,31 +64,26 @@ export async function loadCoworkAttribution(cliSessionId: string): Promise<Cowor
 }
 
 /**
- * Publishes the pin atomically (a reader never sees half of it) and write-once: a unique temp file is hard-linked to the
- * pin path, so an existing valid pin is never replaced and is the value returned. Only a corrupt file is replaced; a file
- * that cannot be read for another reason (permissions, I/O) throws and is left alone, so the next processing retries.
+ * Publishes the pin atomically and write-once under the daemon's session lock: an existing valid pin is returned and
+ * corrupt JSON is replaced. Other read failures (permissions, I/O) leave the file alone and retry next processing.
  * The only writer is the Cowork producer, which the runner serializes per session; no cross-process lock is claimed.
  * Returns the pin now in effect.
  */
 export async function saveCoworkAttribution(cliSessionId: string, attribution: CoworkAttribution): Promise<CoworkAttribution> {
-  const path = attributionPath(cliSessionId);
-  await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temp, JSON.stringify(attribution), 'utf-8');
-  try {
-    try {
-      await link(temp, path);
-      return attribution;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
+  return withSessionLock(cliSessionId, async () => {
+    const path = attributionPath(cliSessionId);
+    await mkdir(dirname(path), { recursive: true });
     const existing = await readPin(cliSessionId);
     if (existing && existing !== 'corrupt') return existing;
-    await rename(temp, path);
-    return attribution;
-  } finally {
-    await rm(temp, { force: true });
-  }
+    const temp = `${path}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, JSON.stringify(attribution), 'utf-8');
+      await rename(temp, path);
+      return attribution;
+    } finally {
+      await rm(temp, { force: true });
+    }
+  });
 }
 
 /**
