@@ -139,12 +139,18 @@ function bucketsFor(from: number, to: number): { bucket: 'day' | 'week'; slots: 
   const bucket = Math.round((to - from + 1) / DAY_MS) > MAX_DAY_BUCKETS ? 'week' : 'day';
   const start = new Date(from);
   start.setHours(0, 0, 0, 0);
-  if (bucket === 'week') start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  if (bucket === 'week') {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    start.setHours(0, 0, 0, 0);
+  }
   const slots: Array<{ from: number; to: number }> = [];
-  // Step by calendar date, never by 24 h: a day across a DST change has 23 or 25 hours.
+  // Step by calendar date, never by 24 h: a day across a DST change has 23 or 25 hours. setDate
+  // keeps the wall-clock time, so return to midnight after each step: where DST skips midnight
+  // that day starts at 01:00, and the days after it must not.
   while (start.getTime() <= to) {
     const next = new Date(start);
     next.setDate(next.getDate() + (bucket === 'week' ? 7 : 1));
+    next.setHours(0, 0, 0, 0);
     slots.push({ from: start.getTime(), to: next.getTime() - 1 });
     start.setTime(next.getTime());
   }

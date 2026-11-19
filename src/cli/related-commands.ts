@@ -99,6 +99,7 @@ export const RELATED: Record<string, RelatedEntry> = {
     related: [
       { path: 'codemie analytics sync', purpose: 'Manage analytics sync' },
       { path: 'codemie analytics otel', purpose: 'Analyze OTEL data' },
+      { path: 'codemie analytics view', purpose: 'Summaries, a session trace or HTML from an export file' },
       A_STATUS,
     ],
     next: {},

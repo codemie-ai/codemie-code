@@ -279,6 +279,26 @@ describe('buildSummary', () => {
     }
   });
 
+  it('starts each day bucket at the day\'s first instant where DST skips midnight', () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Santiago'; // 6 Sep 2026: clocks jump from 00:00 to 01:00
+    try {
+      const range = { from: new Date(2026, 8, 1).getTime(), to: new Date(2026, 8, 12, 23, 59, 59, 999).getTime() };
+
+      const { series } = buildSummary(payload([]), range, opts);
+
+      expect(series.map((b) => new Date(b.from).getDate())).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+      expect(series.map((b) => new Date(b.from).getHours())).toEqual([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]); // 6 Sep has no 00:00
+      for (let i = 1; i < series.length; i++) {
+        expect(series[i].from).toBe(series[i - 1].to + 1);
+      }
+      expect(series.at(-1)!.to).toBe(range.to);
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
+
   it('adds previous and change only with --compare and only when the input covers the previous range', () => {
     const range = { from: Date.UTC(2026, 10, 10), to: Date.UTC(2026, 10, 19, 23, 59, 59, 999) }; // 10 days
     const sessions = [

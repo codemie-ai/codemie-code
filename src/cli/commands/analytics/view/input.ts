@@ -88,6 +88,8 @@ export function viewFilterFrom(options: ViewFilterOptions, now: number): ViewFil
     }
     filter.from = now - duration;
     filter.to = now;
+  } else if (filter.from !== undefined && filter.to !== undefined && filter.from > filter.to) {
+    throw new ViewInputError(`--from ${options.from} is after --to ${options.to}`);
   }
   if (options.agent) filter.agent = options.agent;
   if (options.project) filter.project = options.project;

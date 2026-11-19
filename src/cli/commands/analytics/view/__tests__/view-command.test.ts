@@ -126,6 +126,9 @@ describe('codemie analytics view', () => {
       ['--input', input, '--last', 'a week'],
       ['--input', input, '--export', 'csv'],
       ['--input', input, '--export', 'html'],
+      ['--input', input, '--from', '2026-11-19', '--to', '2026-11-01'],
+      ['--input', input, '-o', dir],
+      ['--input', input, '--export', 'html', '-o', dir],
     ]) {
       const { stdout, stderr, exitCode } = await run(args);
 
@@ -157,6 +160,60 @@ describe('codemie analytics view', () => {
     const bad = await cli(['--from', '2026-13-01']);
     expect(bad.exitCode).toBe(1);
     expect(bad.stderr).toMatch(/^✗ Invalid --from date "2026-13-01"[^\n]*\n$/);
+  });
+
+  it('names the problem for a reversed range and a directory given to -o', async () => {
+    expect((await run(['--input', input, '--from', '2026-11-19', '--to', '2026-11-01'])).stderr)
+      .toBe('✗ --from 2026-11-19 is after --to 2026-11-01\n');
+    expect((await run(['--input', input, '-o', dir])).stderr).toBe(`✗ -o must be a file path: ${dir} is a directory\n`);
+  });
+
+  describe('through the real command tree', () => {
+    const cli = async (args: string[]) => {
+      const { createProgram } = await import('../../../../program.js');
+      return run(['analytics', 'view', '--input', input, ...args], createProgram);
+    };
+    const leaks = (text: string) => ['Add a watering schedule', '/Users/taylor'].filter((s) => text.includes(s));
+
+    it('applies --redact to the HTML, the summary and the session JSON like codemie analytics --redact', async () => {
+      const file = join(dir, 'redacted.html');
+      const html = await cli(['--redact', '--project', '/Users/taylor/projects/garden-planner', '--export', 'html', '-o', file]);
+      const embedded = embeddedPayload(readFileSync(file, 'utf-8'));
+      expect(html.exitCode).toBe(0);
+      expect(leaks(JSON.stringify(embedded))).toEqual([]);
+      expect(embedded.sessions).toHaveLength(3); // filtered on the full path before redaction
+
+      const summaryRun = await cli(['--redact', '--project', '/Users/taylor/projects/garden-planner', '--compare']);
+      const summary = JSON.parse(summaryRun.stdout);
+      expect(summaryRun.exitCode).toBe(0);
+      expect(leaks(summaryRun.stdout)).toEqual([]);
+      expect(summary.totals.sessions).toBe(3);
+      expect(summary.projects.map((p: { project: string }) => p.project)).toEqual(['garden-planner']);
+      expect(summary.sessions[0]).toMatchObject({ title: '', project: 'garden-planner', branch: 'main' });
+      expect(summary.filter.project).toBe('<redacted>');
+
+      const detail = await cli(['--redact', '--session', 'claude-2']);
+      expect(detail.exitCode).toBe(0);
+      expect(leaks(detail.stdout)).toEqual([]);
+      expect(JSON.parse(detail.stdout).session).toMatchObject({ sessionId: 'claude-2', title: '', costUSD: 2 });
+
+      // Without --redact the same output does carry them, so the checks above are not vacuous.
+      expect(leaks((await cli(['--session', 'claude-2'])).stdout)).toEqual(['Add a watering schedule', '/Users/taylor']);
+    });
+
+    it.each([
+      [['--open'], '--open'],
+      [['-v'], '--verbose'],
+      [['--verbose'], '--verbose'],
+      [['--include-external', 'always'], '--include-external'],
+      [['--include-external'], '--include-external'],
+    ])('rejects %j, an analytics option view does not support, with one line and exit 1', async (args, name) => {
+      const { stdout, stderr, exitCode } = await cli(args);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toBe('');
+      expect(stderr).toBe(`✗ ${name} is not supported by analytics view\n`);
+    });
   });
 
   it('never reads agent logs', async () => {

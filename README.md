@@ -599,7 +599,7 @@ codemie doctor           # Health check and diagnostics
 
 ### Analytics from an export file
 
-`codemie analytics view` reads a file written by `codemie analytics --export json` and never opens an agent log, so it answers at once for any range the file covers. By default it prints a JSON summary (`codemie.analytics.summary/1`) with the report's totals, a day or week series, tools, models, projects, efficiency figures and the session list. `--session <id>` prints one session with its step trace instead, and `--export html -o <file>` writes the usual HTML report for the matching sessions. Filters are `--from`/`--to` (a UTC day or an ISO timestamp), `--last`, `--agent`, `--project` and `--branch`; `--compare` adds the previous range of the same length.
+`codemie analytics view` reads a file written by `codemie analytics --export json` and never opens an agent log, so it answers at once for any range the file covers. By default it prints a JSON summary (`codemie.analytics.summary/1`) with the report's totals, a day or week series, tools, models, projects, efficiency figures and the session list. `--session <id>` prints one session with its step trace instead, and `--export html -o <file>` writes the usual HTML report for the matching sessions. Filters are `--from`/`--to` (a UTC day or an ISO timestamp), `--last`, `--agent`, `--project` (the exact project path or its folder name) and `--branch` (the session's main branch); `--compare` adds the previous range of the same length, and `--redact` leaves out prompt text and absolute paths as in `codemie analytics --redact`.
 
 ```bash
 codemie analytics view --input report.json --last 30d --compare

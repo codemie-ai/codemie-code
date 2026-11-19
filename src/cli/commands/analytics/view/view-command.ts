@@ -8,16 +8,17 @@
  */
 
 import { Command } from 'commander';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { generateReport } from '../report/report-generator.js';
+import { REDACTED_PROJECT_FILTER, redactPayload } from '../report/redact.js';
 import type { AgentCoverage } from '../cost/types.js';
 import type { ReportPayload, ReportSessionRecord } from '../report/types.js';
 import { ViewInputError, readExportFile, viewFilterFrom, type ViewFilterOptions } from './input.js';
 import { buildSummary, filterRecords } from './summary.js';
 import { buildTrace } from './trace.js';
-import { SESSION_SCHEMA, type SessionDetail, type ViewFilter } from './types.js';
+import { SESSION_SCHEMA, type AnalyticsSummary, type SessionDetail, type ViewFilter } from './types.js';
 
 interface ViewOptions extends ViewFilterOptions {
   input: string;
@@ -26,7 +27,19 @@ interface ViewOptions extends ViewFilterOptions {
   /** `true` when `--export` was bound to `analytics`'s own `--export [format]` without a value. */
   export: string | true;
   output?: string;
+  /** `analytics`'s `--redact`: honoured as `codemie analytics --redact` honours it. */
+  redact?: boolean;
+  /** `analytics` options that mean nothing for an export file; rejected. */
+  open?: boolean;
+  verbose?: boolean;
+  includeExternal?: string | true;
 }
+
+const UNSUPPORTED: ReadonlyArray<readonly [keyof ViewOptions, string]> = [
+  ['open', '--open'],
+  ['verbose', '--verbose'],
+  ['includeExternal', '--include-external'],
+];
 
 export function createViewCommand(): Command {
   return new Command('view')
@@ -36,21 +49,25 @@ export function createViewCommand(): Command {
     .option('--to <date>', 'End, inclusive: YYYY-MM-DD (the whole UTC day) or an ISO timestamp')
     .option('--last <duration>', 'Sessions from the last duration (e.g. 7d, 24h); overrides --from/--to')
     .option('--agent <name>', 'Only this agent (claude, codex, …)')
-    .option('--project <path>', 'Only this project: its full path or its folder name')
-    .option('--branch <name>', 'Only this git branch')
+    .option('--project <path>', 'Only this project: its exact project path or its folder name')
+    .option('--branch <name>', 'Only sessions whose main branch is this one')
     .option('--compare', 'Add the totals of the same-length range just before, and the change')
     .option('--session <id>', 'Print one session with its step trace instead of a summary')
     .option('--export <format>', 'summary (JSON) or html', 'summary')
     .option('-o, --output <path>', 'Write to this file instead of stdout (required for html)')
-    // `analytics` defines --from, --to, --last, --agent, --project, --branch, --session, --export
-    // and -o too, and the root program parses without positional options, so commander binds
-    // those to `analytics` even when they follow `view`. optsWithGlobals() merges both, as `otel` does.
+    // `analytics` defines --from, --to, --last, --agent, --project, --branch, --session, --export,
+    // -o and --redact too, and the root program parses without positional options, so commander
+    // binds those to `analytics` even when they follow `view`. optsWithGlobals() merges both, as
+    // `otel` does. Its other options (--open, -v, --include-external) are rejected in runView.
     .action((_options: ViewOptions, command: Command) => runView(command.optsWithGlobals() as ViewOptions));
 }
 
 function runView(options: ViewOptions): void {
   const now = Date.now();
   try {
+    for (const [key, flag] of UNSUPPORTED) {
+      if (options[key] !== undefined) throw new ViewInputError(`${flag} is not supported by analytics view`);
+    }
     const format = options.export === true ? 'summary' : options.export.toLowerCase();
     if (format !== 'summary' && format !== 'html') {
       throw new ViewInputError(`Invalid --export format "${options.export}" — use summary or html`);
@@ -61,6 +78,9 @@ function runView(options: ViewOptions): void {
     if (options.session && format === 'html') {
       throw new ViewInputError('--session prints one session as JSON: leave out --export html');
     }
+    if (options.output && isDirectory(options.output)) {
+      throw new ViewInputError(`-o must be a file path: ${options.output} is a directory`);
+    }
     const filter = viewFilterFrom(options, now);
     const payload = readExportFile(options.input);
 
@@ -69,14 +89,15 @@ function runView(options: ViewOptions): void {
       if (!session) {
         throw new ViewInputError(`No session "${options.session}" in ${options.input}`);
       }
-      const detail: SessionDetail = { schema: SESSION_SCHEMA, session, trace: buildTrace(session) };
+      const shown = options.redact ? redactPayload({ meta: payload.meta, sessions: [session] }).sessions[0] : session;
+      const detail: SessionDetail = { schema: SESSION_SCHEMA, session: shown, trace: buildTrace(session) };
       writeOutput(`${JSON.stringify(detail, null, 2)}\n`, options.output);
     } else if (format === 'html') {
       const sessions = filterRecords(payload.sessions, filter);
-      generateReport(reportPayloadFor(payload, sessions, options, filter, now), options.output!);
+      const report = reportPayloadFor(payload, sessions, options, filter, now);
+      generateReport(options.redact ? redactPayload(report) : report, options.output!);
     } else {
-      const summary = buildSummary(payload, filter, { compare: Boolean(options.compare), now });
-      writeOutput(`${JSON.stringify(summary, null, 2)}\n`, options.output);
+      writeOutput(`${JSON.stringify(summaryFor(payload, filter, options, now), null, 2)}\n`, options.output);
     }
   } catch (error) {
     if (!(error instanceof ViewInputError)) {
@@ -86,6 +107,27 @@ function runView(options: ViewOptions): void {
     process.stderr.write(`✗ ${message.split('\n')[0]}\n`);
     process.exitCode = 1;
   }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false; // missing: it will be created as a file
+  }
+}
+
+/**
+ * The summary, or with --redact the summary of the redacted sessions (no titles, project folder
+ * names only, as `redactPayload` leaves them). --project is matched on the full paths first.
+ */
+function summaryFor(payload: ReportPayload, filter: ViewFilter, options: ViewOptions, now: number): AnalyticsSummary {
+  const opts = { compare: Boolean(options.compare), now };
+  if (!options.redact) return buildSummary(payload, filter, opts);
+  const { project, ...rest } = filter;
+  const scoped = project ? { ...payload, sessions: filterRecords(payload.sessions, { project }) } : payload;
+  const summary = buildSummary(redactPayload(scoped), rest, opts);
+  return project ? { ...summary, filter: { ...summary.filter, project: REDACTED_PROJECT_FILTER } } : summary;
 }
 
 function writeOutput(text: string, output: string | undefined): void {

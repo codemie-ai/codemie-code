@@ -6,11 +6,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Added
 
-- `codemie analytics view --input <export.json>` computes the report's numbers from a file written by `codemie analytics --export json`, without reading agent logs: a JSON summary (`codemie.analytics.summary/1`: totals, a day or week series, tools, skills, subagents, commands, models, projects, efficiency and the session list), one session with its step trace (`--session <id>`, `codemie.analytics.session/1`), or the HTML report of the matching sessions (`--export html -o <file>`). It takes `--from`/`--to` (a UTC day or an ISO timestamp), `--last`, `--agent`, `--project`, `--branch` and `--compare`; a bad file, date or session id prints one `✗` line and exits 1
+- `codemie analytics view --input <export.json>` computes the report's numbers from a file written by `codemie analytics --export json`, without reading agent logs: a JSON summary (`codemie.analytics.summary/1`: totals, a day or week series, tools, skills, subagents, commands, models, projects, efficiency and the session list), one session with its step trace (`--session <id>`, `codemie.analytics.session/1`), or the HTML report of the matching sessions (`--export html -o <file>`). It takes `--from`/`--to` (a UTC day or an ISO timestamp), `--last`, `--agent`, `--project` (exact project path or folder name), `--branch` (the session's main branch), `--compare` and `--redact`; a bad file, date, range or session id prints one `✗` line and exits 1
 
 ### Fixed
 
-- `codemie analytics` without `--include-external` no longer parses the logs of agent sessions CodeMie did not start before leaving them out, so it takes much less time and memory (`--last 7d` could run out of memory). The output is unchanged; runs with `--include-external` are unaffected
+- `codemie analytics` without `--include-external` no longer parses the Claude Code, Copilot CLI and Gemini logs of sessions CodeMie did not start before leaving them out (Codex and Pi logs are still parsed: they link sub-agents and forks), so it takes much less time and memory (`--last 7d` could run out of memory). The output is unchanged; runs with `--include-external` are unaffected
 
 ## [0.17.0] - 2026-11-19
 

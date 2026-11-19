@@ -68,6 +68,21 @@ describe('SessionsSource', () => {
     expect(result.rawSessions.map((s) => s.sessionId).sort()).toEqual(['external-1', 'owned-1']);
   });
 
+  it('tells the native loader whether external sessions are wanted, so it can skip parsing them', async () => {
+    const { SessionsSource } = await import('../sessions-source.js');
+    const filter = { agentName: 'claude' };
+
+    await new SessionsSource().load({ filter, includeExternal: true });
+    await new SessionsSource().load({ filter });
+    await new SessionsSource().load({ filter, includeExternal: false });
+
+    expect(mockLoadNativeSessions.mock.calls).toEqual([
+      [filter, undefined, { includeExternal: true }],
+      [filter, undefined, { includeExternal: false }],
+      [filter, undefined, { includeExternal: false }],
+    ]);
+  });
+
   it('always includes owned native sessions regardless of includeExternal', async () => {
     const owned = makeSession('owned-1', 'native');
     mockLoadNativeSessions.mockResolvedValue([owned]);
