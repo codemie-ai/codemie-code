@@ -105,3 +105,12 @@ The separately approved old-daemon/P1-to-P2 upgrade limitation above is unchange
 `evidence-lifecycle`, `spool-io` and `session-status-atomic` suites: exit 0, **10 files passed, 326 passed / 2 skipped**.
 `tsc --noEmit` and scoped ESLint passed. The new tests use real temp-file producer/spool state and mocked HTTP; the earlier
 local-backend runs remain evidence for the previous wire-identical headers, not a newly repeated backend run.
+
+### Rebase onto main `8b8c5e92` (2026-11-19)
+
+Rebased delivery `2b9b450b` from `709f0e6d` onto `8b8c5e92` without conflicts; equivalent task HEAD `b9cc0d98`.
+All 19 task commits are patch-identical by `git range-diff`; reviewer remediation remains unchanged.
+The new Desktop connection state and tracked-session finalization still invoke the existing Cowork connected/disconnected
+paths. Focused Cowork, forwarder and producer-attribution suites: exit 0, 6 files passed, **223 passed / 2 skipped**.
+`tsc --noEmit` and `git diff --check` passed. Reviewed implementation `eee936ee` maps to `d6376154`, reviewed range end
+`ad955b7e` maps to `1de0c4f0`, and reviewer remediation `2b9b450b` maps to `b9cc0d98`.
