@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "task": "Bound the GitHub Copilot CLI and BaseAgentAdapter version probes in codemie-code with a 5s limit, treating a timeout as unknown version and releasing the abandoned child process so the CLI exits promptly.",
+  "generated": "2026-11-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components in one repo: CopilotCliPlugin.getVersion, BaseAgentAdapter.getVersion and, because AC6 requires releasing an unresponsive child (exec() today only sends one SIGTERM, never closes stdio or escalates), the shared exec() utility in utils/exec.ts. Base would be M; bumped to L because a core shared utility is touched. If codex/gemini/claude/kimi probes come into scope (they override getVersion and do not call super), this rises to XL (4+ components, 5 plugins) and the total rises to roughly 21-24 (L)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest pattern is the inline { timeout: 5000 } on frameworks and native-installer probes, but it only rejects the promise. It does not cover AC6 (child ignores SIGTERM and holds pipes open, so the event loop stays alive): this needs SIGKILL escalation, stdio destroy or unref, with Windows (shell:false, windowsHide) behaviour unverified. That is a divergence from the pattern. AC6 also lists a specific error/edge case, and there is no existing exec() test template for timeout or hung-child cases (no exec test file found), so Technical Risk is bumped. exec() changes also affect all callers, including interactive ones and 300000 ms ones."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utility exec() (needed for AC6 process release)",
+    "Technical Risk set to L: closest pattern (inline timeout) does not cover process release; AC6 enumerates an edge case with no existing test template"
+  ],
+  "split_recommendation": null
+}
