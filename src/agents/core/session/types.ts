@@ -143,6 +143,8 @@ export interface RuntimeCheckpoint {
   lastSeenActivityAt?: number;
   /** See RuntimeCheckpoint.baselineCutoffMs in telemetry/runtime/checkpoints.ts. */
   baselineCutoffMs?: number;
+  /** See RuntimeCheckpoint.collectionGeneration in telemetry/runtime/checkpoints.ts. */
+  collectionGeneration?: number;
 }
 
 /**

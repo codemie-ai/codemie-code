@@ -135,13 +135,15 @@ describe('analytics advice', () => {
 
   it('disable and exclude state the coverage boundary, per connector (CR-005)', async () => {
     await run(['disable', '--claude-code-otlp']);
-    expect(out()).toContain('Controls the hook pipeline only');
+    expect(out()).toContain('Controls Claude Code hooks, Cowork and Claude Desktop chats');
     expect(out()).toContain('session sync that `codemie claude` runs itself');
     logSpy.mockClear();
     await run(['exclude', '/work/a', '--claude-code-otlp']);
-    expect(out()).toContain('Controls the hook pipeline only');
+    expect(out()).toContain('Controls the hook pipeline and Cowork only');
+    expect(out()).toContain('Claude Desktop chats (exclusions are not applied to them)');
     logSpy.mockClear();
     await run(['disable', '--copilot-cli-otlp']);
+    expect(out()).toContain('Controls the hook pipeline only');
     expect(out()).toContain('managed `codemie copilot-cli` launches');
     logSpy.mockClear();
     await run(['exclude', '/work/a', '--copilot-chat-otlp']);
@@ -153,7 +155,7 @@ describe('analytics advice', () => {
     logSpy.mockClear();
     await run(['exclude', '/work/a', '--claude-code-otlp']);
     expect(out()).toContain('Nothing to change');
-    expect(out()).not.toContain('Controls the hook pipeline only');
+    expect(out()).not.toContain('Controls the hook pipeline');
   });
 
   it('enable and include that really change something warn that transcript usage is reported on resume (CR-002)', async () => {
@@ -188,7 +190,7 @@ describe('analytics advice', () => {
     const lastLine = (): string => out().split('\n').find((l) => l.includes('These settings do not affect')) as string;
     await run(['status']);
     expect(lastLine()).toBe(
-      '  These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
+      '  These settings do not affect Claude Desktop chats (exclusions are not applied to them), the daily analytics collector and the session sync that `codemie claude` runs itself.'
     );
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);

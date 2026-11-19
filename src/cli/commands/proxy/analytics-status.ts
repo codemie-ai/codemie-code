@@ -85,7 +85,7 @@ async function renderConnectorSection(section: ConnectorSection): Promise<string
   return formatReportSection(
     section.title,
     rows,
-    `These settings do not affect ${unaffectedChannels(section.connectorId)}.`
+    `These settings do not affect ${unaffectedChannels(section.connectorId, 'exclude')}.`
   ).join('\n');
 }
 

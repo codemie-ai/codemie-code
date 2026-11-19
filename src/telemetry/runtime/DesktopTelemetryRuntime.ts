@@ -29,6 +29,7 @@ import { acquirePidLock } from '@/utils/pid-lock.js';
 import { CoworkRunner, type CoworkProducer } from '@/telemetry/runtime/cowork/CoworkRunner.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
+import { AnalyticsSwitch } from '@/telemetry/runtime/analytics-switch.js';
 
 export class DesktopTelemetryRuntime {
   private readonly sessionStore = new SessionStore();
@@ -56,6 +57,7 @@ export class DesktopTelemetryRuntime {
   private startupPass?: Promise<void>;
   private startupChain?: Promise<void>;
   private readonly connection: DesktopConnection;
+  private readonly analyticsSwitch = new AnalyticsSwitch();
   private stopped = false;
   private readonly redelivery: DesktopRedelivery;
   /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
@@ -67,7 +69,7 @@ export class DesktopTelemetryRuntime {
     cowork?: CoworkProducer
   ) {
     this.metrics = new DesktopSessionMetrics(config, this.sessionStore);
-    this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
+    this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics, this.analyticsSwitch);
     this.redelivery = new DesktopRedelivery(this.delivery, this.startedAt);
     this.connection = new DesktopConnection(config, this.startedAt);
     this.cowork = CoworkRunner.forAdapter(adapter, config, cowork);
@@ -147,7 +149,15 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
+      const { collecting, enabledAt } = await this.analyticsSwitch.check(now, this.trackedSessions, this.delivery);
+      if (enabledAt !== undefined) this.connection.collectingSince = enabledAt;
       const connected = await this.connection.check(now);
+      if (!collecting) {
+        this.knownSessionIds = undefined;
+        // Analytics off: only the Cowork producer runs, which applies the switch itself
+        if (!this.stopped) this.cowork?.startIfIdle(now, connected);
+        return;
+      }
       if (!connected) {
         if (!this.stopped) this.cowork?.startIfIdle(now, false);
         await this.followTracked();
@@ -384,7 +394,7 @@ export class DesktopTelemetryRuntime {
     // after an upgrade is what spiked backend load; the tracked session starts at the cutoff.
     const baselineCutoffMs = discovered.createdAt < this.connection.collectingSince ? this.connection.collectingSince : undefined;
 
-    const session = buildNewSession(this.config, this.metrics.credentialsUrl, discovered, attribution, baselineCutoffMs);
+    const session = this.analyticsSwitch.stampNew(buildNewSession(this.config, this.metrics.credentialsUrl, discovered, attribution, baselineCutoffMs));
     await this.sessionStore.saveSession(session);
     try {
       await this.metrics.sendSessionStartMetric(session, discovered);
@@ -461,6 +471,7 @@ export class DesktopTelemetryRuntime {
     setRuntimeCheckpoint(existing, {
       // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
       ...existing.runtimeCheckpoint,
+      ...this.analyticsSwitch.checkpointFields(existing),
       externalSessionId: discovered.externalSessionId,
       transcriptPath: discovered.transcriptPath,
       lastDiscoveredAt: Date.now(),
