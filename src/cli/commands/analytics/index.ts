@@ -22,12 +22,55 @@ import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { parseDuration } from './date-args.js';
 import { EMAIL_REGEX } from './sync/identity.js';
+import { includeExternalFor } from './sync/policy.js';
+import type { IncludeExternalPolicy } from './sync/types.js';
+import { ConfigurationError } from '../../../utils/errors.js';
+import {
+  DEPRECATION_REMOVE_ON,
+  deprecate,
+  registerDeprecation,
+  removedOption,
+  type DeprecationEntry,
+} from '../../deprecation.js';
+
+const BARE_INCLUDE_EXTERNAL = {
+  kind: 'deprecated',
+  old: 'codemie analytics --include-external',
+  replacement: 'codemie analytics --include-external always',
+  bareOnly: true,
+} as const satisfies DeprecationEntry;
+
+const REMOVED_REPORT_FLAGS: ReadonlyArray<{ flags: string; entry: DeprecationEntry }> = [
+  { flags: '--report', entry: { kind: 'removed', old: 'codemie analytics --report', replacement: 'codemie analytics --export', dropOn: DEPRECATION_REMOVE_ON } },
+  { flags: '--report-format <format>', entry: { kind: 'removed', old: 'codemie analytics --report-format', replacement: 'codemie analytics --export <format>', dropOn: DEPRECATION_REMOVE_ON } },
+  { flags: '--report-output <path>', entry: { kind: 'removed', old: 'codemie analytics --report-output', replacement: 'codemie analytics -o <path>', dropOn: DEPRECATION_REMOVE_ON } },
+];
+
+const INCLUDE_EXTERNAL_POLICIES: readonly IncludeExternalPolicy[] = ['windows', 'always', 'never'];
+const INCLUDE_EXTERNAL_ACCEPTED = 'windows, always, or never';
 
 /**
- * Date on which the deprecated analytics report flags (`--report`, `--report-format`,
- * `--report-output`) will be removed.
+ * Resolve the raw `--include-external [policy]` value (undefined: flag absent; true: bare form).
+ * Returns the include flag, or `null` after reporting an invalid value (exitCode 1).
  */
-const LEGACY_FLAGS_REMOVAL_DATE = 'November 1, 2026';
+function resolveIncludeExternal(raw: string | true | undefined, json: boolean): boolean | undefined | null {
+  if (raw === undefined) return undefined;
+  if (raw === true) {
+    deprecate(BARE_INCLUDE_EXTERNAL, { json });
+    return includeExternalFor('always', process.platform);
+  }
+  if ((INCLUDE_EXTERNAL_POLICIES as readonly string[]).includes(raw)) {
+    return includeExternalFor(raw as IncludeExternalPolicy, process.platform);
+  }
+  const subcommand = raw === 'otel' || raw === 'sync';
+  process.stderr.write(
+    subcommand
+      ? `Error: --include-external takes a policy (${INCLUDE_EXTERNAL_ACCEPTED}), not the subcommand "${raw}" — to run "${raw}", drop --include-external or give it a policy first (e.g. --include-external always ${raw})\n`
+      : `Error: invalid --include-external value "${raw}" — use ${INCLUDE_EXTERNAL_ACCEPTED}\n`
+  );
+  process.exitCode = 1;
+  return null;
+}
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
@@ -40,8 +83,16 @@ export function createAnalyticsCommand(): Command {
 
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
-    .option('--include-external', 'Also count native agent sessions CodeMie did not launch (e.g. plain `claude`)')
-    .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
+    .option(
+      '--include-external [policy]',
+      `Also count native agent sessions CodeMie did not launch (e.g. plain \`claude\`): ${INCLUDE_EXTERNAL_ACCEPTED}`
+    )
+    .action((options: AnalyticsOptions & { includeExternal?: string | true }) => {
+      const includeExternal = resolveIncludeExternal(options.includeExternal, false);
+      if (includeExternal === null) return;
+      return runAnalytics({ ...options, includeExternal }, new SessionsSource());
+    });
+  registerDeprecation(BARE_INCLUDE_EXTERNAL);
 
   // `codemie analytics otel --file <path>` — OTEL file source.
   const otel = new Command('otel')
@@ -199,9 +250,9 @@ function applyCommonOptions(command: Command): Command {
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
     .option('--open', 'Open the generated HTML report in the default browser')
     .option('--redact', 'Omit prompt text (session titles) and absolute paths from the exported report, for sharing outside this machine')
-    .option('--report', `Deprecated: use --export instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
-    .option('--report-format <format>', `Deprecated: use --export [format] instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
-    .option('--report-output <path>', `Deprecated: use -o/--output instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`);
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[0].entry, REMOVED_REPORT_FLAGS[0].flags))
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[1].entry, REMOVED_REPORT_FLAGS[1].flags))
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[2].entry, REMOVED_REPORT_FLAGS[2].flags));
 }
 
 /**
@@ -220,41 +271,10 @@ function keptCostSummary(summary: CostSummary, index: SessionCostIndex, analytic
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
-    // Deprecated flags removed in 1144b247d, restored as aliases so existing scripts keep
-    // working. Each prints a warning pointing at its replacement; the new flag wins when both
-    // are set:
-    //   --report              -> bare --export (html)
-    //   --report-format <fmt> -> --export [format]
-    //   --report-output <p>   -> -o/--output <p>
-    //
-    // TODO: retire these aliases on LEGACY_FLAGS_REMOVAL_DATE — drop the three .option()
-    // registrations, this whole mapping block, and the report/reportFormat/reportOutput
-    // fields in types.ts.
-    let output = options.output;
-    if (options.reportOutput !== undefined) {
-      if (output === undefined) {
-        console.log(chalk.yellow(`\n! --report-output is deprecated; use -o/--output instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}).`));
-        output = options.reportOutput;
-      } else {
-        console.log(chalk.yellow('\n! --report-output is deprecated and ignored; -o/--output takes precedence.'));
-      }
-    }
-
-    let exportOpt = options.export;
-    if (options.reportFormat !== undefined) {
-      if (exportOpt === undefined) {
-        console.log(chalk.yellow(`\n! --report-format is deprecated; use --export [format] instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}).`));
-        exportOpt = options.reportFormat;
-      } else {
-        console.log(chalk.yellow('\n! --report-format is deprecated and ignored; --export takes precedence.'));
-      }
-    }
-    if (options.report) {
-      console.log(chalk.yellow(`\n! --report is deprecated; use --export instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}; html is the default format).`));
-      if (exportOpt === undefined) {
-        exportOpt = true;
-      }
-    }
+    // `--report*` are removed stubs: using one already failed (exitCode 1, naming the replacement).
+    if (usedRemovedReportFlag(options)) return;
+    const output = options.output;
+    const exportOpt = options.export;
 
     // --export [format] / --open / -o resolution — validated FIRST, before loading any
     // sessions, so an invalid format (csv included) fails closed even when the source would
@@ -407,8 +427,14 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
   } catch (error) {
     logger.error('Analytics command failed:', error);
     console.error(chalk.red(`\n✗ Failed to generate analytics: ${error instanceof Error ? error.message : String(error)}\n`));
-    process.exit(1);
+    process.exitCode = 1;
   }
+}
+
+/** Commander binds a removed `--report*` stub's value under its camelCase name. */
+function usedRemovedReportFlag(options: AnalyticsOptions): boolean {
+  const bag = options as unknown as Record<string, unknown>;
+  return ['report', 'reportFormat', 'reportOutput'].some((k) => bag[k] !== undefined);
 }
 
 /**
@@ -437,30 +463,27 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
   if (options.from) {
     const fromDate = parseDateOnly(options.from, 'from');
     if (!fromDate) {
-      console.warn(chalk.yellow(`Warning: Invalid --from date "${options.from}", ignoring filter`));
-    } else {
-      filter.fromDate = fromDate;
+      throw new ConfigurationError(`Invalid --from date "${options.from}" — use YYYY-MM-DD (UTC)`);
     }
+    filter.fromDate = fromDate;
   }
 
   if (options.to) {
     const toDate = parseDateOnly(options.to, 'to');
     if (!toDate) {
-      console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
-    } else {
-      filter.toDate = toDate;
+      throw new ConfigurationError(`Invalid --to date "${options.to}" — use YYYY-MM-DD (UTC)`);
     }
+    filter.toDate = toDate;
   }
 
   // Parse --last duration (e.g., "7d", "24h")
   if (options.last) {
     const duration = parseDuration(options.last);
     if (!duration) {
-      console.warn(chalk.yellow(`Warning: Invalid --last duration "${options.last}", ignoring filter`));
-    } else {
-      filter.fromDate = new Date(Date.now() - duration);
-      filter.toDate = new Date();
+      throw new ConfigurationError(`Invalid --last duration "${options.last}" — use a number and a unit, e.g. 7d, 24h, 30m`);
     }
+    filter.fromDate = new Date(Date.now() - duration);
+    filter.toDate = new Date();
   }
 
   return filter;

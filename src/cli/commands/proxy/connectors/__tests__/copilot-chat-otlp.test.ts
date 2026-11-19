@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -223,6 +223,25 @@ describe('copilot-chat-otlp connector', () => {
       const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
       expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
       expect(await readScopeRecord()).toEqual({ enabled: false });
+    });
+
+    it.skipIf(process.platform === 'win32')('full disconnect through a linked hook file deletes its target and the link', async () => {
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
+      const hookFilePath = getCopilotChatHookFilePath();
+      const target = join(testDir, 'dotfiles', 'copilot-chat-hooks.json');
+      await mkdir(join(testDir, 'codemie-home', 'hooks'), { recursive: true });
+      await mkdir(join(testDir, 'dotfiles'));
+      await writeFile(target, '{}');
+      await symlink(target, hookFilePath);
+      await writeCopilotChatOtlpConfig();
+      expect(JSON.parse(await readFile(target, 'utf-8'))).toHaveProperty('hooks');
+      expect((await lstat(hookFilePath)).isSymbolicLink()).toBe(true);
+
+      const result = await removeCopilotChatOtlpConfig();
+
+      expect(result).toMatchObject({ removed: true, mode: 'full' });
+      expect(existsSync(target)).toBe(false);
+      await expect(lstat(hookFilePath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 

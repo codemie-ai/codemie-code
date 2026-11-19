@@ -1,0 +1,266 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "The owner accepted the check round's approve and asked to create the PR."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "The final round asked for two fix-ups: a blank-model test for proxy restart and a JSDoc line on the exported isSymbolicLink."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "The owner accepted the check round's approve and asked to create the PR."
+    }
+  ],
+  "reviewed_head": "27b2503cd813fecb5de8f935895c8717d4112678",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Targeted check at HEAD 27b2503c: both prior blockers resolved from current source in changed files — CR-001 (two blank-model cases added to the proxy restart describe, index.test.ts:3180 and :3192) and CR-002 (JSDoc on exported isSymbolicLink, vscode.ts:324). No new findings by design; DF-001 stays deferred; fix_set_ids absent so every blocking id was graded.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 2,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/__tests__/index.test.ts",
+      "line": 2955,
+      "title": "Restart lacks blank-model spawn test",
+      "problem": "The 17408 spec requires tests that proxy start and proxy restart spawn with the profile's model and pass none for a config without a model or with a blank one. proxy start covers none/blank/set (it.each at line 690), but the proxy restart describe (line 2802) only covers a set model and a missing one; no restart case passes a blank ('  ') model.",
+      "impact": "A required spec test criterion is only partially met; a regression in restart's blank-model handling (e.g. a blank override winning over normalization) would ship undetected.",
+      "recommendation": "In the `proxy restart` describe (line 2802), add a case where the loaded profile's model is blank ('  ') — for a stopped daemon and/or with --profile — and assert `spawnDaemon` is called with `model` undefined, mirroring the `proxy start` it.each at line 690.",
+      "status": "decided",
+      "check_notes": "index.test.ts:3180 stopped-daemon blank model asserts no model property; :3192 --profile blank model asserts model undefined; both in proxy restart describe",
+      "decision": {
+        "outcome": "fixed in code (commit 27b2503c, test(proxy): cover a blank profile model on proxy restart; document isSymbolicLink)",
+        "rationale": "src/cli/commands/proxy/__tests__/index.test.ts, describe 'proxy restart', has two new cases: 'starts a stopped daemon without a model when the profile's model is blank' (the loaded config's model is two spaces, the spawn options have no model property) and 'starts without a model when --profile names a profile whose model is blank' (a running daemon whose state holds a model, --profile other with a blank model, the spawn's model is undefined, so neither the blank value nor the old state's model is passed). With normalizeDaemonModel(config.model) replaced by config.model in launch-daemon.ts both cases fail."
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/vscode.ts",
+      "line": 324,
+      "title": "Exported isSymbolicLink missing JSDoc",
+      "problem": "code-quality.md (Comments & Documentation) requires JSDoc on all public APIs; isSymbolicLink() is newly exported by this change and imported by desktop.ts and claude-code-otlp.ts, but has no JSDoc block.",
+      "impact": "A documented project code-quality rule is unmet for an exported API introduced by this change, which the standards audit treats as blocking.",
+      "recommendation": "Add a one-line JSDoc above `isSymbolicLink` stating it returns true only for a symbolic link and false when the path is missing or unreadable.",
+      "status": "decided",
+      "check_notes": "vscode.ts:324 JSDoc line above exported isSymbolicLink",
+      "decision": {
+        "outcome": "fixed in code (commit 27b2503c, test(proxy): cover a blank profile model on proxy restart; document isSymbolicLink)",
+        "rationale": "src/cli/commands/proxy/connectors/vscode.ts: the exported isSymbolicLink has a JSDoc line saying it is true only for a symbolic link and false for any other path and when the path is missing or cannot be read."
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/connectors/vscode.ts",
+      "line": 334,
+      "title": "Replaced link inherits read-only target mode",
+      "problem": "replaceLink stats through the link for the new file's mode, so a 0444 target yields a 0444 regular settings file the editor may not save.",
+      "preexisting": "origin/main's writeAtomically used the same stat-through-link mode for every linked config; this change only narrows when it runs."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "17408: a connect on the same profile, project, provider, target URL and port reuses the daemon proxy start started; requests in flight complete",
+      "status": "pending-stage-7",
+      "notes": "start records the model via spawnForProfile; index.test.ts reuse test checks the match; the real-daemon stream/pid check is runtime evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: proxy start and proxy restart record the profile's model via spawnForProfile",
+      "status": "pass",
+      "notes": "launch-daemon.ts: overrides.model ?? normalizeDaemonModel(config.model); restart.ts both paths route through spawnForProfile"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: a daemon replaced from its own state takes the global profile's model of the state's name whatever the state's version",
+      "status": "pass",
+      "notes": "otlp-cold-start.ts modelFromState drops the version early return; test updated to expect 'm1'"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: daemonMatchesRequest unchanged; a state without a model vs a requested model stays a mismatch",
+      "status": "pass",
+      "notes": "no change to daemonMatchesRequest; new mismatch test in connect-orchestrator.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: proxy start and proxy restart of a stopped daemon load the config by the active profile's name",
+      "status": "pass",
+      "notes": "start.ts and restart.ts prepareStopped fall back to getActiveProfileName"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: proxy restart --profile uses the new profile's own model; without --profile keeps the state's, else the global profile's, else the loaded config's",
+      "status": "pass",
+      "notes": "restart.ts prepareRunning model undefined for --profile; tests cover both branches"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: docs name every daemon start as a place where the model is passed",
+      "status": "pass",
+      "notes": "docs/ARCHITECTURE-PROXY.md lists connect, start, restart, hook cold start"
+    },
+    {
+      "kind": "spec",
+      "item": "17408 test: daemonMatchesRequest state without model + requested model -> mismatch",
+      "status": "pass",
+      "notes": "connect-orchestrator.test.ts new case"
+    },
+    {
+      "kind": "spec",
+      "item": "17408 test: proxy start and proxy restart spawn with the profile's model; a config without a model or with a blank one passes none",
+      "status": "partial",
+      "notes": "start covered by it.each (none/blank/m1); restart has no blank-model case — CR-001"
+    },
+    {
+      "kind": "spec",
+      "item": "17408 test: options proxy start spawned with match a connect request (daemonMatchesRequest and buildRequestedConfig not mocked)",
+      "status": "pass",
+      "notes": "index.test.ts reuse test; analytics-destination mock spreads the real module"
+    },
+    {
+      "kind": "spec",
+      "item": "17408 test: proxy start and proxy restart of a stopped daemon load the config by the active profile's name",
+      "status": "pass",
+      "notes": "index.test.ts cases for start and stopped restart"
+    },
+    {
+      "kind": "spec",
+      "item": "17408: integration (proxy start, streaming request, connect --codex-desktop -> same pid, stream completes) is a manual check",
+      "status": "pending-stage-7",
+      "notes": "not run manually; runtime evidence only"
+    },
+    {
+      "kind": "story-ac",
+      "item": "17409: the user is not told to run a command that breaks their link; proxy connect writes through the link",
+      "status": "pass",
+      "notes": "writeAtomically delegates to writeFileAtomic; the 'left on the shared key' line removed"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: every client config write goes through the link (connect, move to named key, hook endpoint refresh, migrations, disconnect)",
+      "status": "pass",
+      "notes": "named-key moves use writeFileAtomic; endpoint refresh and migrations 009/011 use writeAtomically"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: a linked config is moved to its named key by proxy start itself; the 'left ... symbolic link' line and 'left' result are gone",
+      "status": "pass",
+      "notes": "lstat 'left' returns removed; moveToNamedKey type narrowed; no remaining 'left' consumer"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: the proxy status line stays",
+      "status": "pass",
+      "notes": "no status-line change"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: a link whose target cannot be written: the move to the named key leaves the link and prints its warning",
+      "status": "pass",
+      "notes": "movers throw, caught in moveOtherClientsToNamedKeys; read-only Codex target test"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: an explicit connect on an unwritable link replaces it with a regular file and logs a warning; on Windows it fails",
+      "status": "pass",
+      "notes": "writeAtomically EACCES/EPERM/EROFS on a link -> replaceLink + warn; win32 rethrows"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: a disconnect that empties a linked config writes an empty config to the target; ~/.claude/settings.json stays a link; the Claude Desktop entry's link is then removed",
+      "status": "pass",
+      "notes": "emptySettingsFile writes '{}\\n' through the link; removeDesktopConfig writes '{}' then rm"
+    },
+    {
+      "kind": "spec",
+      "item": "17409 test: connect --vscode-claude-code and --codex-desktop on a link keep it a link and update the target",
+      "status": "pass",
+      "notes": "vscode-claude-code.test.ts and codex-desktop-roundtrip.test.ts link cases"
+    },
+    {
+      "kind": "spec",
+      "item": "17409 test: move to named key on a linked config (VS Code Claude Code, Codex desktop, Claude Desktop) keeps the link, target holds the named key",
+      "status": "pass",
+      "notes": "updated cases in the three connector suites"
+    },
+    {
+      "kind": "spec",
+      "item": "17409 test: the atomic writer on a link keeps the link and the target's mode, leaves no temp file; an unwritable target is replaced with a log warning, not on Windows",
+      "status": "pass",
+      "notes": "atomic-write.test.ts and vscode.test.ts writeAtomically suites incl. win32 rethrow"
+    },
+    {
+      "kind": "spec",
+      "item": "17409 test: the move on a link whose target cannot be written leaves the link and prints the warning",
+      "status": "pass",
+      "notes": "connect-orchestrator.test.ts read-only Codex target case"
+    },
+    {
+      "kind": "spec",
+      "item": "17409 test: a disconnect that empties a linked config writes an empty config to the target",
+      "status": "pass",
+      "notes": "claude-code-otlp.test.ts and desktop.test.ts linked-empty cases"
+    },
+    {
+      "kind": "spec",
+      "item": "17409: integration (linked VS Code settings.json -> proxy start -> still a link, key codemie-proxy.vscode-claude-code) is a manual check",
+      "status": "pending-stage-7",
+      "notes": "not run manually; runtime evidence only"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "2 subjects use <type>(<scope>): <subject> with allowed type fix and scope proxy, imperative, under 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": ".js imports, @/ alias, explicit return types OK; code-quality.md requires JSDoc on public APIs and newly exported isSymbolicLink() (vscode.ts:324) has none"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "new log calls use sanitizeLogArgs; no secrets; gateway key now written through links into link targets, as the spec intends"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and the standards audit ran; two blockers remain: the spec'd proxy-restart blank-model test is missing (criterion partial) and the newly exported isSymbolicLink lacks the JSDoc code-quality.md requires. 1 deferred (replaceLink inherits a read-only target's mode, unchanged from origin/main) — see code-review-deferred.local.md; 12 candidates dismissed as spec-intended or handled after reading the source; 3 criteria pending-stage-7.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

@@ -167,9 +167,9 @@ function newProducer(discover?: (sinceMs: number) => ReturnType<typeof discoverC
 }
 
 /** Two runs one poll apart: the first sees the current files, the second processes them. */
-async function settle(producer: CoworkEventProducer, now: number): Promise<void> {
-  await producer.run(now);
-  await producer.run(now + 10_000);
+async function settle(producer: CoworkEventProducer, now: number, connected = true): Promise<void> {
+  await producer.run(now, connected);
+  await producer.run(now + 10_000, connected);
 }
 
 function warnings(): unknown[][] {
@@ -958,6 +958,156 @@ describe('CoworkEventProducer and the served mark', () => {
 
     expect(beforeRefresh).toBe(false);
     expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+});
+
+describe('CoworkEventProducer while Desktop is not connected', () => {
+  const cursorPath = (cliSessionId = CLI) => join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork.json`);
+  const ENDED_AT = '2026-11-10T10:00:30.000Z';
+  const RESUMED_AT = Date.parse('2026-11-10T10:20:05.000Z');
+  const UNPARSABLE_CURSOR = '[cowork-producer] Unparsable cursor; the session is read again from its start';
+
+  function appendTurn(): void {
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d1', '2026-11-10T10:20:00.000Z', 'One more synthetic question'));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000d2', '2026-11-10T10:20:05.000Z', 'msg_synthetic_D', [{ type: 'text', text: 'Answered.' }]));
+  }
+
+  it('ends a session whose cursor holds no end, once and with the final summary', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 50_000, false);
+    await producer.run(LAST_LINE_MS + 2 * INACTIVITY_TIMEOUT_MS + 60_000, false);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+    const cursor = JSON.parse(readFileSync(cursorPath(), 'utf-8')) as { lastEndedAt: string; events: { lastLineAt: string } };
+    expect(cursor).toMatchObject({ lastEndedAt: ENDED_AT, events: { lastLineAt: ENDED_AT } });
+  });
+
+  it('reads the lines a session with no end wrote after its cursor, then ends it', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    appendTurn();
+    await settle(producer, RESUMED_AT + 60_000, false);
+    const grown = events().slice(before);
+    await producer.run(RESUMED_AT + INACTIVITY_TIMEOUT_MS + 10_000, false);
+    const ended = events().slice(before + grown.length);
+
+    expect(grown.map((event) => event['type'])).toEqual(['agent.usage.request', 'agent.session.summary', 'agent.prompt.submit']);
+    expect(grown[0]).toMatchObject({ message_id: 'msg_synthetic_D' });
+    expect(ended.map((event) => event['event_id'])).toEqual([
+      `agent.session.summary:${CLI}:summary:final:2026-11-10T10:20:05.000Z`,
+      `agent.session.end:${CLI}:2026-11-10T10:20:05.000Z`,
+    ]);
+  });
+
+  it('reads neither a session with a served mark alone nor one whose cursor holds its end and that grew; a connected run after it reads both', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000);
+    const before = spooled().length;
+    const endedCursor = readFileSync(cursorPath(), 'utf-8');
+    appendTurn();
+    addSecondSession(RESUMED_AT);
+
+    const notConnected = newProducer();
+    await settle(notConnected, RESUMED_AT + 60_000, false);
+
+    expect(spooled().length).toBe(before);
+    expect(readFileSync(cursorPath(), 'utf-8')).toBe(endedCursor);
+    expect(existsSync(spoolPath(CLI_2))).toBe(false);
+    expect(existsSync(cursorPath(CLI_2))).toBe(false);
+
+    await settle(notConnected, RESUMED_AT + 80_000);
+
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.usage.request', 'agent.session.summary', 'agent.prompt.submit']);
+    expect(events(CLI_2).filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+    expect(existsSync(cursorPath(CLI_2))).toBe(true);
+  });
+
+  it('edge: a new producer ends a session whose cursor holds no end', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    await settle(newProducer(), LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+  });
+
+  const unparsableWarnings = () => warnings().filter(([message]) => message === UNPARSABLE_CURSOR);
+
+  it.each([
+    ['an unparsable cursor', '{not json', 1],
+    ['a cursor with no line', JSON.stringify({ offsets: {}, fingerprints: {}, lastEndedAt: '' }), 0],
+  ])('edge: appends nothing for a session with %s, leaves the file as it is and reads it once while it is unchanged', async (_case, content, warned) => {
+    mkdirSync(dirname(cursorPath()), { recursive: true });
+    writeFileSync(cursorPath(), content);
+    appendTurn();
+    const producer = newProducer();
+
+    await settle(producer, RESUMED_AT + INACTIVITY_TIMEOUT_MS + 20_000, false);
+    for (const at of [40_000, 50_000, 60_000]) await producer.run(RESUMED_AT + INACTIVITY_TIMEOUT_MS + at, false);
+
+    expect(existsSync(spoolPath())).toBe(false);
+    expect(readFileSync(cursorPath(), 'utf-8')).toBe(content);
+    expect(unparsableWarnings()).toHaveLength(warned);
+  });
+
+  it('edge: reads no cursor of a session it left again until the session\'s files change', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000);
+    const before = spooled().length;
+    appendTurn();
+    await settle(producer, RESUMED_AT + 60_000, false);
+    writeFileSync(cursorPath(), '{not json');
+
+    for (const at of [80_000, 90_000, 100_000]) await producer.run(RESUMED_AT + at, false);
+    const whileUnchanged = unparsableWarnings().length;
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d3', '2026-11-10T10:22:00.000Z', 'A synthetic follow-up'));
+    for (const at of [130_000, 140_000, 150_000]) await producer.run(RESUMED_AT + at, false);
+
+    expect(whileUnchanged).toBe(0);
+    expect(unparsableWarnings()).toHaveLength(1);
+    expect(spooled().length).toBe(before);
+  });
+
+  it('edge: ends a session it left with a served mark alone once a connected run collected it', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000, false);
+    await producer.run(LAST_LINE_MS + 40_000, false);
+    expect(existsSync(spoolPath())).toBe(false);
+
+    await producer.run(LAST_LINE_MS + 50_000);
+    const before = spooled().length;
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 50_000, false);
+
+    expect(before).toBeGreaterThan(0);
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+  });
+
+  it('edge: appends nothing with analytics disabled, a cursor with no end included', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+    writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled: false }));
+
+    await settle(newProducer(), LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+
+    expect(spooled().length).toBe(before);
   });
 });
 

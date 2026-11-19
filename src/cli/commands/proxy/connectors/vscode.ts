@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { fetchTenantModelDescriptors, type TenantModelDescriptor } from './tenant-catalog.js';
@@ -123,7 +124,7 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
     const alternative = insiders
       ? 'Remove --insiders to configure stable VS Code.'
       : 'Use --insiders if only VS Code Insiders is installed.';
-    throw new ConfigurationError(
+    throw new ClientNotInstalledError(
       `${edition} user data directory was not found at ${productDir}.\n${alternative}`
     );
   }
@@ -275,13 +276,14 @@ async function readProviders(configPath: string): Promise<unknown[]> {
 /**
  * The port the managed CodeMie models of VS Code's (or VS Code Insiders') `chatLanguageModels.json` point at:
  * the first one that differs from the daemon's `port`, else `port`; null when there is no product directory, no
- * readable file, no managed model with a loopback URL. The key is not in this file. Never throws, writes nothing.
+ * readable file, or no managed provider whose model URLs are all loopback (the one the remover removes). The key is not in this file. Never throws, writes nothing.
  */
 export async function readVsCodeByokGateway(port: number, insiders = false): Promise<ConnectorGateway | null> {
   try {
     const providers = await readProviders(getVsCodeLanguageModelsPath(insiders));
+    // The remover's ownership rule: a managed provider with any non-loopback model is the user's, not connected.
     const ports = providers
-      .filter(isManagedProvider)
+      .filter(isCodeMieOwnedProvider)
       .flatMap(provider => Array.isArray(provider.models) ? provider.models : [])
       .map(model => isRecord(model) ? loopbackPortOf(model.url) : null)
       .filter((modelPort): modelPort is number => modelPort !== null);
@@ -293,10 +295,68 @@ export async function readVsCodeByokGateway(port: number, insiders = false): Pro
   }
 }
 
-export async function writeAtomically(configPath: string, content: string): Promise<void> {
-  const configDir = dirname(configPath);
-  await mkdir(configDir, { recursive: true });
+// Codes of a link target that cannot be written (a read-only mount, home-manager's store).
+const READ_ONLY_TARGET_CODES = new Set(['EACCES', 'EPERM', 'EROFS']);
 
+/**
+ * Write a client config atomically through `writeFileAtomic`: a symbolic link is
+ * written through and stays a link. When the link's target cannot be written
+ * (`EACCES` / `EPERM` / `EROFS`), the link itself is replaced by a regular file, so a
+ * link into a read-only place keeps working as before. Not on win32: there these codes
+ * come from a rename over a file another process holds open, not from a read-only
+ * place, and the error is rethrown.
+ */
+export async function writeAtomically(configPath: string, content: string): Promise<void> {
+  try {
+    await writeFileAtomic(configPath, content);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code ?? '';
+    if (process.platform === 'win32' || !READ_ONLY_TARGET_CODES.has(code) || !(await isSymbolicLink(configPath))) {
+      throw error;
+    }
+    await replaceLink(configPath, content);
+    logger.warn(
+      '[proxy] Replaced a linked config with a file: its target cannot be written',
+      ...sanitizeLogArgs({ configPath, code })
+    );
+  }
+}
+
+/** True only for a symbolic link; false for any other path and when the path is missing or cannot be read. */
+export async function isSymbolicLink(configPath: string): Promise<boolean> {
+  try {
+    return (await lstat(configPath)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete a file only CodeMie uses, through a symbolic link: for a link, its final target is
+ * deleted first when it is a regular file, and then the link; a target that is not a regular file
+ * (a directory, a device, a FIFO, a socket) is left in place, and a target that is not a regular
+ * file or cannot be resolved or deleted is a warning, not an error. Any other path is deleted.
+ * A failure deleting the path itself is rethrown.
+ */
+export async function removeFileThroughLink(filePath: string): Promise<void> {
+  if (await isSymbolicLink(filePath)) {
+    try {
+      const target = await realpath(filePath);
+      if (!(await stat(target)).isFile()) {
+        throw new Error('the target is not a regular file');
+      }
+      await unlink(target);
+    } catch (error) {
+      logger.warn(
+        '[proxy] Could not delete the target of a linked file (or it is not a regular file); removing the link',
+        ...sanitizeLogArgs({ filePath, error: error instanceof Error ? error.message : String(error) })
+      );
+    }
+  }
+  await unlink(filePath);
+}
+
+async function replaceLink(configPath: string, content: string): Promise<void> {
   const tempPath = `${configPath}.${process.pid}.tmp`;
   const mode = existsSync(configPath)
     ? (await stat(configPath)).mode & 0o777
@@ -364,4 +424,45 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
   }
 
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
+}
+
+/** A managed provider is the proxy's own only when every model URL it holds is loopback; the reader and the remover share it. */
+function isCodeMieOwnedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
+  if (!isManagedProvider(provider)) return false;
+  const models = Array.isArray(provider.models) ? provider.models : [];
+  return models.length > 0 && models.every(model => isRecord(model) && loopbackPortOf(model.url) !== null);
+}
+
+/**
+ * Removes the `CodeMie`/`customendpoint` provider `writeVsCodeLanguageModelsConfig` wrote, only when all its model
+ * URLs are loopback; user-added providers, and a non-loopback provider that happens to be named CodeMie, stay.
+ * Writes nothing when there is nothing to remove.
+ */
+export async function removeVsCodeLanguageModelsConfigAtPath(configPath: string): Promise<{ removed: boolean }> {
+  const providers = await readProviders(configPath);
+  const kept = providers.filter(provider => !isCodeMieOwnedProvider(provider));
+  if (kept.length === providers.length) return { removed: false };
+  try {
+    await writeAtomically(configPath, `${JSON.stringify(kept, null, '\t')}\n`);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to update VS Code language model configuration at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { removed: true };
+}
+
+/**
+ * Removes the CodeMie provider from VS Code BYOK's `chatLanguageModels.json` (stable VS Code, or VS Code Insiders with
+ * `insiders`): the `CodeMie`/`customendpoint` provider whose model URLs are all loopback; the user's own providers and
+ * models stay. See {@link removeVsCodeLanguageModelsConfigAtPath}.
+ *
+ * @returns `{ removed: true }` when the provider was removed; `{ removed: false }` when there was nothing to remove,
+ *   including when the VS Code product directory does not exist (nothing is written then).
+ * @throws ConfigurationError when the file cannot be written (via `removeVsCodeLanguageModelsConfigAtPath`).
+ */
+export async function removeVsCodeLanguageModelsConfig(opts: { insiders: boolean }): Promise<{ removed: boolean }> {
+  if (!existsSync(getVsCodeProductDir(opts.insiders))) return { removed: false };
+  return removeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(opts.insiders));
 }

@@ -194,7 +194,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+    await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
 
     expect(detectAndAsk).toHaveBeenCalledTimes(1);
     expect(vi.mocked(detectAndAsk).mock.calls[0][0]).toMatchObject({ flow: 'connect-otlp-only' });
@@ -212,23 +212,23 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets, silent: true });
+    await connectTargets({ targets, yes: true });
 
     expect(detectAndAsk).not.toHaveBeenCalled();
     expect(applyConsented).not.toHaveBeenCalled();
   });
 
-  it('passes canPrompt false under --silent even when the terminal could prompt', async () => {
+  it('passes canPrompt false under --yes even when the terminal could prompt', async () => {
     await setupHappyMocks();
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeDesktop: true }, silent: true });
+    await connectTargets({ targets: { claudeDesktop: true }, yes: true });
 
     expect(vi.mocked(detectAndAsk).mock.calls[0][0]).toMatchObject({ flow: 'connect-desktop', canPrompt: false });
   });
 
-  it('passes canPrompt from the terminal check without --silent', async () => {
+  it('passes canPrompt from the terminal check without --yes', async () => {
     await setupHappyMocks();
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { canPromptForProject } = await import('@/utils/interactive.js');
@@ -328,7 +328,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeDesktop: true, claudeCodeOtlp: true }, silent: true });
+    await connectTargets({ targets: { claudeDesktop: true, claudeCodeOtlp: true }, yes: true });
 
     expect(vi.mocked(detectAndAsk).mock.calls.map((c) => c[0].flow)).toEqual(['connect-desktop']);
   });

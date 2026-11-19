@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
-import { connectFolder, consentHolds, coveringEntries, consentStorePath, disconnectFolder, resolveConsent } from '../consent-store.js';
+import { connectFolder, consentHolds, coveringEntries, consentStorePath, disconnectFolder, listConsents, resolveConsent } from '../consent-store.js';
 
 let home: string;
 let work: string;
@@ -124,5 +124,18 @@ describe('consent-store', () => {
     expect(await coveringEntries({ ...scope, owner_hash: 'p'.repeat(64) }, sub)).toEqual([]);
     expect(await disconnectFolder(scope, work)).toBe(1);
     expect(await coveringEntries(scope, sub)).toEqual([]);
+  });
+  it('lists only the signed-in owner and backend entries, and keeps an unreadable store apart from none', async () => {
+    await connectFolder(scope, work);
+    await connectFolder({ ...scope, owner_hash: 'p'.repeat(64) }, join(work, 'sub'));
+    await connectFolder({ ...scope, api_identity: 'https://other.example.com' }, join(work, 'sub', 'deep'));
+    const owner = { owner_hash: scope.owner_hash, api_identity: scope.api_identity };
+
+    const listed = await listConsents(owner);
+    expect(listed.kind === 'ok' ? listed.entries.map((e) => e.project) : listed).toEqual(['Proj-A']);
+    expect(listed.kind === 'ok' && listed.entries[0].owner_hash).toBe(scope.owner_hash);
+
+    writeFileSync(consentStorePath(), '{ not json');
+    expect(await listConsents(owner)).toEqual({ kind: 'unreadable' });
   });
 });

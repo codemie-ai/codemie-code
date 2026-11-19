@@ -1,0 +1,894 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "deterministic",
+    "rationale": "check round: all 24 findings resolved (CR-001 by user decision: PR removal checklist); medium confidence — connect-orchestrator.ts/claude-code-otlp.ts still >500 lines, 3 prose hints, CR-009 lock not shared with connect settings writers"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "deterministic",
+      "rationale": "24 findings (full roster ran); partial ACs 2,8a,10,11,17,45; CR-001 is the handoff removal-ticket action (spec decision), rest go to fix round"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "deterministic",
+      "rationale": "check round: all 24 findings resolved (CR-001 by user decision: PR removal checklist); medium confidence — connect-orchestrator.ts/claude-code-otlp.ts still >500 lines, 3 prose hints, CR-009 lock not shared with connect settings writers"
+    }
+  ],
+  "reviewed_head": "6f8ddd29da96ac1781e3cb8fc92ef8f5c7adef81",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 24 prior blocking findings resolved on kind-appropriate proof: CR-001 by the id-mapped human decision (PR removal checklist, CHANGELOG.md:55 updated), and the other 23 by inspecting the source at HEAD. Confidence is medium, not high: CR-008 left connect-orchestrator.ts and claude-code-otlp.ts over 500 lines and still slightly above baseline, CR-014 left three prose (non-command) hints, and CR-009's new lock is not shared with connect's settings writers. No deferred items were re-checked; brief written to code-review-brief.local.md.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "breaking-change",
+    "public-api"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 23,
+    "moot": 0,
+    "decided": 1,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "CHANGELOG.md",
+      "line": 46,
+      "title": "AC8a removal ticket not created",
+      "problem": "AC8a requires a removal ticket listing the deprecated forms, the removal date and an owner. No ticket exists; CHANGELOG.md records it as owed and defers it to handoff, with the PR checklist carrying the item meanwhile.",
+      "impact": "A required story criterion is only partially met; without an owner and ticket the 2026-12-31 removal (enforced by the removal-date build gate) has no tracked owner, and main builds will start failing on the date with nobody assigned.",
+      "recommendation": "A human must create the removal ticket (EPM-CDME) listing every deprecated form, the 2026-12-31 removal date and an owner, then reference it from CHANGELOG.md instead of \"is owed\"; or record an explicit decision that the PR-checklist fallback satisfies AC8a.",
+      "status": "decided",
+      "check_notes": "fix_evidence decision mapped to CR-001: PR removal checklist instead of a Jira ticket, with a rationale; CHANGELOG.md:55 now says the removal is tracked there",
+      "fix": {
+        "change": "CHANGELOG.md note reworded: the 2026-12-31 removals are tracked in the PR removal checklist (user decision, no Jira ticket)",
+        "test": "n/a (decision)"
+      },
+      "decision": {
+        "outcome": "Option (b): PR removal checklist only, no Jira ticket. The PR description carries a removal checklist listing each deprecated form and the 2026-12-31 date; CHANGELOG.md now says the removal is tracked in the PR removal checklist.",
+        "rationale": "User chose a PR removal checklist instead of a Jira ticket for the 2026-12-31 removals; the release owner tracks it from the PR."
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/COMMANDS.md",
+      "line": 276,
+      "title": "Docs describe removed delivery rows",
+      "problem": "docs/COMMANDS.md still says `proxy status` shows `Last dropped: no_project` (line ~263), that `proxy analytics status` shows a `Last dropped:` row (276), and the `proxy analytics status` table row (~1912, sample near 1933) documents `Delivery`/`Unsent data`/`Next retry`/`Error` rows; README.md:663 says the command shows delivery health and unsent data. The code now prints only connector sections, consented folders and a doctor pointer.",
+      "impact": "Users and support follow documentation for output that no longer exists, exactly in the 'analytics not arriving' troubleshooting path the story targets.",
+      "recommendation": "Rewrite docs/COMMANDS.md lines ~263, ~276 and the `proxy analytics status` table row (~1912, plus the sample output near 1933) and the README comment at line 663 to describe the current output (connector sections, consented folders, doctor pointer), or restore the delivery rows per CR-015 and keep the docs consistent with whichever is chosen.",
+      "status": "resolved",
+      "check_notes": "COMMANDS.md 263/276 now attribute Last dropped to proxy doctor; the 1912 row describes the current output; README 666 points delivery health to proxy doctor",
+      "fix": {
+        "change": "docs/COMMANDS.md and README.md now describe analytics status without delivery rows and point Last dropped/delivery facts to proxy doctor",
+        "test": "n/a (docs; tips-validator docs scan passes)"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "docs/PROXY-AND-ANALYTICS.md",
+      "line": 64,
+      "title": "Scope use case misdescribes settings location",
+      "problem": "The 'Project scope versus user scope' use case says project scope 'writes to the repository's own settings' and user scope 'writes your user-level settings'. The code always writes ~/.claude/settings.json; project scope only adds the project to the tracked allowlist.",
+      "impact": "AC45 (dedicated page with correct worked use cases) is only partially met; users look for or edit a repository settings file that is never written.",
+      "recommendation": "Rewrite the \"Project scope versus user scope\" paragraph: both scopes write ~/.claude/settings.json; project scope adds only the current project to the tracked allowlist, user scope tracks all projects.",
+      "status": "resolved",
+      "check_notes": "PROXY-AND-ANALYTICS.md:64 now says both scopes write ~/.claude/settings.json and project scope only adds the project to the list",
+      "fix": {
+        "change": "PROXY-AND-ANALYTICS.md scope use case: both scopes write ~/.claude/settings.json; project scope only adds the current project to the tracked list",
+        "test": "n/a (docs)"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/evidence/consent-store.ts",
+      "line": 203,
+      "title": "Consent list shows other identities' folders",
+      "problem": "New listConsents() returns every store entry regardless of owner_hash/api_identity/backend, and `consent list` plus the `consentedFolders` row/field of `analytics status` use it, while `consent revoke` and coveringEntries only act on the signed-in owner's entries. An unreadable store reads as an empty list.",
+      "impact": "Status and list report folders consented under another account or backend as consented for the current one (including their API identity), show entries the user cannot revoke, and hide a corrupt store behind 'No work-consent folders are connected'.",
+      "recommendation": "Filter listConsents (or its callers listWorkConsents/showStatus) to the signed-in owner_hash/api_identity/backend, the same scope revoke uses, and report an unreadable store as an error instead of \"No work-consent folders are connected\".",
+      "status": "resolved",
+      "check_notes": "listConsents is filtered by owner_hash/api_identity; an unreadable store is reported as an error (consent list) or as unknown (analytics status)",
+      "fix": {
+        "change": "listConsents(scope) filters to the signed-in owner_hash/api_identity and returns unreadable separately; consent list errors on an unreadable store, analytics status shows unknown/null",
+        "test": "consent-store.test.ts 'lists only the signed-in owner...'; analytics-consent-command.test.ts 'consent list shows only...' / 'reports an unreadable store...'; analytics-command.test.ts 'lists consented folders'"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/doctor/checks/ProxyCheck.ts",
+      "title": "Condensed proxy check lacks doctor pointer",
+      "problem": "ProxyCheck maps compose sections and exit status correctly but never emits a pointer to `codemie proxy doctor` for the full report.",
+      "impact": "AC17 requires the condensed `codemie doctor` proxy section to point to `codemie proxy doctor`; a required criterion is only partially met and users are not routed to the detailed report.",
+      "recommendation": "Append a detail (info, or a hint on the first non-ok detail) naming `codemie proxy doctor` for the full report, as AC17 requires.",
+      "status": "resolved",
+      "check_notes": "ProxyCheck.ts adds FULL_REPORT_POINTER 'Full report: codemie proxy doctor' on both the success and failure paths",
+      "fix": {
+        "change": "ProxyCheck always ends with an info detail 'Full report: codemie proxy doctor'",
+        "test": "doctor-checks.test.ts 'ends with a pointer to codemie proxy doctor'"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/analytics-command.ts",
+      "title": "analytics-command.ts exceeds 500-line limit",
+      "problem": "code-quality.md Code Structure Guidelines require files under 500 lines; this change grew analytics-command.ts from 24 to 693 lines.",
+      "impact": "The change itself pushes the file past the documented size limit, a blocking code-quality standard violation.",
+      "recommendation": "Move the consent grant/revoke/list and connector fan-out handlers into their own modules so analytics-command.ts stays under 500 lines.",
+      "status": "resolved",
+      "check_notes": "analytics-command.ts is now 311 lines; consent and target logic split into analytics-consent-command.ts and analytics-targets.ts",
+      "fix": {
+        "change": "analytics-command.ts split into analytics-targets.ts (targeting/fan-out) and analytics-consent-command.ts (consent); now 311 lines",
+        "test": "existing analytics-command/consent tests pass unchanged"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/client-targets.ts",
+      "title": "Target-table disconnect closures untested",
+      "problem": "Regression gap: CLIENT_TARGETS row disconnect closures (e.g. Insiders rows -> remover(true), analytics rows -> disconnect*Otlp('user')) are never invoked by any test; disconnect-all.test.ts replaces the table with fakes and client-targets.test.ts checks ids/state/scope only.",
+      "impact": "Consumer: `codemie proxy disconnect --all`. A row wired to the wrong remover or argument would remove the stable VS Code config instead of Insiders, or leave tracked-project wiring, while still reporting the target disconnected, and no test would fail.",
+      "recommendation": "In client-targets.test.ts, mock the disconnect-orchestrator exports and for each CLIENT_TARGETS row call target.disconnect() and assert the remover and its arguments (Insiders rows pass true, analytics rows pass 'user').",
+      "status": "resolved",
+      "check_notes": "client-targets.test.ts mocks disconnect-orchestrator and checks each row's remover and its args (Insiders flag, user scope)",
+      "fix": {
+        "change": "client-targets test calls every CLIENT_TARGETS disconnect closure against mocked removers",
+        "test": "client-targets.test.ts 'each row disconnects through its own remover...'"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "title": "Oversized orchestrator and connector grew further",
+      "problem": "code-quality.md requires files under 500 lines; connect-orchestrator.ts (1083 -> 1213) and connectors/claude-code-otlp.ts (850 -> 900) were already over the limit and this change adds about 130 and 50 more lines.",
+      "impact": "The change makes an existing breach of the documented standard bigger instead of leaving it as it was.",
+      "recommendation": "Put the newly added logic (dropped-tracked-project confirmation, --force split, project-add helpers) in new helper modules instead of growing connect-orchestrator.ts and connectors/claude-code-otlp.ts.",
+      "status": "resolved",
+      "check_notes": "new logic moved to connect-scope-preflight.ts and claude-code-otlp-scope.ts; files now 1103/859 lines (+20/+9 over baseline), still over 500",
+      "fix": {
+        "change": "scope pre-flight moved to connect-scope-preflight.ts (orchestrator 1213->1103) and Claude scope read/add moved to connectors/claude-code-otlp-scope.ts (900->859)",
+        "test": "connect-orchestrator.test.ts passes"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/claude-code-otlp.ts",
+      "line": 859,
+      "title": "Unlocked settings write skips backup bookkeeping",
+      "problem": "New addClaudeCodeOtlpProject does an unlocked read-modify-write of ~/.claude/settings.json via writeAtomically without refreshing the settings.json.codemie-backup bookkeeping other writers maintain; addCopilotConnectorProject (src/agents/core/copilot-connector-scope.ts) does the same on copilot-connectors.json.",
+      "impact": "A concurrent edit by Claude Code or another codemie process can be lost, and a later disconnect/restore may work from a stale backup. Reachability of a concurrent writer was unconfirmed.",
+      "recommendation": "Route addClaudeCodeOtlpProject through the same locked, backup-maintaining writer the other ~/.claude/settings.json writers use, and serialize addCopilotConnectorProject's read-modify-write of copilot-connectors.json the same way.",
+      "status": "resolved",
+      "check_notes": "addClaudeCodeOtlpProject and addCopilotConnectorProject now use withPidLock; backup not refreshed, documented as holding no project list. Lock not shared with connect",
+      "fix": {
+        "change": "addClaudeCodeOtlpProject and addCopilotConnectorProject run under a pid lock (new withPidLock); backup needs no refresh since it never holds the project list",
+        "test": "claude-code-otlp-scope.test.ts / copilot-connector-scope.test.ts 'concurrent adds keep every project'"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/vscode.ts",
+      "line": 280,
+      "title": "BYOK reader and remover disagree on ownership",
+      "problem": "readVsCodeByokGateway treats any managed provider with at least one loopback model URL as connected, while the remover drops only loopback-only managed providers. A managed provider with mixed loopback and non-loopback model URLs is reported connected but is never removed.",
+      "impact": "`proxy clients` and doctor report VS Code BYOK connected, and `disconnect --all` counts it disconnected while the config stays. Reachability (a user-edited managed provider with mixed URLs) was unconfirmed.",
+      "recommendation": "Use one ownership predicate (the remover's loopback-only managed-provider test) in both readVsCodeByokGateway and removeVsCodeLanguageModelsConfigAtPath so clients/doctor/disconnect --all agree with what disconnect removes.",
+      "status": "resolved",
+      "check_notes": "readVsCodeByokGateway and the remover both use isCodeMieOwnedProvider (managed provider whose model URLs are all loopback)",
+      "fix": {
+        "change": "readVsCodeByokGateway uses the remover's isCodeMieOwnedProvider (loopback-only) predicate",
+        "test": "vscode.test.ts 'returns null for mixed loopback and non-loopback URLs'"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/disconnect-all.ts",
+      "line": 38,
+      "title": "disconnect --all silently skips failed checks",
+      "problem": "disconnectAll uses listConnectedClientTargets, which keeps only connected:true states; readClientTargetStates turns a throwing isConnected into connected:false with an error, so such targets are dropped without a message.",
+      "impact": "A possibly connected client or connector is not disconnected, the command can print 'Nothing connected.' and exit 0, contradicting AC30's 'reports each'.",
+      "recommendation": "Read readClientTargetStates() in disconnectAll; for every state with an error print \"! <label>: check failed (<error>); not disconnected\", add it to result.failed and set exitCode 1, instead of filtering through listConnectedClientTargets.",
+      "status": "resolved",
+      "check_notes": "disconnectAll reads readClientTargetStates, reports each failed check as not disconnected, adds it to failed and sets exitCode 1",
+      "fix": {
+        "change": "disconnectAll reads readClientTargetStates; a failed check prints '! <label>: check failed (...); not disconnected', is counted failed, exit 1",
+        "test": "disconnect-all.test.ts 'a target whose connected check failed...'"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/disconnect-orchestrator.ts",
+      "title": "disconnect --vscode dispatch untested",
+      "problem": "Regression gap: no test runs `proxy disconnect --vscode` or disconnectTargets({targets:{vscode:true}}); only the file-level remover removeVsCodeLanguageModelsConfigAtPath is tested, and connect-wiring disconnect tests assert vscode:false only.",
+      "impact": "Consumer: `codemie proxy disconnect --vscode [--insiders]`. Dropping the mapping or the empty-target check would print 'Select at least one target' and exit 1 without removing the provider, undetected.",
+      "recommendation": "Add a connect-wiring test for parseAsync(['disconnect','--vscode','--insiders']) asserting targets.vscode/insiders true, and a disconnect-orchestrator test asserting disconnectTargets({targets:{vscode:true},insiders:true}) calls the remover with insiders and does not print the target list or set exitCode 1.",
+      "status": "resolved",
+      "check_notes": "connect-wiring test covers disconnect --vscode --insiders; disconnect-orchestrator test covers disconnectTargets({vscode:true}, insiders)",
+      "fix": {
+        "change": "regression tests for disconnect --vscode --insiders wiring and dispatch",
+        "test": "connect-wiring.test.ts 'routes disconnect --vscode --insiders'; disconnect-orchestrator.test.ts '--vscode --insiders runs the BYOK remover...'"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "line": 200,
+      "title": "Connector failure branches in doctor untested",
+      "problem": "Regression gap: connectorSections branches for unreadable Copilot settings, an invalid Claude tracked-project list (`--overwrite` hint), corrupt preferences and paused collection have no test; every compose fixture is a healthy connector.",
+      "impact": "Consumer: `codemie proxy doctor` connectors section and its JSON. Dropping or misordering a branch silently removes the only place users learn analytics are not collected due to corrupt settings or a pause.",
+      "recommendation": "In doctor-compose.test.ts add cases for an invalid Claude scope (warn with `--overwrite` hint), corrupt preferences (warn naming preferencesPath), unreadable Copilot settings, and enabled:false (info with `codemie proxy analytics enable <flag>`).",
+      "status": "resolved",
+      "check_notes": "doctor-compose.test.ts covers invalid scope (--overwrite), corrupt preferences, unreadable Copilot settings, paused collection, failed check",
+      "fix": {
+        "change": "regression tests for invalid Claude scope, corrupt preferences, unreadable Copilot settings, paused collection",
+        "test": "doctor-compose.test.ts 'connector failures'"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "line": 281,
+      "title": "Doctor fix hints miss --scope and commands",
+      "problem": "The hooks-of-another-install hint for an analytics connector is `codemie proxy connect <flag>` without the current --scope; several warn/error sections (client check failed, delivery unhealthy without a command, 'Authenticated check failed', 'Proxy state could not be read', connector check failed) carry no hint; cli-path, upstream and preferences-corrupt hints are prose actions, not commands.",
+      "impact": "AC11 (one fix hint with the exact command; connector repair hints include the current --scope) is only partially met; following the hint at project scope would reconnect at user scope and drop tracked projects.",
+      "recommendation": "Include the connector's current --scope in the hooks-of-another-install hint (and every analytics-connector repair hint), and give each warn/error section (client check failed, delivery unhealthy without command, authenticated check failed, state unreadable, connector check failed) one hint with an exact command.",
+      "status": "resolved",
+      "check_notes": "repair hints carry --scope via repairCommand; listed warn/error sections have command hints, checked by a test. cli-path/preferences/upstream hints are still prose",
+      "fix": {
+        "change": "hooks-of-another-install and client-check-failed hints repeat the connector --scope; every warn/error section (guarded failures, connector/client/auth/state failures, delivery without command) carries a command hint",
+        "test": "doctor-compose.test.ts 'fix hints' incl. 'every warn and error section carries a hint'"
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "line": 297,
+      "title": "Doctor delivery lacks unsent/retry/dropped detail",
+      "problem": "deliverySections reports only healthy/unhealthy/unknown with a reason label; it gives no unsent data, next retry or last dropped reason. formatDeliveryLines/describeDrop/formatDropLines were deleted from delivery-health.ts and `proxy status` / `proxy analytics status` text no longer show delivery, so these facts appear in no text output (only `analytics status --json`).",
+      "impact": "AC10 requires doctor's analytics delivery section to show unsent data, next retry and last dropped reason; a required criterion is partially met and the 'analytics not arriving' diagnosis (including the no_project remedy) is lost from every human-readable command.",
+      "recommendation": "Extend deliverySections to report unsent bytes (and held part), next retry and the last dropped reason with its remedy, reusing collectDeliveryHealth's data (restore the deleted formatDeliveryLines/describeDrop logic as section messages).",
+      "status": "resolved",
+      "check_notes": "delivery-sections.ts reports Unsent data (and held part), Next retry with its error, and Last dropped with a remedy hint; tested",
+      "fix": {
+        "change": "new doctor/delivery-sections.ts adds Unsent data (held part), Next retry (error) and Last dropped (no_project remedy) under the delivery verdict",
+        "test": "doctor-compose.test.ts 'delivery reports unsent data, the next retry...'"
+      }
+    },
+    {
+      "id": "CR-016",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "line": 363,
+      "title": "Unreachable-daemon branches untested",
+      "problem": "Regression gap: contactDaemon's fetch-throws ('Proxy not responding') and !res.ok ('health endpoint returned <status>') branches are now the only source of `proxy status` healthy/unhealthy, but compose tests always answer /health ok and index.test.ts mocks composeProxyDoctor.",
+      "impact": "Consumer: `codemie proxy status` healthy line/JSON and `proxy doctor` exit code. A change to warn or a fall-through would report a dead daemon as healthy and exit 0 with no failing test.",
+      "recommendation": "In doctor-compose.test.ts make /health reject and, separately, return {ok:false,status:503}; assert the daemon section is error with the restart hint and no keyed request is made.",
+      "status": "resolved",
+      "check_notes": "doctor-compose tests cover a /health that rejects and one that returns 503",
+      "fix": {
+        "change": "regression tests for /health rejecting and returning 503",
+        "test": "doctor-compose.test.ts 'daemon not answering'"
+      }
+    },
+    {
+      "id": "CR-017",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "line": 465,
+      "title": "Stopped-daemon error/warn split untested",
+      "problem": "Regression gap: stoppedSections returns error when gateway clients are connected and warn when only hook-based connectors are; only the nothing-connected stopped case is tested.",
+      "impact": "Consumer: ProxyCheck in `codemie doctor` and `proxy doctor` exit code. Inverting the readHookInstall filter would fail doctor for hook-only users or downgrade a real outage to a warning, undetected.",
+      "recommendation": "With readDaemonStatus -> {running:false}, test (a) a connected gateway client -> daemon error naming the client and `codemie proxy start`; (b) only a hook-based target connected -> warn and no error section.",
+      "status": "resolved",
+      "check_notes": "tests cover stopped daemon with a gateway client (error, proxy start) and with hook-only connectors (warn, no error)",
+      "fix": {
+        "change": "regression tests for stopped daemon with a gateway client (error) vs hook-only connector (warn)",
+        "test": "doctor-compose.test.ts 'daemon stopped'"
+      }
+    },
+    {
+      "id": "CR-018",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "title": "Compose module exceeds 500-line limit",
+      "problem": "code-quality.md Code Structure Guidelines require files under 500 lines; this new module is 598 lines.",
+      "impact": "The documented code-quality standard is not met by a file this change creates.",
+      "recommendation": "Split the section builders (clients/connectors/upstream checks) into a sibling module under src/cli/commands/proxy/doctor/ so each file is under 500 lines.",
+      "status": "resolved",
+      "check_notes": "compose.ts now 401 lines; section builders moved to doctor/sections.ts (285) and delivery-sections.ts (98)",
+      "fix": {
+        "change": "compose.ts split into compose.ts (397), sections.ts (285) and delivery-sections.ts (98)",
+        "test": "doctor-compose.test.ts passes"
+      }
+    },
+    {
+      "id": "CR-019",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "title": "Connector verdicts lack analytics status pointer",
+      "problem": "connectorSections never points to `codemie proxy analytics status` for the tracked and excluded project lists; the string does not occur in compose.ts.",
+      "impact": "AC10 requires the analytics connector verdicts to point to `proxy analytics status`; a required criterion is partially met.",
+      "recommendation": "Have connectorSections point to `codemie proxy analytics status` for the tracked and excluded project lists, as AC10 requires.",
+      "status": "resolved",
+      "check_notes": "sections.ts adds an info section pointing to codemie proxy analytics status for the project lists; tested",
+      "fix": {
+        "change": "connectorSections adds an info section pointing to codemie proxy analytics status when any connector is connected",
+        "test": "doctor-compose.test.ts 'points to codemie proxy analytics status...'"
+      }
+    },
+    {
+      "id": "CR-020",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/doctor/compose.ts",
+      "title": "Daemon healthReason no longer surfaced",
+      "problem": "The removed `proxy status` code showed state.healthReason (the daemon watcher's recorded failure); proxy-daemon.ts still persists health/healthReason, but no CLI consumer reads it any more.",
+      "impact": "A watcher give-up reason recorded by the daemon is invisible in every command, leaving dead data and a lost diagnostic. Whether compose's /health probe always covers the same failures was unconfirmed.",
+      "recommendation": "In composeProxyDoctor's daemon section, when state.health === 'unhealthy' and state.healthReason is set, add a warn naming the last recorded issue with a restart hint; or drop healthReason from the daemon state if it is intentionally retired.",
+      "status": "resolved",
+      "check_notes": "compose.ts:137-142 warns with the recorded healthReason when health is unhealthy, with a restart hint; tested",
+      "fix": {
+        "change": "daemon section adds a warn with restart hint when state.health is unhealthy with a healthReason",
+        "test": "doctor-compose.test.ts 'surfaces the daemon watcher recorded health problem'"
+      }
+    },
+    {
+      "id": "CR-021",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 292,
+      "title": "Connect never passes a Next outcome",
+      "problem": "printNext supports byOutcome, but `proxy connect` and `proxy disconnect` always call it without an outcome, so every target (e.g. --claude-code-otlp vs --claude-desktop, partial --all) gets the same default follow-up.",
+      "impact": "AC2 ('naming the most relevant follow-up') and the spec's printNext(path, outcome) requirement are partially met; the story's example follow-ups after connecting Claude Code analytics never appear.",
+      "recommendation": "Derive an outcome from the connected target(s) (e.g. claude-code-otlp, claude-desktop, partial) and call printNext('proxy connect', outcome) / printNext('proxy disconnect', outcome), with byOutcome entries in RELATED, so the follow-up matches the story example.",
+      "status": "resolved",
+      "check_notes": "connect passes connectOutcome(opts) and disconnect passes all/stopped; RELATED has byOutcome entries for both",
+      "fix": {
+        "change": "connect passes outcome analytics/claude-desktop and disconnect passes all/stopped; RELATED byOutcome entries added",
+        "test": "connect-wiring.test.ts 'Next line'; related-commands.test.ts 'outcome-specific follow-up'"
+      }
+    },
+    {
+      "id": "CR-022",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 292,
+      "title": "Next line printed after failed commands",
+      "problem": "printNext never checks process.exitCode, and the connect, disconnect and disconnect --all actions call it unconditionally (index.ts:292, 335, 353), so a 'Next: codemie proxy status' line follows a failed connect, a no-target connect/disconnect that exits 1, and a failed disconnect --all.",
+      "impact": "AC2 limits the Next line to successful commands; a required criterion is partially met and users are steered onward after a failure.",
+      "recommendation": "Print the Next line only on success: guard each printNext call (connect, disconnect, disconnect --all) with `if (!process.exitCode)`, or make printNext itself return when process.exitCode is non-zero.",
+      "status": "resolved",
+      "check_notes": "printNext returns early when process.exitCode is non-zero (related-commands.ts:147)",
+      "fix": {
+        "change": "printNext returns when process.exitCode is non-zero",
+        "test": "related-commands.test.ts 'prints nothing after a failed command'; connect-wiring.test.ts 'is not printed after a failed connect'"
+      }
+    },
+    {
+      "id": "CR-023",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 352,
+      "title": "Per-target --stop path untested",
+      "problem": "Regression gap: only disconnectAll({stop:true}) with a resolving stopDaemon is tested; the per-target `disconnect <target> --stop` path and stopDaemonAfterDisconnect's failure/exitCode path are run by no test (connect-wiring mocks it but never passes --stop).",
+      "impact": "Consumer: `codemie proxy disconnect <target> --stop`. Removing the call or swallowing a stop failure would leave the daemon running and exit 0, undetected.",
+      "recommendation": "Add connect-wiring tests for parseAsync(['disconnect','--claude-desktop','--stop']) (stopDaemonAfterDisconnect called once, not called without --stop) and a disconnect-all test where stopDaemon rejects (exitCode 1, 'Failed to stop proxy').",
+      "status": "resolved",
+      "check_notes": "connect-wiring tests disconnect --claude-desktop --stop (with and without --stop); disconnect-all test checks 'Failed to stop proxy'",
+      "fix": {
+        "change": "regression tests for per-target --stop and a failing stopDaemon",
+        "test": "connect-wiring.test.ts 'disconnect <target> --stop...'; disconnect-all.test.ts 'a failed stop is reported and exits 1'"
+      }
+    },
+    {
+      "id": "CR-024",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 352,
+      "title": "disconnect --stop stops daemon on usage error",
+      "problem": "The disconnect action calls stopDaemonAfterDisconnect() whenever opts.stop is set, even when disconnectTargets printed the target list and set exitCode 1 because no target was given.",
+      "impact": "A usage error (`codemie proxy disconnect --stop`) stops the shared daemon for every connected client.",
+      "recommendation": "Only stop the daemon when disconnectTargets actually ran a target: e.g. `if (opts.stop && process.exitCode !== 1) await stopDaemonAfterDisconnect();`, or have disconnectTargets return whether any target was selected.",
+      "status": "resolved",
+      "check_notes": "disconnectTargets returns ran; the daemon is stopped only when opts.stop && ran; no-target test asserts it is not stopped",
+      "fix": {
+        "change": "disconnectTargets returns whether a target ran; --stop only stops the daemon when one did",
+        "test": "connect-wiring.test.ts 'disconnect --stop with no target is a usage error...'"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: proxy/analytics --help ends with Related commands",
+      "status": "pass",
+      "notes": "RELATED registry + applyRelatedHelp; coverage test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: successful command prints at most one relevant Next: line",
+      "status": "partial",
+      "notes": "printNext runs after failures/usage errors; connect never passes an outcome (CR-021, CR-022)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: --json writes only JSON; hooks/scheduled sync silent",
+      "status": "pass",
+      "notes": "printNext skips json/silent; deprecate() to stderr"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: one consistent hint format",
+      "status": "pass",
+      "notes": "renderHint + hint-prefix-ban test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: tip catalog covers proxy/analytics topics, no deprecated forms",
+      "status": "pass",
+      "notes": "tips.json + tips-coverage test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: codemie tips flags stale tips; build check fails",
+      "status": "pass",
+      "notes": "tips-validator + test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: deprecated form works, one stderr notice, hidden from help",
+      "status": "pass",
+      "notes": "deprecation.ts factories wired"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: past-due form fails build on default branch, warns elsewhere",
+      "status": "pass",
+      "notes": "removal-date.test.ts isReleaseGate"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8a: removal ticket lists deprecated forms, date and owner",
+      "status": "partial",
+      "notes": "ticket not created; CHANGELOG says owed (CR-001)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: CHANGELOG Deprecated/Removed sections",
+      "status": "pass",
+      "notes": "tables kept in sync with registry by test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: proxy doctor verdict per section incl. connectors and delivery details",
+      "status": "partial",
+      "notes": "delivery lacks unsent/next retry/last dropped; no analytics status pointer (CR-015, CR-019)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: every warn/error has one exact-command hint; connector hints include --scope",
+      "status": "partial",
+      "notes": "hooks-of-another-install hint omits --scope; several sections lack hints (CR-014)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: expired SSO gives auth error naming codemie profile login",
+      "status": "pass",
+      "notes": "authSections stale credentials"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: doctor exits non-zero only on error",
+      "status": "pass",
+      "notes": "doctor/command.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: nothing connected + stopped -> info naming codemie proxy connect",
+      "status": "pass",
+      "notes": "stoppedSections info"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: proxy doctor --json one document, no gateway key",
+      "status": "pass",
+      "notes": "scrubKey; test asserts no key"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: proxy doctor --verbose adds inspect-desktop detail and paths",
+      "status": "pass",
+      "notes": "collectVerbose"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC17: codemie doctor condensed proxy section pointing to codemie proxy doctor",
+      "status": "partial",
+      "notes": "mapping correct but no pointer to codemie proxy doctor (CR-005)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC18: proxy status facts only plus one Issues found line",
+      "status": "pass",
+      "notes": "status action"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC19: gateway key masked unless --show-key",
+      "status": "pass",
+      "notes": "MASKED_KEY in text and JSON"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC20: status --deep and inspect desktop deprecated but working",
+      "status": "pass",
+      "notes": "deprecatedOption/deprecatedCommand"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC21: stopped daemon reports stopped",
+      "status": "pass",
+      "notes": "unchanged branch"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC22: include <path> in project scope tracks the project",
+      "status": "pass",
+      "notes": "includeFor addProject + update"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC23: exclude then include are exact inverses",
+      "status": "pass",
+      "notes": "Claude and Copilot connectors"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC24: include under excluded parent explains and names command",
+      "status": "pass",
+      "notes": "coveringParent branch"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC25: no connector flag fans out to connected connectors",
+      "status": "pass",
+      "notes": "selectTargetConnectors + forEachTarget"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC26: disable with nothing connected fails naming proxy connect",
+      "status": "pass",
+      "notes": "ConfigurationError, exitCode 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC27: consent grant/revoke/list; old names deprecated aliases",
+      "status": "pass",
+      "notes": "listConsents added; see CR-004 on scoping"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC28: analytics status shows scope, projects, collection, consent, doctor pointer",
+      "status": "pass",
+      "notes": "showStatus"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC29: disconnect --vscode keeps user-added models",
+      "status": "pass",
+      "notes": "remover drops loopback-only managed providers"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC30: disconnect --all disconnects every client, daemon kept unless --stop",
+      "status": "pass",
+      "notes": "see CR-011 for skipped failed checks"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC31: proxy clients lists every client with state/location/scope",
+      "status": "pass",
+      "notes": "clients-command.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC32: foreign config unchanged without --overwrite",
+      "status": "pass",
+      "notes": "conflict checks name --overwrite"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC33: connect --restart-daemon replaces healthy daemon",
+      "status": "pass",
+      "notes": "ensureDaemon(restartDaemon)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC34: --force = --restart-daemon --overwrite with notice",
+      "status": "pass",
+      "notes": "proxy/index.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC35: --silent = --yes with notice; --yes skips confirmations",
+      "status": "pass",
+      "notes": "yes: opts.yes || opts.silent"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC36: scope-drop on connect lists drops and asks",
+      "status": "pass",
+      "notes": "confirmScopeDrops pre-flight"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC37: non-interactive scope-drop without --yes fails naming --yes",
+      "status": "pass",
+      "notes": "exitCode 1 with hint"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC38: inapplicable --scope/--yes/--insiders/--model warn",
+      "status": "pass",
+      "notes": "orchestrator notes"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC39: connect/disconnect with no target exit non-zero",
+      "status": "pass",
+      "notes": "exitCode 1 added"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC40: connect desktop/vscode fail naming new flags",
+      "status": "pass",
+      "notes": "removedCommand stubs"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC41: --report flags fail naming --export / -o",
+      "status": "pass",
+      "notes": "removedOption stubs"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC42: invalid --from/--to/--last fails with format",
+      "status": "pass",
+      "notes": "parseFilterOptions"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC43: --include-external policy values; bare form deprecated",
+      "status": "pass",
+      "notes": "resolveIncludeExternal"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC43a: existing report sync keeps working",
+      "status": "pass",
+      "notes": "stored settings untouched"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC44: analytics failure exits non-zero without cutting output",
+      "status": "pass",
+      "notes": "process.exitCode = 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC45: dedicated page with worked use cases",
+      "status": "partial",
+      "notes": "scope use case misstates where settings are written (CR-003)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC46: dedicated page deprecation table",
+      "status": "pass",
+      "notes": "marked tables"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC47: docs/help/tips teach no deprecated form; automated check",
+      "status": "pass",
+      "notes": "scanDocs test"
+    },
+    {
+      "kind": "spec",
+      "item": "createProgram() factory used by index.ts and tree-walking tests",
+      "status": "pass",
+      "notes": "src/cli/program.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Invocation context module replaces detection in bin/codemie.js",
+      "status": "pass",
+      "notes": "invocation-context.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Deprecation registry, shared removal date, removed stubs; alias plumbing removed",
+      "status": "pass",
+      "notes": "src/cli/deprecation.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Related-commands registry with printNext(path, outcome)",
+      "status": "partial",
+      "notes": "connect/disconnect never pass an outcome (CR-021)"
+    },
+    {
+      "kind": "spec",
+      "item": "Hint renderer src/utils/hint.ts used across reports; ban test",
+      "status": "pass",
+      "notes": "hint.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Tip/doc staleness validator over createProgram()",
+      "status": "pass",
+      "notes": "tips-validator.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Removal-date check fails on main/tags/release, warns elsewhere",
+      "status": "pass",
+      "notes": "isReleaseGate"
+    },
+    {
+      "kind": "spec",
+      "item": "WP1: one composition module, pid-checked /health, ProxyCheck no auth probe",
+      "status": "pass",
+      "notes": "doctor/compose.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "WP2: Client keys masked; Issues found line",
+      "status": "pass",
+      "notes": "proxy/index.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "WP3: AnalyticsConnector readScope/addProject; fan-out semantics",
+      "status": "pass",
+      "notes": "analytics-connectors.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "WP4: one client-target table; one Claude Code connected predicate",
+      "status": "pass",
+      "notes": "client-targets.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "WP4: scope pre-flight before SSO/daemon; guarded list reset",
+      "status": "pass",
+      "notes": "confirmScopeDrops, runIfScopeUnchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "clients, disconnect --all and doctor agree on what is connected",
+      "status": "pass",
+      "notes": "readClientTargetStates"
+    },
+    {
+      "kind": "spec",
+      "item": "analytics status --json keeps delivery key, adds consented folders",
+      "status": "pass",
+      "notes": "showStatus JSON"
+    },
+    {
+      "kind": "spec",
+      "item": "WP5: --include-external [policy]; guided-late-steps string rewritten",
+      "status": "pass",
+      "notes": "analytics/index.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goals: no Jira code, no doctor --fix, no mcp-proxy changes",
+      "status": "pass",
+      "notes": "none in diff"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "all 20 subjects in 608d79a1..HEAD use <type>(<scope>): <subject> with allowed types (feat, fix, docs) and allowed scopes (proxy, analytics, cli, utils, or none); longest header 99 chars, under the 100-char limit in git-workflow.md / commitlint.config.cjs"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "imports all carry .js, no require(), exported functions found have explicit return types, new console.log calls are user-facing CLI output (guide bans console.log for debug output, use logger.debug), and debug paths use logger.debug. Unmet: code-quality.md Code Structure Guidelines say files stay under 500 lines; new src/cli/commands/proxy/doctor/compose.ts is 598 lines, src/cli/commands/proxy/analytics-command.ts went from 24 to 693 lines, and already-oversized src/cli/commands/proxy/connect-orchestrator.ts (1083->1213) and connectors/claude-code-otlp.ts (850->900) grew further"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "guide read at .ai-run/guides/security/security-practices.md (the path AGENTS.md documents; .ai-run/guides/development/security-patterns.md does not exist). proxy status masks the gateway key by default and shows it in full only with explicit --show-key (src/cli/commands/proxy/index.ts:200); new logger.debug calls in client-targets.ts, disconnect-all.ts and doctor/compose.ts log target ids and errors only, and vscode.ts routes its log through sanitizeLogArgs; the changed-file list touches no X-CodeMie-* attribution headers or header-injection path; no concrete security defect found"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Oversized diff: not every changed line was read in full, so coverage of unread hunks is unverified; all four lenses and the standards audit ran (no standards coverage gap), with 24 blocking findings — partial ACs 2, 8a, 10, 11, 17, 45, three 500-line file-size standard violations, behavior defects in disconnect (--stop on usage error, --all skipping failed checks) and six regression-test gaps — of which CR-009, CR-010 and CR-020 have unconfirmed reachability. One decision_needed item (CR-001: the AC8a removal ticket needs a human owner); 0 deferred; 20 candidates dismissed as noise, already handled, or spec-sanctioned; fix pack at code-review-fix-pack.local.md.",
+    "confidence": "low",
+    "risk_flags": [
+      "breaking-change",
+      "public-api"
+    ]
+  }
+}

@@ -8,7 +8,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import {
   getVsCodeClaudeCodeSettingsPath,
   moveVsCodeClaudeCodeToNamedKey,
@@ -51,6 +51,23 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
 
     const settings = await readSettings();
     expect(settings['claudeCode.disableLoginPrompt']).toBe(true);
+    expect(settings['claudeCode.environmentVariables']).toEqual([
+      { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
+    ]);
+  });
+
+  it.skipIf(process.platform === 'win32')('writes a settings file that is a symbolic link through the link', async () => {
+    const target = join(testDir, 'dotfiles-settings.json');
+    await writeFile(target, JSON.stringify({ 'editor.fontSize': 14 }, null, 2));
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await symlink(target, configPath);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key-abc123');
+
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    const settings = JSON.parse(await readFile(target, 'utf-8')) as Record<string, unknown>;
+    expect(settings['editor.fontSize']).toBe(14);
     expect(settings['claudeCode.environmentVariables']).toEqual([
       { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
       { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key-abc123.vscode-claude-code' },
@@ -281,6 +298,7 @@ describe('getVsCodeClaudeCodeSettingsPath', () => {
     vi.spyOn(vscodeModule, 'getVsCodeProductDir').mockReturnValue(missingDir);
 
     expect(() => getVsCodeClaudeCodeSettingsPath(false)).toThrow(ConfigurationError);
+    expect(() => getVsCodeClaudeCodeSettingsPath(false)).toThrow(ClientNotInstalledError);
   });
 
   it('resolves to <productDir>/User/settings.json when the product directory exists', () => {
@@ -461,15 +479,16 @@ describe('moveVsCodeClaudeCodeToNamedKey', () => {
     expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
   });
 
-  it('leaves a settings file that is a symbolic link, the link and its target', async () => {
+  it('moves a settings file that is a symbolic link through the link, and a second move leaves it', async () => {
     const target = join(home, 'dotfiles-settings.json');
     await writeFile(target, olderConnectSettings('codemie-proxy'));
     await mkdir(join(vscodeModule.getVsCodeProductDir(false), 'User'), { recursive: true });
     await symlink(target, settingsPath());
 
-    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('left');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('moved');
+    expect(await moveVsCodeClaudeCodeToNamedKey('codemie-proxy', 4001)).toBe('unchanged');
 
     expect((await lstat(settingsPath())).isSymbolicLink()).toBe(true);
-    expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy'));
+    expect(await readFile(target, 'utf-8')).toBe(olderConnectSettings('codemie-proxy.vscode-claude-code'));
   });
 });

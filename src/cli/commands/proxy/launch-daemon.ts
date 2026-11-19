@@ -3,7 +3,8 @@ import { ConfigurationError } from '../../../utils/errors.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import { readConnectionRecord, spawnDaemon, type DaemonState, type SpawnOptions } from './daemon-manager.js';
-import { verifySsoCredentials } from './connect-orchestrator.js';
+import { normalizeDaemonModel, verifySsoCredentials } from './connect-orchestrator.js';
+import { renderHint } from '@/utils/hint.js';
 
 export type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
 
@@ -17,7 +18,7 @@ export type LaunchableConfig = LoadedConfig & { baseUrl: string };
  */
 export async function prepareDaemonLaunch(config: LoadedConfig, profile: string): Promise<LaunchableConfig> {
   if (!config.baseUrl) {
-    throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
+    throw new ConfigurationError(`No API URL configured for this profile.\n${renderHint({ reason: 'Set it up', command: 'codemie setup' })}`);
   }
 
   await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
@@ -40,13 +41,17 @@ export async function shouldWriteConnectionRecord(profileOption: string | undefi
   return Boolean(profileOption) || !(await readConnectionRecord());
 }
 
-/** Spawn the daemon for a prepared config; `overrides` carries the port and what a restart keeps. */
+/**
+ * Spawn the daemon for a prepared config with the profile's model; `overrides` carries the port and what a restart
+ * keeps, and an override's model wins when it is set.
+ */
 export async function spawnForProfile(
   config: LaunchableConfig,
   profile: string,
   overrides: Partial<SpawnOptions>
 ): Promise<DaemonState> {
   console.log('Starting proxy daemon...');
+  const model = overrides.model ?? normalizeDaemonModel(config.model);
   return spawnDaemon({
     targetUrl: config.baseUrl,
     provider: config.provider ?? 'ai-run-sso',
@@ -55,5 +60,6 @@ export async function spawnForProfile(
     syncApiUrl: config.ssoConfig?.apiUrl,
     syncCodeMieUrl: config.codeMieUrl,
     ...overrides,
+    ...(model ? { model } : {}),
   });
 }

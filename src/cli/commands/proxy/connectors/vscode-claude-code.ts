@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   applyEdits,
@@ -11,7 +11,8 @@ import {
 } from 'jsonc-parser';
 import { VSCODE_CLAUDE_CODE } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { isLoopbackGatewayUrl } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
@@ -50,7 +51,7 @@ export function getVsCodeClaudeCodeSettingsPath(insiders = false): string {
     const alternative = insiders
       ? 'Remove --insiders to configure stable VS Code.'
       : 'Use --insiders if only VS Code Insiders is installed.';
-    throw new ConfigurationError(
+    throw new ClientNotInstalledError(
       `${edition} user data directory was not found at ${productDir}.\n${alternative}`
     );
   }
@@ -261,7 +262,7 @@ export async function writeVsCodeClaudeCodeConfig(
  * Moves the extension's `settings.json` of VS Code (or VS Code Insiders) from the shared key of the daemon of
  * gateway key `gatewayKey`, listening on `port`, to the extension's named key, `<gatewayKey>.vscode-claude-code`:
  * only the value of the managed `ANTHROPIC_AUTH_TOKEN` changes, in place, comments and formatting kept, atomically.
- * `moved` when written; `left` for a settings file that is a symbolic link, not written; `unchanged` when the reader
+ * `moved` when written (a symbolic link written through); `unchanged` when the reader
  * gives another port than `port` or anything but the shared key (a named or refused key, no key, no CodeMie entries,
  * a missing or unreadable file). A failed write throws.
  */
@@ -269,11 +270,10 @@ export async function moveVsCodeClaudeCodeToNamedKey(
   gatewayKey: string,
   port: number,
   insiders = false
-): Promise<'moved' | 'left' | 'unchanged'> {
+): Promise<'moved' | 'unchanged'> {
   const gateway = await readVsCodeClaudeCodeGateway(gatewayKey, insiders);
   if (gateway?.port !== port || gateway.key !== 'shared') return 'unchanged';
   const configPath = getVsCodeClaudeCodeSettingsPath(insiders);
-  if ((await lstat(configPath)).isSymbolicLink()) return 'left';
 
   const { settings, raw } = await readSettings(configPath);
   const envVars = settings['claudeCode.environmentVariables'];
@@ -290,7 +290,7 @@ export async function moveVsCodeClaudeCodeToNamedKey(
     })
   );
   try {
-    await writeAtomically(configPath, nextText);
+    await writeFileAtomic(configPath, nextText);
   } catch (error) {
     throw new ConfigurationError(
       `Failed to update VS Code Claude Code settings at ${configPath}: ` +

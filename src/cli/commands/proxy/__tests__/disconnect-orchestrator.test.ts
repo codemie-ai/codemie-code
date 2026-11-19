@@ -2,6 +2,7 @@
  * `proxy disconnect` orchestration.
  * @group unit
  */
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,59 @@ describe('disconnectTargets', () => {
     await disconnectTargets({ targets: {} });
 
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('--codex-desktop'));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  it.each([
+    ['--scope', { scope: 'project' as const }],
+    ['--insiders', { insiders: true }],
+  ])('%s without a target it applies to warns that it has no effect', async (flag, extra) => {
+    vi.doMock('../connectors/codex-desktop.js', () => ({
+      removeCodexDesktopConfig: vi.fn().mockResolvedValue({ removed: false, usedBackup: false, configPath: null }),
+    }));
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    await disconnectTargets({ targets: { codexDesktop: true }, ...extra });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`${flag} has no effect`));
+  });
+
+  it('--vscode --insiders runs the BYOK remover for Insiders, without the target list or a failure exit', async () => {
+    const remove = vi.fn().mockResolvedValue({ removed: true });
+    vi.doMock('../connectors/vscode.js', () => ({ removeVsCodeLanguageModelsConfig: remove }));
+    process.exitCode = undefined;
+    try {
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      const ran = await disconnectTargets({ targets: { vscode: true }, insiders: true });
+
+      expect(ran).toBe(true);
+      expect(remove).toHaveBeenCalledWith({ insiders: true });
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Select at least one target'));
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('VS Code Insiders BYOK disconnected'));
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      vi.doUnmock('../connectors/vscode.js');
+      process.exitCode = undefined;
+    }
+  });
+
+  it('reports that no target ran when none is selected', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    expect(await disconnectTargets({ targets: {} })).toBe(false);
+    process.exitCode = undefined;
+  });
+
+  it('an omitted --scope reaches the Claude Code remover as the user scope', async () => {
+    const remove = vi.fn().mockResolvedValue({ removed: false });
+    vi.doMock('../connectors/claude-code-otlp.js', () => ({ removeClaudeCodeOtlpConfig: remove }));
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+    await disconnectTargets({ targets: { claudeCodeOtlp: true } });
+
+    expect(remove).toHaveBeenCalledWith({ scope: 'user' });
   });
 
   it('reports the removal for the Codex desktop target', async () => {
@@ -178,8 +232,8 @@ describe('disconnectTargets — the analytics aggregates', () => {
    * home of the test's own and a mocked PATH lookup.
    */
   async function machine(
-    found: Array<'desktop' | 'vscode' | 'claude'>,
-    configured: Array<'desktop' | 'desktopProxy' | 'claudeCode'> = [],
+    found: Array<'desktop' | 'vscode' | 'vscodeInsiders' | 'claude'>,
+    configured: Array<'desktop' | 'desktopProxy' | 'claudeCode' | 'routeStable' | 'routeInsiders'> = [],
   ): Promise<void> {
     if (found.includes('desktop')) await mkdir(join(home, 'Applications', 'Claude.app'), { recursive: true });
     vi.doMock('@/telemetry/clients/claude-desktop/claude-desktop.paths.js', async (importOriginal) => ({
@@ -193,6 +247,10 @@ describe('disconnectTargets — the analytics aggregates', () => {
     if (found.includes('vscode')) {
       const { getVsCodeProductDir } = await import('../connectors/vscode.js');
       await mkdir(getVsCodeProductDir(false), { recursive: true });
+    }
+    if (found.includes('vscodeInsiders')) {
+      const { getVsCodeProductDir } = await import('../connectors/vscode.js');
+      await mkdir(getVsCodeProductDir(true), { recursive: true });
     }
     removers = {
       desktop: vi.fn().mockResolvedValue({ removed: true, configPath: '/desktop/config.json', deletedConfigFile: true }),
@@ -214,6 +272,9 @@ describe('disconnectTargets — the analytics aggregates', () => {
     vi.doMock('../connectors/vscode-claude-code.js', async (importOriginal) => ({
       ...(await importOriginal<typeof import('../connectors/vscode-claude-code.js')>()),
       removeVsCodeClaudeCodeConfig: removers.vscode,
+      // The extension's route in an edition's settings.json, pointed at a local CodeMie gateway.
+      readVsCodeClaudeCodeGateway: async (_key: string, insiders = false) =>
+        configured.includes(insiders ? 'routeInsiders' : 'routeStable') ? { port: 4001, key: 'named' } : null,
     }));
     vi.doMock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
       ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
@@ -249,26 +310,28 @@ describe('disconnectTargets — the analytics aggregates', () => {
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  it('--claude-otlp, every member found: the three removers as by the three flags', async () => {
-    await machine(['desktop', 'vscode', 'claude']);
+  it('--claude-otlp, every member found and the extension routed: the three removers as by the three flags', async () => {
+    await machine(['desktop', 'vscode', 'claude'], ['routeStable']);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.desktop).toHaveBeenCalled();
     expect(removers.vscode).toHaveBeenCalledWith(false);
-    expect(removers.claudeCode).toHaveBeenCalledWith({ scope: undefined });
+    expect(removers.claudeCode).toHaveBeenCalledWith({ scope: 'user' });
     expect(process.exitCode).toBe(0);
   });
 
-  it('the extension neither found nor configured: skipped with no line and no exit code', async () => {
+  it('the extension neither installed nor routed in either edition: no line for it, no exit code', async () => {
     await machine(['desktop', 'claude']);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.vscode).not.toHaveBeenCalled();
-    expect(printed.some((line) => line.includes('VS Code Claude Code'))).toBe(false);
+    expect(printed.some((line) => line.includes('VS Code'))).toBe(false);
+    expect(removers.desktop).toHaveBeenCalled();
+    expect(removers.claudeCode).toHaveBeenCalled();
     expect(process.exitCode).toBe(0);
   });
 
@@ -288,7 +351,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.desktop).not.toHaveBeenCalled();
-    expect(printed.some((line) => line.includes('Claude Desktop'))).toBe(false);
+    expect(printed.map(stripVTControlCharacters)).toContain('Claude Desktop: nothing to disconnect.');
     expect(process.exitCode).toBe(0);
   });
 
@@ -327,6 +390,81 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(process.exitCode).toBe(0);
   });
 
+  describe('the VS Code Claude Code extension under --claude-otlp: both editions', () => {
+    const lines = (): string[] => printed.map(stripVTControlCharacters);
+
+    it('only Insiders routed and no --insiders: the Insiders route is removed, stable left alone', async () => {
+      await machine(['vscodeInsiders'], ['routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(removers.vscode.mock.calls).toEqual([[true]]);
+      expect(lines()).toContain('✓ VS Code Insiders Claude Code disconnected (/vscode/settings.json)');
+      expect(lines().some((line) => line.startsWith('VS Code Claude Code extension'))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('both editions routed: both removed, each on its own line', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeStable', 'routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(removers.vscode.mock.calls).toEqual([[false], [true]]);
+      expect(lines()).toContain('✓ VS Code Claude Code disconnected (/vscode/settings.json)');
+      expect(lines()).toContain('✓ VS Code Insiders Claude Code disconnected (/vscode/settings.json)');
+    });
+
+    it('an installed edition with no route: nothing to disconnect for that edition', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(removers.vscode.mock.calls).toEqual([[true]]);
+      expect(lines()).toContain('VS Code Claude Code extension: nothing to disconnect.');
+    });
+
+    it('neither edition installed nor routed: no extension line, exit 0', async () => {
+      await machine([]);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(removers.vscode).not.toHaveBeenCalled();
+      expect(lines().some((line) => line.includes('VS Code'))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('--insiders with the vendor flag covers Insiders only', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeStable', 'routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true });
+
+      expect(removers.vscode.mock.calls).toEqual([[true]]);
+    });
+
+    it('scope project leaves both editions untouched', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeStable', 'routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], scope: 'project' });
+
+      expect(removers.vscode).not.toHaveBeenCalled();
+    });
+
+    it('the per-client --vscode-claude-code still covers one edition', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeStable', 'routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: { vscodeClaudeCode: true } });
+
+      expect(removers.vscode.mock.calls).toEqual([[false]]);
+    });
+  });
+
   it('scope project: Desktop and the extension left connected, Claude Code removed for the project', async () => {
     await machine(['desktop', 'vscode', 'claude']);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
@@ -338,13 +476,16 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(removers.claudeCode).toHaveBeenCalledWith({ scope: 'project' });
   });
 
-  it('nothing left to disconnect: one line, no exit code', async () => {
+  it('nothing left to disconnect: one nothing-to-disconnect line per client of the vendor, no exit code', async () => {
     await machine([]);
     const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-    expect(printed).toEqual(['Nothing to disconnect. See: codemie proxy status']);
+    expect(printed.map(stripVTControlCharacters)).toEqual([
+      'Claude Desktop: nothing to disconnect.',
+      'Claude Code: nothing to disconnect.',
+    ]);
     expect(process.exitCode).toBe(0);
   });
 
@@ -367,8 +508,8 @@ describe('disconnectTargets — the analytics aggregates', () => {
     expect(printed.join('\n')).toContain('--claude-otlp');
     expect(printed.join('\n')).toContain('--copilot-otlp');
     const lines = printed.join('\n').split('\n');
-    expect(lines).toContain('  --claude-otlp          Every Claude client (analytics, and the proxy route of Claude Desktop and the extension)');
-    expect(lines).toContain('  --copilot-otlp         Every Copilot client (Copilot Chat and Copilot CLI analytics)');
+    expect(lines).toContain('  --claude-otlp         Every Claude client (analytics, and the Desktop/VS Code proxy route)');
+    expect(lines).toContain('  --copilot-otlp        Every Copilot client (Copilot Chat and Copilot CLI analytics)');
     expect(lines).toContain('  codemie proxy disconnect --claude-otlp');
   });
 });
