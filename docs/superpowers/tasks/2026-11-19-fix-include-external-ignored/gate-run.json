@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "fix/include-external-ignored",
+  "head": "d685952a144328c7bb95a0ddee3436d7b0f21ed9",
+  "runner": "npm",
+  "started_at": "2026-11-19T10:36:19Z",
+  "completed_at": "2026-11-19T10:40:10Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 170000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "639 passed (639); 12033 passed | 2 skipped (12035) (CI=1, CODEMIE_* unset; itLocal real-transcript tests skipped by design)"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 46000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "47 passed | 1 skipped (48); 389 passed | 10 skipped (399) (CI=1; itLocal tests skipped by design)"
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "command": "npm run validate:secrets",
+      "notes": "scripts/validate-secrets.js scans only the staged diff, so it cannot scan a commit. Not run as a standalone gate; the pre-commit hook (which runs validate:secrets, with OrbStack up) exited 0 when committing d685952a and the artifacts commit. CI runs it unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npx commitlint --from 8b8c5e92 --to HEAD",
+      "exit_code": 0,
+      "notes": "range 8b8c5e92..HEAD (both commits of the rebased branch)"
+    }
+  ],
+  "notes": "Re-run after rebasing onto origin/main 8b8c5e92 (upstream #837). head is the code commit; the planning-artifacts commit follows it. Timestamps are log-file modification times; durations are measured wall seconds."
+}
