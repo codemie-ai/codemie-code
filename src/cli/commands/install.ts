@@ -127,10 +127,10 @@ export function createInstallCommand(): Command {
                 'exit'
               )
             : null;
-          const runAdditionalInstallation = async (): Promise<void> => {
+          const runAdditionalInstallation = async (extra?: { alreadyInstalled?: boolean }): Promise<void> => {
             await settingsSwitch?.apply();
             try {
-              await agent.additionalInstallation?.(options);
+              await agent.additionalInstallation?.({ ...options, ...extra });
             } catch (error: unknown) {
               settingsSwitch?.printBackupNote();
               throw error;
@@ -170,7 +170,7 @@ export function createInstallCommand(): Command {
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
-                  await runAdditionalInstallation();
+                  await runAdditionalInstallation({ alreadyInstalled: true });
                 }
 
                 return;
@@ -199,7 +199,7 @@ export function createInstallCommand(): Command {
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
-                await runAdditionalInstallation();
+                await runAdditionalInstallation({ alreadyInstalled: true });
               }
 
               return;

@@ -496,8 +496,12 @@ export class PiPlugin extends BaseAgentAdapter {
   }
 
   async additionalInstallation(
-    _options?: import('../../core/types.js').AgentInstallationOptions,
+    options?: import('../../core/types.js').AgentInstallationOptions,
   ): Promise<void> {
+    if (options?.alreadyInstalled === true) {
+      logger.info('[pi] Pi is already installed; skipping required Pi package installation');
+      return;
+    }
     await installRequiredPiPackages({ cliCommand: this.metadata.cliCommand });
   }
 }
