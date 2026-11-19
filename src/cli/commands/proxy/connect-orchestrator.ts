@@ -172,6 +172,9 @@ export function routeBillingLine(): string {
 
 const EXTENSION_SKIP_LINE =
   '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+const EXTENSION_OTHER_GATEWAY_SKIP_LINE =
+  '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)';
+const EXTENSION_SWITCH_HINT = '  To route it through the proxy: codemie proxy connect --vscode-claude-code';
 const DESKTOP_SWITCH_HINT =
   'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
 
@@ -196,9 +199,10 @@ async function resolveClaudeRoutes(
 
   if (members.has('vscodeClaudeCode') && activeTargets.vscodeClaudeCode && !explicitRoutes?.vscodeClaudeCode) {
     const decision = await decideVsCodeRoute(insiders);
-    if (decision === 'skip') {
+    if (decision === 'skip' || decision === 'skip-other-gateway') {
       activeTargets.vscodeClaudeCode = false;
-      plan.skipped.push({ member: 'vscodeClaudeCode', line: EXTENSION_SKIP_LINE });
+      const line = decision === 'skip' ? EXTENSION_SKIP_LINE : EXTENSION_OTHER_GATEWAY_SKIP_LINE;
+      plan.skipped.push({ member: 'vscodeClaudeCode', line });
     } else {
       plan.routed.push('vscodeClaudeCode');
       if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--vscode-claude-code'));
@@ -248,7 +252,12 @@ function dropDeclinedClaudeRoutes(
 
 function printClaudeRoutePlan(plan: ClaudeRoutePlan): void {
   for (const { member, line } of plan.skipped) {
-    console.log(member === 'vscodeClaudeCode' ? chalk.green(line) : chalk.yellow(line));
+    if (member !== 'vscodeClaudeCode') {
+      console.log(chalk.yellow(line));
+      continue;
+    }
+    console.log(chalk.green(line));
+    console.log(chalk.dim(EXTENSION_SWITCH_HINT));
   }
   for (const hint of plan.refreshHints) console.log(chalk.dim(hint));
 }
@@ -1158,10 +1167,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     // one is skipped when that prompt will be shown to avoid printing it twice. The
     // non-interactive-without-`--yes` case already threw above.
     const confirmationWillBeShown = Boolean(activeTargets.claudeCodeOtlp) && !opts.yes;
-    if (!confirmationWillBeShown) {
-      printProfileLine();
-      printClaudeRoutePlan(routePlan);
-    }
+    if (!confirmationWillBeShown) printProfileLine();
+    // The route lines follow the analytics header (`CodeMie URL:`, the prompt or what `--yes` prints in its place).
+    let routePlanPrinted = false;
 
     await verifySsoCredentials(
       config.baseUrl,
@@ -1184,7 +1192,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       const declined = confirmed === false;
       // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
       // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
-      if (confirmationWillBeShown && !declined) printClaudeRoutePlan(routePlan);
+      if (!declined) printClaudeRoutePlan(routePlan);
+      routePlanPrinted = true;
       if (!confirmed) {
         activeTargets.claudeCodeOtlp = false;
         if (declined) {
@@ -1194,6 +1203,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         if (!hasAnyTarget(activeTargets)) return failBeforeDispatch();
       }
     }
+    if (!routePlanPrinted) printClaudeRoutePlan(routePlan);
 
     const cwd = process.cwd();
     await Promise.allSettled([

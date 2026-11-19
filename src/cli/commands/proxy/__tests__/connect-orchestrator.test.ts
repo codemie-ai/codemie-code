@@ -1662,7 +1662,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         'Desktop analytics needs the gateway; to switch it: ' +
         'codemie proxy connect --claude-desktop';
 
-      async function decisions(vscode: 'route' | 'refresh' | 'skip', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {
+      async function decisions(vscode: 'route' | 'refresh' | 'skip' | 'skip-other-gateway', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {
         const state = await import('../claude-client-config-state.js');
         vi.mocked(state.decideVsCodeRoute).mockResolvedValue(vscode);
         vi.mocked(state.decideDesktopRoute).mockResolvedValue(desktop);
@@ -1684,6 +1684,41 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         expect(printed().some((line) => line.startsWith('Claude Desktop: configured (not installed'))).toBe(false);
         expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
         expect(process.exitCode).toBe(0);
+      });
+
+      it('extension skip: the switch command follows the skip line, after the analytics header of --yes', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        await writers();
+        await decisions('skip', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        const lines = printed();
+        const skip = lines.indexOf(EXTENSION_SKIP);
+        expect(lines[skip + 1]).toBe('  To route it through the proxy: codemie proxy connect --vscode-claude-code');
+        const header = lines.findIndex((line) => line.startsWith('CodeMie URL:'));
+        expect(header).toBeGreaterThanOrEqual(0);
+        expect(header).toBeLessThan(skip);
+      });
+
+      it('extension on another gateway or key: not written, its own skip line with the switch command', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip-other-gateway', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
+        const lines = printed();
+        const skip = lines.indexOf(
+          '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)');
+        expect(skip).toBeGreaterThanOrEqual(0);
+        expect(lines[skip + 1]).toBe('  To route it through the proxy: codemie proxy connect --vscode-claude-code');
+        expect(lines).not.toContain(EXTENSION_SKIP);
       });
 
       it('extension route: written, and the billing line follows the configured line', async () => {

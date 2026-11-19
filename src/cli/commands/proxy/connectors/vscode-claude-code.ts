@@ -26,6 +26,14 @@ import {
 const ANTHROPIC_BASE_URL_KEY = 'ANTHROPIC_BASE_URL';
 const ANTHROPIC_AUTH_TOKEN_KEY = 'ANTHROPIC_AUTH_TOKEN';
 const MANAGED_ENV_VAR_NAMES = new Set([ANTHROPIC_BASE_URL_KEY, ANTHROPIC_AUTH_TOKEN_KEY]);
+/** Extension variables that give it a key or a model provider of the user's own, which `connect` never writes. */
+const OWN_CREDENTIAL_ENV_VAR_NAMES = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+];
 
 export interface WriteVsCodeClaudeCodeConfigResult {
   written: boolean;
@@ -337,14 +345,21 @@ export async function readVsCodeClaudeCodeGateway(key: string, insiders = false)
   }
 }
 
-/** Who owns the model route of the extension: nobody, CodeMie (loopback base URL) or the user (any other). */
+/** Who owns the model route of the extension: nobody, CodeMie (loopback base URL with its key) or the user (any other). */
 export type VsCodeClaudeCodeRouteState = 'none' | 'ours' | 'foreign';
+
+/** The extension's route is CodeMie's: `ANTHROPIC_AUTH_TOKEN` is a key the daemon of gateway key `key` accepts. */
+function holdsGatewayKey(envVars: unknown[], key: string): boolean {
+  const token = managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY);
+  return gatewayKeyReading(typeof token === 'string' ? `Bearer ${token}` : undefined, key) !== 'refused';
+}
 
 /**
  * The model route in the extension's `claudeCode.environmentVariables`: `ours` for a loopback `ANTHROPIC_BASE_URL`
  * whose `ANTHROPIC_AUTH_TOKEN` the daemon of gateway key `key` accepts, the shared key or the extension's own (what
- * `connect` writes); `foreign` for any other `ANTHROPIC_BASE_URL` (a loopback gateway with another key included) or any
- * `ANTHROPIC_AUTH_TOKEN` entry; `none` otherwise, with no product directory or with unreadable settings included.
+ * `connect` writes); `foreign` for any other `ANTHROPIC_BASE_URL` (a loopback gateway with another key included), or,
+ * with no base URL, any `ANTHROPIC_AUTH_TOKEN` or a key or provider of the user's own (`ANTHROPIC_API_KEY`,
+ * `CLAUDE_CODE_USE_BEDROCK`, …); `none` otherwise, with no product directory or with unreadable settings included.
  * Never throws, writes nothing.
  */
 export async function readVsCodeClaudeCodeRouteState(key: string, insiders = false): Promise<VsCodeClaudeCodeRouteState> {
@@ -354,11 +369,10 @@ export async function readVsCodeClaudeCodeRouteState(key: string, insiders = fal
     if (!Array.isArray(envVars)) return 'none';
     const baseUrl = managedEnvVarValue(envVars, ANTHROPIC_BASE_URL_KEY);
     if (baseUrl !== undefined) {
-      if (loopbackPortOf(baseUrl) === null) return 'foreign';
-      const token = managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY);
-      return gatewayKeyReading(typeof token === 'string' ? `Bearer ${token}` : undefined, key) === 'refused' ? 'foreign' : 'ours';
+      return loopbackPortOf(baseUrl) !== null && holdsGatewayKey(envVars, key) ? 'ours' : 'foreign';
     }
-    return managedEnvVarValue(envVars, ANTHROPIC_AUTH_TOKEN_KEY) !== undefined ? 'foreign' : 'none';
+    const ownNames = [ANTHROPIC_AUTH_TOKEN_KEY, ...OWN_CREDENTIAL_ENV_VAR_NAMES];
+    return ownNames.some(name => managedEnvVarValue(envVars, name) !== undefined) ? 'foreign' : 'none';
   } catch (error) {
     logger.debug('[proxy] VS Code Claude Code route not readable', ...sanitizeLogArgs({ insiders, error: String(error) }));
     return 'none';
@@ -370,13 +384,15 @@ export async function readVsCodeClaudeCodeRouteState(key: string, insiders = fal
  * `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt`
  * so the extension returns to its normal Claude.ai login.
  *
- * Only acts when `ANTHROPIC_BASE_URL` points at a loopback address — a base URL pointing
- * anywhere else was set by the user, not by `connect`, and is left untouched. Every other
+ * Only acts when `ANTHROPIC_BASE_URL` points at a loopback address and `ANTHROPIC_AUTH_TOKEN` is a key the daemon of
+ * gateway key `gatewayKey` accepts — any other route (a local gateway with another key included) was set by the
+ * user, not by `connect`, and is left untouched. Every other
  * `claudeCode.environmentVariables` entry is preserved. Edits are applied to the original text
  * so comments and formatting survive, and an unparseable file is left unchanged.
  */
 export async function removeVsCodeClaudeCodeConfigAtPath(
-  configPath: string
+  configPath: string,
+  gatewayKey: string
 ): Promise<RemoveVsCodeClaudeCodeConfigResult> {
   if (!existsSync(configPath)) {
     return { removed: false, path: configPath, reason: 'settings.json not found' };
@@ -393,6 +409,9 @@ export async function removeVsCodeClaudeCodeConfigAtPath(
   );
   if (!baseUrlEntry || !isLoopbackGatewayUrl(baseUrlEntry.value)) {
     return { removed: false, path: configPath, reason: 'no CodeMie entries found' };
+  }
+  if (!holdsGatewayKey(envVars, gatewayKey)) {
+    return { removed: false, path: configPath, reason: 'its local gateway is not CodeMie\'s' };
   }
 
   const remaining = envVars.filter(
@@ -432,11 +451,12 @@ export async function removeVsCodeClaudeCodeConfigAtPath(
 }
 
 /**
- * Remove CodeMie's managed `claudeCode.*` keys from the current user's VS Code (or VS Code
- * Insiders) `settings.json`.
+ * Remove CodeMie's managed `claudeCode.*` keys, written for the daemon of gateway key `gatewayKey`, from the current
+ * user's VS Code (or VS Code Insiders) `settings.json`.
  */
 export async function removeVsCodeClaudeCodeConfig(
+  gatewayKey: string,
   insiders = false
 ): Promise<RemoveVsCodeClaudeCodeConfigResult> {
-  return removeVsCodeClaudeCodeConfigAtPath(getVsCodeClaudeCodeSettingsPath(insiders));
+  return removeVsCodeClaudeCodeConfigAtPath(getVsCodeClaudeCodeSettingsPath(insiders), gatewayKey);
 }

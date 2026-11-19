@@ -339,9 +339,22 @@ describe('readVsCodeClaudeCodeGateway', () => {
 
     expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toEqual({ port: 52311, key: 'vscode-claude-code' });
 
-    await removeVsCodeClaudeCodeConfigAtPath(settingsPath());
+    await removeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'codemie-proxy');
     expect(await readVsCodeClaudeCodeGateway('codemie-proxy')).toBeNull();
     expect(await readFile(settingsPath(), 'utf-8')).not.toContain('codemie-proxy');
+  });
+
+  it('leaves a local gateway of another tool alone on disconnect', async () => {
+    const text = JSON.stringify({
+      'claudeCode.environmentVariables': [
+        { name: 'ANTHROPIC_BASE_URL', value: 'http://localhost:11434' },
+        { name: 'ANTHROPIC_AUTH_TOKEN', value: 'my-local-gateway-key' },
+      ],
+    }, null, 2);
+    await writeRaw(text);
+    const result = await removeVsCodeClaudeCodeConfigAtPath(settingsPath(), 'codemie-proxy');
+    expect(result.removed).toBe(false);
+    expect(await readFile(settingsPath(), 'utf-8')).toBe(text);
   });
 
   it('writes the custom key of a restarted daemon with the name appended, and one key on a second connect', async () => {
@@ -550,6 +563,19 @@ describe('readVsCodeClaudeCodeRouteState', () => {
       'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_BASE_URL', value: 'http://localhost:11434' }, ...token],
     });
     expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('foreign');
+  });
+
+  it.each(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'])(
+    'is foreign for a key or provider of the user\'s own, %s, with no base URL',
+    async (name) => {
+      await writeSettings({ 'claudeCode.environmentVariables': [{ name, value: '1' }] });
+      expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('foreign');
+    },
+  );
+
+  it('is none for extension variables that give no key or route', async () => {
+    await writeSettings({ 'claudeCode.environmentVariables': [{ name: 'ANTHROPIC_MODEL', value: 'claude-x' }] });
+    expect(await readVsCodeClaudeCodeRouteState(KEY, false)).toBe('none');
   });
 
   it('is foreign for another ANTHROPIC_BASE_URL or an ANTHROPIC_AUTH_TOKEN alone', async () => {

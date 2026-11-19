@@ -59,6 +59,26 @@ describe('claude-client-config-state', () => {
       expect(options.unsetEnv).toEqual(expect.arrayContaining(['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY']));
     });
 
+    it('without a claude binary, counts an ANTHROPIC_API_KEY of the user\'s own as configured', async () => {
+      vi.stubEnv('ANTHROPIC_BASE_URL', '');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-own');
+      const claudeJsonPath = join(scratch, 'absent.json');
+      expect(await detectClaudeLogin({ resolveClaudeBinary: async () => null, claudeJsonPath })).toBe('configured');
+      vi.stubEnv('ANTHROPIC_BASE_URL', 'https://gw.example.com');
+      expect(await detectClaudeLogin({ resolveClaudeBinary: async () => null, claudeJsonPath })).toBe('logged-out');
+    });
+
+    it('keeps an ANTHROPIC_API_KEY of the user\'s own (no ANTHROPIC_BASE_URL) for claude auth status', async () => {
+      vi.stubEnv('ANTHROPIC_BASE_URL', '');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-own');
+      vi.stubEnv('ANTHROPIC_MODEL', 'claude-x');
+      const exec = execReturning(JSON.stringify({ authMethod: 'api_key' }));
+      expect(await detectClaudeLogin({ exec: exec as unknown as ExecFn, resolveClaudeBinary: binary })).toBe('configured');
+      const options = exec.mock.calls[0][2] as { unsetEnv?: string[] };
+      expect(options.unsetEnv).not.toContain('ANTHROPIC_API_KEY');
+      expect(options.unsetEnv).toContain('ANTHROPIC_MODEL');
+    });
+
     it('counts as configured when exec rejects, times out, prints nothing or prints junk', async () => {
       const rejecting = vi.fn(async () => { throw new Error('Command timed out after 5000ms'); });
       expect(await detectClaudeLogin({ exec: rejecting as unknown as ExecFn, resolveClaudeBinary: binary })).toBe('configured');
@@ -87,8 +107,8 @@ describe('claude-client-config-state', () => {
       ['none', 'configured', 'skip'],
       ['ours', 'logged-out', 'refresh'],
       ['ours', 'configured', 'refresh'],
-      ['foreign', 'logged-out', 'skip'],
-      ['foreign', 'configured', 'skip'],
+      ['foreign', 'logged-out', 'skip-other-gateway'],
+      ['foreign', 'configured', 'skip-other-gateway'],
     ] as const)('route state %s with login %s gives %s', async (state, login, expected) => {
       vi.mocked(readVsCodeClaudeCodeRouteState).mockResolvedValue(state);
       const exec = login === 'logged-out' ? loggedOut : loggedIn;
@@ -129,10 +149,21 @@ describe('claude-client-config-state', () => {
       expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('route');
     });
 
-    it('refreshes a config that already points at the local proxy', async () => {
-      await applyConfig({ inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'http://127.0.0.1:4001' });
-      expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('refresh');
-    });
+    it.each(['codemie-proxy', 'codemie-proxy.claude-desktop', '__sealed__:abc'])(
+      'refreshes a config that already points at the local proxy with key %s',
+      async (apiKey) => {
+        await applyConfig({ inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'http://127.0.0.1:4001', inferenceGatewayApiKey: apiKey });
+        expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir, gatewayKey: 'codemie-proxy' })).toBe('refresh');
+      },
+    );
+
+    it.each([['another key', 'ollama'], ['no key', undefined]])(
+      'skips a local gateway that is not CodeMie\'s (%s)',
+      async (_label, apiKey) => {
+        await applyConfig({ inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'http://localhost:11434', inferenceGatewayApiKey: apiKey });
+        expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir, gatewayKey: 'codemie-proxy' })).toBe('skip-other-gateway');
+      },
+    );
 
     it('skips a foreign gateway', async () => {
       await applyConfig({ inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'https://gw.example.com' });
@@ -151,11 +182,12 @@ describe('claude-client-config-state', () => {
       expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('skip-1p');
     });
 
-    it('routes when the 1p directory exists but the 3p deployment mode is set', async () => {
+    it('skips a Desktop back on its own account after gateway use (a stale 3p deployment mode, no applied config)', async () => {
       await mkdir(desktop1pDir, { recursive: true });
-      await mkdir(desktop3pDir, { recursive: true });
+      await mkdir(join(desktop3pDir, 'configLibrary'), { recursive: true });
       await writeFile(join(desktop3pDir, 'claude_desktop_config.json'), JSON.stringify({ deploymentMode: '3p' }));
-      expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('route');
+      await writeFile(join(desktop3pDir, 'configLibrary', '_meta.json'), JSON.stringify({ entries: [] }));
+      expect(await decideDesktopRoute({ desktop3pDir, desktop1pDir })).toBe('skip-1p');
     });
   });
 });
