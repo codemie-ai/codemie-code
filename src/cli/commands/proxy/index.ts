@@ -332,9 +332,9 @@ export function createProxyCommand(): Command {
   connect.description('Configure clients to use the local CodeMie proxy');
 
   addAggregateOptions(connect, 'connectDescription')
-    .option('--claude-desktop', 'Route Claude Desktop\'s model requests through the proxy, so they use your CodeMie budget, not your Claude login (also writes its MCP servers config)')
+    .option('--claude-desktop', 'Route Claude Desktop\'s model requests through the proxy and write its MCP servers config')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
-    .option('--vscode-claude-code', 'Route the VS Code Claude Code extension through the proxy, so its requests use your CodeMie budget, not your Claude login (writes settings.json: ANTHROPIC_BASE_URL/token)')
+    .option('--vscode-claude-code', 'Route the VS Code Claude Code extension through the proxy (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')

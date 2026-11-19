@@ -1657,9 +1657,9 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     describe('the route decision of --claude-otlp', () => {
       const EXTENSION_SKIP =
         '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
-      const BILLING = '  Its model requests now use your CodeMie budget (profile p), not your Claude login.';
+      const BILLING = '  Its model requests now go through the gateway, not your Claude login.';
       const DESKTOP_SWITCH =
-        'Desktop analytics needs the gateway; to switch it (its requests then use your CodeMie budget): ' +
+        'Desktop analytics needs the gateway; to switch it: ' +
         'codemie proxy connect --claude-desktop';
 
       async function decisions(vscode: 'route' | 'refresh' | 'skip', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {

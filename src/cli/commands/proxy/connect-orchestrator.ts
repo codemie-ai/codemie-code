@@ -165,15 +165,15 @@ interface ClaudeRoutePlan {
   refreshHints: string[];
 }
 
-/** The line printed under a client's `configured` line once its model requests go through the proxy: who pays now. */
-export function routeBillingLine(profile: string): string {
-  return `  Its model requests now use your CodeMie budget (profile ${profile}), not your Claude login.`;
+/** The line printed under a client's `configured` line once its model requests go through the proxy. */
+export function routeBillingLine(): string {
+  return `  Its model requests now go through the gateway, not your Claude login.`;
 }
 
 const EXTENSION_SKIP_LINE =
   '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
 const DESKTOP_SWITCH_HINT =
-  'Desktop analytics needs the gateway; to switch it (its requests then use your CodeMie budget): codemie proxy connect --claude-desktop';
+  'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
 
 function disconnectToLoginHint(flag: string): string {
   return `To use your Claude login instead: codemie proxy disconnect ${flag}`;
@@ -729,7 +729,7 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       })
     );
     console.log(chalk.green('✓ Claude Desktop configured'));
-    console.log(chalk.yellow(routeBillingLine(state.profile)));
+    console.log(chalk.yellow(routeBillingLine()));
     const managedSettingsWarning = describeManagedSettingsOverride();
     if (managedSettingsWarning) {
       console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
@@ -825,7 +825,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRe
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
-    console.log(chalk.yellow(routeBillingLine(state.profile)));
+    console.log(chalk.yellow(routeBillingLine()));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {

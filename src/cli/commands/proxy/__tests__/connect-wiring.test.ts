@@ -816,7 +816,7 @@ describe('proxy connect / disconnect --claude-otlp and --copilot-otlp', () => {
       expect(option(command, '--copilot-otlp')).toBeDefined();
     }
     expect(option('connect', '--claude-otlp')?.description).toContain('through the proxy');
-    expect(option('connect', '--claude-otlp')?.description).toContain('their requests use your CodeMie budget');
+    expect(option('connect', '--claude-otlp')?.description).toContain('routed through the proxy only when they are not configured yet');
     expect(option('connect', '--claude-otlp')?.description).toContain('codemie proxy disconnect --claude-otlp gives them back their Claude login');
     expect(option('disconnect', '--claude-otlp')?.description).toContain('remove the CodeMie proxy route');
     expect(option('connect', '--scope')?.description).toContain('an existing project list is kept');
