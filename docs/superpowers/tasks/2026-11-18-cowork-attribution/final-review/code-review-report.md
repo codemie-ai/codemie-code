@@ -58,3 +58,14 @@ Result outside the restricted sandbox: exit 0, 4 files passed, 195 passed / 7 sk
 The initial sandbox run exited 1 with Node child-process `read ENOTCONN`; only the successful rerun is counted.
 `git diff --check` passed. Subsequent artifact cleanup changes documentation only and preserves the machine verdict and
 actual complexity unchanged. Intermediate review inputs and superseded reports are retained locally outside the repository.
+
+### Rebase onto main `709f0e6d` (2026-11-19)
+
+Rebased delivery `54f5304a` from `37a2fe47` onto main `709f0e6d` without conflicts; equivalent task HEAD `2c8b0f2d`.
+`git range-diff 37a2fe47..54f5304a 709f0e6d..2c8b0f2d` marks all 17 task commits identical (`=`).
+Original reviewed implementation `eee936ee` maps to `9945aaf0`, and review range end `ad955b7e` maps to `017b613a`.
+Reviewed overlap: main's disconnected-Desktop finalization (#840) still uses the pinned project through the common
+processing/end paths; conflict-discard reporting (#839) changes loss recording, not project binding or funding.
+Focused command: `node node_modules/vitest/vitest.mjs run src/telemetry/runtime/cowork src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/spool-io.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/session-project.test.ts`.
+Result: exit 0, 7 files passed, 311 tests passed / 2 skipped. `tsc --noEmit` and `git diff --check` passed.
+No task source edits or conflict resolutions were needed; the existing source review and actual complexity remain applicable.
