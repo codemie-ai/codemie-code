@@ -135,7 +135,7 @@ export function createInstallCommand(): Command {
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
-                  await agent.additionalInstallation(options);
+                  await agent.additionalInstallation({ ...options, alreadyInstalled: true });
                 }
 
                 return;
@@ -164,7 +164,7 @@ export function createInstallCommand(): Command {
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
-                await agent.additionalInstallation(options);
+                await agent.additionalInstallation({ ...options, alreadyInstalled: true });
               }
 
               return;
