@@ -241,6 +241,42 @@ describe('composeProxyDoctor', () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
+  describe('the Desktop section', () => {
+    it('is ok while collecting', async () => {
+      collectDesktopCollection.mockResolvedValue({ connected: true, collecting: true });
+
+      const desktop = (await compose()).sections.find((s) => s.id === 'desktop');
+
+      expect(desktop).toMatchObject({ status: 'ok', message: 'Claude Desktop: collecting' });
+    });
+
+    it('is info, with the enable command, while analytics are disabled: a choice, not a fault', async () => {
+      collectDesktopCollection.mockResolvedValue({
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: 'run: codemie proxy analytics enable --claude-otlp',
+      });
+
+      const desktop = (await compose()).sections.find((s) => s.id === 'desktop');
+
+      expect(desktop?.status).toBe('info');
+      expect(desktop?.message).toBe('Claude Desktop: not collecting — analytics are disabled');
+      expect(desktop?.hint).toContain('codemie proxy analytics enable --claude-otlp');
+    });
+
+    it('stays a warning when Desktop is not collecting for another reason', async () => {
+      collectDesktopCollection.mockResolvedValue({
+        connected: true,
+        collecting: false,
+        reason: 'the analytics preferences file is unreadable (fix or delete /p)',
+      });
+
+      expect((await compose()).sections.find((s) => s.id === 'desktop')?.status).toBe('warn');
+    });
+  });
+
   describe('every section always renders', () => {
     /** Section ids by display group: daemon, sign-in and upstream, clients, connectors, delivery, Desktop, environment. */
     const GROUPS: string[][] = [['daemon'], ['auth', 'upstream'], ['clients'], ['connectors', 'claude-code-otlp'], ['delivery'], ['desktop'], ['cli-path']];
