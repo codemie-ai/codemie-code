@@ -105,9 +105,15 @@ codemie proxy connect --claude-otlp      # Analytics for every Claude client, in
 codemie proxy connect --copilot-otlp     # Analytics for every Copilot client, installed or not (Copilot Chat, Copilot CLI)
 codemie proxy disconnect --claude-otlp   # Turn analytics off for every Claude client and remove that route
 codemie proxy disconnect --copilot-otlp  # Turn analytics off for Copilot Chat and Copilot CLI
+codemie proxy reset-mcp-auth --claude-desktop   # Clear Claude Desktop's saved MCP sign-ins so they can be redone
 ```
 
 `codemie proxy connect --claude-desktop` does more than write the gateway config. While Claude Desktop's applied config points at the running daemon — whichever command started it — the daemon discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie under the client label `claude-desktop`.
+
+`codemie proxy reset-mcp-auth --claude-desktop` removes the `custom3pMcpOAuth` entry, the saved MCP sign-ins of every server, from `config.json` in Claude Desktop's `Claude-3p` directory (`~/.config/Claude-3p/` on Linux, honouring `XDG_CONFIG_HOME`; `~/Library/Application Support/Claude-3p/` on macOS; `%LOCALAPPDATA%\Claude-3p\` on Windows) and leaves every other setting as it was. It prints the names of the servers it cleared, does not stop the proxy daemon or touch the gateway config, and is not part of `disconnect`. Without a client flag it lists the clients it can reset. A missing, unreadable or invalid `config.json` is reported with its path and left unchanged, and the command exits non-zero. After it runs:
+
+> Fully quit Claude Desktop, start it again, then press Reconnect on each MCP server under Customize → Connectors.
+> If the sign-ins come back, quit Claude Desktop, run this command again, then start Claude Desktop.
 
 **One daemon for every client.** The daemon has no client identity of its own. `proxy connect` writes each client a key of its own — the gateway key with the client's name appended: `codemie-proxy.claude-desktop`, `codemie-proxy.vscode-claude-code`, `codemie-proxy.codex-desktop`, `codemie-proxy.vscode-byok`, and `codemie-proxy.codemie-daemon` for oh-my-pi — and a request is labelled and handled as the client its key names. A key that names no known client is refused like a wrong key. A request with the bare gateway key is served as the client an older CLI recorded for the daemon, else as `codemie-daemon`, so a client set up by an older CLI keeps working.
 
