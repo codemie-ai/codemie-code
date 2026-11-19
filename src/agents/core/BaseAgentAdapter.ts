@@ -1,5 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
+// Tests mock processes.js only, so VERSION_PROBE_OPTIONS stays real by living in exec.js.
+import { VERSION_PROBE_OPTIONS } from '@/utils/exec.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import {
   exec,
@@ -294,9 +296,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], VERSION_PROBE_OPTIONS);
       return result.stdout.trim();
-    } catch {
+    } catch (error) {
+      logger.debug(`Version probe failed for ${this.metadata.cliCommand}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

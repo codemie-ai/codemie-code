@@ -5,7 +5,7 @@
  * Separated from higher-level utilities to enable proper testing and mocking.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import os from 'os';
 
 export interface ExecOptions {
@@ -14,6 +14,40 @@ export interface ExecOptions {
   timeout?: number;
   shell?: boolean; // Allow override for specific cases
   interactive?: boolean; // Allow interactive mode (stdio: 'inherit')
+  /**
+   * Give the child an immediately-closed stdin (EOF) instead of an open pipe.
+   * Ignored when `interactive` is set.
+   */
+  closeStdin?: boolean;
+  /**
+   * After SIGTERM on timeout, wait this long and then SIGKILL the child.
+   * Only applies together with `timeout`; a no-op without it.
+   */
+  killGraceMs?: number;
+}
+
+/**
+ * Options for agent `--version` probes: bounded, EOF on stdin, escalating kill.
+ * New agent version probes should use this.
+ */
+export const VERSION_PROBE_OPTIONS: ExecOptions = { timeout: 5000, closeStdin: true, killGraceMs: 500 };
+
+/** Stop a timed-out child and release its pipes so it cannot keep the process alive. */
+function terminate(child: ChildProcess, killGraceMs: number | undefined, onGraceTimer: (t: NodeJS.Timeout) => void, isClosed: () => boolean): void {
+  const release = (): void => {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+  };
+  child.kill('SIGTERM');
+  release();
+  if (killGraceMs) {
+    onGraceTimer(setTimeout(() => {
+      if (isClosed()) return;
+      child.kill('SIGKILL');
+      release();
+    }, killGraceMs));
+  }
 }
 
 export interface ExecResult {
@@ -50,7 +84,9 @@ export async function exec(
     }
 
     // Interactive mode: inherit stdio for user prompts
-    const stdio = options.interactive ? 'inherit' : 'pipe';
+    const stdio: 'inherit' | 'pipe' | ['ignore', 'pipe', 'pipe'] = options.interactive
+      ? 'inherit'
+      : options.closeStdin ? ['ignore', 'pipe', 'pipe'] : 'pipe';
 
     // When using shell: true, merge args into command string to avoid DEP0190
     // Node.js deprecation warning: shell mode doesn't escape array arguments, only concatenates them
@@ -81,12 +117,19 @@ export async function exec(
     let stdout = '';
     let stderr = '';
     let timeoutId: NodeJS.Timeout | null = null;
+    let graceId: NodeJS.Timeout | null = null;
+    let settled = false;
+    let closed = false;
 
-    // Cleanup function to clear timeout and prevent memory leaks
+    // Cleanup function to clear timers and prevent memory leaks
     const cleanup = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
+      }
+      if (graceId) {
+        clearTimeout(graceId);
+        graceId = null;
       }
     };
 
@@ -103,11 +146,16 @@ export async function exec(
 
     child.on('error', (error) => {
       cleanup();
+      if (settled) return;
+      settled = true;
       reject(new Error(`Failed to execute ${command}: ${error.message}`));
     });
 
     child.on('close', (code, signal) => {
+      closed = true;
       cleanup();
+      if (settled) return;
+      settled = true;
 
       if (code === null) {
         reject(new Error(`Command terminated by signal ${signal ?? 'unknown'}`));
@@ -133,7 +181,14 @@ export async function exec(
     // Handle timeout
     if (options.timeout) {
       timeoutId = setTimeout(() => {
-        child.kill();
+        timeoutId = null;
+        if (settled) return;
+        settled = true;
+        if (options.killGraceMs) {
+          terminate(child, options.killGraceMs, (t) => { graceId = t; }, () => closed);
+        } else {
+          child.kill();
+        }
         reject(new Error(`Command timed out after ${options.timeout}ms`));
       }, options.timeout);
     }
