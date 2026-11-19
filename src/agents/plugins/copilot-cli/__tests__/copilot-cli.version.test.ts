@@ -31,9 +31,14 @@ describe('CopilotCliPlugin.getVersion', () => {
     expect(await (await plugin()).getVersion()).toBe('1.2.3');
   });
 
-  it('falls back to trimmed stdout for non-version output', async () => {
-    mockExec.mockResolvedValue({ code: 0, stdout: '  nightly  ', stderr: '' });
-    expect(await (await plugin()).getVersion()).toBe('nightly');
+  it('returns null for prompt text without an x.y.z version', async () => {
+    mockExec.mockResolvedValue({ code: 1, stdout: 'Install GitHub Copilot CLI? [y/N]', stderr: '' });
+    expect(await (await plugin()).getVersion()).toBeNull();
+  });
+
+  it('extracts the version from "GitHub Copilot CLI 1.2.3"', async () => {
+    mockExec.mockResolvedValue({ code: 0, stdout: 'GitHub Copilot CLI 1.2.3', stderr: '' });
+    expect(await (await plugin()).getVersion()).toBe('1.2.3');
   });
 
   it('returns null when the probe times out', async () => {
