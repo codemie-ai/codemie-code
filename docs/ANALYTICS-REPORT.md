@@ -420,7 +420,7 @@ codemie analytics view --input <file> [options]
   --redact                  As `codemie analytics --redact`: no titles, project folder names only
 ```
 
-`view` computes from an existing export and never opens an agent log, so it answers at once for any range the file covers. `--open`, `--verbose` and `--include-external` mean nothing for an export file and are rejected, as are the removed `--report*` flags.
+`view` computes from an existing export and never opens an agent log, so it answers at once for any range the file covers. `--open`, `--verbose` and `--include-external` mean nothing for an export file and are rejected.
 
 **Output contract.** stdout carries only JSON, or nothing when `-o` is given (an HTML report is always written to the `-o` file). No prompts, no colours, no start-up notices. A problem (unreadable or non-export file, bad date or duration, reversed range, unknown session id, `-o` that is a directory, `--export html` without `-o`, an unsupported flag) is one `✗ ...` line on stderr, exit code 1 and nothing on stdout.
 
