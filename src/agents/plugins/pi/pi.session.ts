@@ -4,7 +4,7 @@
  * Discovers and parses Pi JSONL session files, then runs the metrics processor.
  */
 
-import { open, readFile, readdir, stat, type FileHandle } from 'fs/promises';
+import { open, readdir, stat, type FileHandle } from 'fs/promises';
 import { homedir } from 'os';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { existsSync } from 'fs';
@@ -12,6 +12,7 @@ import { latestRecordTime, type SessionAdapter, type ParsedSession, type Aggrega
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
+import { readTranscriptText } from '../../core/session/utils/jsonl-reader.js';
 import { getUserPiAgentDir, resolvePiSessionDir, type PiSessionDirResolution } from './pi.paths.js';
 import { readPiRunLedger } from './pi.extension.js';
 import type { Session } from '../../core/session/types.js';
@@ -306,7 +307,7 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   private async readJsonlFile(filePath: string): Promise<PiEntry[]> {
-    const content = await readFile(filePath, 'utf-8');
+    const content = await readTranscriptText(filePath);
     const entries: PiEntry[] = [];
     for (const line of content.split('\n')) {
       const trimmed = line.trim();

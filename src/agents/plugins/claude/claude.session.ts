@@ -8,13 +8,13 @@
 import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
-import { readdir, readFile, stat } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
 import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
 import type { AgentMetadata } from '../../core/types.js';
-import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
+import { isOutsideJSONLSnapshot, readJSONLTolerant, readSnapshotFile } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
@@ -266,6 +266,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       let subagentsIncomplete = subagentFiles === null;
 
       for (const subagentFile of subagentFiles ?? []) {
+        // Replaying an analytics snapshot: a sub-agent started after it was taken is not part of it.
+        if (isOutsideJSONLSnapshot(subagentFile.filePath)) continue;
         try {
           const subagentMessages = this.dedupeByUuid(
             (await readJSONLTolerant<ClaudeMessage>(subagentFile.filePath, '[Claude]')).filter(isCountedTranscriptLine)
@@ -461,9 +463,9 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     let requestShape: string | undefined;
     let requestNonInteractive: boolean | undefined;
     try {
-      const metaRaw = JSON.parse(
-        await readFile(join(subagentsDir, f.replace('.jsonl', '.meta.json')), 'utf-8')
-      );
+      // Read through the snapshot reader so a report replays the sidecar it discovered: one absent
+      // at discovery stays absent, one present gives the same text even if rewritten since.
+      const metaRaw = JSON.parse(await readSnapshotFile(join(subagentsDir, f.replace('.jsonl', '.meta.json'))));
       if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
       if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
       if (typeof metaRaw.parentAgentId === 'string') parentAgentId = metaRaw.parentAgentId;

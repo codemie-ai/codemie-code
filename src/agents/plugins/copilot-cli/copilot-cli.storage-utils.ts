@@ -6,10 +6,10 @@
  * session anyway, but degrading here keeps one bad line from discarding a whole session.
  */
 
-import { readFileSync } from 'fs';
 import type { CopilotEvent } from './copilot-cli-event-types.js';
 import { unlessAbsent } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
+import { readTranscriptTextSync } from '../../core/session/utils/jsonl-reader.js';
 
 export function readCopilotEventsTolerant(filePath: string): CopilotEvent[] {
   try {
@@ -22,7 +22,7 @@ export function readCopilotEventsTolerant(filePath: string): CopilotEvent[] {
 
 /** The transcript's events: an absent file has none, any other read failure throws, a torn line is dropped. */
 export function readCopilotEvents(filePath: string): CopilotEvent[] {
-  const text = unlessAbsent(() => readFileSync(filePath, 'utf-8'));
+  const text = unlessAbsent(() => readTranscriptTextSync(filePath));
   return text === undefined ? [] : parseCopilotEvents(text, filePath);
 }
 

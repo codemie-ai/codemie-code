@@ -19,6 +19,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { AgentMetadata } from '../../core/types.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import { logger } from '../../../utils/logger.js';
+import { readTranscriptText } from '../../core/session/utils/jsonl-reader.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from './session/processors/gemini.conversations-processor.js';
@@ -254,7 +255,8 @@ export class GeminiSessionAdapter implements SessionAdapter {
       let sessionData: GeminiSessionFile;
 
       if (filePath.endsWith('.jsonl')) {
-        const content = await readFile(filePath, 'utf-8');
+        // Append-only: read through the snapshot reader so analytics can replay this parse.
+        const content = await readTranscriptText(filePath);
         const lines = content.trim().split('\n');
 
         let sessionIdFromData = sessionId;

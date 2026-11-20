@@ -40,6 +40,7 @@ import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isClaudeFamilyAgent } from './claude-agent.js';
 import { isPiFamilyAgent, sessionAdapterKey } from './pi-agent.js';
 import { allocatePiUsage, isPiLayoutRunId } from './pi-dispatch-allocation.js';
 import { PI_SUBAGENT_RUN } from '@/agents/plugins/pi/pi.session.js';
@@ -47,6 +48,7 @@ import { extractPiToolCalls, isPiAssistantMessage, isPiMessageEntry, type PiEntr
 import { isLocalModel } from './local-models.js';
 import { copilotRunWindows, isCopilotRun, parseCopilotRun } from './copilot-runs.js';
 import { logger } from '@/utils/logger.js';
+import { replayFamily, type FamilyRecipe } from '../parsed-family.js';
 
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
@@ -127,7 +129,10 @@ export interface ParsedEntry {
   hadLog: boolean;
   /** The resolved log path itself (raw.agentSessionFile or the correlation-file fallback); null when hadLog is false. */
   filePath: string | null;
+  /** Set only while phase 2 prices this session (or when a family was captured whole); see {@link loadParsed}. */
   parsed: ParsedSession | null;
+  /** How native discovery parsed this log; replayed to reproduce exactly that input. */
+  recipe?: FamilyRecipe;
   startTime: number;
   /** Why the session's log was not parsed, when that is known. */
   unavailableReason?: string;
@@ -221,7 +226,7 @@ function computeDedupWindowEnd(groups: Map<string, ParsedEntry[]>): Map<string, 
 function maxOwnRecordTs(agentName: string, parsed: ParsedSession, upperBoundExclusive?: number): number | undefined {
   const a = agentName.toLowerCase();
   let records: UsageRecord[];
-  if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
+  if (isClaudeFamilyAgent(a)) {
     records = extractClaudeUsageRecords(parsed);
   } else if (isCodexFamilyAgent(a)) {
     records = extractCodexUsageRecords(parsed);
@@ -274,16 +279,19 @@ function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefin
   return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
 }
 
-/** Phase 1: resolve + parse a session's native log (a copilot run's waits for its window). Safe to run in parallel. */
-async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
+/**
+ * Phase 1: resolve a session's native log and the facts that order it, without parsing it — the
+ * log is parsed in phase 2, only while this session is priced. Safe to run in parallel.
+ */
+async function describeOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
   const capture = raw[INTERNAL_PARSED_FAMILY];
-  const parsed = capture?.parsed
-    ?? (filePath && !isCopilotRun(agentName) ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
-    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed: capture?.parsed ?? null,
+    ...(capture?.recipe && { recipe: capture.recipe }),
+    startTime: raw.startEvent?.data?.startTime ?? 0,
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
@@ -489,6 +497,32 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
 }
 
 /**
+ * How many sessions after the one being priced are parsed ahead of it. Bounds memory to a few
+ * transcripts — Claude ones reach hundreds of MB with their sub-agents — while keeping reads busy.
+ */
+const PARSE_LOOKAHEAD = 4;
+
+/** The reason a session whose transcript was removed or truncated mid-report stays unpriced, not a $0 session. */
+const TRANSCRIPT_CHANGED_REASON = 'The transcript was removed or truncated while the report ran — rerun the report to price it';
+
+/**
+ * A session's parsed native log for phase 2: the family captured whole, the one native discovery
+ * parsed (replayed from its recipe, so a growing live log gives every reader the same input), or
+ * a fresh parse. A copilot run was already parsed over its own window in phase 1b; a native Copilot
+ * session discovery captured replays its recipe like any other.
+ */
+async function loadParsed(entry: ParsedEntry, deps: EnricherDeps): Promise<ParsedSession | null> {
+  if (entry.parsed) return entry.parsed;
+  if (entry.recipe) {
+    const parsed = await replayFamily((agentName, filePath, sessionId) => deps.parseNative(agentName, filePath, sessionId), entry.recipe);
+    if (!parsed) entry.unavailableReason = TRANSCRIPT_CHANGED_REASON;
+    return parsed;
+  }
+  if (isCopilotRun(entry.agentName)) return null;
+  return entry.filePath ? deps.parseNative(entry.agentName, entry.filePath, entry.sessionId) : null;
+}
+
+/**
  * Second-pass enrichment: for each agent dispatch that has a matching subagent entry
  * (linked by toolUseId from the .meta.json), extract usage from the subagent's messages,
  * price it, and attach costUSD + tokens + tools to the dispatch event in place.
@@ -602,8 +636,8 @@ export async function enrichCosts(
   sessions: RawSessionData[],
   deps: EnricherDeps = realDeps
 ): Promise<{ index: SessionCostIndex; summary: CostSummary }> {
-  // Phase 1: parse every native log concurrently.
-  const parsedEntries = await mapWithConcurrency(sessions, 16, (raw) => parseOne(raw, deps));
+  // Phase 1: resolve every native log concurrently; nothing is parsed yet.
+  const parsedEntries = await mapWithConcurrency(sessions, 16, (raw) => describeOne(raw, deps));
 
   // Phase 2+3: gather usage in startTime order so the EARLIEST session owns a shared API
   // response, deduping by (message.id, requestId) across sessions — Claude replays prior
@@ -631,7 +665,16 @@ export async function enrichCosts(
   let totalCostUSD = 0;
   let pricedSessions = 0;
 
-  for (const entry of ordered) {
+  // Parse each session only while it is priced, PARSE_LOOKAHEAD ahead, and release it after:
+  // keeping every parsed log at once ran multi-GB histories out of memory.
+  const pending = new Map<number, Promise<ParsedSession | null>>();
+  for (let i = 0; i < ordered.length; i++) {
+    for (let ahead = i; ahead <= Math.min(i + PARSE_LOOKAHEAD, ordered.length - 1); ahead++) {
+      if (!pending.has(ahead)) pending.set(ahead, loadParsed(ordered[ahead], deps));
+    }
+    const entry = ordered[i];
+    entry.parsed = (await pending.get(i)) ?? null;
+    pending.delete(i);
     let usageByModel: Map<string, TokenUsage>;
     let series: CostSeriesPoint[] = [];
     let records: UsageRecord[] = [];
@@ -737,7 +780,7 @@ export async function enrichCosts(
 
       try {
         const { events: dispatches, complete } = extractDispatchResult(entry.parsed, entry.agentName);
-        if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
+        if (isClaudeFamilyAgent(entry.agentName)) {
           enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
           cost.dispatchesComplete = complete;
         } else {
@@ -755,6 +798,7 @@ export async function enrichCosts(
       cost.usageUnavailableReason = entry.unavailableReason;
     }
     index.set(cost.sessionId, cost);
+    entry.parsed = null; // priced: release the transcript before the next one is read
     u.forEach((m) => unpriced.add(m));
     est.forEach((m) => estimated.add(m));
     loc.forEach((m) => local.add(m));
