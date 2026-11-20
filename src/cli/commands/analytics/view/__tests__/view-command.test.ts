@@ -216,6 +216,21 @@ describe('codemie analytics view', () => {
     });
   });
 
+  it.each([
+    [['--report']],
+    [['--report-format', 'json']],
+    [['--report-output', 'out.html']],
+  ])('fails with one stderr line and no stdout for the removed flag %j after view', async (args) => {
+    const { createProgram } = await import('../../../../program.js');
+
+    const { stdout, stderr, exitCode } = await run(['analytics', 'view', '--input', input, ...args], createProgram);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toMatch(/^[^\n]+\n$/);
+    expect(stderr).toContain('Removed');
+  });
+
   it('never reads agent logs', async () => {
     await run(['--input', input]);
     await run(['--input', input, '--session', 'claude-1']);

@@ -63,6 +63,9 @@ export function createViewCommand(): Command {
 }
 
 function runView(options: ViewOptions): void {
+  // A removed `analytics` flag (--report …) given after `view` already wrote its one stderr line
+  // and set the exit code while commander parsed it: fail without printing a summary.
+  if (process.exitCode) return;
   const now = Date.now();
   try {
     for (const [key, flag] of UNSUPPORTED) {
