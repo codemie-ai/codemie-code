@@ -12,6 +12,29 @@ describe('isMachineOutputInvocation', () => {
   });
 
   it.each([
+    [['analytics', 'view', '--input', 'sessions.json']],
+    [['analytics', 'view', '--input', 'sessions.json', '--session', 'abc', '-o', 'out.json']],
+    [['analytics', 'view']],
+    [['analytics', '--last', '7d', 'view', '--input', 'f']],
+    [['analytics', '--redact', 'view', '--input', 'f']],
+  ])('is true for `analytics view`, whose stdout is always JSON: %j', (argv) => {
+    expect(isMachineOutputInvocation(argv)).toBe(true);
+  });
+
+  it.each([
+    [['analytics']],
+    [['analytics', '--last', '7d']],
+    [['analytics', '--export', 'json']],
+    [['analytics', 'otel', '--file', 'events.jsonl']],
+    [['analytics', 'sync', 'status']],
+    [['view']],
+    [['run', 'claude', '--', 'analytics', 'view']],
+    [['analytics', '--', 'view']],
+  ])('stays false for other analytics invocations: %j', (argv) => {
+    expect(isMachineOutputInvocation(argv)).toBe(false);
+  });
+
+  it.each([
     [[]],
     [['version']],
     [['--version']],
