@@ -13,11 +13,16 @@ class RewriteHookCommandPathsMigration implements Migration {
   id = '006-resolve-hook-command-paths';
   description = 'Rewrite installed Claude/Gemini hook commands to the absolute codemie path';
 
-  private hookFiles(): Array<{ file: string; claude: boolean }> {
+  protected hookFiles(): Array<{ file: string; claude: boolean }> {
     return [
       { file: getCodemiePath('claude-plugin', 'hooks', 'hooks.json'), claude: true },
       { file: path.join(homedir(), '.gemini', 'extensions', 'codemie', 'hooks', 'hooks.json'), claude: false },
     ];
+  }
+
+  // Overridable so a subclass can write atomically.
+  protected async writeHooks(file: string, content: string): Promise<void> {
+    await fs.writeFile(file, content, 'utf-8');
   }
 
   async up(): Promise<MigrationResult> {
@@ -43,7 +48,7 @@ class RewriteHookCommandPathsMigration implements Migration {
       const powershell = claude && process.platform === 'win32';
       if (rewriteHooksCommandTree(parsed.hooks, binary, powershell)) {
         try {
-          await fs.writeFile(file, JSON.stringify(parsed, null, 2), 'utf-8');
+          await this.writeHooks(file, JSON.stringify(parsed, null, 2));
           logger.info(`[${this.id}] Rewrote ${file}`);
           migrated = true;
         } catch (error) {
