@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Add windowsHide: true to the sh spawn and sibling execSync in shell-hooks-source.ts to stop Windows console-window flash.",
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 7,
+  "size": "XS",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two spawn sites (execCommandAsync spawn and execCommand execSync) in one file, no layer boundary crossed." },
+    { "dimension": "technical_risk", "reason": "Exact pattern exists (src/utils/exec.ts, processes.ts); option is a no-op off Windows; no security surface touched." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
