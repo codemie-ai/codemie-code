@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "task": "Extend the Windows PowerShell hook pin (currently Claude-only) to the Gemini install and its repair migrations in codemie-code so Gemini hooks stop flashing an empty cmd.exe window (EPMCDME-16975).",
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 24,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Scored XL (base L, bumped): touches the shared installer core BaseExtensionInstaller.ts (hookHost gate at line 532) and the shared utility src/utils/hook-command.ts (rewriteHooksCommandTree, resolveHookCommand), which is also imported by migrations 006/008 and codemie-code.plugin.ts. Four components across the installer, utility, migration and agent-asset layers. The OTLP connector (claude-code-otlp.ts:341) is out of scope per NG4." },
+    { "dimension": "requirements_clarity", "reason": "Scored L: ACs AC1-AC6 are concrete and D1/D2 are decided, but two open questions change the shared contract. Scope risk Q1: widening the shared pin rule to plain-path Claude installs would change AC6 and the shared rule. Scope risk Q2: repairing users who never relaunch codemie-gemini needs a new migration id, which adds a migration file. The Gemini hook shell behaviour is also unverified and is settled only by the manual AC1 check." },
+    { "dimension": "technical_risk", "reason": "Scored XXL: no exact precedent for the Gemini path (the pin exists only for Claude, CHANGELOG 0.16.3). The fix depends on Gemini CLI honouring a per-hook shell field, which is unverified and lives outside this repo (external dependency of unknown reliability). Base L, then bumped to XL for the data-migration red flag (migrations 006 and 008 rewrite installed hook files on upgrade), then to XXL for enumerated edge cases (AC4 non-Windows, AC5 unresolvable binary path) with no win32 hook test template (BaseExtensionInstaller-windows.test.ts has no hook or shell assertions). The pin also only fires for a quoted binary (hook-command.ts:115, :155). Calibration: the L example epmcdme-10401 scored a config migration for existing users at L; this assessment is higher because of the unverified external executor and the edge-case bump. The total band is unaffected." },
+    { "dimension": "file_change_estimate", "reason": "Scored L (bumped from M): requires data migration. Modified files are about 5-7 across agents/core/extension, agents/plugins/gemini, migrations and utils (BaseExtensionInstaller.ts, gemini.extension-installer.ts, 006 migration, hook-command.ts possibly, migrations/index.ts registration). New files are about 2-3: a win32 Gemini installer test, a 008 test (none exists), and a new migration file if Q2 is taken." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared utilities (BaseExtensionInstaller.ts gate, hook-command.ts rewriteHooksCommandTree)",
+    "Technical Risk bumped from L to XL: requires data migration (migrations 006 and 008 rewrite installed hook files on upgrade)",
+    "File Change Estimate bumped from M to L: requires data migration",
+    "Technical Risk bumped from XL to XXL: enumerated edge-case ACs (AC4 non-Windows, AC5 unresolvable binary path) with no win32 hook-installer test template"
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "7 files per diffstat (hook-command util, migrations 006/012/index, plus 3 test files), mapping to L." },
+    { "dimension": "technical_risk", "reason": "Windows-specific shim healing in shared resolveHookCommand and a migration rewriting user hook config with EPERM/EBUSY retry; pattern follows earlier migrations so M." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
