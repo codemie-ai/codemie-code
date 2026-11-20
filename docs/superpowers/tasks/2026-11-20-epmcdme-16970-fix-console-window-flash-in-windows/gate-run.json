@@ -1,0 +1,82 @@
+{
+ "schema": 1,
+ "branch": "EPMCDME-16970-fix-console-window-flash-in-windows",
+ "head": "802c90893cfb81d79f8be7b98bef7fc94a8bec9c",
+ "runner": "npm",
+ "started_at": "2026-11-20T10:36:37.690661Z",
+ "completed_at": "2026-11-20T10:36:37.690661Z",
+ "status": "BLOCKED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "license-check",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 10184,
+   "command": "npm run license-check",
+   "exit_code": 0
+  },
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 126318,
+   "command": "npm run lint",
+   "exit_code": 0
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 50602,
+   "command": "npm run typecheck",
+   "exit_code": 0
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 45070,
+   "command": "npm run build",
+   "exit_code": 0
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 335332,
+   "command": "npx vitest run --project unit",
+   "exit_code": 1,
+   "notes": "4 files/5 tests failed. Pre-existing on clean origin/main (e1a06ad7): sso.auth-gate.integration.test.ts (2), config-per-profile-identity.test.ts (1). Not reproducible on main in isolation, pass on branch when rerun alone (load-induced timeout/timing flakes): hook.session-delivery.test.ts (30s timeout), copilot-managed-report.test.ts (expected 10500 < 10500)."
+  },
+  {
+   "id": "integration",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 191612,
+   "command": "npx vitest run --project cli",
+   "exit_code": 0,
+   "notes": "47 files passed, 2 skipped; previous run's 30 failures did not reproduce"
+  },
+  {
+   "id": "commitlint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 622,
+   "command": "npm run commitlint:last",
+   "exit_code": 0
+  },
+  {
+   "id": "secrets",
+   "source": "guide",
+   "status": "SKIPPED",
+   "duration_ms": 365,
+   "command": "npm run validate:secrets",
+   "exit_code": 0,
+   "notes": "Output: 'No staged changes to scan'; nothing scanned. CI runs it unconditionally."
+  }
+ ],
+ "failures": {
+  "unit": "sso.auth-gate (2) and config-per-profile-identity (1) also fail on clean origin/main; see notes"
+ }
+}

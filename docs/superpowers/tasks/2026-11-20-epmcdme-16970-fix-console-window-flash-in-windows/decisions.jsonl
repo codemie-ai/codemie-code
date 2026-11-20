@@ -1,0 +1,4 @@
+{"ts":"2026-11-20T09:39:38Z","gate_id":"spec.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved spec","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-11-20T09:43:05Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved plan","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-11-20T09:56:12Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved; 0 findings","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-11-20T10:40:29Z","gate_id":"feature.verification","mode":"hitl","verdict":{"decision":"approve","rationale":"User accepted pre-existing unit failures (sso.auth-gate, config-per-profile-identity) also failing on clean main","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}

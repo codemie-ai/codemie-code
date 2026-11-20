@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 6,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 1,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Single file (shell-hooks-source.ts), two added option lines on spawn/execSync; no layer boundary crossed." },
+    { "dimension": "technical_risk", "reason": "windowsHide is a standard Node child_process option; no-op on non-Windows, trivially reversible." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
