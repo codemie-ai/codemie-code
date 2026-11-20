@@ -19,9 +19,17 @@ vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: () => mockConfigLoad() },
 }));
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
+// The resolver reads per-URL cookie records through the credential store; the global slot and
+// the JWT slot are empty here.
+vi.mock('@/utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: (url?: string) => (url === undefined ? Promise.resolve(null) : mockGetStoredCredentials(url)),
+      retrieveJWTCredentials: () => Promise.resolve(null),
+      clearSSOCredentials: () => Promise.resolve(),
+      clearJWTCredentials: () => Promise.resolve(),
+    }),
   },
 }));
 
@@ -75,7 +83,9 @@ describe('searchPublic', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0]!;
     expect(url).toBe('https://skills.sh/api/search?q=pdf%20agent&limit=7');
+    expect(init.headers.cookie).toBeUndefined();
     expect(init.headers.Cookie).toBeUndefined();
+    expect(init.headers.authorization).toBeUndefined();
     expect(section.available).toBe(true);
     expect(section.results).toHaveLength(1);
     expect(section.results[0]).toMatchObject({
@@ -156,8 +166,8 @@ describe('searchInternal', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0]!;
     expect(url).toBe('https://internal.example.com/v1/skills/search?q=pdf&limit=5');
-    expect(init.headers.Cookie).toMatch(/session=abc/);
-    expect(init.headers.Cookie).toMatch(/other=def/);
+    expect(init.headers.cookie).toMatch(/session=abc/);
+    expect(init.headers.cookie).toMatch(/other=def/);
     expect(init.headers['X-CodeMie-Client']).toBe('codemie-cli');
     expect(section.available).toBe(true);
     expect(section.results[0]?.slug).toBe('epam/sec');
@@ -221,7 +231,7 @@ describe('searchInternal', () => {
 
     expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
     const [, init] = fetchSpy.mock.calls[0]!;
-    expect(init.headers.Cookie).toMatch(/session=abc/);
+    expect(init.headers.cookie).toMatch(/session=abc/);
   });
 
   it('falls back to codeMieUrl when the profile URL lookup misses', async () => {
@@ -244,6 +254,6 @@ describe('searchInternal', () => {
       'https://workspace.example.com',
     ]);
     const [, init] = fetchSpy.mock.calls[0]!;
-    expect(init.headers.Cookie).toMatch(/session=w/);
+    expect(init.headers.cookie).toMatch(/session=w/);
   });
 });

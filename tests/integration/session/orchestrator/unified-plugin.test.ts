@@ -22,6 +22,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { rm } from 'fs/promises';
 import { SSOSessionSyncPlugin } from '../../../../src/providers/plugins/sso/proxy/plugins/sso.session-sync.plugin.js';
+import { toSSOAuth } from '../../../../src/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '../../../../src/providers/plugins/sso/auth/index.js';
 import { CredentialRefresher } from '../../../../src/providers/plugins/sso/proxy/plugins/credential-refresh.js';
 import { SessionStore } from '../../../../src/agents/core/session/SessionStore.js';
 import type { PluginContext } from '../../../../src/proxy/plugins/types.js';
@@ -29,8 +31,10 @@ import type { Session } from '../../../../src/agents/core/session/types.js';
 
 // sso.proxy.ts builds this once and shares it across every consumer in production; these
 // fixtures build PluginContext directly, so they need to supply it themselves.
-const testCredentialRefresher = (): CredentialRefresher<never> =>
-  new CredentialRefresher({ cookies: { session: 'test-cookie' } } as never, {
+const testAuth = (): SSOAuth =>
+  toSSOAuth({ type: 'cookie', record: { cookies: { session: 'test-cookie' }, apiUrl: 'https://api.example.com' } }, 'https://api.example.com');
+const testCredentialRefresher = (): CredentialRefresher =>
+  new CredentialRefresher(testAuth(), {
     baseUrl: 'https://api.example.com',
   });
 
@@ -134,7 +138,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
     it('should fail initialization without session ID', async () => {
       const context: PluginContext = {
         config: { targetApiUrl: 'https://api.example.com' },
-        credentials: { cookies: { session: 'test' } },
+        credentials: testAuth(),
         profileConfig: {}
       } as any;
 
@@ -161,7 +165,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           sessionId: 'test-session',
           targetApiUrl: 'https://api.example.com'
         },
-        credentials: { cookies: { session: 'test' } },
+        credentials: testAuth(),
         profileConfig: {}
       } as any;
 
@@ -200,7 +204,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           clientType: 'codemie-claude',
           version: '0.0.28'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
@@ -234,7 +238,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           clientType: 'codemie-claude',
           version: '0.0.28'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
@@ -277,7 +281,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           targetApiUrl: 'https://api.example.com',
           clientType: 'codemie-claude'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
@@ -300,7 +304,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           clientType: 'codemie-claude',
           version: '0.0.28'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
@@ -332,7 +336,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           clientType: 'codemie-claude',
           version: '0.0.28'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
@@ -361,7 +365,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
           clientType: 'codemie-claude',
           version: '0.0.28'
         },
-        credentials: { cookies: { session: 'test-cookie' } },
+        credentials: testAuth(),
         credentialRefresher: testCredentialRefresher(),
         syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}

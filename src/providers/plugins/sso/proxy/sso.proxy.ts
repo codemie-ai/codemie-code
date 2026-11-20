@@ -28,13 +28,13 @@ import { URL } from 'url';
 import { Readable } from 'stream';
 import { ProviderRegistry } from '../../../core/registry.js';
 import { AuthMethod } from '../../../core/types.js';
-import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
 import { isTlsVerificationEnabled } from '../../../../utils/system-proxy.js';
-import { getStoredPlatformCredentials } from '../../../core/codemie-auth-helpers.js';
+import { loadStoredJwtToken } from '../../jwt/jwt.utils.js';
+import { explicitJwtAuth, resolveSSOAuth, resolveSSOAuthForUrl, type SSOAuth } from '../auth/index.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
-import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
+import { AuthenticationError, NetworkError, ProxyError, TimeoutError, normalizeError } from './proxy-errors.js';
 import { getPluginRegistry } from './plugins/registry.js';
 import { PluginContext, ProxyInterceptor, ResponseMetadata, UpstreamResponseTools } from './plugins/types.js';
 import { CredentialRefresher } from './plugins/credential-refresh.js';
@@ -67,14 +67,14 @@ export class CodeMieProxy {
     const authMethod = this.config.authMethod || AuthMethod.SSO;  // Default: SSO for backward compat
 
     // 2. Load credentials based on auth method
-    let credentials: SSOCredentials | JWTCredentials | null = null;
-    let syncCredentials: SSOCredentials | JWTCredentials | null = null;
+    let credentials: SSOAuth | null = null;
 
     if (authMethod === AuthMethod.JWT) {
-      // JWT path: token from CLI arg, env var, or credential store
-      const token = this.config.jwtToken
-        || process.env.CODEMIE_JWT_TOKEN
-        || await this.loadJWTFromStore();
+      // JWT path: token from CLI arg, env var, or the bearer-auth profile's stored token. All of
+      // them are explicit (`source: 'explicit'`): read once here and never re-read from the store.
+      const explicitToken = this.config.jwtToken || process.env.CODEMIE_JWT_TOKEN;
+      // An unreadable store counts as no stored token
+      const token = explicitToken || await loadStoredJwtToken(this.config.targetApiUrl).catch(() => null);
 
       if (!token) {
         throw new AuthenticationError(
@@ -82,19 +82,18 @@ export class CodeMieProxy {
         );
       }
 
-      credentials = { token, apiUrl: this.config.targetApiUrl };
+      credentials = explicitJwtAuth(token, this.config.targetApiUrl);
     } else {
-      // SSO path: existing behavior (unchanged)
+      // SSO path: the resolver picks the stored login (usable cookies or an SSO-issued JWT)
       const provider = ProviderRegistry.getProvider(this.config.provider || '');
       const isSSOProvider = provider?.authType === 'sso';
 
       if (isSSOProvider) {
-        const stored = await getStoredPlatformCredentials({
+        credentials = await resolveSSOAuth({
           provider: this.config.provider,
           baseUrl: this.config.targetApiUrl,
           codeMieUrl: this.config.syncCodeMieUrl,
         });
-        credentials = stored?.credentials ?? null;
 
         if (!credentials) {
           throw new AuthenticationError(
@@ -105,15 +104,13 @@ export class CodeMieProxy {
       }
     }
 
-    if (this.config.syncCodeMieUrl) {
-      const { CodeMieSSO } = await import('../sso.auth.js');
-      const sso = new CodeMieSSO();
-      syncCredentials = await sso.getStoredCredentials(this.config.syncCodeMieUrl);
-      if (!syncCredentials) {
-        logger.debug(
-          `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login --url ${this.config.syncCodeMieUrl}`
-        );
-      }
+    const syncCredentials: SSOAuth | null = this.config.syncCodeMieUrl
+      ? await resolveSSOAuthForUrl(this.config.syncCodeMieUrl)
+      : null;
+    if (this.config.syncCodeMieUrl && !syncCredentials) {
+      logger.debug(
+        `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login --url ${this.config.syncCodeMieUrl}`
+      );
     }
 
     const refresherParams = {
@@ -123,17 +120,14 @@ export class CodeMieProxy {
     };
     // One refresher per credential SOURCE, not one total, so a consumer never gets another
     // source's identity (PR #661 review): `credentialRefresher` wraps the main auth method's
-    // own snapshot (SSO or JWT — JWT `refresh()` is a no-op) for auth injection and the
-    // model-catalogue fetch; `syncCredentialRefresher` wraps whichever of
-    // `syncCredentials`/`credentials` actually has SSO cookies, for session sync.
+    // own credential (an explicit JWT is never re-read) for auth injection and the
+    // model-catalogue fetch; `syncCredentialRefresher` wraps `syncCredentials`, falling back to
+    // `credentials`, for session sync. Either refresher adopts whatever credential type the
+    // store holds on a re-read.
     const credentialRefresher = credentials
       ? new CredentialRefresher(credentials, refresherParams)
       : undefined;
-    const syncSource = syncCredentials && 'cookies' in syncCredentials
-      ? syncCredentials
-      : credentials && 'cookies' in credentials
-        ? credentials
-        : null;
+    const syncSource: SSOAuth | null = syncCredentials ?? credentials ?? null;
     // A distinct sync source has its own host (syncCodeMieUrl), not the main profile's
     // (targetApiUrl). `refresherParams` above resolves candidates with baseUrl (targetApiUrl)
     // first, so re-using it here would re-read and overwrite the sync cookies with the main
@@ -148,11 +142,11 @@ export class CodeMieProxy {
     // `credentials` — reuse that SAME refresher instance in that case (rather than a second one
     // over an identical snapshot) so the cache/throttle clock stays singular for one SSO
     // identity, same as before this split.
-    const syncCredentialRefresher: CredentialRefresher<SSOCredentials> | undefined = !syncSource
+    const syncCredentialRefresher: CredentialRefresher | undefined = !syncSource
       ? undefined
       : syncSource === credentials && credentialRefresher
-        ? (credentialRefresher as CredentialRefresher<SSOCredentials>)
-        : new CredentialRefresher(syncSource as SSOCredentials, syncOnlyRefresherParams);
+        ? credentialRefresher
+        : new CredentialRefresher(syncSource, syncOnlyRefresherParams);
 
     // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
@@ -633,6 +627,15 @@ export class CodeMieProxy {
           break;
         }
       } catch (error) {
+        // A ProxyError (e.g. AuthenticationError from the auth interceptors) is a deliberate,
+        // typed failure that must abort the request — swallowing it here would forward the
+        // request upstream with no auth header at all instead of failing closed. Plain Errors
+        // are left alone: several request-normalizer plugins throw a bare Error as a
+        // self-skip-this-plugin guard (e.g. "Plugin disabled for agent: ...") and rely on this
+        // catch to continue with the remaining interceptors.
+        if (hookName === 'onRequest' && error instanceof ProxyError) {
+          throw error;
+        }
         logger.error(`[CodeMieProxy] Hook ${hookName} error in ${interceptor.name}:`, error);
         // Continue with other interceptors
       }
@@ -825,19 +828,5 @@ export class CodeMieProxy {
         }
       });
     });
-  }
-
-  /**
-   * Load JWT token from credential store
-   */
-  private async loadJWTFromStore(): Promise<string | null> {
-    try {
-      const { CredentialStore } = await import('../../../../utils/security.js');
-      const store = CredentialStore.getInstance();
-      const jwtCreds = await store.retrieveJWTCredentials(this.config.targetApiUrl);
-      return jwtCreds?.token || null;
-    } catch {
-      return null;
-    }
   }
 }

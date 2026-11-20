@@ -5,9 +5,17 @@ const mockConfigLoad = vi.fn();
 
 vi.mock('@/utils/config.js', () => ({ ConfigLoader: { load: () => mockConfigLoad() } }));
 vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
+// The resolver reads per-URL cookie records through the credential store; the global slot and
+// the JWT slot are empty here.
+vi.mock('@/utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: (url?: string) => (url === undefined ? Promise.resolve(null) : mockGetStoredCredentials(url)),
+      retrieveJWTCredentials: () => Promise.resolve(null),
+      clearSSOCredentials: () => Promise.resolve(),
+      clearJWTCredentials: () => Promise.resolve(),
+    }),
   },
 }));
 

@@ -5,8 +5,9 @@ import { analyticsAuthMarkedInvalid } from '@/agents/core/session/stale-session-
 import { markEndMetricRejected } from '@/cli/commands/hook/end-metric.js';
 import type { RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
-import { PROXY_STORE_READ_DEADLINE_MS, readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { analyticsAuthFields, hasAnalyticsAuth, resolveAnalyticsAuth, type AnalyticsAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
+import { PROXY_STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { resolveSSOAuthForUrl } from '@/providers/plugins/sso/auth/index.js';
 import type {
   DesktopTelemetryRuntimeConfig,
   LocalTelemetryDiscoveredSession
@@ -34,7 +35,8 @@ export class DesktopSessionMetrics {
   async canDeliver(): Promise<boolean> {
     if (!(await claudeAnalyticsCollecting())) return false;
     const urls = [this.credentialsUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
-    return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookieAuth()).cookies !== '';
+    if (await analyticsAuthMarkedInvalid(urls)) return false;
+    return hasAnalyticsAuth(await this.loadAuth());
   }
 
   /** `abortSignal` marks the requests of one delivery attempt, so a rejection of its credentials is told apart. */
@@ -43,11 +45,10 @@ export class DesktopSessionMetrics {
     discovered?: LocalTelemetryDiscoveredSession,
     abortSignal?: AbortSignal
   ): Promise<ProcessingContext> {
-    const { cookies, credentialsSuperseded } = await this.loadCookieAuth();
+    const auth = await this.loadAuth();
     return {
       apiBaseUrl: this.config.syncApiUrl || this.config.targetApiUrl,
-      cookies,
-      credentialsSuperseded,
+      ...analyticsAuthFields(auth),
       clientType: this.config.clientType,
       version: this.config.version,
       dryRun: false,
@@ -58,10 +59,10 @@ export class DesktopSessionMetrics {
     };
   }
 
-  private async loadCookieAuth(): Promise<Awaited<ReturnType<typeof readCookieAuth>>> {
+  private async loadAuth(): Promise<AnalyticsAuth> {
     const credentialsUrl = this.credentialsUrl;
-    const auth = await readCookieAuth(
-      () => new CodeMieSSO().getStoredCredentials(credentialsUrl),
+    const auth = await resolveAnalyticsAuth(
+      () => resolveSSOAuthForUrl(credentialsUrl),
       { deadlineMs: PROXY_STORE_READ_DEADLINE_MS }
     );
     if (auth.readTimedOut) {
@@ -75,7 +76,7 @@ export class DesktopSessionMetrics {
     discovered: LocalTelemetryDiscoveredSession
   ): Promise<void> {
     const context = await this.buildProcessingContext(session, discovered);
-    if (!context.cookies) {
+    if (!context.cookies && !context.jwtToken) {
       return;
     }
 
@@ -86,6 +87,7 @@ export class DesktopSessionMetrics {
       workingDirectory: session.workingDirectory,
       apiBaseUrl: context.apiBaseUrl,
       hasCookies: !!context.cookies,
+      hasJwtToken: !!context.jwtToken,
     });
 
     await this.createSender(context).sendSessionStart(
@@ -110,7 +112,7 @@ export class DesktopSessionMetrics {
       return;
     }
     const context = await this.buildProcessingContext(session, undefined, abortSignal);
-    if (!context.cookies) {
+    if (!context.cookies && !context.jwtToken) {
       logger.warn('[desktop-telemetry] No SSO credentials; END metric kept for a later attempt', {
         sessionId: session.sessionId
       });
@@ -168,6 +170,7 @@ export class DesktopSessionMetrics {
     return new MetricsSender({
       baseUrl: context.apiBaseUrl,
       cookies: context.cookies,
+      jwtToken: context.jwtToken,
       credentialsSuperseded: context.credentialsSuperseded,
       version: this.config.version,
       clientType: this.config.clientType,

@@ -27,8 +27,16 @@ Handles browser-based OAuth; manages credential storage, session lifecycle, and 
 | Method | Signature |
 |--------|-----------|
 | `authenticate` | `(config: SSOAuthConfig) => Promise<SSOAuthResult>` |
-| `getStoredCredentials` | `(url?, allowFallback?) => Promise<SSOCredentials \| null>` |
 | `clearStoredCredentials` | `(baseUrl?) => Promise<void>` |
+
+**Reading stored credentials** goes through `@/providers/plugins/sso/auth` (the only place that decides cookie vs JWT), not `CodeMieSSO`:
+
+| Function | Signature |
+|----------|-----------|
+| `resolveSSOAuth` | `(src: PlatformUrlSource) => Promise<SSOAuth \| null>` — profile URL first, workspace URL second |
+| `resolveSSOAuthForUrl` | `(url, opts?) => Promise<SSOAuth \| null>` — one URL, same-origin global-slot fallback |
+| `resolveAnalyticsSSOAuth` | `(ssoUrl?, env?, overrides?) => Promise<SSOAuth \| null>` — analytics/session sync |
+| `clearSSOAuth` | `(url?) => Promise<void>` — clears every credential type for the URL |
 
 **Auth flow**: starts local HTTP server → opens browser to `${codeMieBase}/v1/auth/login/${port}` → waits for OAuth callback → stores credentials via `CredentialStore`.
 
@@ -44,11 +52,12 @@ const result = await sso.authenticate({ codeMieUrl: 'https://codemie.lab.epam.co
 |-----------|-----------|
 | `SSOAuthConfig` | `codeMieUrl: string`, `timeout?: number` (default 120 000 ms) |
 | `SSOAuthResult` | `success: boolean`, `apiUrl?`, `cookies?`, `error?` |
-| `SSOCredentials` | `cookies`, `apiUrl`, `expiresAt: number` |
+| `SSOAuth` | `type: 'cookie' \| 'jwt'`, `apiUrl`, `headers`, `authValue`, `fingerprint`, `expiresAt?`, `source` (plus `cookies` or `token` per type) |
+| `SSOCredentials` / `JWTCredentials` | Stored records: `apiUrl`, `expiresAt?`, `cookies` or `token`; marked with `authType` / `storedAt` |
 
 | DO | DON'T |
 |----|-------|
-| Call `authenticate()` before accessing stored credentials | Assume credentials exist without checking `getStoredCredentials()` |
+| Call `authenticate()` before accessing stored credentials | Assume credentials exist without checking `resolveSSOAuth()` / `resolveSSOAuthForUrl()` for `null` |
 | Store credentials per URL | Use global fallback for all URLs |
 | Call `clearStoredCredentials()` on logout | Leave credentials in storage |
 
@@ -205,7 +214,7 @@ for the full `sync` command surface.
 | Surface | Error type | Handling |
 |---------|-----------|---------|
 | `CodeMieSSO.authenticate` | Returns `{ success: false, error }` — does not throw | Check `result.success` |
-| `CodeMieSSO.getStoredCredentials` | May throw on store failure | `try/catch` |
+| `resolveSSOAuth` / `resolveSSOAuthForUrl` | May throw on store failure | `try/catch` |
 | `CodeMieProxy.start` | `AuthenticationError`, `NetworkError` | `try/catch`; `TimeoutError` also possible |
 | `processEvent` with config | Throws on validation / processing failure | `try/catch`; check `error.message` |
 | `ConfigLoader.loadAndValidate` | Throws on missing required fields | `try/catch`; check for `'Profile'` or `'API key'` in message |

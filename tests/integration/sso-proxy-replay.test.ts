@@ -18,18 +18,20 @@ import { join } from 'node:path';
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/providers/core/codemie-auth-helpers.js')>()),
-  getStoredPlatformCredentials: vi.fn(),
+vi.mock('@/providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/providers/plugins/sso/auth/index.js')>()),
+  resolveSSOAuth: vi.fn(),
 }));
 vi.mock('@/providers/plugins/sso/sso.detached-login.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/providers/plugins/sso/sso.detached-login.js')>()),
   startDetachedSsoLogin: vi.fn(async () => 'started'),
 }));
 
-import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import { resolveSSOAuth } from '@/providers/plugins/sso/auth/index.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { startDetachedSsoLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import { CodeMieProxy } from '@/providers/plugins/sso/proxy/sso.proxy.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/index.js';
 import type { ProxyConfig } from '@/providers/plugins/sso/proxy/proxy-types.js';
 import '@/providers/plugins/sso/index.js'; // register the SSO provider
 import '@/providers/plugins/sso/proxy/plugins/index.js'; // register core plugins
@@ -44,8 +46,8 @@ interface UpstreamRequest {
   body: string;
 }
 
-function credentials(token: string): { credentials: { cookies: Record<string, string>; apiUrl: string }; url: string } {
-  return { credentials: { cookies: { codemie_access_token: token }, apiUrl: 'http://placeholder' }, url: 'http://placeholder' };
+function credentials(token: string): SSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: token }, apiUrl: 'http://placeholder' } }, 'http://placeholder');
 }
 
 describe('SSO proxy replay after a superseding sign-in (end-to-end, in-process)', () => {
@@ -65,7 +67,8 @@ describe('SSO proxy replay after a superseding sign-in (end-to-end, in-process)'
     process.env.CODEMIE_HOME = tempHome;
     received = [];
     storedToken = 'old-token';
-    vi.mocked(getStoredPlatformCredentials).mockImplementation(async () => credentials(storedToken) as never);
+    // The proxy start and the credential refresher both read the stored login through the resolver.
+    vi.mocked(resolveSSOAuth).mockImplementation(async () => credentials(storedToken));
     vi.mocked(startDetachedSsoLogin).mockClear();
     respond = (count, res) => {
       if (count === 1) {

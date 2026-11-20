@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { MoonshotSubscriptionSetupSteps } from '../moonshot-subscription.setup-steps.js';
 import { MoonshotSubscriptionTemplate } from '../moonshot-subscription.template.js';
 import { ConfigurationError } from '../../../../utils/errors.js';
+import { toSSOAuth } from '../../sso/auth/selection.js';
 
 const { mockCommandExists, mockPrompt, mockAuthenticateWithCodeMie, mockSelectCodeMieProject, mockPromptForCodeMieUrl } = vi.hoisted(() => ({
   mockCommandExists: vi.fn(),
@@ -71,10 +72,13 @@ describe('MoonshotSubscriptionSetupSteps', () => {
     it('authenticates and selects project when analytics is enabled', async () => {
       mockPrompt.mockResolvedValue({ enableCodeMieAnalytics: true });
       mockPromptForCodeMieUrl.mockResolvedValue('https://codemie.lab.epam.com');
+      const apiUrl = 'https://codemie.lab.epam.com/code-assistant-api';
+      const auth = toSSOAuth({ type: 'cookie', record: { cookies: { session: 'abc' }, apiUrl } }, 'https://codemie.lab.epam.com');
       mockAuthenticateWithCodeMie.mockResolvedValue({
         success: true,
-        apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+        apiUrl,
         cookies: { session: 'abc' },
+        auth,
       });
       mockSelectCodeMieProject.mockResolvedValue({ project: 'my-project', userEmail: 'user@example.com' });
 
@@ -85,7 +89,7 @@ describe('MoonshotSubscriptionSetupSteps', () => {
         'CodeMie platform URL for analytics sync:'
       );
       expect(mockAuthenticateWithCodeMie).toHaveBeenCalledWith('https://codemie.lab.epam.com', 120000);
-      expect(mockSelectCodeMieProject).toHaveBeenCalled();
+      expect(mockSelectCodeMieProject).toHaveBeenCalledWith(auth);
       expect(credentials.additionalConfig).toEqual({
         authMethod: 'manual',
         codeMieUrl: 'https://codemie.lab.epam.com',

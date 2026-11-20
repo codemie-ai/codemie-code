@@ -8,7 +8,7 @@ const {
   clearAnalyticsAuthStatus,
   getLastSignInAt,
   summarizeSpoolDelivery,
-  getStoredAnalyticsCredentials,
+  resolveAnalyticsSSOAuth,
   withVerifiedOwner,
   forwarderIdentity,
   getPolicyState,
@@ -17,7 +17,7 @@ const {
   clearAnalyticsAuthStatus: vi.fn(),
   getLastSignInAt: vi.fn(),
   summarizeSpoolDelivery: vi.fn(),
-  getStoredAnalyticsCredentials: vi.fn(),
+  resolveAnalyticsSSOAuth: vi.fn(),
   withVerifiedOwner: vi.fn(),
   forwarderIdentity: vi.fn(),
   getPolicyState: vi.fn(),
@@ -37,9 +37,9 @@ vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
 vi.mock('@/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.js', () => ({
   summarizeSpoolDelivery,
 }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
+vi.mock('@/providers/plugins/sso/auth/index.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getStoredAnalyticsCredentials,
+  resolveAnalyticsSSOAuth,
 }));
 vi.mock('@/providers/core/credential-owner.js', () => ({
   withVerifiedOwner,
@@ -64,8 +64,14 @@ import type { DaemonState } from '../daemon-manager.js';
 import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
 import { createStatus } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js';
 import { spoolRoot, statusFile, streamFile } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/index.js';
 
 const URL = 'https://codemie.example.com';
+
+function cookieAuth(email?: string): SSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies: { session: 'x' }, apiUrl: URL, ...(email && { email }) } }, URL);
+}
 
 const state = {
   pid: 1,
@@ -90,7 +96,7 @@ describe('collectDeliveryHealth', () => {
     getAnalyticsAuthStatus.mockResolvedValue(null);
     getLastSignInAt.mockResolvedValue(null);
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 0, mismatchHeld: false, classificationStalled: false });
-    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: { apiUrl: URL, email: 'user@example.com' }, url: URL });
+    resolveAnalyticsSSOAuth.mockResolvedValue(cookieAuth('user@example.com'));
     withVerifiedOwner.mockImplementation(async (creds: unknown) => creds);
     forwarderIdentity.mockReturnValue({ api_identity: 'id', owner_hash: 'hash' });
     getPolicyState.mockResolvedValue({ policy: null, capability: 'evidence', usable: false, refreshDue: true });
@@ -430,9 +436,9 @@ describe('collectDeliveryHealth', () => {
   });
 
   it('resolves identity from the owner-verified credential, not the raw stored one', async () => {
-    const stored = { apiUrl: URL, cookies: {} };
-    const verified = { apiUrl: URL, cookies: {}, email: 'owner@example.com' };
-    getStoredAnalyticsCredentials.mockResolvedValue({ credentials: stored, url: URL });
+    const stored = cookieAuth();
+    const verified = { ...stored, email: 'owner@example.com' };
+    resolveAnalyticsSSOAuth.mockResolvedValue(stored);
     withVerifiedOwner.mockResolvedValue(verified);
     getPolicyState.mockResolvedValue({ policy: null, capability: 'unknown', usable: false, refreshDue: true });
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 3, mismatchHeld: false, classificationStalled: true });
@@ -462,7 +468,7 @@ describe('collectDeliveryHealth', () => {
 
   it('starts the spool scan without waiting for capability resolution to finish', async () => {
     let resolveCreds!: (v: unknown) => void;
-    getStoredAnalyticsCredentials.mockImplementation(
+    resolveAnalyticsSSOAuth.mockImplementation(
       () => new Promise((resolve) => { resolveCreds = resolve; })
     );
     const pending = collectDeliveryHealth(state, ok);
@@ -473,12 +479,12 @@ describe('collectDeliveryHealth', () => {
   });
 
   it('still resolves normally when there is no stored analytics credential', async () => {
-    getStoredAnalyticsCredentials.mockResolvedValue(null);
+    resolveAnalyticsSSOAuth.mockResolvedValue(null);
     expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 0 });
   });
 
   it('falls back to an unresolved policy state, instead of going unknown, when the credential lookup throws', async () => {
-    getStoredAnalyticsCredentials.mockRejectedValue(new Error('boom'));
+    resolveAnalyticsSSOAuth.mockRejectedValue(new Error('boom'));
     summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 10, mismatchHeld: true, classificationStalled: false });
     expect(await collectDeliveryHealth(state, ok)).toEqual({
       status: 'unhealthy',

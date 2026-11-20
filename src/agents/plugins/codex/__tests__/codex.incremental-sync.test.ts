@@ -19,7 +19,7 @@ vi.mock('../codex.session.js', () => ({
 }));
 
 const mockSync = vi.fn();
-const mockGetStoredCredentials = vi.fn();
+const mockRetrieveSSOCredentials = vi.fn();
 
 vi.mock('../../../../providers/plugins/sso/session/SessionSyncer.js', () => ({
   SessionSyncer: class {
@@ -27,9 +27,14 @@ vi.mock('../../../../providers/plugins/sso/session/SessionSyncer.js', () => ({
   },
 }));
 
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = mockGetStoredCredentials;
+// The SSO resolver reads the per-URL cookie slot, then the JWT slot (always empty here).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: mockRetrieveSSOCredentials,
+      retrieveJWTCredentials: async () => null,
+    }),
   },
 }));
 
@@ -55,7 +60,7 @@ describe('codex.incremental-sync', () => {
     parseSessionFile.mockReset();
     processSession.mockReset();
     mockSync.mockReset();
-    mockGetStoredCredentials.mockReset();
+    mockRetrieveSSOCredentials.mockReset();
     delete process.env.CODEMIE_CODEX_SYNC_ENABLED;
     delete process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS;
     testCounter++;
@@ -229,7 +234,7 @@ describe('codex.incremental-sync', () => {
     ]);
     parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
     processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
     const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
@@ -241,7 +246,7 @@ describe('codex.incremental-sync', () => {
     });
 
     await waitFor(() => mockSync.mock.calls.length >= 1);
-    expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://codemie.example.com');
+    expect(mockRetrieveSSOCredentials).toHaveBeenCalledWith('https://codemie.example.com');
     expect(mockSync).toHaveBeenCalledWith(
       currentSessionId,
       expect.objectContaining({
@@ -262,7 +267,7 @@ describe('codex.incremental-sync', () => {
     ]);
     parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
     processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
     const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
@@ -284,7 +289,7 @@ describe('codex.incremental-sync', () => {
     ]);
     parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
     processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
     const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
@@ -298,12 +303,12 @@ describe('codex.incremental-sync', () => {
     const context = mockSync.mock.calls[0][1];
     expect(typeof context.credentialsSuperseded).toBe('function');
 
-    const readsBefore = mockGetStoredCredentials.mock.calls.length;
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+    const readsBefore = mockRetrieveSSOCredentials.mock.calls.length;
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
     await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
     await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
-    expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
-    expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
+    expect(mockRetrieveSSOCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(mockRetrieveSSOCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
   });
 
   it('skips upload when ssoUrl or syncApiUrl is not set', async () => {
@@ -320,7 +325,7 @@ describe('codex.incremental-sync', () => {
     await waitFor(() => processSession.mock.calls.length >= 1);
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(mockSync).not.toHaveBeenCalled();
-    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+    expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
   });
 
   it('skips upload when SSO credentials are not available', async () => {
@@ -330,7 +335,7 @@ describe('codex.incremental-sync', () => {
     ]);
     parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
     processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-    mockGetStoredCredentials.mockResolvedValue(null);
+    mockRetrieveSSOCredentials.mockResolvedValue(null);
 
     const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
     startCodexIncrementalSync({
@@ -351,7 +356,7 @@ describe('codex.incremental-sync', () => {
     ]);
     parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
     processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
     mockSync.mockRejectedValue(new Error('network failure'));
 
     const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');

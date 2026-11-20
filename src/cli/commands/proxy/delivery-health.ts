@@ -1,4 +1,5 @@
-import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import { getAnalyticsPlatformSource, getPlatformUrl } from '@/providers/core/codemie-auth-helpers.js';
+import { resolveAnalyticsSSOAuth } from '@/providers/plugins/sso/auth/index.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
 import { applicableAuthMarker } from '@/providers/plugins/sso/sso.auth-gate.js';
@@ -77,12 +78,12 @@ const UNKNOWN: DeliveryHealth = { status: 'unknown' };
  */
 async function resolvePolicyState(state: DaemonState): Promise<PolicyState | null> {
   try {
-    const stored = await getStoredAnalyticsCredentials(state.syncCodeMieUrl, {}, {
+    const auth = await resolveAnalyticsSSOAuth(state.syncCodeMieUrl, {}, {
       provider: state.provider,
       baseUrl: state.targetUrl,
     });
-    if (!stored) return null;
-    const identity = forwarderIdentity(await withVerifiedOwner(stored.credentials));
+    if (!auth) return null;
+    const identity = forwarderIdentity(await withVerifiedOwner(auth));
     if (!identity) return null;
     return await getPolicyState({ ...identity, profile: state.profile });
   } catch (error) {

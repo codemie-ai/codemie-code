@@ -5,11 +5,14 @@ import { join } from 'node:path';
 
 const retrieveSSOCredentials = vi.fn();
 const clearSSOCredentials = vi.fn();
+// Cookie-only logins: the JWT slot is empty.
+const retrieveJWTCredentials = vi.fn(async (): Promise<unknown> => null);
+const clearJWTCredentials = vi.fn();
 const openBrowser = vi.fn();
 
 vi.mock('@/utils/security.js', () => ({
   CredentialStore: {
-    getInstance: () => ({ retrieveSSOCredentials, clearSSOCredentials }),
+    getInstance: () => ({ retrieveSSOCredentials, clearSSOCredentials, retrieveJWTCredentials, clearJWTCredentials }),
   },
 }));
 vi.mock('open', () => ({ default: openBrowser }));
@@ -34,6 +37,7 @@ import { SSOSessionExpiryPlugin } from '../proxy/plugins/sso-session-expiry.plug
 import type { IncomingMessage } from 'http';
 import { releaseLoginLockOnSuccess } from '@/providers/plugins/sso/sso.detached-login.js';
 import { spawnDetached } from '@/utils/processes.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 
 const BASE_URL = 'https://codemie.example.com';
 const configured = { provider: 'ai-run-sso', ssoUrl: BASE_URL, syncApiUrl: BASE_URL };
@@ -84,8 +88,10 @@ describe('ensureCodeMieSsoAuthOrWait with real credential lookup (cookie-only cr
     /** Runs the real plugin interceptor against a fake upstream response and returns what it hands on. */
     async function passThroughPlugin(response: Partial<IncomingMessage>, responseBody: Buffer): Promise<IncomingMessage> {
       const plugin = new SSOSessionExpiryPlugin();
+      const sentAuth = toSSOAuth({ type: 'cookie', record: cookieCredentials }, BASE_URL);
+      // The store still holds the login the request was sent with, so it is not superseded.
       const interceptor = await plugin.createInterceptor({
-        credentials: cookieCredentials,
+        credentialRefresher: { refreshNow: vi.fn().mockResolvedValue(sentAuth) },
         config: { targetApiUrl: `${BASE_URL}/code-assistant-api` },
       } as never);
       const tools = {
@@ -94,7 +100,7 @@ describe('ensureCodeMieSsoAuthOrWait with real credential lookup (cookie-only cr
         fromBuffer: vi.fn().mockImplementation((source: IncomingMessage) => ({ statusCode: source.statusCode, headers: {} })),
       };
       return interceptor.onUpstreamResponse!(
-        { headers: { cookie: '_oauth2_proxy=cookie-value' } } as never,
+        { headers: { cookie: '_oauth2_proxy=cookie-value' }, sentAuth } as never,
         response as IncomingMessage,
         tools as never
       );

@@ -20,7 +20,7 @@ import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 import { daemonStartedAt, readConnectionRecord } from '../cli/commands/proxy/daemon-manager.js';
 import { startAwaitingLoginListener, type AwaitingLoginListener } from '../cli/commands/proxy/awaiting-login-listener.js';
 import { AuthenticationError } from '../providers/plugins/sso/proxy/proxy-errors.js';
-import { getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
+import { resolveSSOAuth } from '../providers/plugins/sso/auth/index.js';
 import { startDetachedSsoLogin, type DetachedLoginOutcome } from '../providers/plugins/sso/sso.detached-login.js';
 import { sessionExpiredMessage } from '../providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.js';
 import { markAnalyticsAuthInvalid } from '../utils/analytics-auth-status.js';
@@ -178,12 +178,14 @@ function healthPatch(): Record<string, unknown> {
 }
 
 async function credentialsAvailable(): Promise<boolean> {
-  const stored = await getStoredPlatformCredentials({
+  // Any stored SSO login counts, cookies or a JWT — the resolver only returns a usable,
+  // unexpired credential, so presence alone is the right check here.
+  const auth = await resolveSSOAuth({
     provider: config.provider,
     baseUrl: config.targetApiUrl,
     codeMieUrl: config.syncCodeMieUrl,
   });
-  return Boolean(stored?.credentials);
+  return auth !== null;
 }
 
 async function cleanup(): Promise<void> {

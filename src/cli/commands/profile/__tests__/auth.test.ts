@@ -4,12 +4,28 @@ const mockGetStoredCredentials = vi.fn();
 const mockClearStoredCredentials = vi.fn();
 const mockAuthenticate = vi.fn();
 const mockConfigLoad = vi.fn();
+const mockRetrieveJWTCredentials = vi.fn();
 
 vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
-    clearStoredCredentials = (...args: unknown[]) => mockClearStoredCredentials(...args);
     authenticate = (...args: unknown[]) => mockAuthenticate(...args);
+  },
+}));
+// The real resolver picks the URL; only the clear is observed.
+vi.mock('../../../../providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../providers/plugins/sso/auth/index.js')>()),
+  clearSSOAuth: (...args: unknown[]) => mockClearStoredCredentials(...args),
+}));
+// Per-URL cookie and JWT records come from the mocks; the global slots are empty.
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: (url?: string) => (url === undefined ? Promise.resolve(null) : mockGetStoredCredentials(url)),
+      retrieveJWTCredentials: (url?: string) => (url === undefined ? Promise.resolve(null) : mockRetrieveJWTCredentials(url)),
+      clearSSOCredentials: () => Promise.resolve(),
+      clearJWTCredentials: () => Promise.resolve(),
+    }),
   },
 }));
 vi.mock('../../../../utils/config.js', () => ({ ConfigLoader: { load: () => mockConfigLoad() } }));
@@ -40,6 +56,8 @@ describe('profile auth commands', () => {
     mockClearStoredCredentials.mockReset();
     mockAuthenticate.mockReset();
     mockConfigLoad.mockReset();
+    mockRetrieveJWTCredentials.mockReset();
+    mockRetrieveJWTCredentials.mockResolvedValue(null);
     mockAuthenticate.mockResolvedValue({ success: true });
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -61,7 +79,7 @@ describe('profile auth commands', () => {
   describe('refresh', () => {
     it('proceeds for a baseUrl-only SSO profile and re-logs in on the same URL', async () => {
       mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
-      mockGetStoredCredentials.mockResolvedValue({ cookies: {}, apiUrl: P });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' }, apiUrl: P });
       await run(createRefreshCommand());
       expect(mockClearStoredCredentials).toHaveBeenCalledWith(P);
       expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000 });
@@ -69,7 +87,7 @@ describe('profile auth commands', () => {
 
     it('refreshes the URL that actually holds the credentials (split host)', async () => {
       mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-      mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce({ cookies: {}, apiUrl: `${P}/code-assistant-api` });
+      mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce({ cookies: { session: 'abc' }, apiUrl: `${P}/code-assistant-api` });
       await run(createRefreshCommand());
       expect(mockClearStoredCredentials).toHaveBeenCalledWith(W);
       expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: W, timeout: 120000 });
@@ -99,9 +117,18 @@ describe('profile auth commands', () => {
   describe('logout', () => {
     it('clears only the URL that holds the credentials', async () => {
       mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-      mockGetStoredCredentials.mockResolvedValueOnce({ cookies: {}, apiUrl: `${P}/code-assistant-api` });
+      mockGetStoredCredentials.mockResolvedValueOnce({ cookies: { session: 'abc' }, apiUrl: `${P}/code-assistant-api` });
       await run(createLogoutCommand());
       expect(mockClearStoredCredentials.mock.calls.map(c => c[0])).toEqual([P]);
+    });
+
+    it('clears the URL that holds only a JWT (cookie-stripping reverse proxy)', async () => {
+      mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+      mockGetStoredCredentials.mockResolvedValue(null);
+      // The JWT was issued for the profile's own API host, so the profile-origin filter keeps it.
+      mockRetrieveJWTCredentials.mockImplementation(async (url: string) => (url === W ? { token: 't', apiUrl: `${P}/code-assistant-api` } : null));
+      await run(createLogoutCommand());
+      expect(mockClearStoredCredentials.mock.calls.map(c => c[0])).toEqual([W]);
     });
 
     it('clears the baseUrl of a baseUrl-only profile', async () => {

@@ -39,17 +39,20 @@ const { CREDENTIAL_REFRESH_INTERVAL_MS } = await import('../credential-refresh.j
 const { withVerifiedOwner } = await import('@/providers/core/credential-owner.js');
 const { forwarderIdentity } = await import('../otlp-spool/spool-io.js');
 const { ownerHash } = await import('@/agents/core/evidence/api-identity.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
 
 const API = 'https://codemie.example.com/code-assistant-api';
-const login = (cookie: string) => ({ cookies: { _oauth2_proxy: cookie }, apiUrl: API });
+const login = (cookie: string) => toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: cookie }, apiUrl: API } }, API);
 const user = (email: string) => ({ userId: 'u', name: 'n', username: 'x', email, applications: [], applications_admin: [] });
 
 let home = '';
 const priorHome = process.env.CODEMIE_HOME;
 const tickOf = (interceptor: unknown) => (interceptor as { tick: () => Promise<void> }).tick();
 const sentOwner = (call: number) => forwarderIdentity(m.tick.mock.calls[call][1])?.owner_hash;
-function daemonStartedWith(creds: unknown) {
-  return new OtlpPlugin().createInterceptor({ credentials: creds, config: { targetApiUrl: API } } as unknown as PluginContext);
+function daemonStartedWith(creds: ReturnType<typeof login>) {
+  // The shared refresher as sso.proxy.ts wires it; the forwarder only reads its snapshot.
+  const credentialRefresher = { get: () => creds };
+  return new OtlpPlugin().createInterceptor({ credentialRefresher, config: { targetApiUrl: API } } as unknown as PluginContext);
 }
 
 beforeEach(() => {

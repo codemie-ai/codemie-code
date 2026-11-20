@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 import { Readable } from 'stream';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PluginContext, ProxyInterceptor, UpstreamResponseTools } from '../types.js';
-import type { ProxyContext } from '../../proxy-types.js';
+import type { ProxyConfig, ProxyContext } from '../../proxy-types.js';
 import { logger } from '../../../../../../utils/logger.js';
 
 vi.mock('@/providers/plugins/sso/sso.detached-login.js', async (importOriginal) => ({
@@ -16,34 +16,58 @@ vi.mock('@/utils/analytics-auth-status.js', () => ({ markAnalyticsAuthInvalid: v
 import { SSOSessionExpiryPlugin } from '../sso-session-expiry.plugin.js';
 import { startDetachedSsoLogin, describeLogin, getLastSignInAt } from '@/providers/plugins/sso/sso.detached-login.js';
 import { markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
-import { buildCookieHeader } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { buildCookieHeader, toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
+import { AuthMethod } from '@/providers/core/types.js';
 
 const TARGET_API_URL = 'https://api.example.com';
 
+function cookieAuth(cookies: Record<string, string>, expiresAt?: number): SSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies, apiUrl: TARGET_API_URL, expiresAt } }, TARGET_API_URL);
+}
+
+function jwtAuth(token: string): SSOAuth {
+  return toSSOAuth({ type: 'jwt', record: { token, apiUrl: TARGET_API_URL } }, TARGET_API_URL);
+}
+
+interface StoredCookies {
+  cookies: Record<string, string>;
+  apiUrl: string;
+  expiresAt?: number;
+}
+
+/** A refresher whose store holds nothing newer (sso.proxy.ts always wires one for an SSO login). */
+const EMPTY_STORE = { refreshNow: async (): Promise<SSOAuth | null> => null };
+
 function createPluginContext(
-  credentials?: PluginContext['credentials'],
-  credentialRefresher?: { refreshNow: () => Promise<unknown> }
+  credentials?: StoredCookies | SSOAuth,
+  credentialRefresher: { refreshNow: () => Promise<unknown> } | null = EMPTY_STORE,
+  authMethod?: ProxyConfig['authMethod']
 ): PluginContext {
+  const auth = credentials && !('type' in credentials) ? cookieAuth(credentials.cookies, credentials.expiresAt) : credentials;
   return {
     config: {
       targetApiUrl: TARGET_API_URL,
       provider: 'test',
       sessionId: 'test-session',
+      ...(authMethod && { authMethod }),
     },
     logger,
-    credentials,
-    credentialRefresher: credentialRefresher as PluginContext['credentialRefresher'],
+    credentials: auth,
+    credentialRefresher: (credentialRefresher ?? undefined) as PluginContext['credentialRefresher'],
   };
 }
 
-function createProxyContext(cookie?: string, requestBody: Buffer | null = null): ProxyContext {
+/** A request the auth interceptor sent with `sent` (its headers and `sentAuth`), or with no credential. */
+function createProxyContext(sent?: SSOAuth, requestBody: Buffer | null = null): ProxyContext {
   return {
     requestId: 'test-req',
     sessionId: 'test-session',
     agentName: 'claude',
     method: 'POST',
     url: '/v1/messages',
-    headers: cookie === undefined ? {} : { cookie },
+    headers: sent ? { ...sent.headers } : {},
+    sentAuth: sent,
     requestBody,
     requestStartTime: Date.now(),
     metadata: {},
@@ -98,12 +122,34 @@ describe('SSOSessionExpiryPlugin', () => {
     vi.mocked(getLastSignInAt).mockResolvedValue(null);
   });
 
-  it('returns a no-op interceptor for JWT credentials (no cookies key)', async () => {
+  it('returns a no-op interceptor for the bearer-auth (JWT auth method) profile', async () => {
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
-      createPluginContext({ token: 'jwt-token', apiUrl: TARGET_API_URL })
+      createPluginContext(jwtAuth('jwt-token'), EMPTY_STORE, AuthMethod.JWT)
     );
 
     expect(interceptor.onUpstreamResponse).toBeUndefined();
+  });
+
+  it('returns a no-op interceptor when no credentialRefresher is wired', async () => {
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: { session: 'abc' }, apiUrl: TARGET_API_URL }, null)
+    );
+
+    expect(interceptor.onUpstreamResponse).toBeUndefined();
+  });
+
+  it('acts on a session-expiry redirect for an SSO-issued JWT too', async () => {
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(createPluginContext(jwtAuth('jwt-token')));
+
+    const result = await interceptor.onUpstreamResponse!(
+      createProxyContext(jwtAuth('jwt-token')),
+      response(302, { location: 'https://x/oauth2/start?rd=%2F' }),
+      createTools()
+    );
+
+    expect(result.statusCode).toBe(401);
+    expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
   });
 
   it('replaces an oauth2-proxy session-expiry redirect with a parseable 401 and triggers re-auth', async () => {
@@ -296,11 +342,11 @@ describe('SSOSessionExpiryPlugin', () => {
     const REQUEST_BODY = Buffer.from('{"model":"m","messages":[]}', 'utf-8');
 
     function supersededContext(): ProxyContext {
-      return createProxyContext(buildCookieHeader({ session: 'old' }), REQUEST_BODY);
+      return createProxyContext(cookieAuth({ session: 'old' }), REQUEST_BODY);
     }
 
     it('replays a request with superseded cookies once, with the original body and the fresh cookies, and returns the retried response', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       const retried = response(200, { 'content-type': 'application/json' });
       let cookieAtRetry: string | undefined;
@@ -324,8 +370,49 @@ describe('SSOSessionExpiryPlugin', () => {
       expect(startDetachedSsoLogin).not.toHaveBeenCalled();
     });
 
+    it('replay after type change sends only the new header', async () => {
+      // A re-login flipped cookie -> JWT while the request was in flight: the replay must carry
+      // the bearer token alone, never the stale cookie next to it.
+      const fresh = jwtAuth('jwt-relogin');
+      const interceptor = await interceptorWith(async () => fresh);
+      const tools = createTools();
+      const retried = response(200);
+      const context = supersededContext();
+      expect(context.headers['cookie']).toBe(buildCookieHeader({ session: 'old' }));
+      let headersAtRetry: Record<string, string> | undefined;
+      tools.retry.mockImplementation(async () => {
+        headersAtRetry = { ...context.headers };
+        return retried;
+      });
+
+      const result = await interceptor.onUpstreamResponse!(context, response(302, REDIRECT), tools);
+
+      expect(result).toBe(retried);
+      expect(tools.retry).toHaveBeenCalledTimes(1);
+      expect(headersAtRetry).toEqual({ authorization: 'Bearer jwt-relogin' });
+      expect(context.sentAuth).toBe(fresh);
+      expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+
+      // ...and back: JWT -> cookie drops the authorization header.
+      const cookieAgain = cookieAuth({ session: 'newest' });
+      const back = await interceptorWith(async () => cookieAgain);
+      const jwtContext = createProxyContext(fresh, REQUEST_BODY);
+      let backHeaders: Record<string, string> | undefined;
+      const backTools = createTools();
+      backTools.retry.mockImplementation(async () => {
+        backHeaders = { ...jwtContext.headers };
+        return response(200);
+      });
+
+      await back.onUpstreamResponse!(jwtContext, response(302, REDIRECT), backTools);
+
+      expect(backHeaders).toEqual({ cookie: 'session=newest' });
+      expect(jwtContext.sentAuth).toBe(cookieAgain);
+    });
+
     it('treats a retried oauth2 redirect as a real revoke: one marker, one sign-in, a session-expired 401, never a second retry', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       const original = response(302, REDIRECT);
       const retriedRedirect = response(302, REDIRECT);
@@ -347,7 +434,7 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('answers the "just renewed" 401 without a marker or sign-in when the retry throws', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       tools.retry.mockRejectedValueOnce(new Error('upstream down'));
       const original = response(302, REDIRECT);
@@ -368,10 +455,10 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('replays a request without a body (GET) once with the fresh cookie, passing the null body to retry unchanged', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       const retried = response(200);
-      const context = createProxyContext(buildCookieHeader({ session: 'old' }));
+      const context = createProxyContext(cookieAuth({ session: 'old' }));
       let cookieAtRetry: string | undefined;
       tools.retry.mockImplementation(async () => {
         cookieAtRetry = context.headers['cookie'];
@@ -392,12 +479,12 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('treats a retried redirect of a body-less request as a real revoke, without a second retry', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       tools.retry.mockResolvedValueOnce(response(302, REDIRECT));
 
       const result = await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'old' })),
+        createProxyContext(cookieAuth({ session: 'old' })),
         response(302, REDIRECT),
         tools
       );
@@ -410,7 +497,7 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('still replays without a marker or sign-in when draining the redirect body rejects', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new' }));
       const tools = createTools();
       tools.readBody.mockRejectedValueOnce(new Error('socket hang up'));
       const retried = response(200);
@@ -427,10 +514,10 @@ describe('SSOSessionExpiryPlugin', () => {
 
     it('logs one debug line without cookie content when the request carried superseded credentials', async () => {
       const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'new-secret' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'new-secret' }));
 
       await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'old-secret' })),
+        createProxyContext(cookieAuth({ session: 'old-secret' })),
         response(302, REDIRECT),
         createTools()
       );
@@ -443,11 +530,11 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('treats a redirect as a real revoke when the sent header equals the freshly built one', async () => {
-      const interceptor = await interceptorWith(async () => ({ cookies: { session: 'same' } }));
+      const interceptor = await interceptorWith(async () => cookieAuth({ session: 'same' }));
       const tools = createTools();
 
       const result = await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'same' }), REQUEST_BODY),
+        createProxyContext(cookieAuth({ session: 'same' }), REQUEST_BODY),
         response(302, REDIRECT),
         tools
       );
@@ -464,11 +551,15 @@ describe('SSOSessionExpiryPlugin', () => {
     });
 
     it('treats a redirect as a real revoke when the store holds an entry the header builder drops', async () => {
+      // The request was sent with that very record (the header builder dropped the orphan entry
+      // from both), so the store holding it again is not a newer login.
       const stored = { session: 'same', '': 'orphan' };
-      const interceptor = await interceptorWith(async () => ({ cookies: stored }));
+      const interceptor = await interceptorWith(async () => cookieAuth(stored));
+      const sent = cookieAuth(stored);
+      expect(sent.headers).toEqual({ cookie: buildCookieHeader({ session: 'same' }) });
 
       const result = await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'same' })),
+        createProxyContext(sent),
         response(302, REDIRECT),
         createTools()
       );
@@ -486,7 +577,7 @@ describe('SSOSessionExpiryPlugin', () => {
       const interceptor = await interceptorWith(refreshNow);
 
       const result = await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'old' })),
+        createProxyContext(cookieAuth({ session: 'old' })),
         response(302, REDIRECT),
         createTools()
       );
@@ -499,22 +590,8 @@ describe('SSOSessionExpiryPlugin', () => {
       expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the sign-in path when no credentialRefresher is provided', async () => {
-      const interceptor = await plugin.createInterceptor(createPluginContext(SSO_CREDENTIALS));
-
-      const result = await interceptor.onUpstreamResponse!(
-        createProxyContext(buildCookieHeader({ session: 'old' })),
-        response(302, REDIRECT),
-        createTools()
-      );
-
-      expect(result.statusCode).toBe(401);
-      expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
-      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps the sign-in path when the request carried no cookie header', async () => {
-      const refreshNow = vi.fn(async () => ({ cookies: { session: 'new' } }));
+    it('keeps the sign-in path when the request carried no credential', async () => {
+      const refreshNow = vi.fn(async () => cookieAuth({ session: 'new' }));
       const interceptor = await interceptorWith(refreshNow);
 
       const result = await interceptor.onUpstreamResponse!(
@@ -528,10 +605,10 @@ describe('SSOSessionExpiryPlugin', () => {
       expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
     });
 
-    it('stays a no-op for JWT credentials even with a credentialRefresher', async () => {
+    it('stays a no-op for the bearer-auth profile even with a credentialRefresher', async () => {
       const refreshNow = vi.fn();
       const interceptor = await plugin.createInterceptor(
-        createPluginContext({ token: 'jwt-token', apiUrl: TARGET_API_URL }, { refreshNow })
+        createPluginContext(jwtAuth('jwt-token'), { refreshNow }, AuthMethod.JWT)
       );
 
       expect(interceptor.onUpstreamResponse).toBeUndefined();
@@ -554,13 +631,13 @@ describe('SSOSessionExpiryPlugin', () => {
       return plugin.createInterceptor(
         createPluginContext(
           { cookies: { session: 'same' }, apiUrl: TARGET_API_URL },
-          { refreshNow: async () => ({ cookies: store.cookies }) }
+          { refreshNow: async () => cookieAuth(store.cookies) }
         )
       );
     }
 
     function contextWith(cookies: Record<string, string>): ProxyContext {
-      return createProxyContext(buildCookieHeader(cookies));
+      return createProxyContext(cookieAuth(cookies));
     }
 
     it('writes the marker, starts one sign-in and returns the synthetic 401, as for the redirect', async () => {
@@ -763,10 +840,10 @@ describe('SSOSessionExpiryPlugin', () => {
 
       it.each([
         ['returns nothing', async () => null],
-        ['returns an empty cookie jar', async () => ({ cookies: {} })],
+        ['returns an empty cookie jar', async () => cookieAuth({})],
         ['cannot be read', async () => { throw new Error('keychain locked'); }],
       ])('never suppresses a 401 when the credential store %s', async (_label, readStore) => {
-        let reading: () => Promise<{ cookies: Record<string, string> } | null> = async () => ({ cookies: { session: 'same' } });
+        let reading: () => Promise<SSOAuth | null> = async () => cookieAuth({ session: 'same' });
         const interceptor = await plugin.createInterceptor(
           createPluginContext(
             { cookies: { session: 'same' }, apiUrl: TARGET_API_URL },

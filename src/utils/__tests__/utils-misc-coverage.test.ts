@@ -46,6 +46,21 @@ vi.mock('../processes.js', async (importOriginal) => {
   return { ...actual, getLatestVersion: getLatestVersionMock, installGlobal: installGlobalMock };
 });
 
+// Under vitest the updater runs from src/, which isLocalBuild() reports as a local build and
+// skips the update check. Its own path is reported through node_modules/.. instead: the same
+// file, so package.json still resolves, but its dirname has a registry install's node_modules
+// segment.
+vi.mock('url', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('url')>();
+  const path = await import('path');
+  const fileURLToPath = ((url: string | URL): string => {
+    const resolved = actual.fileURLToPath(url);
+    if (!/cli-updater\.[jt]s$/.test(resolved)) return resolved;
+    return [path.dirname(resolved), 'node_modules', '..', path.basename(resolved)].join(path.sep);
+  }) as typeof actual.fileURLToPath;
+  return { ...actual, fileURLToPath, default: { ...actual, fileURLToPath } };
+});
+
 const inquirerPromptMock = vi.hoisted(() => vi.fn());
 vi.mock('inquirer', () => ({ default: { prompt: inquirerPromptMock } }));
 

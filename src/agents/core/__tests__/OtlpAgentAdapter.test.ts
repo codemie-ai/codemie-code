@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, 
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 
 // The real daemon-manager resolves its state file at load and the real cold start writes Claude Code's settings:
 // both land under a home of this file's own.
@@ -54,7 +55,7 @@ const readPinnedProjectNameMock = vi.fn();
 const pinProjectNameMock = vi.fn();
 const loadLocalConfigProfileMock = vi.fn();
 const loadGlobalConfigProfileMock = vi.fn();
-const getStoredPlatformCredentialsMock = vi.fn();
+const resolveSSOAuthMock = vi.fn();
 
 vi.mock('../hook-credentials.js', () => ({ resolveHookCredentials: resolveHookCredentialsMock }));
 vi.mock('../identity-resolver.js', async () => ({
@@ -72,9 +73,9 @@ vi.mock('@/utils/config.js', () => ({
     loadGlobalConfigProfile: loadGlobalConfigProfileMock,
   },
 }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', async () => ({
-  ...(await vi.importActual<typeof import('@/providers/core/codemie-auth-helpers.js')>('@/providers/core/codemie-auth-helpers.js')),
-  getStoredPlatformCredentials: getStoredPlatformCredentialsMock,
+vi.mock('@/providers/plugins/sso/auth/index.js', async () => ({
+  ...(await vi.importActual<typeof import('@/providers/plugins/sso/auth/index.js')>('@/providers/plugins/sso/auth/index.js')),
+  resolveSSOAuth: resolveSSOAuthMock,
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('../session-project-pin.js', () => ({
@@ -173,6 +174,10 @@ const AWS = 'AKIAIOSFODNN7EXAMPLE'; // gitleaks:allow
 const tokenWith = (claims: Record<string, unknown>): string =>
   `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
 
+/** A stored cookie login as the SSO resolver hands it out. */
+const cookieAuth = (cookies: Record<string, string>, apiUrl: string) =>
+  toSSOAuth({ type: 'cookie', record: { cookies, apiUrl } }, apiUrl);
+
 describe('OtlpAgentAdapter.processOtlpEvent', () => {
   const ensureOtlpProxy = vi.fn(async () => {});
   const forwardToSpool = vi.fn(async () => true);
@@ -191,11 +196,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     adapter = new FakeAdapter();
     detectGitBranchMock.mockResolvedValue('main');
     detectGitRemoteRepoMock.mockResolvedValue('org/repo');
-    resolveHookCredentialsMock.mockResolvedValue({
-      cookies: { codemie_access_token: tokenWith({ email: 'dev@example.com' }) },
-      apiUrl: 'https://api',
-      timestamp: 0,
-    });
+    resolveHookCredentialsMock.mockResolvedValue(cookieAuth({ codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, 'https://api'));
     resolveIdentityMock.mockResolvedValue({ developerName: 'dev@example.com', identitySource: 'jwt' });
     getActiveProfileNameMock.mockResolvedValue('work');
     configLoadMock.mockResolvedValue({ codeMieProject: 'proj-1' });
@@ -361,7 +362,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       configLoadMock.mockResolvedValue({ name: 'p', baseUrl: 'https://x.example.com/api', codeMieProject: 'proj-1' });
       readConnectionRecordMock.mockResolvedValue({ version: 1, profile: 'p', clientType: 'fake', updatedAt: '' });
       loadLocalConfigProfileMock.mockResolvedValue({ name: 'p' });
-      getStoredPlatformCredentialsMock.mockResolvedValue({ cookies: {}, apiUrl: 'https://api', timestamp: 0 });
+      resolveSSOAuthMock.mockResolvedValue(cookieAuth({ s: 'x' }, 'https://api'));
       readStateMock.mockResolvedValue(null);
       checkStatusMock.mockResolvedValue({ running: false, state: null });
       spawnDaemonMock.mockResolvedValue({ pid: process.pid, port: 4001, url: 'http://127.0.0.1:4001', startedAt: new Date().toISOString() });
@@ -1189,8 +1190,9 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
     it.each([
       ['no credentials', () => resolveHookCredentialsMock.mockResolvedValue(null)],
-      ['unparsable api url', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: { codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, apiUrl: 'not a url', timestamp: 0 })],
-      ['no owner', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: {}, apiUrl: 'https://api', timestamp: 0 })],
+      ['unparsable api url', () => resolveHookCredentialsMock.mockResolvedValue(cookieAuth({ codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, 'not a url'))],
+      // A login without an owner is normally held for replay (owner-pending.test.ts); with an API URL that cannot key a hold, there is nothing to hold.
+      ['no owner and nothing to hold', () => resolveHookCredentialsMock.mockResolvedValue(cookieAuth({ s: 'x' }, 'not a url'))],
     ])('enqueues nothing and logs a reason code when %s', async (_n, arrange) => {
       arrange();
       const { logger } = await import('@/utils/logger.js');

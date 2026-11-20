@@ -7,6 +7,7 @@
 import { IncomingHttpHeaders } from 'http';
 import type { CodeMieConfigOptions } from '../../../../env/types.js';
 import type { DesktopRepositoryResolver } from '../../../../telemetry/runtime/DesktopRepositoryResolver.js';
+import type { SSOAuth } from '../auth/index.js';
 
 /**
  * Proxy configuration
@@ -62,6 +63,8 @@ export interface ProxyContext {
   requestStartTime: number;
   targetUrl?: string;
   remotePort?: number;        // TCP source port of the connecting client (used for process CWD lookup)
+  /** The credential the auth-injection interceptor sent this request with. */
+  sentAuth?: SSOAuth;
   metadata: Record<string, unknown>;
 }
 

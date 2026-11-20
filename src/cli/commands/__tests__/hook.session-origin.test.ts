@@ -22,11 +22,14 @@ vi.mock('../../../providers/plugins/sso/index.js', () => ({
   })
 }));
 
-vi.mock('../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(function (this: Record<string, unknown>) {
-    this.getStoredCredentials = vi.fn().mockResolvedValue({ cookies: { session: 'abc123' } });
-  })
-}));
+vi.mock('../../../providers/plugins/sso/auth/index.js', async (importOriginal) => {
+  const { toSSOAuth } = await import('../../../providers/plugins/sso/auth/selection.js');
+  return {
+    ...(await importOriginal<typeof import('../../../providers/plugins/sso/auth/index.js')>()),
+    resolveAnalyticsSSOAuth: vi.fn(async (ssoUrl: string) =>
+      toSSOAuth({ type: 'cookie', record: { cookies: { session: 'abc123' }, apiUrl: ssoUrl } }, ssoUrl)),
+  };
+});
 
 const TMP = join(tmpdir(), `codemie-hook-origin-test-${process.pid}`);
 

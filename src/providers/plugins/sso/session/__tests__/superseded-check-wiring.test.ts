@@ -25,6 +25,12 @@ const GUARDED_CALLS: Array<{ label: string; pattern: RegExp }> = [
  */
 const ALLOWLIST: Record<string, string> = {};
 
+/**
+ * Options that carry the check: named directly, or spread from analyticsAuthFields(), which
+ * includes `credentialsSuperseded` whenever the credentials are cookies.
+ */
+const PASSES_CHECK = /\bcredentialsSuperseded\b|\.\.\.\s*analyticsAuthFields\s*\(/;
+
 interface CallSite {
   file: string;
   line: number;
@@ -122,7 +128,7 @@ describe('credentialsSuperseded wiring', () => {
 
   it('passes credentialsSuperseded at every construction site', () => {
     const missing = sites
-      .filter((site) => !/\bcredentialsSuperseded\b/.test(site.args))
+      .filter((site) => !PASSES_CHECK.test(site.args))
       .filter((site) => !(site.file in ALLOWLIST))
       .map((site) => `${site.file}:${site.line} ${site.call}`);
 
@@ -135,7 +141,7 @@ describe('credentialsSuperseded wiring', () => {
 
   it('keeps no allowlist entry for a file that no longer builds such a client without the check', () => {
     const stale = Object.keys(ALLOWLIST).filter(
-      (file) => !sites.some((site) => site.file === file && !/\bcredentialsSuperseded\b/.test(site.args))
+      (file) => !sites.some((site) => site.file === file && !PASSES_CHECK.test(site.args))
     );
 
     expect(stale).toEqual([]);
@@ -175,6 +181,12 @@ describe('findGuardedCalls', () => {
     const source = "new MetricsSender({ label: ')', credentialsSuperseded })";
 
     expect(findGuardedCalls('x.ts', source)[0].args).toContain('credentialsSuperseded');
+  });
+
+  it('counts options spread from analyticsAuthFields() as passing the check', () => {
+    const source = 'new MetricsSender({ baseUrl: url, ...analyticsAuthFields(auth), timeout: 1 })';
+
+    expect(PASSES_CHECK.test(findGuardedCalls('x.ts', source)[0].args)).toBe(true);
   });
 
   it('finds the aliased factory used by the conversation sync', () => {

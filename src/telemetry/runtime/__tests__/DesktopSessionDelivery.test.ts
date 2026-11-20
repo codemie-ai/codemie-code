@@ -4,10 +4,17 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { logger } from '@/utils/logger.js';
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(function (this: Record<string, unknown>) {
-    this.getStoredCredentials = vi.fn().mockResolvedValue({ cookies: { session: 'abc123' } });
-  })
+vi.mock('@/providers/plugins/sso/auth/index.js', () => ({
+  resolveSSOAuthForUrl: vi.fn().mockResolvedValue({
+    type: 'cookie',
+    apiUrl: 'https://api.example.com',
+    url: 'https://api.example.com',
+    headers: { cookie: 'session=abc123' },
+    authValue: 'session=abc123',
+    fingerprint: 'fp',
+    cookies: { session: 'abc123' },
+    source: 'store',
+  }),
 }));
 
 import { SessionStore } from '@/agents/core/session/SessionStore.js';

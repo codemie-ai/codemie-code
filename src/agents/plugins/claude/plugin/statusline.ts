@@ -27,6 +27,10 @@ import { exec } from '@/utils/exec.js';
 import { parseRoutingHeaders } from '@/utils/routing-headers.mjs';
 import { parseBackendModelName, applyBedrockRegionalPremium } from '@/utils/bedrock-pricing.mjs';
 import { deriveMachineEncryptionKey, decryptWithKey, deriveUrlStorageKey, deriveLegacyUrlStorageKey } from '@/utils/credential-crypto.js';
+// Cookie-vs-JWT selection is the SSO plugin's own pure module (keytar-free, so it bundles), shared
+// with every other request path instead of a statusline-local copy of the rules.
+import { selectRecord, toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { RecordCandidate } from '@/providers/plugins/sso/auth/selection.js';
 // Model-id → rate-card-key resolution is the same module src/utils/pricing.ts's resolvePrice() uses,
 // so the live statusline cost and the analytics report cannot price one id differently.
 import { priceTableKey, resolvePriceKey } from '@/utils/price-resolution.js';
@@ -64,18 +68,28 @@ async function readStoredCredsFile(jwtPrefix, codeMieUrl) {
   return readCredsFile(path.join(CREDS_DIR, `${jwtPrefix}${deriveLegacyUrlStorageKey(codeMieUrl)}.enc`));
 }
 
+/**
+ * Auth headers for the budget request. Reads both credential files (no keychain here) and lets the
+ * SSO plugin's selection rules (`selectRecord`) pick between them, the same rules every other
+ * CodeMie request path uses. A record that is not an object of the expected shape is skipped, so
+ * a corrupt file never throws.
+ */
 export async function getAuthHeaders(codeMieUrl) {
-  const sso = await readStoredCredsFile('', codeMieUrl);
-  if (sso?.cookies) {
-    return { cookie: Object.entries(sso.cookies).map(([k, v]) => `${k}=${v}`).join(';') };
+  const [sso, jwt] = await Promise.all([
+    readStoredCredsFile('', codeMieUrl),
+    readStoredCredsFile('jwt-', codeMieUrl),
+  ]);
+
+  const candidates: RecordCandidate[] = [];
+  if (sso && typeof sso === 'object' && sso.cookies && typeof sso.cookies === 'object') {
+    candidates.push({ type: 'cookie', record: sso });
+  }
+  if (jwt && typeof jwt === 'object' && typeof jwt.token === 'string') {
+    candidates.push({ type: 'jwt', record: jwt });
   }
 
-  const jwt = await readStoredCredsFile('jwt-', codeMieUrl);
-  if (jwt?.token) {
-    return { authorization: `Bearer ${jwt.token}` };
-  }
-
-  return null;
+  const selected = selectRecord(candidates);
+  return selected ? toSSOAuth(selected, codeMieUrl).headers : null;
 }
 
 // --- Pure functions (unit-testable, no filesystem/network access) ---
