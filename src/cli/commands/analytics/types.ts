@@ -265,3 +265,13 @@ export interface OtelCommandOptions extends AnalyticsOptions {
   /** Scope OTEL analytics to one user (matches native user.email or user.id). */
   user?: string;
 }
+
+/** Options of `codemie analytics copilot` — the GitHub Copilot local-artifact scan. */
+export interface CopilotCommandOptions extends AnalyticsOptions {
+  /** Days of history to scan; defaults to the shared date window, else everything on disk. */
+  scanDays?: string;
+  /** Skip the WSL pass (Windows only; a no-op elsewhere). */
+  noWsl?: boolean;
+  /** Skip the VS Code extension pass. */
+  noVscode?: boolean;
+}
