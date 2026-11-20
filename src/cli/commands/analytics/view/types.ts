@@ -103,7 +103,10 @@ export interface AnalyticsSummary {
   filter: { agent: string | null; project: string | null; branch: string | null };
   coverage: Array<{ agentName: string; sessions: number; priced: number; withLog: number }>;
   totals: SummaryTotals;
-  /** Totals of the same-length range just before; null without --compare or when the input does not reach back that far. */
+  /**
+   * Totals of the same-length range just before; null without --compare, when the input does not reach
+   * back that far, or when it was generated before 99% of the current range up to now (`meta.generatedAt`).
+   */
   previous: SummaryTotals | null;
   /** (current − previous) / previous per field; a field is null when its previous value is 0. */
   change: { costUSD: number | null; sessions: number | null; durationMs: number | null } | null;

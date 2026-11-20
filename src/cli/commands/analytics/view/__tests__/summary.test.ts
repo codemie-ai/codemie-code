@@ -395,6 +395,27 @@ describe('buildSummary', () => {
     expect(notCovered.previous).toBeNull();
     expect(notCovered.change).toBeNull();
   });
+
+  it('compares only when the export was generated late enough to observe the current range', () => {
+    const range = { from: Date.UTC(2026, 10, 10), to: Date.UTC(2026, 10, 19, 23, 59, 59, 999) }; // 10 days; NOW is 19 Nov 12:00
+    const sessions = [
+      record({ sessionId: 'now', startTime: Date.UTC(2026, 10, 11, 9), costUSD: 2 }),
+      record({ sessionId: 'before', startTime: Date.UTC(2026, 10, 5, 9), costUSD: 1 }),
+    ];
+    const compare = { ...opts, compare: true };
+    const withGenerated = (generatedAt: string | undefined): ReturnType<typeof buildSummary> =>
+      buildSummary(payload(sessions, { periodStart: '2026-10-01T00:00:00.000Z', generatedAt: generatedAt as string }), range, compare);
+
+    // An archived export, generated a week before now: most of the current range was never observed.
+    const archived = withGenerated('2026-11-12T00:00:00.000Z');
+    expect(archived.totals.sessions).toBe(1);
+    expect(archived.previous).toBeNull();
+    expect(archived.change).toBeNull();
+    // Generated 2 h before now: under 1% of the 10-day range is unobserved, so it compares.
+    expect(withGenerated('2026-11-19T10:00:00.000Z').previous).toMatchObject({ sessions: 1, costUSD: 1 });
+    // An input that does not say when it was generated (a store merged from many exports) is taken as current.
+    expect(withGenerated(undefined).previous).toMatchObject({ sessions: 1, costUSD: 1 });
+  });
 });
 
 describe('parseViewDate', () => {

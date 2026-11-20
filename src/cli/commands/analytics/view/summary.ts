@@ -28,6 +28,8 @@ const DAY_MS = 86_400_000;
 const MAX_DAY_BUCKETS = 35;
 /** At most this many week buckets (about 19 years): a longer range is refused before any is made. */
 const MAX_WEEK_BUCKETS = 1000;
+/** `--compare` is left out when more of the current range than this share was never observed. */
+const MAX_UNOBSERVED_SHARE = 0.01;
 /** Rows in the dead and heavy session lists. */
 const TOP_ROWS = 8;
 // VIEWS.efficiency "Session depth" buckets; the last label is "51+" (app.js prints "50+" for the same > 50 test).
@@ -308,8 +310,13 @@ export function buildSummary(payload: ReportPayload, f: ViewFilter, opts: { comp
   let previous: SummaryTotals | null = null;
   let change: AnalyticsSummary['change'] = null;
   const length = to - from + 1;
-  // Only when the export reaches back to the previous range's start; otherwise it would read as a drop.
-  if (opts.compare && periodStart <= from - length) {
+  // The current range up to now that the export never saw: it was generated before then. An input
+  // that doesn't say when it was generated (a store merged from many exports) is taken as current.
+  const generatedAt = Date.parse(payload.meta.generatedAt ?? '');
+  const unobserved = Number.isFinite(generatedAt) ? Math.max(0, Math.min(to, opts.now) - generatedAt) : 0;
+  // Only when the export reaches back to the previous range's start and saw nearly all of the
+  // current one; otherwise a missing stretch would read as a drop.
+  if (opts.compare && periodStart <= from - length && unobserved <= length * MAX_UNOBSERVED_SHARE) {
     previous = totalsOf(filterRecords(payload.sessions, { ...f, from: from - length, to: from - 1 }));
     change = {
       costUSD: changeOf(totals.costUSD, previous.costUSD),

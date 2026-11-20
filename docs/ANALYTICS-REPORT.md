@@ -435,7 +435,7 @@ codemie analytics view --input <file> [options]
 | `filter` | `{ agent, project, branch }`, each `null` when not given (`project` is `"<redacted>"` when `--project` is given with `--redact`) |
 | `coverage[]` | Per agent: `agentName`, `sessions`, `priced` (sessions with a `costSource`), `withLog` |
 | `totals` | `sessions`, `pricedSessions`, `costUSD`, `cacheReadCostUSD`, `durationMs`, `turns`, `linesAdded`, `linesRemoved`, `netLines`, `filesChanged`, `toolCalls`, `toolSuccessRate` (percent, one decimal), `tokens` `{ input, output, cacheRead, cacheCreation, total }` |
-| `previous` | The same `totals` for the range just before, of the same length. `null` without `--compare`, or when the export does not reach back that far |
+| `previous` | The same `totals` for the range just before, of the same length. `null` without `--compare`, when the export does not reach back that far, or when the export was generated (`meta.generatedAt`) before 99% of the current range up to now, so an archived export never reads as a drop. An input without `generatedAt` (a store merged from many exports) is taken as current |
 | `change` | `{ costUSD, sessions, durationMs }` as (current - previous) / previous; a field is `null` when its previous value is 0. `null` when `previous` is `null` |
 | `series[]` | One bucket per local calendar day (Monday-start weeks for `bucket: "week"`): `from`, `to`, `sessions`, `costUSD`, `tokens` (total), `durationMs`. The first bucket starts at `range.from` and the last ends at `range.to`, so no bucket covers time outside the range |
 | `tools[]` | `name`, `calls`, `success`, `failure`, `successRate` (whole percent); most calls first |
