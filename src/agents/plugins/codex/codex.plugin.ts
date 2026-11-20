@@ -50,7 +50,9 @@ import { sendPathApiUrl } from '../../core/session/send-path.js';
 import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { CodexSessionAdapter } from './codex.session.js';
+import { CodexSessionAdapter, resolveParentRollout } from './codex.session.js';
+import { computeActiveDuration } from './codex.active-duration.js';
+import { SessionStore } from '../../core/session/SessionStore.js';
 import {
   assertExplicitCodexModelAllowed,
   isCodexCompatibleModelName,
@@ -352,7 +354,7 @@ export const CodexPluginMetadata: AgentMetadata = {
 
       // Stop the in-process incremental sync timer first so it doesn't race
       // the final flush below.
-      stopCodexIncrementalSync(sessionId);
+      await stopCodexIncrementalSync(sessionId);
 
       // 1. Process rollout file → MetricDelta JSONL (must run before SessionEnd sync)
       try {
@@ -389,6 +391,9 @@ export const CodexPluginMetadata: AgentMetadata = {
           } else {
             logger.warn(`[codex] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
           }
+
+          // The tick timer is stopped, so nothing can overwrite this; SessionEnd's accumulate leaves it alone
+          await storeActiveDuration(sessionId, rollout.filePath, startedAt);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -415,6 +420,32 @@ export const CodexPluginMetadata: AgentMetadata = {
     },
   },
 };
+
+/**
+ * Write the session's active time (sum of the parent rollout's turns) on its record. Assigned, not
+ * added; failures never block session end.
+ */
+async function storeActiveDuration(sessionId: string, pickedRollout: string, runStart: number): Promise<void> {
+  try {
+    const parentRollout = await resolveParentRollout(pickedRollout);
+    const value = await computeActiveDuration(parentRollout, runStart, Date.now());
+    if (value <= 0) {
+      return;
+    }
+    const store = new SessionStore();
+    const session = await store.loadSession(sessionId);
+    if (!session) {
+      logger.debug(`[codex] No session record for ${sessionId}; active duration not stored`);
+      return;
+    }
+    session.activeDurationMs = value;
+    await store.saveSession(session);
+    logger.debug(`[codex] Active duration ${value}ms stored for session ${sessionId}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.warn(`[codex] Could not store active duration (non-blocking): ${msg}`);
+  }
+}
 
 function getExplicitModelArg(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {

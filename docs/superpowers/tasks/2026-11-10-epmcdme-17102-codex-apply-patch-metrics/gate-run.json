@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17102",
+  "head": "a4244ceef84af236c761476e8a302ca8b9f63f30",
+  "runner": "npm",
+  "started_at": "2026-11-10T17:24:05Z",
+  "completed_at": "2026-11-10T17:26:53Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1813,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3050,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3816,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6355,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 94358,
+      "command": "npx vitest run --project unit --maxWorkers=3",
+      "exit_code": 0,
+      "notes": "User-approved last retry: reduced parallel load because earlier runs failed only on load-sensitive timing tests; a manual run with --maxWorkers=3 passed 9484/9484."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 57935,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 825,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\". Nothing was scanned; stage changes or run CI Gitleaks scan to settle."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 426,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {}
+}

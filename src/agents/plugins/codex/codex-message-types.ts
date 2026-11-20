@@ -131,6 +131,7 @@ export interface CodexSessionMetadata {
   repository?: string;
   branch?: string;
   codexSessionId: string;   // UUID from session_meta.id (unique per rollout file)
+  rolloutPath?: string;      // Absolute path of the parsed rollout file
   model?: string;            // Resolved model string (turn_context.model or session_meta.model_provider)
   cliVersion?: string;
 }
