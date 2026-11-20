@@ -11,6 +11,18 @@ const agentMaxWorkers = (() => {
 // (e.g. two CI jobs, or a local run alongside watch mode) never share a log directory.
 const testCodemieHome = join(tmpdir(), `codemie-test-home-${process.pid}`);
 
+// Shared by every project. Its keys are exempt from tests/setup/clean-env.ts, which removes
+// inherited CODEMIE_*/ANTHROPIC_* and similar variables: VITEST_PRESERVE_ENV lists them for it.
+const sharedTestEnv = {
+  FORCE_COLOR: '1',
+  NODE_ENV: 'test',
+  CODEMIE_HOME: testCodemieHome,
+};
+const testEnv = {
+  ...sharedTestEnv,
+  VITEST_PRESERVE_ENV: Object.keys(sharedTestEnv).join(','),
+};
+
 export default defineConfig({
   test: {
     projects: [
@@ -28,11 +40,7 @@ export default defineConfig({
           isolate: true,
           // Drop inherited CODEMIE_*/ANTHROPIC_* (e.g. from a codemie-claude session)
           setupFiles: ['./tests/setup/clean-env.ts'],
-          env: {
-            FORCE_COLOR: '1',
-            NODE_ENV: 'test',
-            CODEMIE_HOME: testCodemieHome,
-          },
+          env: testEnv,
           coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
@@ -64,11 +72,9 @@ export default defineConfig({
           hookTimeout: 10_000,
           isolate: true,
           sequence: { groupOrder: 1 },
-          env: {
-            FORCE_COLOR: '1',
-            NODE_ENV: 'test',
-            CODEMIE_HOME: testCodemieHome,
-          },
+          // Same isolation as the unit project: these tests spawn the CLI and inherit the worker env
+          setupFiles: ['./tests/setup/clean-env.ts'],
+          env: testEnv,
         },
         resolve: {
           alias: { '@': '/src' },
@@ -87,11 +93,7 @@ export default defineConfig({
           isolate: true,
           sequence: { groupOrder: 2 },
           reporters: ['verbose'],
-          env: {
-            FORCE_COLOR: '1',
-            NODE_ENV: 'test',
-            CODEMIE_HOME: testCodemieHome,
-          },
+          env: testEnv,
         },
         resolve: {
           alias: { '@': '/src' },
