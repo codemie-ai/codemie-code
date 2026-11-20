@@ -109,7 +109,6 @@ export class AnalyticsSwitch {
     const checkpoint = record.runtimeCheckpoint;
     let cutoff: number | undefined;
     if (!this.rebased.has(record.sessionId)) {
-      this.rebased.add(record.sessionId);
       const stamp = checkpoint?.collectionGeneration;
       cutoff = this.forwardOnlyFrom ?? (stamp !== undefined && stamp !== this.generation ? this.generationSince : undefined);
     }
@@ -117,6 +116,11 @@ export class AnalyticsSwitch {
       ...(cutoff !== undefined && { baselineCutoffMs: Math.max(checkpoint?.baselineCutoffMs ?? cutoff, cutoff) }),
       ...(this.generation !== undefined && { collectionGeneration: this.generation })
     };
+  }
+
+  /** Marks a record rebased once its checkpoint is saved; until then the next call owes the same cutoff again. */
+  confirmRebased(sessionId: string): void {
+    this.rebased.add(sessionId);
   }
 
   /** A record created now needs no rebase; it is stamped with the current generation. */

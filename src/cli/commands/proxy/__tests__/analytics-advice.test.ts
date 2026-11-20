@@ -190,7 +190,7 @@ describe('analytics advice', () => {
     const lastLine = (): string => out().split('\n').find((l) => l.includes('These settings do not affect')) as string;
     await run(['status']);
     expect(lastLine()).toBe(
-      '  These settings do not affect Claude Desktop chats (exclusions are not applied to them), the daily analytics collector and the session sync that `codemie claude` runs itself.'
+      '  These settings do not affect the daily analytics collector and the session sync that `codemie claude` runs itself.'
     );
     logSpy.mockClear();
     await run(['status', '--copilot-cli-otlp']);
