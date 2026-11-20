@@ -28,7 +28,8 @@ export interface CopilotRunWindows {
  * the window does not depend on the report's filter.
  */
 export async function copilotRunWindows(ordered: ParsedEntry[], nextSiblingStart: Map<string, number>, deps: EnricherDeps): Promise<CopilotRunWindows> {
-  const runs = ordered.filter((entry) => entry.filePath && !entry.parsed && isCopilotRun(entry.agentName));
+  // A native session discovery captured is priced from that capture (its parse or its replay recipe).
+  const runs = ordered.filter((entry) => entry.filePath && !entry.parsed && !entry.recipe && isCopilotRun(entry.agentName));
   const started = runs.filter((entry) => entry.startTime).map((entry) => entry.sessionId);
   const diskBounds = started.length > 0 ? await deps.nextRecordStarts?.(started) : undefined;
   const bounds = new Map(runs.map((entry) => [entry.sessionId, earliest(nextSiblingStart.get(entry.sessionId), diskBounds?.get(entry.sessionId))]));

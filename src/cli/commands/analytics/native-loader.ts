@@ -13,11 +13,20 @@
  */
 
 import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
-import { basename, dirname, join, win32 } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
 import type { FileOperation, MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
+import type { JSONLSnapshot } from '../../../agents/core/session/utils/jsonl-reader.js';
+import {
+  appendPiForkedContinuation,
+  recordParse,
+  replayPart,
+  type FamilyRecipe,
+  type PiForkPart,
+  type TranscriptPart,
+} from './parsed-family.js';
 import type { SessionDescriptor } from '../../../agents/core/session/discovery-types.js';
 import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
@@ -29,7 +38,7 @@ import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
-import { PI_FORKED_CONTINUATION, PI_SUBAGENT_RUN, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
+import { PI_SUBAGENT_RUN, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
 import { extractPiNamedInvocations, sumPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
 import { extractPiFileOperations, type PiFileOperationContext } from '../../../agents/plugins/pi/session/pi-file-operations.js';
 import {
@@ -41,7 +50,6 @@ import {
   type PiEntry,
   type PiToolCall,
 } from '../../../agents/plugins/pi/pi.types.js';
-import { COPILOT_CLI_AGENT_NAME, COPILOT_DESKTOP_AGENT_NAME } from '../../../agents/plugins/copilot-cli/copilot-cli.constants.js';
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
@@ -227,9 +235,7 @@ export const realNativeDeps: NativeLoaderDeps = {
     return found;
   },
   async parse(agentName, filePath, sessionId) {
-    const adapter = AgentRegistry.getAgent(
-      sessionAdapterKey(agentName === COPILOT_DESKTOP_AGENT_NAME ? COPILOT_CLI_AGENT_NAME : agentName)
-    )?.getSessionAdapter?.();
+    const adapter = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
     if (!adapter) {
       return null;
     }
@@ -711,15 +717,24 @@ function windowDays(filter?: AnalyticsFilter): number {
 
 /** A discovered Pi transcript, parsed once, with the fork source its own header names. */
 interface PiTranscript {
+  agentName: string;
   descriptor: SessionDescriptor;
   /** Symlink-resolved path — the identity every dedup in this module keys on. */
   realPath: string;
+  /** Whether the transcript parsed; it is folded or reported only when it did. */
+  parseable: boolean;
+  /** The input it was parsed from; it is re-read from this when its family is built. */
+  snapshot?: JSONLSnapshot;
+  /** The parse itself, kept only when it cannot be replayed (no snapshot). */
   parsed: ParsedSession | null;
   /** Real path of the transcript this one forked from; set only when that source is also discovered. */
   parentRealPath?: string;
 }
 
-/** Parse every discovered Pi transcript once and resolve the fork source each header names. */
+/**
+ * Parse every discovered Pi transcript and resolve the fork source each header names. Keeps
+ * what each was parsed from, not the parse: the families are built one at a time later.
+ */
 async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoaderDeps): Promise<PiTranscript[]> {
   const piDiscoveredPaths = new Set(
     discovered.filter((d) => isPiFamilyAgent(d.agentName)).map((d) => deps.realPath(d.descriptor.filePath))
@@ -730,13 +745,16 @@ async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoa
     if (!isPiFamilyAgent(agentName)) {
       continue;
     }
-    const parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
+    const { parsed, snapshot } = await recordParse(deps.parse, agentName, descriptor.filePath, descriptor.sessionId);
     const parentSession = (parsed?.metadata as { parentSession?: string } | undefined)?.parentSession;
     const parentRealPath = parentSession ? deps.realPath(parentSession) : undefined;
     transcripts.push({
+      agentName,
       descriptor,
       realPath: deps.realPath(descriptor.filePath),
-      parsed,
+      parseable: parsed !== null,
+      ...(snapshot && { snapshot }),
+      parsed: snapshot ? null : parsed,
       ...(parentRealPath && piDiscoveredPaths.has(parentRealPath) && { parentRealPath }),
     });
   }
@@ -744,8 +762,8 @@ async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoa
 }
 
 /**
- * The continuations to leave out of the listing, because the adapter already folded each one
- * into the transcript it grew out of.
+ * Which `/fork` continuations fold into which root transcript, and so are left out of the
+ * listing. {@link buildPiFamily} folds exactly the forks planned here.
  *
  * A `/fork` continuation is not a new conversation, it is the same one carried into a new file:
  * it replays the prior conversation VERBATIM and names its source in the header's
@@ -753,7 +771,7 @@ async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoa
  * real corpus, 12 files for 2 conversations, with every derived per-session metric wrong by the
  * same factor.
  *
- * Folding and suppression happen HERE, together, in one pass, because they must agree exactly:
+ * Folding and suppression are decided HERE, together, in one pass, because they must agree exactly:
  * a file suppressed but not folded loses its spend outright, and one folded but not suppressed
  * has it billed twice. An earlier design folded in the session adapter and suppressed here, and
  * the two disagreed in both directions — including for a cross-directory fork
@@ -768,9 +786,10 @@ async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoa
  * The source must still be in the listing. A fork whose source fell outside the discovery
  * window has nobody to be counted inside, and dropping it would delete its spend from the report.
  */
-function foldPiForkFamilies(transcripts: PiTranscript[]): Set<string> {
+function planPiForkFamilies(transcripts: PiTranscript[]): PiForkPlan {
   const byRealPath = new Map(transcripts.map((t) => [t.realPath, t]));
   const suppressed = new Set<string>();
+  const forksOf = new Map<string, PiTranscript[]>();
 
   /** The oldest ancestor still in the listing, so a fork of a fork folds into one session. */
   const rootOf = (start: PiTranscript): PiTranscript => {
@@ -778,7 +797,7 @@ function foldPiForkFamilies(transcripts: PiTranscript[]): Set<string> {
     const seen = new Set<string>([current.realPath]);
     for (;;) {
       const parent = current.parentRealPath ? byRealPath.get(current.parentRealPath) : undefined;
-      if (!parent?.parsed || seen.has(parent.realPath)) {
+      if (!parent?.parseable || seen.has(parent.realPath)) {
         return current; // no parent in the listing, or a cyclic parentSession chain
       }
       seen.add(parent.realPath);
@@ -787,25 +806,76 @@ function foldPiForkFamilies(transcripts: PiTranscript[]): Set<string> {
   };
 
   for (const transcript of transcripts) {
-    if (!transcript.parsed || !transcript.parentRealPath) {
+    if (!transcript.parseable || !transcript.parentRealPath) {
       continue;
     }
     const root = rootOf(transcript);
-    if (root === transcript || !root.parsed) {
+    if (root === transcript || !root.parseable) {
       continue; // its source is not in the listing — report it on its own or its spend is lost
     }
-    root.parsed.subagents = [
-      ...(root.parsed.subagents ?? []),
-      {
-        agentId: basename(transcript.realPath, '.jsonl'),
-        filePath: transcript.realPath,
-        agentType: PI_FORKED_CONTINUATION,
-        messages: transcript.parsed.messages ?? [],
-      },
-    ];
+    forksOf.set(root.realPath, [...(forksOf.get(root.realPath) ?? []), transcript]);
     suppressed.add(transcript.realPath);
   }
-  return suppressed;
+  return { suppressed, forksOf };
+}
+
+/** Which Pi transcripts fold into which root, and the ones that therefore are not reported alone. */
+interface PiForkPlan {
+  suppressed: Set<string>;
+  /** Root real path → its forks, in discovery order. */
+  forksOf: Map<string, PiTranscript[]>;
+}
+
+/** A transcript's snapshot as a replayable part. */
+function partOf(agentName: string, descriptor: SessionDescriptor, snapshot: JSONLSnapshot): TranscriptPart {
+  return { agentName, filePath: descriptor.filePath, sessionId: descriptor.sessionId, snapshot };
+}
+
+/** A Pi transcript's parse: replayed from its snapshot, or the one kept when it has none. */
+function piParse(transcript: PiTranscript, deps: NativeLoaderDeps): Promise<ParsedSession | null> {
+  return transcript.snapshot
+    ? replayPart(deps.parse, partOf(transcript.agentName, transcript.descriptor, transcript.snapshot)).then((r) => r.result)
+    : Promise.resolve(transcript.parsed);
+}
+
+/**
+ * Build one Pi root's family — the root with its forks folded in — and the recipe that rebuilds
+ * it, or none when a member cannot be replayed (then the family itself must be kept).
+ */
+async function buildPiFamily(
+  root: PiTranscript,
+  forks: PiTranscript[],
+  deps: NativeLoaderDeps
+): Promise<{ parsed: ParsedSession | null; recipe?: FamilyRecipe }> {
+  const parsed = await piParse(root, deps);
+  if (!parsed) return { parsed: null };
+  for (const fork of forks) {
+    const forkParsed = await piParse(fork, deps);
+    if (forkParsed) appendPiForkedContinuation(parsed, fork.realPath, forkParsed);
+  }
+  if (!root.snapshot || forks.some((fork) => !fork.snapshot)) return { parsed };
+  const piForks: PiForkPart[] = forks.map((fork) => ({
+    ...partOf(fork.agentName, fork.descriptor, fork.snapshot as JSONLSnapshot),
+    realPath: fork.realPath,
+  }));
+  return { parsed, recipe: { root: partOf(root.agentName, root.descriptor, root.snapshot), ...(piForks.length && { piForks }) } };
+}
+
+/**
+ * Synthesize a session and keep, for cost enrichment, the recipe that replays its parsed family
+ * when there is one — never the family itself, which ran multi-GB histories out of memory.
+ */
+function synthesizeCaptured(
+  agentName: string,
+  descriptor: SessionDescriptor,
+  parsed: ParsedSession,
+  recipe: FamilyRecipe | undefined
+): RawSessionData {
+  const raw = synthesizeRawSession(agentName, descriptor, parsed);
+  if (recipe) {
+    raw[INTERNAL_PARSED_FAMILY] = { recipe, capturedAt: raw[INTERNAL_PARSED_FAMILY]?.capturedAt ?? Date.now() };
+  }
+  return raw;
 }
 
 /**
@@ -826,23 +896,24 @@ export async function loadNativeSessions(
     ? discovered.filter(({ descriptor }) => descriptor.sessionId === filter.sessionId)
     : discovered;
 
-  // Parse each Codex session ONCE (cached for reuse below) and collect the child thread IDs each
-  // parent references via spawn/wait collaboration events, so those sub-agent rollouts are not
-  // double-counted as standalone sessions (they are counted inside their parent — see
-  // readCodexSubagentUsage in the cost enricher).
-  const codexParsed = new Map<string, ParsedSession | null>();
+  // Parse each Codex session ONCE, synthesize it (kept for reuse below), and collect the child
+  // thread IDs each parent references via spawn/wait collaboration events, so those sub-agent
+  // rollouts are not double-counted as standalone sessions (they are counted inside their parent —
+  // see readCodexSubagentUsage in the cost enricher). The parse itself is not kept.
+  const codexSessions = new Map<string, RawSessionData | null>();
   const codexChildThreads = new Set<string>();
   for (const { agentName, descriptor } of scoped) {
     if (!isCodexFamilyAgent(agentName)) {
       continue;
     }
-    const parsed = await deps.parse('codex', descriptor.filePath, descriptor.sessionId);
-    codexParsed.set(descriptor.filePath, parsed);
+    const { parsed, snapshot } = await recordParse(deps.parse, 'codex', descriptor.filePath, descriptor.sessionId);
     if (parsed?.messages) {
       for (const id of collectCodexChildThreadIds(parsed.messages)) {
         codexChildThreads.add(id);
       }
     }
+    const recipe = snapshot && { root: partOf('codex', descriptor, snapshot) };
+    codexSessions.set(descriptor.filePath, parsed ? synthesizeCaptured(agentName, descriptor, parsed, recipe) : null);
   }
 
   // Same shape for Pi, one level up: parse each transcript ONCE, then drop the `/fork`
@@ -856,7 +927,7 @@ export async function loadNativeSessions(
     !filter?.sessionId || scoped.some(({ agentName }) => isPiFamilyAgent(agentName));
   const piTranscripts = needsPiFamily ? await readPiTranscripts(discovered, deps) : [];
   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
-  const piForkedChildren = foldPiForkFamilies(piTranscripts);
+  const { suppressed: piForkedChildren, forksOf: piForksOf } = planPiForkFamilies(piTranscripts);
 
   const out: RawSessionData[] = [];
   for (const { agentName, descriptor } of scoped) {
@@ -875,18 +946,22 @@ export async function loadNativeSessions(
     if (tracked.has(deps.realPath(descriptor.filePath))) {
       continue; // already tracked by CodeMie — avoid double counting
     }
-    let parsed: ParsedSession | null;
+    let raw: RawSessionData | null;
     if (isCodexFamilyAgent(agentName)) {
-      parsed = codexParsed.get(descriptor.filePath) ?? null;
+      raw = codexSessions.get(descriptor.filePath) ?? null;
     } else if (isPiFamilyAgent(agentName)) {
-      parsed = piByRealPath.get(deps.realPath(descriptor.filePath))?.parsed ?? null;
+      const transcript = piByRealPath.get(deps.realPath(descriptor.filePath));
+      const family = transcript
+        ? await buildPiFamily(transcript, piForksOf.get(transcript.realPath) ?? [], deps)
+        : { parsed: null };
+      raw = family.parsed ? synthesizeCaptured(agentName, descriptor, family.parsed, family.recipe) : null;
     } else {
-      parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
+      const { parsed, snapshot } = await recordParse(deps.parse, agentName, descriptor.filePath, descriptor.sessionId);
+      raw = parsed ? synthesizeCaptured(agentName, descriptor, parsed, snapshot && { root: partOf(agentName, descriptor, snapshot) }) : null;
     }
-    if (!parsed) {
+    if (!raw) {
       continue;
     }
-    const raw = synthesizeRawSession(agentName, descriptor, parsed);
     if (raw.startEvent && !deps.hasOwnershipMarker(descriptor.filePath)) {
       // Truly analytics-only agents can never carry an ownership marker, so tagging them
       // 'native-external' would drop 100% of their sessions from the default report. They

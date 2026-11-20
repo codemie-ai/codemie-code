@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
+import { readJSONLTolerant } from '../../../../agents/core/session/utils/jsonl-reader.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
 // hoisting transform actually lifts it above the static `native-loader.js` import above).
@@ -210,36 +211,45 @@ describe('loadNativeSessions', () => {
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
 
-  it('reuses one growing transcript capture for discovery and cost enrichment', async () => {
-    let parseCalls = 0;
-    const parse = async () => {
-      parseCalls += 1;
-      const inputTokens = parseCalls === 1 ? 1_000_000 : 2_000_000;
-      return ({
-        sessionId: 'growing', agentName: 'claude', metadata: {}, metrics: { tools: {} },
-        messages: [{
-          type: 'assistant', timestamp: '2026-06-08T10:00:00Z', requestId: `r-${parseCalls}`,
-          message: { id: `m-${parseCalls}`, role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: inputTokens, output_tokens: 0 } },
-        }],
-      }) as never;
+  it('prices a growing transcript from the input discovery read, not from what was appended later', async () => {
+    const dir = join(tmpdir(), `native-loader-growing-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, 'growing.jsonl');
+    const turn = (n: number, inputTokens: number): string =>
+      JSON.stringify({
+        type: 'assistant', timestamp: `2026-06-08T10:0${n}:00Z`, requestId: `r-${n}`,
+        message: { id: `m-${n}`, role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: inputTokens, output_tokens: 0 } },
+      }) + '\n';
+    writeFileSync(filePath, turn(1, 1_000_000));
+    let parses = 0;
+    // A real read through the snapshot-aware reader, as the Claude adapter does.
+    const parse = async (_agent: string, path: string) => {
+      parses += 1;
+      const messages = await readJSONLTolerant<Record<string, unknown>>(path);
+      return { sessionId: 'growing', agentName: 'claude', metadata: {}, metrics: { tools: {} }, messages } as never;
     };
-    const deps: NativeLoaderDeps = {
-      trackedLogPaths: () => new Set(),
-      discover: async () => [{ agentName: 'claude', descriptor: { sessionId: 'growing', filePath: '/logs/growing.jsonl', createdAt: 1, agentName: 'claude' } }],
-      parse,
-      realPath: (p) => p,
-      hasOwnershipMarker: () => true,
-    };
+    try {
+      const sessions = await loadNativeSessions(undefined, {
+        trackedLogPaths: () => new Set(),
+        discover: async () => [{ agentName: 'claude', descriptor: { sessionId: 'growing', filePath, createdAt: 1, agentName: 'claude' } }],
+        parse,
+        realPath: (p) => p,
+        hasOwnershipMarker: () => true,
+      });
+      // The live session keeps writing between discovery and cost enrichment.
+      writeFileSync(filePath, turn(1, 1_000_000) + turn(2, 2_000_000));
 
-    const sessions = await loadNativeSessions(undefined, deps);
-    const { index } = await enrichCosts(sessions, {
-      resolveAgentName: () => 'claude',
-      loadAgentSessionFile: async () => '/logs/growing.jsonl',
-      parseNative: parse,
-    });
+      const { index } = await enrichCosts(sessions, {
+        resolveAgentName: () => 'claude',
+        loadAgentSessionFile: async () => filePath,
+        parseNative: parse,
+      });
 
-    expect(parseCalls).toBe(1);
-    expect(index.get('growing')?.tokens.input).toBe(1_000_000);
+      expect(parses).toBe(2); // discovery, then a replay of the same bytes — the parse is not kept
+      expect(index.get('growing')?.tokens.input).toBe(1_000_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

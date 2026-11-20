@@ -11,6 +11,7 @@ import { getCodemiePath } from '../../../utils/paths.js';
 import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
 import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
+import type { FamilyRecipe } from './parsed-family.js';
 
 /**
  * Private hand-off between native discovery and report-time enrichment.
@@ -19,8 +20,14 @@ import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdap
  */
 export const INTERNAL_PARSED_FAMILY: unique symbol = Symbol('analytics.parsedFamily');
 
+/**
+ * One report run's view of a native log: how to replay its parsed family from the exact input
+ * discovery read ({@link FamilyRecipe}), or — when its reads cannot be replayed (a whole-file
+ * JSON chat, a SQLite store) — the parsed family itself.
+ */
 export interface InternalParsedFamilyCapture {
-  parsed: ParsedSession;
+  recipe?: FamilyRecipe;
+  parsed?: ParsedSession;
   capturedAt: number;
 }
 
