@@ -1,14 +1,15 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import TOML from '@iarna/toml';
 
 import { CODEX_DESKTOP } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { CODEMIE_PROVIDER_ID, findManagedRegions, replaceManagedAuthorization } from './codex-config-toml.js';
 import { getCodexDesktopConfigPath } from './codex-desktop.js';
-import { gatewayKeyReading, loopbackPortOf, writeAtomically, type ConnectorGateway } from './vscode.js';
+import { gatewayKeyReading, loopbackPortOf, type ConnectorGateway } from './vscode.js';
 
 function isTable(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -44,8 +45,8 @@ export async function readCodexDesktopGateway(
 /**
  * Moves the Codex config from the shared key of the daemon of gateway key `gatewayKey`, listening on `port`, to
  * Codex's named key: only the `Authorization` value of the managed provider table becomes
- * `Bearer <gatewayKey>.codex-desktop`; no backup and no state file is written. `moved` when written; `left` for a
- * config file that is a symbolic link, not written; `unchanged` when the reader gives another port than `port` or
+ * `Bearer <gatewayKey>.codex-desktop`; no backup and no state file is written. `moved` when written (a symbolic link
+ * written through); `unchanged` when the reader gives another port than `port` or
  * anything but the shared key (a named or refused key, no CodeMie block, a missing or unreadable file). A failed
  * write, or a result that would not read back as the named key, throws.
  */
@@ -53,10 +54,9 @@ export async function moveCodexDesktopToNamedKey(
   gatewayKey: string,
   port: number,
   configPath: string = getCodexDesktopConfigPath()
-): Promise<'moved' | 'left' | 'unchanged'> {
+): Promise<'moved' | 'unchanged'> {
   const gateway = await readCodexDesktopGateway(gatewayKey, configPath);
   if (gateway?.port !== port || gateway.key !== 'shared') return 'unchanged';
-  if ((await lstat(configPath)).isSymbolicLink()) return 'left';
 
   const namedKey = `${gatewayKey}.${CODEX_DESKTOP}`;
   const next = replaceManagedAuthorization(await readFile(configPath, 'utf-8'), namedKey);
@@ -69,7 +69,7 @@ export async function moveCodexDesktopToNamedKey(
     );
   }
 
-  await writeAtomically(configPath, next);
+  await writeFileAtomic(configPath, next);
   logger.info('[proxy] Moved Codex desktop to its named key', ...sanitizeLogArgs({ configPath }));
   return 'moved';
 }

@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import {
@@ -30,13 +30,14 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
 import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import { CHAT_HOOK_EVENT_NAMES } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.types.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import { getVsCodeProductDir, writeAtomically } from './vscode.js';
+import { getVsCodeProductDir, removeFileThroughLink, writeAtomically } from './vscode.js';
 
 const HOOK_FILE_LOCATIONS_KEY = 'chat.hookFilesLocations';
 const USE_HOOKS_KEY = 'chat.useHooks';
@@ -44,6 +45,8 @@ export const CHAT_HOOK_TIMEOUT_SECONDS = 30;
 
 export interface WriteCopilotChatOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotChatOtlpResult {
@@ -226,7 +229,10 @@ function resolveAbsoluteHookCommand(): string {
   return `${JSON.stringify(process.execPath)} ${JSON.stringify(cliEntry)} hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`;
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotChatOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }
@@ -361,7 +367,7 @@ export async function removeCopilotChatOtlpConfig(
   await writeAtomically(settingsPath, nextText);
 
   if (existsSync(hookFilePath)) {
-    await unlink(hookFilePath);
+    await removeFileThroughLink(hookFilePath);
   }
   await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
 

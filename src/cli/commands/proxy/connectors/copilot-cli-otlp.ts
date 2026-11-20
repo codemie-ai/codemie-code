@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -19,19 +19,22 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
 import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import { getCopilotHome } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import { CLI_HOOK_EVENT_NAMES, COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { writeAtomically } from './vscode.js';
+import { removeFileThroughLink, writeAtomically } from './vscode.js';
 
 export const CLI_HOOK_TIMEOUT_SECONDS = 30;
 const CLI_HOOK_FILE_NAME = 'codemie-copilot-cli-hooks.json';
 
 export interface WriteCopilotCliOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotCliOtlpResult {
@@ -99,7 +102,10 @@ export function buildHookFileContent(): Record<string, unknown> {
   return { version: 1, hooks };
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotCliOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CLI_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }
@@ -166,7 +172,7 @@ export async function removeCopilotCliOtlpConfig(
 
   const existed = existsSync(hookFilePath);
   if (existed) {
-    await unlink(hookFilePath);
+    await removeFileThroughLink(hookFilePath);
   }
   await writeCopilotConnectorScope(COPILOT_CLI_OTLP_AGENT_NAME, { enabled: false });
 

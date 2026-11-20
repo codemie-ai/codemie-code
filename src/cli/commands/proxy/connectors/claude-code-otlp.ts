@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs';
 import type { HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -19,7 +20,7 @@ import {
   rewriteHooksCommandTree,
 } from '@/utils/hook-command.js';
 import { readState } from '../daemon-manager.js';
-import { writeAtomically } from './vscode.js';
+import { isSymbolicLink, removeFileThroughLink, writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
   type AllowlistScope,
@@ -30,10 +31,14 @@ import {
   parseAllowlist,
   removeProjectPath,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
-  force?: boolean;
+  /** Replace conflicting settings and an invalid project list (`--overwrite`). */
+  overwrite?: boolean;
   scope?: AllowlistScope;
+  /** With no `scope`: a stored list of named projects is written back as it is, anything else is all projects. */
+  keepProjectList?: boolean;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -121,7 +126,7 @@ const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
  * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
  * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
  * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
- * to today's default with no `--force`, and a disconnect still clean it up.
+ * to today's default with no `--overwrite`, and a disconnect still clean it up.
  */
 const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
   OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
@@ -168,8 +173,18 @@ export function isCodemieOwnedEnvValue(
   return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
+// The only shape `connect` writes (daemon binds 127.0.0.1); anything else is the user's own destination.
+const LOCAL_DAEMON_ENDPOINT = /^http:\/\/127\.0\.0\.1:\d{1,5}\/v1\/analytics\/otlp$/;
+
+/** True if `env` holds codemie's own local-daemon endpoint/header pair, for whatever port and gateway key it was written. */
+export function isOwnedLocalDaemonOtlpEnv(env: Record<string, unknown>): boolean {
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  return isCodemieOwnedEnvValue('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint, env) &&
+    typeof endpoint === 'string' && LOCAL_DAEMON_ENDPOINT.test(endpoint);
+}
+
 /**
- * Puts a value a `--force` connect once displaced into `backupEnv` back
+ * Puts a value an `--overwrite` connect once displaced into `backupEnv` back
  * into `baseEnv`, for any key `baseEnv` doesn't hold — only while `liveEnv`
  * still carries codemie's OWN value right now (AC3: a user edit since then
  * leaves `baseEnv` untouched).
@@ -490,7 +505,7 @@ export async function writeClaudeCodeOtlpConfig(
 ): Promise<WriteClaudeCodeOtlpResult> {
   const state = await readState();
   if (!state) {
-    throw new ConfigurationError('No live proxy daemon. Run: codemie proxy start');
+    throw new ConfigurationError(renderHint({ reason: 'No live proxy daemon', command: 'codemie proxy start' }));
   }
 
   // Always user-level: the allowlist (not the settings location) decides which projects are tracked.
@@ -508,6 +523,7 @@ export async function writeClaudeCodeOtlpConfig(
   // --- Conflict detection: env values AND malformed (non-array) hooks entries ---
   const existingEnv = existing.env ?? {};
   const envConflicts: string[] = [];
+  const ownsLocalDaemonPair = isOwnedLocalDaemonOtlpEnv(existingEnv);
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
@@ -515,8 +531,12 @@ export async function writeClaudeCodeOtlpConfig(
       continue;
     }
     // A prior CodeMie version's own value for this key — migrated to today's default by
-    // this same write below, not a conflict requiring --force.
+    // this same write below, not a conflict requiring --overwrite.
     if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    // Codemie's own pair written for an earlier daemon port or gateway key — re-pointed, not a conflict.
+    if ((key === 'OTEL_EXPORTER_OTLP_ENDPOINT' || key === 'OTEL_EXPORTER_OTLP_HEADERS') && ownsLocalDaemonPair) {
       continue;
     }
     envConflicts.push(key);
@@ -532,7 +552,7 @@ export async function writeClaudeCodeOtlpConfig(
     }
   }
 
-  if ((envConflicts.length > 0 || malformedHookEvents.length > 0) && !opts.force) {
+  if ((envConflicts.length > 0 || malformedHookEvents.length > 0) && !opts.overwrite) {
     const parts: string[] = [];
     if (envConflicts.length > 0) {
       parts.push(`conflicting env values for: ${envConflicts.join(', ')}`);
@@ -541,23 +561,28 @@ export async function writeClaudeCodeOtlpConfig(
       parts.push(`non-array hooks entries for: ${malformedHookEvents.join(', ')}`);
     }
     throw new ConfigurationError(
-      `Claude Code settings already contain ${parts.join('; ')}. Re-run with --force to overwrite.`
+      renderHint({
+        reason: `Claude Code settings already contain ${parts.join('; ')}`,
+        action: 're-run with --overwrite to replace them',
+      })
     );
   }
 
   // --- Allowlist pre-check (before anything is written) ---
   const rawAllowlist: unknown = existingEnv[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV];
   const existingAllowlist = parseAllowlist(rawAllowlist);
-  if (existingAllowlist.kind === 'invalid' && !opts.force) {
+  if (existingAllowlist.kind === 'invalid' && !opts.overwrite) {
     throw new ConfigurationError(
       `Claude Code settings contain an invalid ${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} value: ${JSON.stringify(rawAllowlist)}. ` +
-      `Fix it manually (expected a JSON array of absolute paths, e.g. '["/path/to/project"]') or re-run with --force to discard it.`
+      `Fix it manually (expected a JSON array of absolute paths, e.g. '["/path/to/project"]') or re-run with --overwrite to discard it.`
     );
   }
 
   const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (scope === 'project') {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    allowlist = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
+  } else if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
@@ -584,7 +609,7 @@ export async function writeClaudeCodeOtlpConfig(
       // the bearer token) are never enshrined as the "original".
       const { stripped } = stripCodemieManagedContent(existing);
 
-      // Carry forward a value a PRIOR --force connect displaced into the
+      // Carry forward a value a PRIOR --overwrite connect displaced into the
       // existing backup: it is no longer present in `existing` itself
       // (codemie's own write replaced it), so stripping `existing` alone
       // would silently drop it from the refreshed backup.
@@ -596,7 +621,7 @@ export async function writeClaudeCodeOtlpConfig(
         delete stripped.env;
       }
 
-      // Same carry-forward for a hook event a PRIOR --force connect displaced
+      // Same carry-forward for a hook event a PRIOR --overwrite connect displaced
       // (dropped a malformed value) — otherwise it would be silently lost
       // from the refreshed backup before an eventual disconnect ever restores it.
       const mergedHooks = withDisplacedHooks(stripped.hooks, oldBackup?.hooks, existingHooksBlock);
@@ -616,7 +641,7 @@ export async function writeClaudeCodeOtlpConfig(
         // (e.g. EPERM) must not fail the whole connect — just leaves a stale
         // backup for the next cycle to clean up.
         try {
-          await unlink(backupPathCandidate);
+          await removeFileThroughLink(backupPathCandidate);
         } catch (error) {
           logger.warn(
             '[proxy] Could not remove the now-unneeded stale backup file',
@@ -656,7 +681,7 @@ export async function writeClaudeCodeOtlpConfig(
   const hooks: Record<string, unknown[]> = {};
   for (const [eventName, entries] of Object.entries(existingHooksBlock)) {
     if (!Array.isArray(entries)) {
-      // Only reachable here when `force` is set (validated above) — an
+      // Only reachable here when `overwrite` is set (validated above) — an
       // explicit, consented overwrite. Drop the malformed value rather than
       // propagate it further.
       continue;
@@ -710,6 +735,27 @@ export async function writeClaudeCodeOtlpConfig(
   };
 }
 
+/**
+ * Empties a settings file left with nothing but CodeMie's entries: a regular file is
+ * deleted; a symbolic link keeps pointing at its target, written `{}`, so a synced
+ * dotfile loses CodeMie's entries too. When that target cannot be written the link is
+ * deleted instead.
+ */
+async function emptySettingsFile(settingsPath: string): Promise<void> {
+  if (await isSymbolicLink(settingsPath)) {
+    try {
+      await writeFileAtomic(settingsPath, '{}\n');
+      return;
+    } catch (error) {
+      logger.warn(
+        '[proxy] Could not empty the target of the linked Claude Code settings; removing the link',
+        ...sanitizeLogArgs({ settingsPath, error: error instanceof Error ? error.message : String(error) })
+      );
+    }
+  }
+  await unlink(settingsPath);
+}
+
 export async function removeClaudeCodeOtlpConfig(
   opts: RemoveClaudeCodeOtlpOptions = {}
 ): Promise<RemoveClaudeCodeOtlpResult> {
@@ -730,7 +776,7 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude --claude-otlp';
       }
       return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
@@ -764,7 +810,7 @@ export async function removeClaudeCodeOtlpConfig(
   const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
   const backupSettings = await readBackupSettings(backupPath);
 
-  // Put back a value a `--force` connect displaced into the backup (preserves
+  // Put back a value an `--overwrite` connect displaced into the backup (preserves
   // AC3 — never resurrects a value the user changed after connect; see
   // `withDisplacedEnvValues`).
   const restoredEnv = withDisplacedEnvValues(stripped.env, backupSettings?.env, existing.env ?? {});
@@ -774,7 +820,7 @@ export async function removeClaudeCodeOtlpConfig(
     delete stripped.env;
   }
 
-  // Same restore for a hook event a `--force` connect displaced (dropped a
+  // Same restore for a hook event an `--overwrite` connect displaced (dropped a
   // malformed value) — see `withDisplacedHooks` for the AC3 guard.
   const restoredHooks = withDisplacedHooks(stripped.hooks, backupSettings?.hooks, existing.hooks ?? {});
   if (restoredHooks) {
@@ -787,10 +833,10 @@ export async function removeClaudeCodeOtlpConfig(
 
   // Always derive the result from the CURRENT live content, never raw backup
   // bytes — a backup can hold a value the user changed/removed since connect.
-  // The one exception: a value `--force` displaced, restored above only
+  // The one exception: a value `--overwrite` displaced, restored above only
   // while codemie still owns it right now.
   if (isEmpty) {
-    await unlink(settingsPath);
+    await emptySettingsFile(settingsPath);
   } else {
     await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
   }
@@ -798,7 +844,7 @@ export async function removeClaudeCodeOtlpConfig(
     // Best-effort: settings.json is already correctly updated by this point,
     // so a failure here (e.g. EPERM) must not surface as "disconnect failed".
     try {
-      await unlink(backupPath);
+      await removeFileThroughLink(backupPath);
     } catch (error) {
       logger.warn(
         '[proxy] Disconnected successfully but could not remove the stale backup file',
@@ -814,36 +860,40 @@ export async function removeClaudeCodeOtlpConfig(
   return { removed: true, path: settingsPath, mode: 'full' };
 }
 
-/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
-export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
-  let existing: ClaudeSettings;
-  try {
-    existing = await readSettingsFile(getClaudeSettingsPath());
-  } catch {
-    return false;
-  }
-  return Object.values(existing.hooks ?? {}).some(
-    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
-  );
-}
-
 /**
- * The absolute `codemie` the first codemie hook command in `~/.claude/settings.json` runs — a shim, a
- * `codemie.cmd`, or the script of a `node` + script pair — or null: no settings, unreadable ones, no codemie hook,
- * or a bare `codemie hook …` resolved through `PATH` when it runs. Never throws, writes nothing.
+ * The first hook command in `~/.claude/settings.json` that carries codemie's own marker, or null: no settings,
+ * unreadable ones, no codemie hook. The one reading behind Claude Code's connected predicate
+ * ({@link hasClaudeCodeOtlpHooks}) and the install its hooks run ({@link readClaudeCodeHookInstall}). Never throws.
  */
-export async function readClaudeCodeHookInstall(): Promise<string | null> {
+async function readCodemieHookCommand(): Promise<string | null> {
   let existing: ClaudeSettings;
   try {
     existing = await readSettingsFile(getClaudeSettingsPath());
   } catch {
     return null;
   }
-  const command = Object.values(existing.hooks ?? {})
+  return Object.values(existing.hooks ?? {})
     .flatMap((groups) => (Array.isArray(groups) ? groups : []))
     .flatMap((group) => (isHookGroup(group) ? group.hooks : []))
     .filter(isHookEntry)
-    .find(isCodemieCommand)?.command;
+    .find(isCodemieCommand)?.command ?? null;
+}
+
+/**
+ * Claude Code's one connected predicate: true iff any hooks entry in `~/.claude/settings.json` carries codemie's
+ * own command. Never throws.
+ */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  return (await readCodemieHookCommand()) !== null;
+}
+
+/**
+ * The absolute `codemie` the first codemie hook command in `~/.claude/settings.json` runs — a shim, a
+ * `codemie.cmd`, or the script of a `node` + script pair — or null: not connected ({@link hasClaudeCodeOtlpHooks}),
+ * or a bare `codemie hook …` resolved through `PATH` when it runs. Never throws, writes nothing.
+ */
+export async function readClaudeCodeHookInstall(): Promise<string | null> {
+  const command = await readCodemieHookCommand();
   const paths = command ? parseHookCommandHead(command)?.paths : undefined;
   const last = paths?.[paths.length - 1];
   return last !== undefined && isAbsoluteCodemiePath(last) ? last : null;
