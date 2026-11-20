@@ -26,6 +26,8 @@ export default defineConfig({
           // cold-start module loading to exceed 10 s. 30 s gives enough headroom.
           hookTimeout: 30_000,
           isolate: true,
+          // Drop inherited CODEMIE_*/ANTHROPIC_* (e.g. from a codemie-claude session)
+          setupFiles: ['./tests/setup/clean-env.ts'],
           env: {
             FORCE_COLOR: '1',
             NODE_ENV: 'test',
