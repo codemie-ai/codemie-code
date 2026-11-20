@@ -11,6 +11,11 @@ vi.mock('../connectors/claude-code-otlp.js', () => ({
   hasClaudeCodeOtlpHooks: vi.fn(),
 }));
 
+vi.mock('../connectors/claude-code-otlp-scope.js', () => ({
+  readClaudeCodeOtlpScope: vi.fn(),
+  addClaudeCodeOtlpProject: vi.fn(),
+}));
+
 vi.mock('../connectors/desktop.js', () => ({
   readDesktopGateway: vi.fn(),
 }));

@@ -348,7 +348,16 @@ describe('snapshots — project gate under the lock', () => {
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     await expectAllCursorsAtEof(Buffer.byteLength(hooks));
+    const { readStatus } = await import('../session-status.js');
+    const jsonBytes = Object.values(JSON_SEED).reduce((sum, s) => sum + Buffer.byteLength(s), 0);
+    const loss = (await readStatus(SESSION))?.lastLoss;
+    expect(loss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: Buffer.byteLength(hooks) + 6 + jsonBytes,
+    });
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
+    expect((await readStatus(SESSION))?.lastLoss).toEqual(loss); // a repeat moves 0 bytes and keeps the record
   });
 
   it('returns null and discards every stream for an unbound session', async () => {
@@ -394,6 +403,13 @@ describe('snapshots — project gate under the lock', () => {
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     expect(await snapshotPendingBytes(SESSION, 'metrics')).toBeNull();
     expect(await snapshotPendingBytes(SESSION, 'traces')).toBeNull();
+    const { readStatus } = await import('../session-status.js');
+    const jsonBytes = Object.values(JSON_SEED).reduce((sum, s) => sum + Buffer.byteLength(s), 0);
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'logs', // the hooks prefix is not discarded
+      bytes: 6 + jsonBytes,
+    });
   });
 
   it('nulls all three masked-JSON snapshots after a late conflict and parks their cursors at EOF', async () => {
@@ -707,6 +723,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     let status = await readStatus(SESSION);
     expect(status?.projectConflict).toEqual(['A', 'B']);
     expect(status?.projectSeal).toBeUndefined();
+    expect(status?.lastLoss).toBeUndefined(); // detection alone discards nothing
 
     await rm(file('status'));
     await rm(file('hooks.ndjson'));
@@ -716,6 +733,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     status = await readStatus(SESSION);
     expect(status?.projectConflict).toEqual(['A', 'B']);
     expect(status?.projectSeal).toBeUndefined();
+    expect(status?.lastLoss).toBeUndefined();
   });
 
   it('sends only records that are provably A below the seal; blank and later records are consumed unsent', async () => {
@@ -753,10 +771,20 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     await advanceCursor(SESSION, 'hooks', sealEnd);
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
     expect((await readStatus(SESSION))?.cursors.hooks).toBe(bytes(a1, blank, a2, b));
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: bytes(b) + 6, // the rest of the hooks plus the three OTLP chunks (L, MM, TTT)
+    });
 
     await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']); // even an A hook after the conflict
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
     expect((await readStatus(SESSION))?.cursors.hooks).toBe(bytes(a1, blank, a2, b, hookLine('A')));
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: bytes(hookLine('A')), // the later loss wins
+    });
   });
 
   it('completes at the file size when the seal end is beyond the file: no endless wait', async () => {

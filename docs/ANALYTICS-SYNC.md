@@ -19,6 +19,8 @@ the analytics owner can.
 
 `sync` is one-way: reports go to the team, nothing comes back.
 
+Command groups and worked use cases: [Proxy and Analytics Commands](PROXY-AND-ANALYTICS.md).
+
 ## Quickstart
 
 **You need:** the `codemie` CLI (Node.js 20+). For a git target, also `git` and push

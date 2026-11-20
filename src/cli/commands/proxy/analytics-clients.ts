@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -16,16 +15,16 @@ import { logger } from '@/utils/logger.js';
 import { resolveHomeDir } from '@/utils/paths.js';
 import { getCommandPath } from '@/utils/processes.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { renderHint } from '@/utils/hint.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId } from './analytics-connectors.js';
-import { CLAUDE_CODE_OTLP_LABEL, runClaudeCodeOtlp } from './claude-code-otlp-flow.js';
+import { CLAUDE_CODE_OTLP_LABEL } from './claude-code-otlp-flow.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag, type FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
-import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
-import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
 import { getVsCodeProductDir, type ConnectorGateway } from './connectors/vscode.js';
 import type { DaemonState } from './daemon-manager.js';
-import type { ConnectOptions, ConnectTargets, TargetResult } from './connect-orchestrator.js';
+import type { ConnectTargets, TargetResult } from './connect-orchestrator.js';
 
 /** A `which` / `where.exe` lookup still running at this deadline is killed and counts as found. */
 export const APPLICATION_LOOKUP_TIMEOUT_MS = 3000;
@@ -47,13 +46,11 @@ export interface AnalyticsAggregate {
   members: readonly AnalyticsMember[];
   connectDescription: string;
   disconnectDescription: string;
-  /** The text of its line in the bare-connect target list, then the text of each continuation line. */
-  connectListLines: readonly string[];
+  /** The text of its row in the bare-connect target list: one short line. */
+  connectListLine: string;
   /** The text of its line in the bare-disconnect target list. */
   disconnectListLine: string;
 }
-
-const CLAUDE_OTLP_FLAG = '--claude-otlp';
 
 export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
   {
@@ -62,28 +59,24 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
     option: 'claudeOtlp',
     members: ['claudeDesktop', 'vscodeClaudeCode', 'claudeCodeOtlp'],
     connectDescription:
-      'Analytics for every Claude client found on this machine — Claude Code, the VS Code Claude Code extension, ' +
-      'Claude Desktop (same as --claude-desktop --vscode-claude-code --claude-code-otlp); routes Claude Desktop and ' +
-      `the extension through the CodeMie proxy, and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} removes that route`,
+      'Analytics for every Claude client, found on this machine or not — Claude Code, the VS Code Claude Code extension, ' +
+      'Claude Desktop; the extension and Desktop are routed through the proxy only when they are not configured yet ' +
+      `(--vscode-claude-code / --claude-desktop route them explicitly), and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} gives them back their Claude login`,
     disconnectDescription:
       'Turn off analytics for every Claude client and remove the CodeMie proxy route of Claude Desktop and the ' +
       'VS Code Claude Code extension',
-    connectListLines: [
-      'Analytics for every Claude client found (Claude Code, VS Code extension, Claude Desktop)',
-      'Routes Claude Desktop and the extension through the CodeMie proxy; its disconnect removes that route',
-    ],
-    disconnectListLine: 'Every Claude client (analytics, and the proxy route of Claude Desktop and the extension)',
+    connectListLine: 'Analytics for every Claude client: Claude Code, VS Code, Desktop',
+    disconnectListLine: 'Every Claude client (analytics, and the Desktop/VS Code proxy route)',
   },
   {
     id: 'copilot-otlp',
-    flag: '--copilot-otlp',
+    flag: COPILOT_OTLP_FLAG,
     option: 'copilotOtlp',
     members: ['copilotChatOtlp', 'copilotCliOtlp'],
     connectDescription:
-      'Analytics for every Copilot client found on this machine — Copilot Chat, Copilot CLI ' +
-      '(same as --copilot-chat-otlp --copilot-cli-otlp)',
+      'Analytics for every Copilot client, found on this machine or not — Copilot Chat and Copilot CLI',
     disconnectDescription: 'Turn off analytics for Copilot Chat and Copilot CLI',
-    connectListLines: ['Analytics for every Copilot client found (Copilot Chat, Copilot CLI)'],
+    connectListLine: 'Analytics for every Copilot client: Copilot Chat, Copilot CLI',
     disconnectListLine: 'Every Copilot client (Copilot Chat and Copilot CLI analytics)',
   },
 ];
@@ -105,12 +98,9 @@ export function aggregateFlagOf(member: AnalyticsMember): string {
   return aggregate.flag;
 }
 
-/**
- * The lines of the aggregates in a bare-command target list: the flag padded to the list's description column, then
- * the text; a continuation line starts at that column.
- */
-export function aggregateListLines(text: (a: AnalyticsAggregate) => readonly string[]): string[] {
-  return ANALYTICS_AGGREGATES.flatMap((a) => text(a).map((line, i) => `  ${i === 0 ? a.flag.padEnd(23) : ' '.repeat(23)}${line}`));
+/** The rows of the aggregates in a bare-command target list: the flag and its one-line text. */
+export function aggregateListRows(text: (a: AnalyticsAggregate) => string): FlagRow[] {
+  return ANALYTICS_AGGREGATES.map((a) => [a.flag, text(a)] as const);
 }
 
 /** The aggregates' lines in the bare-connect examples. */
@@ -126,9 +116,12 @@ export const MEMBER_FLAGS: Record<AnalyticsMember, string> = {
   copilotCliOtlp: `--${COPILOT_CLI_OTLP_AGENT_NAME}`,
 };
 
-/** The flag that names `member`: its aggregate's when an aggregate given holds it, else its own. */
+/**
+ * The flag that names `member` in a printed command: its aggregate's when an aggregate given holds it, else its own
+ * flag's vendor flag (a per-connector analytics flag is deprecated for its vendor flag).
+ */
 export function memberFlag(member: AnalyticsMember, members: ReadonlySet<AnalyticsMember>): string {
-  return members.has(member) ? aggregateFlagOf(member) : MEMBER_FLAGS[member];
+  return members.has(member) ? aggregateFlagOf(member) : vendorFlag(MEMBER_FLAGS[member]);
 }
 
 /** `flags` led by the flags of the aggregates given, which stand in for their members' flags. */
@@ -142,10 +135,13 @@ export interface AnalyticsClientRow {
   client: 'claude-code' | 'vscode-claude-code' | 'claude-desktop' | 'copilot-chat' | 'copilot-cli';
   label: string;
   found: boolean;
+  /** Its analytics are on: the hooks for Claude Code and the extension, the gateway for Desktop, the scope for Copilot. */
   connected: boolean;
   flag: string;
   /** Desktop's applied config is a loopback gateway with a key this proxy does not accept. */
   otherGateway: boolean;
+  /** Its model requests go through the proxy: the extension's route, Desktop's gateway. */
+  routed: boolean;
 }
 
 /** A lookup that fails counts as found: a member is never skipped, nor a row shown `not found`, on a guess. */
@@ -225,38 +221,32 @@ export async function isMemberFound(member: AnalyticsMember, run: { insiders: bo
 }
 
 /**
- * A copy of `targets` in which every member of the aggregates given that is set and not found in this run is false.
- * With no aggregate no lookup runs. Never rejects.
+ * The members of the aggregates given that are set in `targets` and whose application is not found in this run. They
+ * are still connected — their config is written as under their own flag and takes effect once the application is
+ * installed; the caller names them `configured (not installed yet)`. With no aggregate no lookup runs. Never rejects.
  */
-export async function dropMembersNotFound(
+export async function membersNotFound(
   targets: ConnectTargets,
   aggregates: readonly AggregateId[],
   run: { insiders: boolean },
-): Promise<ConnectTargets> {
+): Promise<Set<AnalyticsMember>> {
   const members = [...membersOf(aggregates)].filter((member) => targets[member]);
   const found = await Promise.all(members.map((member) => isMemberFound(member, run)));
-  const result: ConnectTargets = { ...targets };
-  members.forEach((member, i) => {
-    if (!found[i]) result[member] = false;
-  });
-  return result;
+  return new Set(members.filter((_, i) => !found[i]));
 }
 
-/**
- * {@link dropMembersNotFound}; when no target is left, the "Nothing was connected" line and null. Never rejects.
- */
-export async function dropMembersOrReportNone(
-  targets: ConnectTargets,
-  aggregates: readonly AggregateId[],
-  run: { insiders: boolean },
-): Promise<ConnectTargets | null> {
-  const active = await dropMembersNotFound(targets, aggregates, run);
-  if (Object.values(active).some(Boolean)) return active;
-  console.log(
-    `Nothing was connected: no client of ${aggregateFlags(aggregates)} was found on this machine. ` +
-    'See: codemie proxy status'
-  );
-  return null;
+/** The label a member's `configured (not installed yet)` line names. */
+export const MEMBER_LABELS: Record<AnalyticsMember, string> = {
+  claudeDesktop: 'Claude Desktop',
+  vscodeClaudeCode: 'VS Code Claude Code extension',
+  claudeCodeOtlp: 'Claude Code',
+  copilotChatOtlp: 'Copilot Chat',
+  copilotCliOtlp: 'Copilot CLI',
+};
+
+/** The line of a member that was configured while its application is not on this machine. */
+export function notInstalledLine(member: AnalyticsMember): string {
+  return `${MEMBER_LABELS[member]}: configured (not installed yet — takes effect once installed)`;
 }
 
 /**
@@ -270,7 +260,8 @@ export function failDesktopWithoutCodeMieUrl(
   results: TargetResult[],
 ): boolean {
   if (!targets.claudeDesktop || codeMieUrl) return false;
-  const message = 'Selected profile is missing CodeMie URL.\nRun: codemie setup or codemie profile login';
+  const message = 'Selected profile is missing CodeMie URL.\n' +
+    renderHint({ reason: 'Set it up again', action: 'run: codemie setup or codemie profile login' });
   if (!members.has('claudeDesktop')) throw new ConfigurationError(message);
   targets.claudeDesktop = false;
   results.push({ label: 'Claude Desktop', ok: false, error: message.replace('\n', ' ') });
@@ -302,89 +293,6 @@ export function failAggregateInvalidProjectList(
   return undefined;
 }
 
-interface CopilotOtlpRunOptions {
-  scope?: 'user' | 'project';
-  keepProjectList?: boolean;
-}
-
-async function runCopilotChatOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
-  const label = 'Copilot Chat Analytics';
-  try {
-    const result = await writeCopilotChatOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
-    console.log(chalk.green('✓ Copilot Chat analytics configured (hooks-only, no OTel)'));
-    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`));
-    console.log(chalk.dim(`  Hook file:     ${result.hookFilePath}`));
-    console.log(chalk.dim(`  Settings:      ${result.settingsPath}`));
-    if (result.allowlist.length > 0) {
-      console.log(chalk.dim('  Tracked projects:'));
-      for (const projectPath of result.allowlist) {
-        console.log(chalk.dim(`    - ${projectPath}`));
-      }
-    } else {
-      console.log(chalk.dim('  Tracked projects: all projects'));
-    }
-    console.log(chalk.dim('  Token usage is unavailable in v1 (no native OTel export is configured).'));
-    console.log(chalk.yellow('  Restart VS Code to apply changes.'));
-    return { label, ok: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[proxy] Failed to configure Copilot Chat analytics', ...sanitizeLogArgs({ error: message }));
-    console.log(chalk.yellow(`  Could not configure Copilot Chat analytics: ${message}`));
-    return { label, ok: false, error: message };
-  }
-}
-
-async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
-  const label = 'Copilot CLI Analytics';
-  try {
-    const result = await writeCopilotCliOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
-    console.log(chalk.green('✓ Copilot CLI analytics configured (hooks-only, no OTel)'));
-    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CLI_OTLP_AGENT_NAME}`));
-    console.log(chalk.dim(`  Hook file: ${result.hookFilePath}`));
-    if (result.allowlist.length > 0) {
-      console.log(chalk.dim('  Tracked projects:'));
-      for (const projectPath of result.allowlist) {
-        console.log(chalk.dim(`    - ${projectPath}`));
-      }
-    } else {
-      console.log(chalk.dim('  Tracked projects: all projects'));
-    }
-    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
-    console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
-    return { label, ok: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[proxy] Failed to configure Copilot CLI analytics', ...sanitizeLogArgs({ error: message }));
-    console.log(chalk.yellow(`  Could not configure Copilot CLI analytics: ${message}`));
-    return { label, ok: false, error: message };
-  }
-}
-
-/**
- * Writes Claude Code's, then Copilot Chat's, then Copilot CLI's analytics, each that `targets` sets; an omitted
- * `--scope` keeps the project list of a member an aggregate set.
- */
-export async function runAnalyticsMembers(
-  targets: ConnectTargets,
-  members: ReadonlySet<AnalyticsMember>,
-  opts: Pick<ConnectOptions, 'force' | 'scope'>,
-): Promise<TargetResult[]> {
-  const keepProjectList = (member: AnalyticsMember): boolean => members.has(member) && opts.scope === undefined;
-  const results: TargetResult[] = [];
-  if (targets.claudeCodeOtlp) {
-    results.push(await runClaudeCodeOtlp(keepProjectList('claudeCodeOtlp')
-      ? { force: Boolean(opts.force), keepProjectList: true }
-      : { force: Boolean(opts.force), scope: opts.scope ?? 'user' }));
-  }
-  if (targets.copilotChatOtlp) {
-    results.push(await runCopilotChatOtlp(keepProjectList('copilotChatOtlp') ? { keepProjectList: true } : { scope: opts.scope }));
-  }
-  if (targets.copilotCliOtlp) {
-    results.push(await runCopilotCliOtlp(keepProjectList('copilotCliOtlp') ? { keepProjectList: true } : { scope: opts.scope }));
-  }
-  return results;
-}
-
 /**
  * Whether a disconnect has something of the member to remove: Claude Desktop, Claude Code and the Copilot members
  * read connected to this proxy; the extension — its VS Code directory exists. Never rejects; a reader that fails
@@ -410,17 +318,17 @@ export async function isMemberConfigured(member: AnalyticsMember, run: { insider
   }
 }
 
-function row({ client, label, member, lookedUp, connected, aggregateFlag, otherGateway = false }: {
+function row({ client, label, lookedUp, connected, aggregateFlag, otherGateway = false, routed = false }: {
   client: AnalyticsClientRow['client'];
   label: string;
-  member: AnalyticsMember;
   lookedUp: boolean;
   connected: boolean;
   aggregateFlag: string;
   otherGateway?: boolean;
+  routed?: boolean;
 }): AnalyticsClientRow {
-  const found = lookedUp || connected;
-  return { client, label, found, connected, flag: found ? aggregateFlag : MEMBER_FLAGS[member], otherGateway };
+  // The vendor flag connects a client whether or not its application is found.
+  return { client, label, found: lookedUp || connected, connected, flag: aggregateFlag, otherGateway, routed };
 }
 
 /**
@@ -435,7 +343,8 @@ function isExtensionRouted(routes: (ConnectorGateway | null)[], state: DaemonSta
 /**
  * The five analytics clients `proxy connect` turns on, found and connected. With `state` null (no daemon) Claude
  * Desktop is not connected and its gateway config is not read. The extension is connected when the hooks are in
- * place and its route is in VS Code's settings. Reads files only; never rejects.
+ * place; its route in VS Code's settings (routed through the proxy) is `routed`, a
+ * separate fact. Reads files only; never rejects.
  */
 export async function collectAnalyticsClients(state: DaemonState | null): Promise<AnalyticsClientRow[]> {
   // With no daemon the route's key is not judged.
@@ -462,35 +371,57 @@ export async function collectAnalyticsClients(state: DaemonState | null): Promis
   const desktopConnected = state !== null && isDesktopConnectedTo(gateway, state.gatewayKey, state.port);
   const otherGateway = state !== null && gateway !== null && !isDesktopPointedAtLocalProxy(gateway, state.gatewayKey);
   return [
-    row({ client: 'claude-code', label: 'Claude Code', member: 'claudeCodeOtlp', lookedUp: claudeBinary,
+    row({ client: 'claude-code', label: 'Claude Code', lookedUp: claudeBinary,
       connected: hooks, aggregateFlag: claude }),
-    row({ client: 'vscode-claude-code', label: 'VS Code Claude Code extension', member: 'vscodeClaudeCode',
-      lookedUp: vscode, connected: hooks && isExtensionRouted([stableRoute, insidersRoute], state),
+    row({ client: 'vscode-claude-code', label: 'VS Code Claude Code extension',
+      lookedUp: vscode, connected: hooks, routed: isExtensionRouted([stableRoute, insidersRoute], state),
       aggregateFlag: insidersDir && !stableDir ? `${claude} --insiders` : claude }),
-    row({ client: 'claude-desktop', label: 'Claude Desktop', member: 'claudeDesktop', lookedUp: desktopApp,
-      connected: desktopConnected, aggregateFlag: claude, otherGateway }),
-    row({ client: 'copilot-chat', label: 'Copilot Chat', member: 'copilotChatOtlp', lookedUp: stableDir,
+    row({ client: 'claude-desktop', label: 'Claude Desktop', lookedUp: desktopApp,
+      connected: desktopConnected, aggregateFlag: claude, otherGateway, routed: desktopConnected }),
+    row({ client: 'copilot-chat', label: 'Copilot Chat', lookedUp: stableDir,
       connected: chatOn, aggregateFlag: copilot }),
-    row({ client: 'copilot-cli', label: 'Copilot CLI', member: 'copilotCliOtlp', lookedUp: copilotBinary,
+    row({ client: 'copilot-cli', label: 'Copilot CLI', lookedUp: copilotBinary,
       connected: cliOn, aggregateFlag: copilot }),
   ];
 }
 
-function rowValue(row: AnalyticsClientRow, commands: boolean): string {
-  if (row.connected) return 'connected';
-  if (row.found && !commands) return 'not connected';
-  if (row.otherGateway && commands) {
-    return 'points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: ' +
-      `codemie proxy connect ${row.flag}`;
-  }
-  if (row.found) return `not connected — Run: codemie proxy connect ${row.flag}`;
-  return `not found — if it is installed, run: codemie proxy connect ${row.flag}`;
+/** The client-target row (`proxy clients`) each analytics client is shown on. */
+export const ANALYTICS_CLIENT_TARGET_IDS: Record<AnalyticsClientRow['client'], string> = {
+  'claude-code': CLAUDE_CODE_OTLP_AGENT_NAME,
+  'vscode-claude-code': 'vscode-claude-code',
+  'claude-desktop': 'claude-desktop',
+  'copilot-chat': COPILOT_CHAT_OTLP_AGENT_NAME,
+  'copilot-cli': COPILOT_CLI_OTLP_AGENT_NAME,
+};
+
+/** The extension whose hooks are on and whose model route is not CodeMie's. */
+export const EXTENSION_ANALYTICS_ON = 'analytics on (uses your Claude login; model routing unchanged)';
+
+/** The note of an extension routed through CodeMie, with the command that gives it back its Claude login. */
+export function routedExtensionNote(flag: string): string {
+  const insiders = flag.endsWith('--insiders') ? ' --insiders' : '';
+  return 'routed through the proxy — ' +
+    `to use your Claude login: codemie proxy disconnect --vscode-claude-code${insiders}`;
 }
 
-/** The `Analytics clients:` block of `proxy status`; `commands` false names no command in a `not connected` row and prints no other-gateway line. */
-export function formatAnalyticsClientLines(rows: AnalyticsClientRow[], opts: { commands: boolean }): string[] {
-  return [
-    'Analytics clients:',
-    ...rows.map((r) => `  ${`${r.label}:`.padEnd(32)}${rowValue(r, opts.commands)}`),
-  ];
+/**
+ * The one-line state of an analytics client that is not connected, with the command that connects it: its vendor
+ * flag, whether or not the client is found. `commands` false (a daemon of an older CLI, whose restart
+ * comes first) names no command for a found client. Undefined for a connected client, except the extension, whose
+ * analytics-on state says whether its model route is CodeMie's (and how to give it back).
+ */
+export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean): string | undefined {
+  if (row.client === 'vscode-claude-code' && row.connected) {
+    return row.routed ? routedExtensionNote(row.flag) : EXTENSION_ANALYTICS_ON;
+  }
+  if (row.connected) return undefined;
+  if (row.found && !commands) return 'not connected';
+  const command = `codemie proxy connect ${row.flag}`;
+  if (row.otherGateway && commands) {
+    return renderHint({
+      reason: 'points at a local gateway with a key this proxy does not accept',
+      action: `if it should use CodeMie, run: ${command}`,
+    });
+  }
+  return renderHint({ reason: row.found ? 'not connected' : 'not found', command });
 }

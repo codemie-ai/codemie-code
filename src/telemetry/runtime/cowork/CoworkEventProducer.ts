@@ -88,6 +88,11 @@ export class CoworkEventProducer {
   private readonly previousRun = new Map<string, string>();
   /** Per session, the fingerprints of its last completed processing in this process and that cursor's line and end times. */
   private readonly processed = new Map<string, { key: string; lastLineAt: string; lastEndedAt: string }>();
+  /**
+   * Per session, the fingerprints at which a run while Desktop is not connected left it unread. Keyed by the session's
+   * files alone: this producer is the only writer of a cursor, so a cursor does not change while they stay the same.
+   */
+  private readonly leftWhileNotConnected = new Map<string, string>();
   /** The last failure warned about per session: the same failure again is not repeated at every run. */
   private readonly lastFailure = new Map<string, string>();
   private readonly otelWarned = new Set<string>();
@@ -101,9 +106,11 @@ export class CoworkEventProducer {
   /**
    * One pass over the known Cowork sessions. The session list is refreshed and the served marks pruned before the
    * preferences and forwarding gates, so a closed gate stops the intake alone. Never throws: a failure is logged and
-   * retried at the next run.
+   * retried at the next run. A run while Desktop is not connected (`connected` false) takes only a session whose cursor
+   * holds a last line with no end sent for it, reads it to its end, the lines written since the cursor included, and
+   * then sends its end and final summary; it takes no other session.
    */
-  async run(now: number): Promise<void> {
+  async run(now: number, connected = true): Promise<void> {
     try {
       if (this.refreshedAt === undefined || now - this.refreshedAt >= this.options.inactivityTimeoutMs) {
         const { sessions, listed } = await this.listSessions(now);
@@ -111,7 +118,7 @@ export class CoworkEventProducer {
         this.sessions = sessions;
         this.refreshedAt = now;
         // What is remembered about a session goes with it once it left the list.
-        for (const remembered of [this.previousRun, this.processed, this.lastFailure, this.otelWarned]) {
+        for (const remembered of [this.previousRun, this.processed, this.leftWhileNotConnected, this.lastFailure, this.otelWarned]) {
           for (const id of [...remembered.keys()]) {
             if (!listed.has(id)) remembered.delete(id);
           }
@@ -138,7 +145,7 @@ export class CoworkEventProducer {
         const progress: Progress = { step: 'exclusion' };
         try {
           if (await isProjectExcluded(session.discovered.workingDirectory, preferences.value.excludedProjects)) continue;
-          await this.runSession(session, now, progress);
+          await this.runSession(session, now, connected, progress);
           this.lastFailure.delete(session.cliSessionId);
         } catch (error) {
           this.warnFailure(session.cliSessionId, progress.step, error);
@@ -217,7 +224,7 @@ export class CoworkEventProducer {
     return true;
   }
 
-  private async runSession(session: CoworkSession, now: number, progress: Progress): Promise<void> {
+  private async runSession(session: CoworkSession, now: number, connected: boolean, progress: Progress): Promise<void> {
     progress.step = 'fingerprint';
     const fingerprints = await this.fingerprint(session);
     const key = JSON.stringify(fingerprints);
@@ -232,8 +239,18 @@ export class CoworkEventProducer {
       return;
     }
 
+    if (!connected && this.leftWhileNotConnected.get(session.cliSessionId) === key) return;
+    if (connected) this.leftWhileNotConnected.delete(session.cliSessionId);
+
     progress.step = 'cursor';
     let cursor = await loadCoworkCursor(session.cliSessionId);
+    // While Desktop is not connected only a session being collected is read. One with no readable cursor is not; one
+    // whose end is sent is not read again: a cursor is kept after the end, so the session could be continued through
+    // another gateway long afterwards.
+    if (!connected && (!cursor || cursor.lastEndedAt === cursor.events.lastLineAt)) {
+      this.leftWhileNotConnected.set(session.cliSessionId, key);
+      return;
+    }
     if (!cursor || JSON.stringify(cursor.fingerprints) !== key) {
       cursor = await this.process(session, cursor, now, fingerprints, false, progress);
     }

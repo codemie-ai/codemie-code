@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import stripAnsi from 'strip-ansi';
-import { chmod, mkdtemp, mkdir, readFile, symlink, unlink, utimes, writeFile, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, symlink, unlink, utimes, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -96,6 +96,11 @@ vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
     allowlist: ['/repo/project'],
   }),
 }));
+// What each Claude client is configured with today is decided by the detector; a test names the decision it needs.
+vi.mock('../claude-client-config-state.js', () => ({
+  decideVsCodeRoute: vi.fn(async () => 'route'),
+  decideDesktopRoute: vi.fn(async () => 'route'),
+}));
 vi.mock('../connectors/copilot-chat-otlp.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/copilot-chat-otlp.js')>()),
   writeCopilotChatOtlpConfig: vi.fn().mockResolvedValue({
@@ -141,7 +146,26 @@ vi.mock('@/utils/project-root.js', () => ({
 vi.mock('../prompts/analytics-confirmation.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../prompts/analytics-confirmation.js')>()),
   promptAnalyticsConfirmation: vi.fn().mockResolvedValue('enable'),
+  promptScopeDropConfirmation: vi.fn().mockResolvedValue('confirm'),
 }));
+// Each analytics connector's tracking scope, as its readScope reads it; every test starts in user scope.
+const scopeReads = vi.hoisted(() => ({
+  values: {} as Record<string, Array<{ scope: 'user' | 'project'; paths: string[] } | { invalid: string }>>,
+}));
+vi.mock('../analytics-connectors.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../analytics-connectors.js')>();
+  return {
+    ...actual,
+    ANALYTICS_CONNECTORS: actual.ANALYTICS_CONNECTORS.map((entry) => ({
+      ...entry,
+      readScope: vi.fn(async () => {
+        const queue = scopeReads.values[entry.id];
+        if (!queue || queue.length === 0) return { scope: 'user' as const, paths: [] };
+        return queue.length > 1 ? queue.shift()! : queue[0];
+      }),
+    })),
+  };
+});
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
 }));
@@ -319,6 +343,10 @@ describe('daemonMatchesRequest — model comparison', () => {
     ).toBe(true);
   });
 
+  it('fails to match a state without a model against a requested model', () => {
+    expect(daemonMatchesRequest(codexState(), baseRequest({ model: 'm1' }))).toBe(false);
+  });
+
   it('compares no client type: a state of another client type matches', () => {
     expect(daemonMatchesRequest(codexState({ clientType: 'claude-desktop', telemetryMode: 'claude-desktop' }), baseRequest())).toBe(true);
   });
@@ -339,7 +367,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     process.exitCode = 0;
   });
 
-  it('bare connect: prints the target list, writes nothing, exit code stays 0', async () => {
+  it('bare connect: prints the target list, writes nothing, exits non-zero', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
@@ -354,14 +382,14 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('--claude-otlp'));
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('--copilot-otlp'));
     expect(console_.log()).toHaveBeenCalledWith(
-      expect.stringContaining('Routes Claude Desktop and the extension through the CodeMie proxy; its disconnect removes that route'),
+      expect.stringContaining('Analytics for every Claude client: Claude Code, VS Code, Desktop'),
     );
     const lines = String(console_.log().mock.calls[0][0]).split('\n');
-    expect(lines).toContain('  --claude-otlp          Analytics for every Claude client found (Claude Code, VS Code extension, Claude Desktop)');
-    expect(lines).toContain('  --copilot-otlp         Analytics for every Copilot client found (Copilot Chat, Copilot CLI)');
+    expect(lines).toContain('  --claude-otlp         Analytics for every Claude client: Claude Code, VS Code, Desktop');
+    expect(lines).toContain('  --copilot-otlp        Analytics for every Copilot client: Copilot Chat, Copilot CLI');
     expect(lines).toContain('  codemie proxy connect --claude-otlp');
     expect(lines).toContain('  codemie proxy connect --copilot-otlp');
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(1);
   });
 
   it('does not start the proxy when Claude Code analytics confirmation is declined', async () => {
@@ -425,7 +453,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
   });
 
-  it('--silent without a scope skips the prompt and writes the Global scope', async () => {
+  it('--yes without a scope skips the prompt and writes the Global scope', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
@@ -436,7 +464,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     );
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+    await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
 
     expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
@@ -446,7 +474,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(printed.some((message) => message.startsWith('Repository:'))).toBe(false);
   });
 
-  it('--scope project --silent skips the prompt and writes the Project scope', async () => {
+  it('--scope project --yes skips the prompt and writes the Project scope', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
@@ -457,7 +485,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     );
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project', silent: true });
+    await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project', yes: true });
 
     expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
     expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project' }));
@@ -467,7 +495,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
   });
 
   for (const scope of [undefined, 'project'] as const) {
-    it(`errors before anything starts or is written when non-interactive without --silent (scope: ${scope ?? 'omitted'})`, async () => {
+    it(`errors before anything starts or is written when non-interactive without --yes (scope: ${scope ?? 'omitted'})`, async () => {
       await setupHappyMocks();
       const { ConfigLoader } = await import('../../../../utils/config.js');
       const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
@@ -482,7 +510,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
         connectTargets({ targets: { claudeCodeOtlp: true }, scope })
       ).rejects.toThrow('process.exit:1');
 
-      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--silent'));
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--yes'));
       expect(ConfigLoader.load).not.toHaveBeenCalled();
       expect(CodeMieSSO).not.toHaveBeenCalled();
       expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
@@ -492,7 +520,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     });
   }
 
-  it('--silent still stops on an invalid allowlist unless --force is passed', async () => {
+  it('--yes still stops on an invalid allowlist, naming --overwrite, unless --overwrite is passed', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
@@ -508,14 +536,15 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await expect(
-      connectTargets({ targets: { claudeCodeOtlp: true }, silent: true })
+      connectTargets({ targets: { claudeCodeOtlp: true }, yes: true })
     ).rejects.toThrow('process.exit:1');
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('invalid CODEMIE_ANALYTICS_PROJECT_FILTER'));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--overwrite'));
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
 
-    await connectTargets({ targets: { claudeCodeOtlp: true }, silent: true, force: true });
-    expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+    await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true, overwrite: true });
+    expect(writeClaudeCodeOtlpConfig).toHaveBeenCalledWith(expect.objectContaining({ overwrite: true }));
   });
 
   it('--insiders with only --claude-desktop warns and continues', async () => {
@@ -586,7 +615,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     }) as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
     const { connectTargets } = await import('../connect-orchestrator.js');
-    await connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+    await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
     expect(stopDaemon).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
   });
@@ -612,7 +641,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(spawnDaemon).toHaveBeenCalled();
   });
 
-  it('restarts on --force even when a matching daemon is running (skips health check)', async () => {
+  it('restartDaemon (the deprecated --force) restarts even a matching running daemon (skips health check)', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
@@ -624,12 +653,12 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     const status = vi.spyOn(logger, 'status').mockImplementation(() => {});
     const { connectTargets } = await import('../connect-orchestrator.js');
 
-    await connectTargets({ targets: { claudeDesktop: true }, force: true });
+    await connectTargets({ targets: { claudeDesktop: true }, restartDaemon: true });
 
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
     expect(checkProxyHealth).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith('Forcing a fresh proxy restart...');
+    expect(status).toHaveBeenCalledWith('Restarting the proxy...');
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
     status.mockRestore();
   });
@@ -1488,16 +1517,16 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       },
     );
 
-    it('is printed exactly once for Claude Code analytics with --silent', async () => {
-      const lines = await profileLinesFor({ targets: { claudeCodeOtlp: true }, silent: true });
+    it('is printed exactly once for Claude Code analytics with --yes', async () => {
+      const lines = await profileLinesFor({ targets: { claudeCodeOtlp: true }, yes: true });
       const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
 
       expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
       expect(lines).toEqual(['Using profile: p']);
     });
 
-    it('keeps the (source: ...) suffix with --silent in verbose mode', async () => {
-      const lines = await profileLinesFor({ targets: { claudeCodeOtlp: true }, silent: true, verbose: true });
+    it('keeps the (source: ...) suffix with --yes in verbose mode', async () => {
+      const lines = await profileLinesFor({ targets: { claudeCodeOtlp: true }, yes: true, verbose: true });
 
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatch(/^Using profile: p \(source: (--profile|active profile)\)$/);
@@ -1578,49 +1607,341 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const w = await writers();
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(vi.mocked(w.writeDesktopConfig).mock.calls[0].slice(0, 2)).toEqual(['http://127.0.0.1:4001', 'gk']);
       expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
-      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalledWith({ force: false, scope: undefined, keepProjectList: true });
+      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalledWith({ overwrite: false, keepProjectList: true });
       expect(process.exitCode).toBe(0);
     });
 
-    it('the VS Code directory not found: the extension skipped silently, the other two written', async () => {
+    it('no VS Code: under --claude-otlp the extension is skipped with its line, the others configured, exit 0', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'claude');
       const w = await writers();
+      const { ClientNotInstalledError } = await import('@/utils/errors.js');
+      vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(
+        new ClientNotInstalledError('VS Code user data directory was not found at /x/Code.'));
+      const { writeConnectionRecord } = await import('../daemon-manager.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
-      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
-      expect(printed().some((line) => line.includes('VS Code Claude Code'))).toBe(false);
+      expect(printed()).toContain(
+        'VS Code Claude Code extension: skipped — VS Code not installed; re-run `codemie proxy connect --claude-otlp` after installing');
+      expect(printed().some((line) => line.startsWith('✗ VS Code Claude Code extension'))).toBe(false);
+      expect(printed().some((line) => line.includes('Could not configure the VS Code Claude Code extension'))).toBe(false);
+      expect(printed().some((line) => line.startsWith('VS Code Claude Code extension: configured'))).toBe(false);
       expect(w.writeDesktopConfig).toHaveBeenCalled();
       expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+      expect(writeConnectionRecord).toHaveBeenCalled();
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('no VS Code Insiders under --claude-otlp --insiders: the skip line names VS Code Insiders', async () => {
+      await withFreshDaemon();
+      await onMachine('desktop', 'claude');
+      const w = await writers();
+      const { ClientNotInstalledError } = await import('@/utils/errors.js');
+      vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(new ClientNotInstalledError('not found'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true, yes: true });
+
+      expect(printed()).toContain(
+        'VS Code Claude Code extension: skipped — VS Code Insiders not installed; ' +
+        're-run `codemie proxy connect --claude-otlp --insiders` after installing');
+      expect(process.exitCode).toBe(0);
+    });
+
+    describe('the route decision of --claude-otlp', () => {
+      const EXTENSION_SKIP =
+        '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+      const BILLING = '  Its model requests now go through the gateway, not your Claude login.';
+      const DESKTOP_SWITCH =
+        'Desktop analytics needs the gateway; to switch it: ' +
+        'codemie proxy connect --claude-desktop';
+
+      async function decisions(vscode: 'route' | 'refresh' | 'skip' | 'skip-other-gateway', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {
+        const state = await import('../claude-client-config-state.js');
+        vi.mocked(state.decideVsCodeRoute).mockResolvedValue(vscode);
+        vi.mocked(state.decideDesktopRoute).mockResolvedValue(desktop);
+        return state;
+      }
+
+      it('extension skip: no write, the analytics-on line, and no billing line', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip', 'route');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
+        expect(printed()).toContain(EXTENSION_SKIP);
+        expect(printed().filter((line) => line === BILLING)).toHaveLength(1); // Desktop's only
+        expect(printed().some((line) => line.startsWith('Claude Desktop: configured (not installed'))).toBe(false);
+        expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+        expect(process.exitCode).toBe(0);
+      });
+
+      it('extension skip: the switch command follows the skip line, after the analytics header of --yes', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        await writers();
+        await decisions('skip', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        const lines = printed();
+        const skip = lines.indexOf(EXTENSION_SKIP);
+        expect(lines[skip + 1]).toBe('  To route it through the proxy: codemie proxy connect --vscode-claude-code');
+        const header = lines.findIndex((line) => line.startsWith('CodeMie URL:'));
+        expect(header).toBeGreaterThanOrEqual(0);
+        expect(header).toBeLessThan(skip);
+      });
+
+      it('extension on another gateway or key: not written, its own skip line with the switch command', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip-other-gateway', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
+        const lines = printed();
+        const skip = lines.indexOf(
+          '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)');
+        expect(skip).toBeGreaterThanOrEqual(0);
+        expect(lines[skip + 1]).toBe('  To route it through the proxy: codemie proxy connect --vscode-claude-code');
+        expect(lines).not.toContain(EXTENSION_SKIP);
+      });
+
+      it('extension route: written, and the billing line follows the configured line', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('route', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
+        const lines = printed();
+        const configured = lines.findIndex((line) => line.startsWith('✓ VS Code Claude Code extension configured'));
+        expect(configured).toBeGreaterThanOrEqual(0);
+        expect(lines[configured + 1]).toBe(BILLING);
+        expect(lines).not.toContain(EXTENSION_SKIP);
+      });
+
+      it('extension refresh: written, with the way back to the Claude login', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('refresh', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+        expect(printed()).toContain('To use your Claude login instead: codemie proxy disconnect --vscode-claude-code');
+      });
+
+      it('Desktop route: written, with the billing line after its configured line', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip', 'route');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeDesktopConfig).toHaveBeenCalled();
+        const lines = printed();
+        expect(lines[lines.indexOf('✓ Claude Desktop configured') + 1]).toBe(BILLING);
+      });
+
+      it('Desktop refresh: written, with the way back', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip', 'refresh');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeDesktopConfig).toHaveBeenCalled();
+        expect(printed()).toContain('To use your Claude login instead: codemie proxy disconnect --claude-desktop');
+      });
+
+      it.each([
+        ['skip-1p', '– Claude Desktop: skipped — uses your own Claude account. '],
+        ['skip-other-gateway', '– Claude Desktop: skipped — it uses another gateway. '],
+      ] as const)('Desktop %s: not written, skip line with the switch command, no billing line', async (decision, prefix) => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip', decision);
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+        expect(printed()).toContain(prefix + DESKTOP_SWITCH);
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
+      });
+
+      it('a skipped Desktop under a profile with no CodeMie URL is not a failure', async () => {
+        await withFreshDaemon();
+        await setupHappyMocks({ codeMieUrl: undefined });
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('skip', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+        expect(printed().some((line) => line.includes('Selected profile is missing CodeMie URL'))).toBe(false);
+        expect(process.exitCode).toBe(0);
+      });
+
+      it('explicit --vscode-claude-code and --claude-desktop: no decision consulted, both routed, two billing lines', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        const state = await decisions('skip', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({
+          targets: CLAUDE,
+          aggregates: ['claude-otlp'],
+          explicitRoutes: { claudeDesktop: true, vscodeClaudeCode: true },
+          yes: true,
+        });
+
+        expect(state.decideVsCodeRoute).not.toHaveBeenCalled();
+        expect(state.decideDesktopRoute).not.toHaveBeenCalled();
+        expect(w.writeDesktopConfig).toHaveBeenCalled();
+        expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+        expect(printed().filter((line) => line === BILLING)).toHaveLength(2);
+      });
+
+      it('the vendor flags alone route and print the billing line without any decision', async () => {
+        await withFreshDaemon();
+        const w = await writers();
+        const state = await decisions('skip', 'skip-1p');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: { vscodeClaudeCode: true } });
+
+        expect(state.decideVsCodeRoute).not.toHaveBeenCalled();
+        expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+        expect(printed()).toContain(BILLING);
+      });
+
+      it('a client that is not installed or whose write failed gets no billing line', async () => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        const w = await writers();
+        await decisions('route', 'route');
+        const { ClientNotInstalledError } = await import('@/utils/errors.js');
+        vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(new ClientNotInstalledError('not found'));
+        vi.mocked(w.writeDesktopConfig).mockRejectedValue(new Error('disk full'));
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
+
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
+      });
+
+      it.each([
+        ['route', 'skip-1p', ['VS Code Claude Code extension']],
+        ['skip', 'route', ['Claude Desktop']],
+        ['refresh', 'route', ['VS Code Claude Code extension', 'Claude Desktop']],
+        ['skip', 'skip-other-gateway', []],
+      ] as const)('the confirmation of vscode=%s desktop=%s names %j', async (vscode, desktop, expected) => {
+        await withFreshDaemon();
+        await onMachine('desktop', 'vscode', 'claude');
+        await writers();
+        await decisions(vscode, desktop);
+        const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+        expect(promptAnalyticsConfirmation).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(promptAnalyticsConfirmation).mock.calls[0][0].routedClients).toEqual(expected);
+      });
+
+      it('--claude-code-otlp alone prints nothing about billing and consults no decision', async () => {
+        await withFreshDaemon();
+        const w = await writers();
+        const state = await decisions('route', 'route');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
+
+        expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+        expect(state.decideVsCodeRoute).not.toHaveBeenCalled();
+        expect(state.decideDesktopRoute).not.toHaveBeenCalled();
+        expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
+      });
+    });
+
+    it('--vscode-claude-code by its own flag with no VS Code: still a failure, exit 1', async () => {
+      await withFreshDaemon();
+      const w = await writers();
+      const { ClientNotInstalledError } = await import('@/utils/errors.js');
+      vi.mocked(w.writeVsCodeClaudeCodeConfig).mockRejectedValue(
+        new ClientNotInstalledError('VS Code user data directory was not found at /x/Code.'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { vscodeClaudeCode: true } });
+
+      expect(printed()).toContain('✗ VS Code Claude Code extension — VS Code user data directory was not found at /x/Code.');
+      expect(printed().some((line) => line.includes('skipped'))).toBe(false);
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('--copilot-otlp with Copilot CLI not found: its config is written and it reads configured, not installed yet', async () => {
+      await withFreshDaemon();
+      await onMachine('vscode');
+      const w = await writers();
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: COPILOT, aggregates: ['copilot-otlp'] });
+
+      expect(w.writeCopilotChatOtlpConfig).toHaveBeenCalled();
+      expect(w.writeCopilotCliOtlpConfig).toHaveBeenCalled();
+      expect(printed()).toContain('Copilot CLI: configured (not installed yet — takes effect once installed)');
+      expect(printed().some((line) => line.startsWith('Copilot Chat: configured (not installed'))).toBe(false);
       expect(process.exitCode).toBe(0);
     });
 
     it.each([
       [['claude-otlp'] as const, CLAUDE, '--claude-otlp'],
       [['claude-otlp', 'copilot-otlp'] as const, { ...CLAUDE, ...COPILOT }, '--claude-otlp --copilot-otlp'],
-    ])('no member of %j found: one line, no sign-in, no daemon, nothing written', async (aggregates, targets, flags) => {
+    ])('no member of %j found: every writer runs, each client reads configured, not installed yet', async (aggregates, targets, flags) => {
       await withFreshDaemon();
       await onMachine();
       const w = await writers();
-      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets, aggregates, silent: true });
+      await connectTargets({ targets, aggregates, yes: true });
 
-      expect(printed()).toEqual([
-        `Nothing was connected: no client of ${flags} was found on this machine. See: codemie proxy status`,
-      ]);
-      expect(CodeMieSSO).not.toHaveBeenCalled();
-      expect(checkStatus).not.toHaveBeenCalled();
-      expect(spawnDaemon).not.toHaveBeenCalled();
-      for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
+      expect(printed().some((line) => line.includes('Nothing was connected'))).toBe(false);
+      for (const [name, writer] of Object.entries(w)) {
+        if (name.startsWith('writeCopilot') && !flags.includes('copilot')) continue;
+        expect(writer, name).toHaveBeenCalled();
+      }
+      for (const label of ['Claude Desktop', 'VS Code Claude Code extension', 'Claude Code']) {
+        expect(printed()).toContain(`${label}: configured (not installed yet — takes effect once installed)`);
+      }
       expect(process.exitCode).toBe(0);
     });
 
@@ -1632,7 +1953,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const { writeConnectionRecord } = await import('../daemon-manager.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(printed()).toContain('✗ VS Code Claude Code extension — settings.json is read-only');
       expect(process.exitCode).toBe(1);
@@ -1641,7 +1962,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(writeConnectionRecord).toHaveBeenCalledWith(expect.anything(), 'p', { port: 4001 });
     });
 
-    it('no terminal and no --silent with Claude Code found: refused before the daemon, naming --claude-otlp', async () => {
+    it('no terminal and no --yes with Claude Code found: refused before the daemon, naming --claude-otlp', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'claude');
       await writers();
@@ -1652,30 +1973,44 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
       await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] })).rejects.toThrow('process.exit:1');
 
-      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('codemie proxy connect --claude-otlp --silent'));
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('codemie proxy connect --claude-otlp --yes'));
       expect(spawnDaemon).not.toHaveBeenCalled();
     });
 
-    it('no terminal and no --silent with Claude Code not found: not refused, Desktop written', async () => {
+    it('no terminal and no --yes with Claude Code not found: still refused, since its settings are written', async () => {
       await withFreshDaemon();
       await onMachine('desktop');
-      const w = await writers();
+      await writers();
+      const { spawnDaemon } = await import('../daemon-manager.js');
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
-      vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
+      vi.mocked(isNonInteractiveEnvironment).mockReturnValueOnce(true);
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      try {
-        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
-      } finally {
-        vi.mocked(isNonInteractiveEnvironment).mockReturnValue(false);
-      }
+      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] })).rejects.toThrow('process.exit:1');
 
-      expect(w.writeDesktopConfig).toHaveBeenCalled();
-      expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(0);
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('codemie proxy connect --claude-otlp --yes'));
+      expect(spawnDaemon).not.toHaveBeenCalled();
     });
 
-    it('the confirmation declined: the analytics writer not called, Desktop and the extension written', async () => {
+    it('the confirmation declined: nothing the aggregate set is written, and the run ends', async () => {
+      await withFreshDaemon();
+      await onMachine('desktop', 'vscode', 'claude');
+      const w = await writers();
+      const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+      vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
+      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
+      expect(spawnDaemon).not.toHaveBeenCalled();
+      expect(printed()).toContain('Claude Desktop and VS Code Claude Code extension: not routed through the proxy.');
+    });
+
+    it('the confirmation declined, a client typed by its own flag: only that client is routed', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'vscode', 'claude');
       const w = await writers();
@@ -1683,11 +2018,12 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], explicitRoutes: { claudeDesktop: true } });
 
       expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
       expect(w.writeDesktopConfig).toHaveBeenCalled();
-      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+      expect(printed()).toContain('VS Code Claude Code extension: not routed through the proxy.');
     });
 
     it('--copilot-otlp with no scope keeps the lists; with scope user it resets them', async () => {
@@ -1715,9 +2051,9 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const w = await writers();
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: { ...CLAUDE, copilotCliOtlp: true }, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: { ...CLAUDE, copilotCliOtlp: true }, aggregates: ['claude-otlp'], yes: true });
 
-      expect(vi.mocked(w.writeCopilotCliOtlpConfig).mock.calls[0][0]).toEqual({ scope: undefined, keepProjectList: undefined });
+      expect(vi.mocked(w.writeCopilotCliOtlpConfig).mock.calls[0][0]).toEqual({ scope: 'user', keepProjectList: undefined });
     });
 
     it('omp beside --claude-otlp with no Claude member found: omp runs, no nothing-connected line', async () => {
@@ -1727,7 +2063,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/omp/codemie-models.js', changed: true });
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: { ...CLAUDE, omp: true }, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: { ...CLAUDE, omp: true }, aggregates: ['claude-otlp'], yes: true });
 
       expect(writeOmpExtension).toHaveBeenCalled();
       expect(printed().some((line) => line.includes('Nothing was connected'))).toBe(false);
@@ -1739,7 +2075,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await writers();
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true, silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true, yes: true });
 
       expect(printed().some((line) => line.includes('--insiders has no effect'))).toBe(false);
     });
@@ -1752,9 +2088,9 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const calls = () => [w.writeDesktopConfig, w.writeVsCodeClaudeCodeConfig, w.writeClaudeCodeOtlpConfig]
         .map((writer) => vi.mocked(writer).mock.calls.at(-1));
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
       const first = calls();
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(calls()).toEqual(first);
       expect(first.every(Boolean)).toBe(true);
@@ -1777,7 +2113,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(w.writeCopilotCliOtlpConfig).toHaveBeenCalled();
     });
 
-    const MISSING_URL_LINE = '✗ Claude Desktop — Selected profile is missing CodeMie URL. Run: codemie setup or codemie profile login';
+    const MISSING_URL_LINE = '✗ Claude Desktop — Selected profile is missing CodeMie URL. Set it up again — run: codemie setup or codemie profile login';
 
     it('--claude-otlp, a profile with no CodeMie URL: Claude Desktop fails alone, Claude Code written, exit code 1', async () => {
       await withFreshDaemon();
@@ -1786,7 +2122,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const w = await writers();
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
       expect(w.writeDesktopConfig).not.toHaveBeenCalled();
@@ -1794,20 +2130,22 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(process.exitCode).toBe(1);
     });
 
-    it('--claude-otlp, a profile with no CodeMie URL, Claude Desktop the only member found: its line, no daemon', async () => {
+    it('--claude-otlp, a profile with no CodeMie URL, only Claude Desktop found: Desktop fails, the others configured', async () => {
       await withFreshDaemon();
       await setupHappyMocks({ codeMieUrl: undefined });
       await onMachine('desktop');
       const w = await writers();
-      const { spawnDaemon } = await import('../daemon-manager.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
-      expect(printed()).toEqual([MISSING_URL_LINE]);
+      expect(printed()).toContain(MISSING_URL_LINE);
+      expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+      expect(printed()).toContain('Claude Code: configured (not installed yet — takes effect once installed)');
+      expect(printed().some((line) => line.startsWith('Claude Desktop: configured'))).toBe(false);
       expect(process.exitCode).toBe(1);
-      expect(spawnDaemon).not.toHaveBeenCalled();
-      for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
     });
 
     it('--claude-desktop alone, a profile with no CodeMie URL: refused', async () => {
@@ -1822,7 +2160,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(w.writeDesktopConfig).not.toHaveBeenCalled();
     });
 
-    it('--claude-otlp --silent, an invalid stored project list, no --force: Claude Code analytics fails alone', async () => {
+    it('--claude-otlp --yes, an invalid stored project list, no --overwrite: Claude Code analytics fails alone', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'vscode', 'claude');
       const w = await writers();
@@ -1830,19 +2168,19 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(readAllowlistState).mockResolvedValueOnce({ kind: 'invalid' });
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(w.writeDesktopConfig).toHaveBeenCalled();
       expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
       expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
       expect(printed()).toContain(
         '✗ Claude Code Analytics — Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. ' +
-        'Fix it manually or re-run with --force to discard it.',
+        'Fix it manually or re-run with --overwrite to discard it.',
       );
       expect(process.exitCode).toBe(1);
     });
 
-    it('--claude-otlp, an invalid stored project list, no --silent: the profile named, the prompt never opened', async () => {
+    it('--claude-otlp, an invalid stored project list, no --yes: the profile named, the prompt never opened', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'vscode', 'claude');
       const w = await writers();
@@ -1856,7 +2194,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(printed().filter((line) => line.startsWith('Using profile:'))).toEqual(['Using profile: p']);
       expect(printed()).toContain(
         '✗ Claude Code Analytics — Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. ' +
-        'Fix it manually or re-run with --force to discard it.',
+        'Fix it manually or re-run with --overwrite to discard it.',
       );
       expect(w.writeDesktopConfig).toHaveBeenCalled();
       expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
@@ -1865,27 +2203,27 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(process.exitCode).toBe(1);
     });
 
-    it('--claude-otlp --silent, an invalid stored project list, Claude Code the only member found: its line, no daemon', async () => {
+    it('--claude-otlp --yes, an invalid stored project list, only Claude Code found: it fails, the others configured', async () => {
       await withFreshDaemon();
       await onMachine('claude');
       const w = await writers();
       const { readAllowlistState } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js');
       vi.mocked(readAllowlistState).mockResolvedValueOnce({ kind: 'invalid' });
-      const { spawnDaemon } = await import('../daemon-manager.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+      await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(printed()).toContain(
         '✗ Claude Code Analytics — Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. ' +
-        'Fix it manually or re-run with --force to discard it.',
+        'Fix it manually or re-run with --overwrite to discard it.',
       );
       expect(process.exitCode).toBe(1);
-      expect(spawnDaemon).not.toHaveBeenCalled();
-      for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
+      expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeDesktopConfig).toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
     });
 
-    it('--claude-otlp --silent, no CodeMie URL, the SSO check fails: the Desktop line, then the SSO error', async () => {
+    it('--claude-otlp --yes, no CodeMie URL, the SSO check fails: the Desktop line, then the SSO error', async () => {
       await withFreshDaemon();
       await setupHappyMocks({ codeMieUrl: undefined });
       await onMachine('desktop', 'claude');
@@ -1896,7 +2234,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       } as unknown as typeof CodeMieSSO);
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true }))
+      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true }))
         .rejects.toThrow('process.exit:1');
 
       const logs = console_.log().mock;
@@ -1909,7 +2247,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(logs.invocationCallOrder[failure]).toBeLessThan(errors.invocationCallOrder[ssoError]);
     });
 
-    it('--claude-otlp --silent, an invalid stored project list, the daemon start throws: the analytics line, then the error', async () => {
+    it('--claude-otlp --yes, an invalid stored project list, the daemon start throws: the analytics line, then the error', async () => {
       await withFreshDaemon();
       await onMachine('desktop', 'claude');
       await writers();
@@ -1919,7 +2257,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true }))
+      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true }))
         .rejects.toThrow('process.exit:1');
 
       const logs = console_.log().mock;
@@ -1940,7 +2278,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       vi.mocked(ProviderRegistry.getProvider).mockReturnValue({ name: 'openai', authType: 'api-key' } as ReturnType<typeof ProviderRegistry.getProvider>);
       const { connectTargets } = await import('../connect-orchestrator.js');
 
-      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], profile: 'plain', silent: true }))
+      await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], profile: 'plain', yes: true }))
         .rejects.toThrow('process.exit:1');
 
       const remedy = vi.mocked(console.error).mock.calls.map(([message]) => stripAnsi(String(message)))
@@ -1962,10 +2300,12 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
       expect(printed()).toContain(MISSING_URL_LINE);
       expect(process.exitCode).toBe(1);
-      for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
+      expect(w.writeDesktopConfig).not.toHaveBeenCalled();
+      expect(w.writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+      expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
     });
 
-    it('--claude-otlp, the CodeMie hooks in place and no application found: the nothing-connected line alone', async () => {
+    it('--claude-otlp, the CodeMie hooks in place and no application found: the writers run again', async () => {
       await withFreshDaemon();
       await onMachine();
       const w = await writers();
@@ -1981,15 +2321,14 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
       try {
         expect(await hasClaudeCodeOtlpHooks()).toBe(true);
-        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], silent: true });
+        await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
       } finally {
         vi.mocked(getClaudeSettingsPath).mockReset();
       }
 
-      expect(printed()).toEqual([
-        'Nothing was connected: no client of --claude-otlp was found on this machine. See: codemie proxy status',
-      ]);
-      for (const writer of Object.values(w)) expect(writer).not.toHaveBeenCalled();
+      expect(printed().some((line) => line.includes('Nothing was connected'))).toBe(false);
+      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalled();
+      expect(w.writeDesktopConfig).toHaveBeenCalled();
       expect(process.exitCode).toBe(0);
     });
 
@@ -2153,9 +2492,9 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     vi.mocked(daemon.hasLegacyClientIdentity).mockReset();
   });
 
-  async function connect(targets: ConnectOptions['targets'], force = false): Promise<void> {
+  async function connect(targets: ConnectOptions['targets'], overwrite = false): Promise<void> {
     const { connectTargets } = await import('../connect-orchestrator.js');
-    await connectTargets({ targets, force });
+    await connectTargets({ targets, overwrite });
   }
 
   it('--claude-desktop moves Codex and the VS Code Claude Code extension to their named keys, each named with its hint', async () => {
@@ -2231,18 +2570,45 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     expect(printed().some((line) => line.includes('Codex desktop'))).toBe(false);
   });
 
-  it('leaves a Codex config that is a symbolic link, naming the command that connects it', async () => {
+  it('moves a Codex config that is a symbolic link through the link, and a second connect leaves it', async () => {
     const target = join(clientHome, 'dotfiles-config.toml');
     await writeAt(target, codexConfig('Bearer gk'));
     await mkdir(dirname(codexConfigPath()), { recursive: true });
     await symlink(target, codexConfigPath());
 
     await connect({ claudeDesktop: true });
+    await connect({ claudeDesktop: true });
 
+    expect((await lstat(codexConfigPath())).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe(codexConfig('Bearer gk.codex-desktop'));
+    expect(printed().filter((line) => line.includes('Codex desktop'))).toEqual([
+      '✓ Codex desktop moved to its own key — Quit and reopen the ChatGPT desktop app to apply the change.',
+    ]);
+  });
+
+  it.skipIf(process.platform === 'win32')('warns once for a linked Codex config whose target it cannot write, leaves the link, still moves the other client', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    const targetDir = join(clientHome, 'read-only-dotfiles');
+    const target = join(targetDir, 'config.toml');
+    await writeAt(target, codexConfig('Bearer gk'));
+    await mkdir(dirname(codexConfigPath()), { recursive: true });
+    await symlink(target, codexConfigPath());
+    await writeAt(await vscodeSettingsPath(), vscodeSettings('gk'));
+
+    await chmod(targetDir, 0o555);
+    try {
+      await connect({ claudeDesktop: true });
+    } finally {
+      await chmod(targetDir, 0o755);
+    }
+
+    expect((await lstat(codexConfigPath())).isSymbolicLink()).toBe(true);
     expect(await readFile(target, 'utf-8')).toBe(codexConfig('Bearer gk'));
-    expect(printed()).toContain(
-      '  Codex desktop left on the shared key: its config is a symbolic link — Run: codemie proxy connect --codex-desktop'
-    );
+    expect(await readFile(await vscodeSettingsPath(), 'utf-8')).toBe(vscodeSettings('gk.vscode-claude-code'));
+    expect(printed().filter((line) => line.includes('Codex desktop'))).toEqual([
+      expect.stringMatching(/^Warning: could not move Codex desktop to its own key: .*EACCES/),
+    ]);
+    expect(process.exitCode).toBe(0);
   });
 
   it('--vscode-claude-code --insiders moves the stable VS Code settings to the named key', async () => {
@@ -3059,13 +3425,13 @@ describe('ensureOtlpProxy', () => {
       expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe(model);
     });
 
-    it('a state with a version and no model passes no model', async () => {
+    it('a state with a version and no model takes the model of the global profile of the state\'s name', async () => {
       const s = await arrangeState({ ...OLDER, model: undefined });
       vi.mocked(s.ConfigLoader.loadGlobalConfigProfile).mockResolvedValue({ name: 'p', model: 'm1' });
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
+      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
     });
 
     /** The state of a live older daemon that names no upstream. */
@@ -3410,6 +3776,8 @@ describe('runCodexDesktop', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('ChatGPT.app');
+    expect(result.error).toContain('--overwrite');
+    expect(result.error).not.toContain('--force');
     // The story guarantees nothing is written when the app is absent, so the
     // message alone is not enough — the writer must never have been reached.
     const { writeCodexDesktopConfig } = await import('../connectors/codex-desktop.js');
@@ -3436,7 +3804,7 @@ describe('runCodexDesktop', () => {
     }));
   });
 
-  it('proceeds past a missing app when --force is set', async () => {
+  it('proceeds past a missing app when --overwrite is set', async () => {
     vi.doMock('../connectors/codex-desktop.js', () => codexDesktopMock({
       findCodexDesktopApp: vi.fn().mockReturnValue(null),
     }));
@@ -3444,7 +3812,7 @@ describe('runCodexDesktop', () => {
     const { runCodexDesktopForTest } = await import('../connect-orchestrator.js');
     const result = await runCodexDesktopForTest(
       { url: 'http://127.0.0.1:4001', gatewayKey: 'k' } as never,
-      { force: true }
+      { overwrite: true }
     );
 
     expect(result.ok).toBe(true);
@@ -3489,6 +3857,70 @@ describe('targets that once needed another identity, over one daemon', () => {
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalled();
     expect(writeOmpExtension).toHaveBeenCalled();
     expect(process.exitCode).toBe(0);
+  });
+
+  it('restartDaemon alone replaces the daemon only: a foreign omp extension is not overwritten', async () => {
+    await arrangeFresh();
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true }, restartDaemon: true });
+
+    expect(writeOmpExtension).toHaveBeenCalledWith({ overwrite: false });
+  });
+
+  it('--overwrite reaches the omp writer', async () => {
+    await arrangeFresh();
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true }, overwrite: true });
+
+    expect(writeOmpExtension).toHaveBeenCalledWith({ overwrite: true });
+  });
+
+  it.each([
+    ['--scope', { scope: 'project' as const }],
+    ['--yes', { yes: true }],
+  ])('%s without an analytics connector target warns that it has no effect', async (flag, extra) => {
+    await arrangeFresh();
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true }, ...extra });
+
+    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining(`${flag} has no effect`));
+    expect(writeOmpExtension).toHaveBeenCalled();
+  });
+
+  it('--scope and --yes with an analytics connector target print no ignored-flag warning', async () => {
+    await arrangeFresh();
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project', yes: true });
+
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('has no effect'));
+  });
+
+  it('an omitted --scope reaches the Copilot CLI writer as the user scope', async () => {
+    await arrangeFresh();
+    const write = vi.fn().mockResolvedValue({ hookEvents: 1, hookFilePath: '/h', allowlist: [] });
+    vi.doMock('../connectors/copilot-cli-otlp.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../connectors/copilot-cli-otlp.js')>()),
+      writeCopilotCliOtlpConfig: write,
+    }));
+    try {
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { copilotCliOtlp: true } });
+
+      expect(write).toHaveBeenCalledWith({ scope: 'user' });
+    } finally {
+      vi.doUnmock('../connectors/copilot-cli-otlp.js');
+    }
   });
 
   it('--codex-desktop --claude-desktop prints no warning', async () => {
@@ -3586,7 +4018,7 @@ describe('assertSsoCredentials', () => {
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect((thrown as Error).message).toBe(
-      "No SSO credentials found for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
+      "No SSO credentials found for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(lookup).toHaveBeenCalledWith({
@@ -3662,7 +4094,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
       const running = matchingDesktopState({ clientType });
       const s = await arrange(4001, running);
 
-      await s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true });
+      await s.connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
 
       expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
@@ -3691,7 +4123,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
     const spawnedState = matchingDesktopState({ port: 62000, url: 'http://127.0.0.1:62000' });
     vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(spawnedState as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>);
 
-    await expect(s.connectTargets({ targets: { claudeCodeOtlp: true }, silent: true })).resolves.toBeUndefined();
+    await expect(s.connectTargets({ targets: { claudeCodeOtlp: true }, yes: true })).resolves.toBeUndefined();
 
     expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
@@ -3784,5 +4216,210 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
     const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
     expect(spawned.port).toBe(4001);
     expectNoIdentity(spawned as unknown as Record<string, unknown>);
+  });
+});
+
+describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+    scopeReads.values = {};
+    await setupHappyMocks();
+    const { checkStatus, readState, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(readState).mockResolvedValue(null);
+    vi.mocked(spawnDaemon).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof spawnDaemon>>);
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+    scopeReads.values = {};
+  });
+
+  function printedLines(): string[] {
+    return console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
+  }
+
+  const connectors = [
+    { id: 'claude-code-otlp', target: 'claudeCodeOtlp', label: 'Claude Code' },
+    { id: 'copilot-cli-otlp', target: 'copilotCliOtlp', label: 'Copilot CLI' },
+    { id: 'copilot-chat-otlp', target: 'copilotChatOtlp', label: 'Copilot Chat' },
+  ] as const;
+
+  async function writerFor(id: string): Promise<ReturnType<typeof vi.fn>> {
+    const write = vi.fn().mockResolvedValue({
+      hookEvents: 1, hookFilePath: '/h', settingsPath: '/s', allowlist: [],
+      written: true, path: '/s', backupPath: null, envVars: 1,
+    });
+    if (id === 'claude-code-otlp') {
+      const mod = await import('../connectors/claude-code-otlp.js');
+      vi.mocked(mod.writeClaudeCodeOtlpConfig).mockImplementation(write);
+    } else if (id === 'copilot-cli-otlp') {
+      vi.doMock('../connectors/copilot-cli-otlp.js', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../connectors/copilot-cli-otlp.js')>()),
+        writeCopilotCliOtlpConfig: write,
+      }));
+    } else {
+      vi.doMock('../connectors/copilot-chat-otlp.js', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../connectors/copilot-chat-otlp.js')>()),
+        writeCopilotChatOtlpConfig: write,
+      }));
+    }
+    return write;
+  }
+
+  afterEach(() => {
+    vi.doUnmock('../connectors/copilot-cli-otlp.js');
+    vi.doUnmock('../connectors/copilot-chat-otlp.js');
+  });
+
+  it('a connector an aggregate set with no --scope keeps its list: no prompt and no baseline', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { confirmScopeDrops } = await import('../connect-scope-preflight.js');
+
+    const baselines = await confirmScopeDrops({ copilotCliOtlp: true }, undefined, false, new Set(['copilotCliOtlp']));
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(baselines?.size).toBe(0);
+  });
+
+  for (const c of connectors) {
+    for (const scope of [undefined, 'user'] as const) {
+      it(`${c.label}: lists the projects to drop and a decline changes nothing for it (scope: ${scope ?? 'omitted'})`, async () => {
+        scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a', '/repo/b'] }];
+        const write = await writerFor(c.id);
+        const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+        vi.mocked(promptScopeDropConfirmation).mockResolvedValueOnce('cancel');
+        const { spawnDaemon } = await import('../daemon-manager.js');
+        const { connectTargets } = await import('../connect-orchestrator.js');
+
+        await connectTargets({ targets: { [c.target]: true }, scope });
+
+        expect(promptScopeDropConfirmation).toHaveBeenCalledWith(
+          expect.objectContaining({ paths: ['/repo/a', '/repo/b'] })
+        );
+        expect(write).not.toHaveBeenCalled();
+        expect(spawnDaemon).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(0);
+      });
+    }
+
+    it(`${c.label}: a confirmed drop writes the user scope`, async () => {
+      scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a'] }];
+      const write = await writerFor(c.id);
+      const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { [c.target]: true } });
+
+      expect(promptScopeDropConfirmation).toHaveBeenCalledTimes(1);
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({ scope: 'user' }));
+      expect(process.exitCode).toBe(0);
+    });
+
+    it(`${c.label}: non-interactive without --yes exits 1 naming --yes before SSO or the daemon`, async () => {
+      scopeReads.values[c.id] = [{ scope: 'project', paths: ['/repo/a'] }];
+      const write = await writerFor(c.id);
+      const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
+      vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
+      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      try {
+        await connectTargets({ targets: { [c.target]: true }, scope: 'user' });
+      } finally {
+        vi.mocked(isNonInteractiveEnvironment).mockReturnValue(false);
+      }
+
+      expect(process.exitCode).toBe(1);
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--yes'));
+      expect(CodeMieSSO).not.toHaveBeenCalled();
+      expect(checkStatus).not.toHaveBeenCalled();
+      expect(spawnDaemon).not.toHaveBeenCalled();
+      expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it(`${c.label}: a list changed after confirmation skips the writer with a message`, async () => {
+      scopeReads.values[c.id] = [
+        { scope: 'project', paths: ['/repo/a'] },
+        { scope: 'project', paths: ['/repo/a', '/repo/new'] },
+      ];
+      const write = await writerFor(c.id);
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { [c.target]: true }, yes: true });
+
+      expect(write).not.toHaveBeenCalled();
+      expect(printedLines().some((line) => line.includes('changed after confirmation'))).toBe(true);
+      expect(process.exitCode).toBe(1);
+    });
+  }
+
+  it('--yes skips the scope prompt, works non-interactively and lists what is dropped', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
+    vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    try {
+      await connectTargets({ targets: { copilotCliOtlp: true }, yes: true });
+    } finally {
+      vi.mocked(isNonInteractiveEnvironment).mockReturnValue(false);
+    }
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'user' });
+    expect(printedLines().some((line) => line.includes('/repo/a'))).toBe(true);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('--scope project asks nothing about dropping projects', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true }, scope: 'project' });
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'project' });
+  });
+
+  it('an invalid project list needs no scope confirmation', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ invalid: 'corrupt' }];
+    const write = await writerFor('copilot-cli-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true } });
+
+    expect(promptScopeDropConfirmation).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith({ scope: 'user' });
+  });
+
+  it('a decline for one connector still connects the others', async () => {
+    scopeReads.values['copilot-cli-otlp'] = [{ scope: 'project', paths: ['/repo/a'] }];
+    const cli = await writerFor('copilot-cli-otlp');
+    const chat = await writerFor('copilot-chat-otlp');
+    const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
+    vi.mocked(promptScopeDropConfirmation).mockResolvedValueOnce('cancel');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true, copilotChatOtlp: true } });
+
+    expect(cli).not.toHaveBeenCalled();
+    expect(chat).toHaveBeenCalledWith({ scope: 'user' });
+    expect(process.exitCode).toBe(0);
   });
 });

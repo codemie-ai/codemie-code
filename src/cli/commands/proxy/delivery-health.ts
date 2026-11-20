@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
@@ -9,7 +8,6 @@ import { advertisesContract, getPolicyState, type PolicyState } from '@/provider
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
-import { formatReportRows, type ReportRow } from './analytics-report.js';
 
 export type DeliveryReason =
   | 'credentials_expired'
@@ -48,12 +46,12 @@ export interface DeliveryHealth {
  * docstring) — a session still pending from a profile the user has since switched away from is
  * judged by the wrong capability until it drains or is lost to retention.
  */
-export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
-  credentials_expired: { label: 'CodeMie sign-in has expired', run: 'codemie profile login' },
-  auth_rejected: { label: 'CodeMie asked you to sign in again', run: 'codemie profile login' },
+export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; command?: string }> = {
+  credentials_expired: { label: 'CodeMie sign-in has expired', command: 'codemie profile login' },
+  auth_rejected: { label: 'CodeMie asked you to sign in again', command: 'codemie profile login' },
   identity_mismatch: {
     label: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-    run: 'codemie proxy restart',
+    command: 'codemie proxy restart',
   },
   send_failed: { label: 'last send to CodeMie failed, retrying' },
   classification_unreachable: { label: 'waiting for CodeMie to respond' },
@@ -151,105 +149,7 @@ export async function collectDeliveryHealth(
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-/**
- * A time in the user's time zone as `YYYY-MM-DD HH:mm:ss +HH:MM` (the offset in force at that moment); a time read
- * from a status file outside the date range is printed as stored, not thrown on.
- */
-function formatTime(ms: number): string {
-  const at = new Date(ms);
-  if (Number.isNaN(at.getTime())) return String(ms);
-  const pad = (n: number, width = 2): string => String(n).padStart(width, '0');
-  const offsetMinutes = -at.getTimezoneOffset();
-  const sign = offsetMinutes < 0 ? '-' : '+';
-  const offset = `${sign}${pad(Math.trunc(Math.abs(offsetMinutes) / 60))}:${pad(Math.trunc(Math.abs(offsetMinutes) % 60))}`;
-  const date = `${pad(at.getFullYear(), 4)}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
-  const time = `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
-  return `${date} ${time} ${offset}`;
-}
-
-/** The `Last dropped:` row of the newest recorded drop, with the remedy of a session without a project. */
-export function describeDrop(drop: LatestDrop | undefined): ReportRow | undefined {
-  if (!drop) return undefined;
-  const where = drop.stream ? `${drop.stream}, ` : '';
-  return {
-    message: `Last dropped: ${drop.reason} (${where}${formatTime(drop.at)})`,
-    ...(drop.reason === 'no_project'
-      ? { hint: 'Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent' }
-      : {}),
-  };
-}
-
-/** The drop as indented lines for `proxy status`: the message, then the remedy when there is one. */
-export function formatDropLines(drop: LatestDrop | undefined): string[] {
-  const row = describeDrop(drop);
-  return row ? [`  ${row.message}`, ...(row.hint ? [`  ${row.hint}`] : [])] : [];
-}
-
-/** The `Delivery:` row; only the status text is colored: green when healthy, yellow otherwise. */
-function deliveryRow(health: DeliveryHealth): ReportRow {
-  if (health.status === 'healthy') {
-    return { message: `Delivery: ${chalk.green('healthy')}` };
-  }
-  if (health.status === 'unhealthy') {
-    const entry = health.reason ? DELIVERY_REASONS[health.reason] : undefined;
-    return {
-      message: `Delivery: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? { hint: `Run: ${entry.run}` } : {}),
-    };
-  }
-  return { message: `Delivery: ${chalk.yellow(`unknown (${unknownHint(health)})`)}` };
-}
-
 /** Why delivery cannot be judged: an unreadable spool is not fixed by a restart, a missing health reply is. */
 export function unknownHint(health: DeliveryHealth): string {
   return health.incomplete ? 'local analytics data could not be read' : 'restart the proxy to enable all checks';
-}
-
-/** An amount that could not be read is `unknown`, never `none`. The part held in sessions that are not sent for now is named after it. */
-function unsentDataMessage(pendingBytes: number | undefined, heldBytes?: number): string {
-  if (pendingBytes === undefined) return 'Unsent data: unknown';
-  if (pendingBytes <= 0) return 'Unsent data: none';
-  const held = heldBytes ? `, ${formatBytes(heldBytes)} of it on hold` : '';
-  return `Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)${held}`;
-}
-
-/** The error code of a failed send; no HTTP response at all reads as the backend being unreachable. */
-function describeError(detail: string): string {
-  return detail === 'request_error' ? 'backend unreachable' : detail;
-}
-
-/**
- * The rows above the connector section of `proxy analytics status`, with no heading: Delivery and Unsent
- * data as separate rows, the next retry and error code of a failing send, and the newest drop. `null`
- * means the proxy is not running, so there is nothing else to show.
- */
-export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
-  if (!health) {
-    return formatReportRows([{ message: `Delivery: ${chalk.yellow('proxy not running')}` }]);
-  }
-
-  const rows: ReportRow[] = [
-    deliveryRow(health),
-    { message: unsentDataMessage(health.pendingBytes, health.heldBytes) },
-  ];
-  if (health.sendFailure) {
-    // The daemon retries on its next tick, so a time that has come reads as due, never as a past date.
-    const { nextAt } = health.sendFailure;
-    rows.push({ message: `Next retry: ${nextAt <= Date.now() ? 'due now' : formatTime(nextAt)}` });
-    if (health.sendFailure.detail) {
-      rows.push({ message: `Error: ${describeError(health.sendFailure.detail)}` });
-    }
-  }
-  const drop = describeDrop(health.latestDrop);
-  if (drop) {
-    rows.push(drop);
-  }
-  return formatReportRows(rows);
 }

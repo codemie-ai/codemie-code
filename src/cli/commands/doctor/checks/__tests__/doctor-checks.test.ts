@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   listWorkflowsMock: vi.fn(),
   getUserNpmrcPrefixMock: vi.fn(),
   getCodemieNpmPrefixMock: vi.fn(),
+  composeMock: vi.fn(),
 }));
 
 // exec() drives AwsCliCheck and UvCheck.
@@ -94,6 +95,10 @@ vi.mock('@/utils/npm-prefix.js', async (importOriginal) => {
   };
 });
 
+vi.mock('@/cli/commands/proxy/doctor/compose.js', () => ({
+  composeProxyDoctor: (...args: unknown[]) => h.composeMock(...args),
+}));
+
 // Import checks AFTER mocks are registered.
 import { NodeVersionCheck } from '../NodeVersionCheck.js';
 import { AwsCliCheck } from '../AwsCliCheck.js';
@@ -104,6 +109,7 @@ import { AIConfigCheck } from '../AIConfigCheck.js';
 import { WorkflowsCheck } from '../WorkflowsCheck.js';
 import { FrameworksCheck } from '../FrameworksCheck.js';
 import { NpmPrefixOverrideCheck } from '../NpmPrefixOverrideCheck.js';
+import { ProxyCheck } from '../ProxyCheck.js';
 import { getLegacyNpmPrefixPath } from '@/utils/npm-prefix.js';
 
 /** Build a fake JWT whose payload has the given exp (seconds since epoch), or none. */
@@ -332,7 +338,7 @@ describe('AIConfigCheck', () => {
     expect(result.name).toBe('Active Profile');
     expect(result.success).toBe(false);
     expect(result.details).toEqual([
-      { status: 'error', message: 'No configuration found', hint: 'Run: codemie setup' },
+      { status: 'error', message: 'No configuration found', hint: 'Not configured — run: codemie setup' },
     ]);
   });
 
@@ -584,5 +590,51 @@ describe('NpmPrefixOverrideCheck', () => {
 
     expect(result.success).toBe(true);
     expect(result.details).toEqual([{ status: 'ok', message: expect.any(String) }]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+describe('ProxyCheck', () => {
+  it('composes without the auth probe', async () => {
+    h.composeMock.mockResolvedValue({ sections: [{ id: 'daemon', status: 'ok', message: 'running' }], nothingConnected: false });
+    const result = await new ProxyCheck().run();
+    expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false });
+    expect(result.name).toBe('Proxy');
+    expect(result.success).toBe(true);
+    expect(result.details).toEqual([
+      { status: 'ok', message: 'running' },
+      { status: 'info', message: expect.stringContaining('codemie proxy doctor') },
+    ]);
+  });
+
+  it('ends with a pointer to codemie proxy doctor for the full report', async () => {
+    h.composeMock.mockResolvedValue({ sections: [{ id: 'clients', status: 'warn', message: 'w', hint: 'h' }], nothingConnected: false });
+    const result = await new ProxyCheck().run();
+    expect(result.details.at(-1)).toEqual({ status: 'info', message: 'Full report: codemie proxy doctor' });
+  });
+
+  it('fails only on an error section, not on a warning', async () => {
+    h.composeMock.mockResolvedValue({ sections: [{ id: 'clients', status: 'warn', message: 'w', hint: 'h' }], nothingConnected: false });
+    expect((await new ProxyCheck().run()).success).toBe(true);
+    h.composeMock.mockResolvedValue({ sections: [{ id: 'auth', status: 'error', message: 'e' }], nothingConnected: false });
+    expect((await new ProxyCheck().run()).success).toBe(false);
+  });
+
+  it('reports a single info line when nothing is connected', async () => {
+    h.composeMock.mockResolvedValue({
+      sections: [{ id: 'clients', status: 'warn', message: 'nothing is connected', hint: 'run: codemie proxy connect' }],
+      nothingConnected: true,
+    });
+    const result = await new ProxyCheck().run();
+    expect(result.success).toBe(true);
+    expect(result.details.every((d) => d.status === 'info' || d.status === 'ok')).toBe(true);
+  });
+
+  it('never rejects: a thrown compose becomes an error detail', async () => {
+    h.composeMock.mockRejectedValue(new Error('boom'));
+    const result = await new ProxyCheck().run();
+    expect(result.success).toBe(false);
+    expect(result.details[0].status).toBe('error');
+    expect(result.details[0].message).toContain('boom');
   });
 });

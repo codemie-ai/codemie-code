@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Closest pattern is the disconnect-orchestrator plus connector file logic, which reuse writeJsonFileAtomic, sanitizeLogArgs and getClaudeDesktopBaseDir (base S). Bumped to M because the work diverges on the security-sensitive side: it mutates a third-party config file that holds OAuth tokens, reads only Object.keys of the entry, drops parser text from every result, and passes server names through JSON.stringify against terminal escape injection (output encoding the existing pattern does not cover). Windows blocked-rename handling (EBUSY/EPERM/EACCES) adds a platform branch. Existing connector and orchestrator test templates already cover error-path assertions, so the edge-case auto-bump does not apply." },
+    { "dimension": "component_scope", "reason": "Three components in one CLI subtree: connectors/desktop-mcp-auth.ts (file logic with a typed outcome table), reset-mcp-auth-orchestrator.ts (messages, logging, exit code) and the proxy/index.ts subcommand registration with help text. Pattern is clear and shared utilities are reused, not changed." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S to M: secret-bearing config file handled without exposing token values, and output-encoding of server names is not covered by the closest existing pattern"
+  ],
+  "split_recommendation": null
+}
