@@ -1,0 +1,123 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Check round approved; CR-001 resolved. User approved."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001 fix-now accepted by user"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved; CR-001 resolved. User approved."
+    }
+  ],
+  "reviewed_head": "08c060703bd37bb68aa9aa28abba1af3c431f611",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 resolved: install.ps1 line 100 now filters null entries before ToString(), so the 'not found in registry' message is built on empty npm output. Only the prior blocking finding was verified.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "install/windows/install.ps1",
+      "line": 100,
+      "title": "Null output breaks not-found error message",
+      "problem": "When npm exits non-zero (or returns nothing) with no output, $output is $null; @($output) yields one null element and $_.ToString() throws a null-method error under ErrorActionPreference=Stop, so the intended 'was not found in registry' message is never built. Unmet acceptance criterion 3.",
+      "impact": "Users get an opaque PowerShell error instead of the actionable registry guidance; required criterion 3 is partial. Reachability confirmed: line 99 condition routes empty output here.",
+      "recommendation": "$outputText = (@($output | Where-Object { $null -ne $_ }) | ForEach-Object { $_.ToString() }) -join ' '",
+      "status": "resolved",
+      "check_notes": "install.ps1:100 filters null elements before ToString(); null-method error no longer possible.",
+      "fix": {
+        "change": "Filter null entries from $output before ToString() when building the npm output text in Get-PackageVersion",
+        "test": "n/a (PowerShell installer; no focused test harness, manual runtime check)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "1. Unrecognized .npmrc key does not abort on PS 5.1 and 7.x",
+      "status": "pass",
+      "notes": "Local Continue preference around npm call; runtime check is manual."
+    },
+    {
+      "kind": "story-ac",
+      "item": "2. Returns only version string when npm warns on stderr",
+      "status": "pass",
+      "notes": "ErrorRecords filtered out of $output."
+    },
+    {
+      "kind": "story-ac",
+      "item": "3. Non-zero exit still fails with 'was not found in registry'",
+      "status": "partial",
+      "notes": "Empty $output makes message-building hit a null .ToString() first."
+    },
+    {
+      "kind": "story-ac",
+      "item": "4. DryRun path unchanged",
+      "status": "pass",
+      "notes": "Early return 'dry-run' untouched."
+    },
+    {
+      "kind": "story-ac",
+      "item": "5. ErrorActionPreference restored including on throw",
+      "status": "pass",
+      "notes": "try/finally."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Edge-case and acceptance lenses ran; one finding (confirmed in source) leaves criterion 3 partial: empty npm output hits a null .ToString() under Stop and hides the 'not found in registry' message. 0 deferred, 0 dismissed, 0 advisory.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}
