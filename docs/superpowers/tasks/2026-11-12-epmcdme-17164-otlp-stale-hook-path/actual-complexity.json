@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-12T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "defaultAgentHooks '*' beforeRun runs on every agent launch and rewrites the shared ~/.claude/settings.json; mitigated by try/catch that never blocks launch, lazy import to avoid a provider-to-connector cycle, and reuse of existing hook-command rewrite logic." },
+    { "dimension": "file_change_estimate", "reason": "4 files per diffstat (2 source modified, 2 test files), 134 insertions, across src/cli and src/providers." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

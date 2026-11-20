@@ -28,6 +28,7 @@ import {
 } from '../../../utils/installation-detector.js';
 import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
+import { healClaudeSettingsHooks } from '../../../cli/commands/proxy/connectors/claude-code-otlp.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
@@ -622,6 +623,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
       // checks have no timeout of their own and must not stall this synchronous path.
       if (await isClaudeCodeOtlpConnected()) {
+        // Repair stale CodeMie CLI paths in the shared OTLP hooks (EPMCDME-17164); never blocks launch.
+        try {
+          await healClaudeSettingsHooks();
+        } catch (error) {
+          logger.debug(`OTLP hook heal skipped: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
         const timeoutMessage = `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`;
         try {
           await withTimeout(
