@@ -183,6 +183,31 @@ describe('codemie analytics view', () => {
     expect(bad.stderr).toMatch(/^✗ Invalid --from date "2026-13-01"[^\n]*\n$/);
   });
 
+  it('refuses a session without a numeric start, and a range of more than 1000 weeks before building any bucket', async () => {
+    const at = Date.UTC(2026, 10, 18, 9);
+    const noStart = join(dir, 'no-start.json');
+    writeFileSync(noStart, JSON.stringify(payload([{ ...record({ sessionId: 'odd', startTime: at }), startTime: 'yesterday' }])));
+    const bad = await run(['--input', noStart]);
+    expect(bad).toMatchObject({ stdout: '', exitCode: 1 });
+    expect(bad.stderr).toMatch(/^✗ [^\n]*is not an analytics export[^\n]*\n$/);
+
+    // A start some 250,000 years back would otherwise ask for ~13 million week buckets.
+    const ancient = join(dir, 'ancient.json');
+    writeFileSync(ancient, JSON.stringify(payload([
+      record({ sessionId: 'old', startTime: -8e15 }),
+      record({ sessionId: 'new', startTime: at }),
+    ])));
+    for (const args of [['--input', ancient], ['--input', input, '--from', '0001-01-01', '--to', '2026-11-19']]) {
+      const { stdout, stderr, exitCode } = await run(args);
+      expect({ args, exitCode, stdout }).toEqual({ args, exitCode: 1, stdout: '' });
+      expect(stderr).toMatch(/^✗ The range is longer than 19 years[^\n]* — narrow it with --from\/--to or --last\n$/);
+    }
+    // Narrowed, the same file answers.
+    const narrowed = await run(['--input', ancient, '--from', '2026-11-01', '--to', '2026-11-19']);
+    expect(narrowed.exitCode).toBe(0);
+    expect(JSON.parse(narrowed.stdout).totals.sessions).toBe(1);
+  });
+
   it('names the problem for a reversed range and a directory given to -o', async () => {
     expect((await run(['--input', input, '--from', '2026-11-19', '--to', '2026-11-01'])).stderr)
       .toBe('✗ --from 2026-11-19 is after --to 2026-11-01\n');

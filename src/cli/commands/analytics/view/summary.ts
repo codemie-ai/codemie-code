@@ -9,6 +9,7 @@
 
 import { agentMatchesAnalyticsFilter } from '../cost/codex-agent.js';
 import type { ReportPayload, ReportSessionRecord } from '../report/types.js';
+import { ViewInputError } from './input.js';
 import {
   SUMMARY_SCHEMA,
   type AnalyticsSummary,
@@ -25,6 +26,8 @@ type StepKind = 'agent' | 'skill' | 'command';
 const DAY_MS = 86_400_000;
 /** Ranges longer than this many days are bucketed by week. */
 const MAX_DAY_BUCKETS = 35;
+/** At most this many week buckets (about 19 years): a longer range is refused before any is made. */
+const MAX_WEEK_BUCKETS = 1000;
 /** Rows in the dead and heavy session lists. */
 const TOP_ROWS = 8;
 // VIEWS.efficiency "Session depth" buckets; the last label is "51+" (app.js prints "50+" for the same > 50 test).
@@ -293,6 +296,12 @@ export function buildSummary(payload: ReportPayload, f: ViewFilter, opts: { comp
   if (from === undefined) {
     from = Number.isFinite(periodStart) ? periodStart : to;
     for (const s of records) from = Math.min(from, s.startTime);
+  }
+  // A malformed export or an extreme --from would otherwise ask for millions of buckets.
+  if ((to - from) / (7 * DAY_MS) > MAX_WEEK_BUCKETS) {
+    const years = Math.floor((MAX_WEEK_BUCKETS * 7) / 365);
+    const origin = f.from === undefined ? ' (it starts at the export’s earliest session)' : '';
+    throw new ViewInputError(`The range is longer than ${years} years${origin} — narrow it with --from/--to or --last`);
   }
   const totals = totalsOf(records);
 

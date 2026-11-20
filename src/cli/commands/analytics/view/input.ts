@@ -17,13 +17,18 @@ export class ViewInputError extends CodeMieError {
   }
 }
 
+/** An export: `{meta, sessions}`, every session with a string `sessionId` and a finite `startTime`. */
 function isExport(data: unknown): data is ReportPayload {
   if (typeof data !== 'object' || data === null) return false;
   const { meta, sessions } = data as { meta?: unknown; sessions?: unknown };
   return (
     typeof meta === 'object' && meta !== null &&
     Array.isArray(sessions) &&
-    sessions.every((s) => typeof s === 'object' && s !== null && typeof (s as { sessionId?: unknown }).sessionId === 'string')
+    sessions.every((s) => {
+      if (typeof s !== 'object' || s === null) return false;
+      const { sessionId, startTime } = s as { sessionId?: unknown; startTime?: unknown };
+      return typeof sessionId === 'string' && typeof startTime === 'number' && Number.isFinite(startTime);
+    })
   );
 }
 
