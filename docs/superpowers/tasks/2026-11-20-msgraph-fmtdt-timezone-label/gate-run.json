@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "fix/msgraph-timezone-label",
+  "head": "7d31c3b9ec8284d43421c3f984ce11de2471694b",
+  "runner": "npm",
+  "started_at": "2026-11-20T00:00:00Z",
+  "completed_at": "2026-11-20T00:00:00Z",
+  "status": "PASS",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 163000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "full unit project passed 12111/12111 with CODEMIE_*/ANTHROPIC_* unset; the 5 failures depend on the environment and also fail on clean upstream/main"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 33000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan'. Stage changes to scan locally; CI runs it unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {}
+}
