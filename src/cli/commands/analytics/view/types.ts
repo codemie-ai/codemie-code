@@ -105,7 +105,8 @@ export interface AnalyticsSummary {
   totals: SummaryTotals;
   /**
    * Totals of the same-length range just before; null without --compare, when the input does not reach
-   * back that far, or when it was generated before 99% of the current range up to now (`meta.generatedAt`).
+   * back that far, or when it observed less than 99% of the current range up to now (it observed up to
+   * the earlier of `meta.generatedAt` and a `meta.periodEnd` set by --to).
    */
   previous: SummaryTotals | null;
   /** (current − previous) / previous per field; a field is null when its previous value is 0. */

@@ -416,6 +416,25 @@ describe('buildSummary', () => {
     // An input that does not say when it was generated (a store merged from many exports) is taken as current.
     expect(withGenerated(undefined).previous).toMatchObject({ sessions: 1, costUSD: 1 });
   });
+
+  it('takes an export made with --to as observed only up to its periodEnd, however recently it was generated', () => {
+    const range = { from: Date.UTC(2026, 10, 10), to: Date.UTC(2026, 10, 19, 23, 59, 59, 999) }; // 10 days; NOW is 19 Nov 12:00
+    const sessions = [
+      record({ sessionId: 'now', startTime: Date.UTC(2026, 10, 11, 9), durationMs: 60_000, costUSD: 2 }),
+      record({ sessionId: 'before', startTime: Date.UTC(2026, 10, 5, 9), durationMs: 60_000, costUSD: 1 }),
+    ];
+    const compare = { ...opts, compare: true };
+    const exportWith = (periodEnd: string | undefined): ReturnType<typeof buildSummary> =>
+      buildSummary(payload(sessions, { periodStart: '2026-10-01T00:00:00.000Z', generatedAt: '2026-11-19T11:59:00.000Z', periodEnd }), range, compare);
+
+    // Generated a minute ago, but for --to 2026-11-12: the rest of the current range was never read.
+    expect(exportWith('2026-11-12T23:59:59.999Z').previous).toBeNull();
+    // A periodEnd that is just the last session's end (an export made without --to) says nothing
+    // about how far it observed: the generation time counts.
+    expect(exportWith(new Date(Date.UTC(2026, 10, 11, 9) + 60_000).toISOString()).previous).toMatchObject({ sessions: 1, costUSD: 1 });
+    // Made with --to past the range's end: it compares.
+    expect(exportWith('2026-11-19T23:59:59.999Z').previous).toMatchObject({ sessions: 1, costUSD: 1 });
+  });
 });
 
 describe('parseViewDate', () => {

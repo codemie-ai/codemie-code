@@ -285,6 +285,24 @@ function changeOf(current: number, previous: number): number | null {
 }
 
 /**
+ * How far the export observed: the earlier of `meta.generatedAt` and `meta.periodEnd`. A periodEnd
+ * equal to the last session's end (start + duration, as `payload-builder` derives it for an export
+ * made without --to) says nothing about how far it read, so only generatedAt counts then. Undefined
+ * when the input says neither.
+ */
+function observedUntil(payload: ReportPayload): number | undefined {
+  const generatedAt = Date.parse(payload.meta.generatedAt ?? '');
+  const periodEnd = Date.parse(payload.meta.periodEnd ?? '');
+  let lastEnd = -Infinity;
+  for (const s of payload.sessions) {
+    if (!(s.startTime > 0)) continue;
+    lastEnd = Math.max(lastEnd, s.startTime + (Number.isFinite(s.durationMs) ? Math.max(s.durationMs, 0) : 0));
+  }
+  const ends = [generatedAt, periodEnd === lastEnd ? NaN : periodEnd].filter(Number.isFinite);
+  return ends.length ? Math.min(...ends) : undefined;
+}
+
+/**
  * The `codemie.analytics.summary/1` document for the sessions of `payload` that match `f`.
  * Without `--from` the range starts at the earlier of the export's `periodStart` and the earliest
  * matching session, so the series and the totals count the same sessions; without `--to` it ends
@@ -310,10 +328,10 @@ export function buildSummary(payload: ReportPayload, f: ViewFilter, opts: { comp
   let previous: SummaryTotals | null = null;
   let change: AnalyticsSummary['change'] = null;
   const length = to - from + 1;
-  // The current range up to now that the export never saw: it was generated before then. An input
-  // that doesn't say when it was generated (a store merged from many exports) is taken as current.
-  const generatedAt = Date.parse(payload.meta.generatedAt ?? '');
-  const unobserved = Number.isFinite(generatedAt) ? Math.max(0, Math.min(to, opts.now) - generatedAt) : 0;
+  // The current range up to now that the export never saw. An input that says neither when it was
+  // generated nor where its range ended (a store merged from many exports) is taken as current.
+  const seenUntil = observedUntil(payload);
+  const unobserved = seenUntil === undefined ? 0 : Math.max(0, Math.min(to, opts.now) - seenUntil);
   // Only when the export reaches back to the previous range's start and saw nearly all of the
   // current one; otherwise a missing stretch would read as a drop.
   if (opts.compare && periodStart <= from - length && unobserved <= length * MAX_UNOBSERVED_SHARE) {
