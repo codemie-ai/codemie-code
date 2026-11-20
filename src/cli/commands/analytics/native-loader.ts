@@ -23,7 +23,6 @@ import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
-import { isCountedTranscriptLine } from '../../../agents/plugins/claude/session/transcript-lines.js';
 import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 import { isCodexFamilyAgent } from './cost/codex-agent.js';
 import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
@@ -46,12 +45,6 @@ import { COPILOT_CLI_AGENT_NAME, COPILOT_DESKTOP_AGENT_NAME } from '../../../age
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
-
-/** The only discovered agent whose logs `parse` reads with the Claude session adapter (claude.session.ts). */
-const CLAUDE_ADAPTER_AGENT = 'claude';
-
-/** How much of a Claude log's head {@link NativeLoaderDeps.firstCountedTimestamp} reads. */
-const FIRST_COUNTED_HEAD_BYTES = 64 * 1024;
 
 /**
  * Agents CodeMie only reads analytics for and never installs, launches, or manages.
@@ -87,8 +80,6 @@ export interface NativeLoaderDeps {
   realPath(p: string): string;
   /** Returns true when the transcript at filePath contains a codemie_session_start marker (first 10 lines). */
   hasOwnershipMarker(filePath: string): boolean;
-  /** Time (ms) of the first timestamped line the Claude adapter counts within a log's first 64 KB; null when none or unreadable. */
-  firstCountedTimestamp(filePath: string): number | null;
 }
 
 /** Symlink-free form of `p`, or `p` unchanged when it cannot be resolved. On Windows the native
@@ -281,34 +272,6 @@ export const realNativeDeps: NativeLoaderDeps = {
         });
     } catch {
       return false;
-    }
-  },
-  firstCountedTimestamp(filePath: string): number | null {
-    try {
-      const fd = openSync(filePath, 'r');
-      const buf = Buffer.alloc(FIRST_COUNTED_HEAD_BYTES);
-      let bytesRead: number;
-      try {
-        bytesRead = readSync(fd, buf, 0, FIRST_COUNTED_HEAD_BYTES, 0);
-      } finally {
-        closeSync(fd);
-      }
-      const lines = buf.subarray(0, bytesRead).toString('utf-8').split('\n');
-      lines.pop(); // empty, or a line the 64 KB limit may have cut
-      for (const line of lines) {
-        let record: unknown;
-        try {
-          record = JSON.parse(line);
-        } catch {
-          continue; // not JSON: readJSONLTolerant skips it too
-        }
-        if (!isCountedTranscriptLine(record)) continue;
-        const time = toMs((record as RawMessage | null)?.timestamp);
-        if (time !== null && Number.isFinite(time)) return time;
-      }
-      return null;
-    } catch {
-      return null;
     }
   },
 };
@@ -933,17 +896,6 @@ export async function loadNativeSessions(
       // Would be tagged 'native-external' below and dropped by the caller: never parse it.
       continue;
     } else {
-      if (filter?.toDate && agentName === CLAUDE_ADAPTER_AGENT) {
-        // A native Claude session starts at the earliest timestamp of its kept root and subagent
-        // lines (claudeFamilyBounds). Transcripts are append-only and copied history (resume,
-        // fork) sits at the head, so no later line and no subagent line is older than the first
-        // timestamped counted line; dropping lines (dedupe, the /clear strip) only raises that
-        // minimum (with none left, the start is the log's mtime, later still). So a first line
-        // after --to means a start after --to, which sessionMatchesFilter drops anyway. There is
-        // no such skip for --from: dedupe and the strip can move the start past a first line.
-        const first = deps.firstCountedTimestamp(descriptor.filePath);
-        if (first !== null && first > filter.toDate.getTime()) continue;
-      }
       parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
     }
     if (!parsed) {
