@@ -4,7 +4,8 @@
  * state in, wire events out; the state is updated in place so the next batch continues where this one ended.
  */
 
-import { boundedText, TEXT_FIELD_LIMITS, UNMASKED_FIELD_KEYS } from '@/agents/core/OtlpAgentAdapter.js';
+import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
+import { maskSecretsDeep } from '@/utils/security.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
@@ -16,7 +17,6 @@ import {
   type SignalLine,
   userLineText,
 } from '@/agents/plugins/claude-code-otlp/transcript/session-signals.js';
-import { maskSecretsDeep } from '@/utils/security.js';
 
 /** What the event builders remember about one session between batches; kept in the producer's cursor. */
 export interface CoworkEventState {
@@ -320,7 +320,7 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
  */
 export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fallbackTimestamp: string): WireEvent {
   const { event_id: ownId, ...own } = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined));
-  const masked = maskSecretsDeep({
+  const masked = maskAndBoundFields({
     session_id: envelope.sessionId,
     schema_version: 2,
     platform: 'claude-code',
@@ -332,10 +332,7 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     ...(envelope.project && { codemie_project_name: envelope.project }),
     ...own,
     timestamp: own['timestamp'] || fallbackTimestamp,
-  }, UNMASKED_FIELD_KEYS) as WireEvent;
-  for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
-    if (Object.prototype.hasOwnProperty.call(masked, field)) masked[field] = boundedText(masked[field], maxChars);
-  }
+  }) as WireEvent;
   if (typeof masked['prompt_body'] === 'string') {
     masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
   }
