@@ -424,7 +424,7 @@ codemie analytics view --input <file> [options]
 
 **Output contract.** stdout carries only JSON, or nothing when `-o` is given (an HTML report is always written to the `-o` file). No prompts, no colours, no start-up notices. A problem (unreadable or non-export file, bad date or duration, reversed range, unknown session id, `-o` that is a directory, `--export html` without `-o`, an unsupported flag) is one `✗ ...` line on stderr, exit code 1 and nothing on stdout.
 
-**Units.** Money is USD, times are epoch milliseconds, durations are milliseconds. A `...Rate` or `...Pct` field is a percent (0-100); a `share...`, `...Share` or `share` field is a fraction (0-1). Field names and units are a contract; they change only with a new schema version. Money, shares and `change` values are not rounded; only the fields marked above as rounded are.
+**Units.** Money is USD, times are epoch milliseconds, durations are milliseconds. A `...Rate` or `...Pct` field is a percent (0-100); a `share...`, `...Share` or `share` field is a fraction (0-1). Field names and units are a contract; they change only with a new schema version. Money, shares and `change` values are not rounded; only the fields marked as rounded in the tables below are.
 
 #### `codemie.analytics.summary/1`
 
