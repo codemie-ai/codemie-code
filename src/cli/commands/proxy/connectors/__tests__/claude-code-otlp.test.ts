@@ -863,6 +863,57 @@ describe('claude-code-otlp connector', () => {
       });
     });
 
+    describe('a daemon on another port or with another gateway key', () => {
+      it.each([
+        ['an earlier port', { url: 'http://127.0.0.1:4001', gatewayKey: mockState.gatewayKey }],
+        ['an earlier gateway key', { url: mockState.url, gatewayKey: 'old-gateway-key' }],
+        ['an earlier port and key', { url: 'http://127.0.0.1:4001', gatewayKey: 'old-gateway-key' }],
+      ])('re-points codemie\'s own pair written for %s without --overwrite, and keeps it out of the backup', async (_label, earlier) => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(settingsPath, JSON.stringify({ theme: 'dark', env: buildExpectedEnv(earlier) }, null, 2));
+
+        const result = await writeClaudeCodeOtlpConfig();
+
+        const after = await readJson(settingsPath);
+        expect(after.env).toMatchObject(buildExpectedEnv(mockState));
+        const backup = await readJson(result.backupPath!);
+        expect(backup).toEqual({ theme: 'dark' });
+      });
+
+      it.each([
+        ['localhost', 'http://localhost:4001/v1/analytics/otlp'],
+        ['a remote collector', 'https://collector.example.com/v1/analytics/otlp'],
+      ])('still refuses a Bearer endpoint on %s without --overwrite and leaves the file unchanged', async (_label, endpoint) => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        const originalRaw = JSON.stringify(
+          { env: { OTEL_EXPORTER_OTLP_ENDPOINT: endpoint, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer user-token' } },
+          null, 2
+        );
+        await writeFile(settingsPath, originalRaw);
+
+        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+
+        expect(await readRaw(settingsPath)).toBe(originalRaw);
+        expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
+      });
+
+      it('still refuses a local-daemon endpoint paired with a header that is not a Bearer token', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        const originalRaw = JSON.stringify(
+          { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4001/v1/analytics/otlp', OTEL_EXPORTER_OTLP_HEADERS: 'x-api-key=user-key' } },
+          null, 2
+        );
+        await writeFile(settingsPath, originalRaw);
+
+        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+
+        expect(await readRaw(settingsPath)).toBe(originalRaw);
+      });
+    });
+
     it('throws ConfigurationError when an existing hooks event value is not an array, without overwrite, and leaves the file unchanged', async () => {
       const settingsPath = join(homeDir, '.claude', 'settings.json');
       await mkdir(join(homeDir, '.claude'), { recursive: true });

@@ -74,13 +74,13 @@ describe.each([
 });
 
 describe('bare proxy connect target list note', () => {
-  it('has one note line under the rows: --claude-otlp also routes Desktop and the extension, disconnect removes it', () => {
+  it('has one note line under the rows: --claude-otlp routes Desktop and the extension only when not configured, disconnect removes it', () => {
     const lines = CONNECT_TARGET_LIST.split('\n');
     const lastRow = lines.findLastIndex((line) => line.startsWith('  --'));
     expect(lines[lastRow + 1]).toBe('');
     expect(lines[lastRow + 2]).toBe(
-      '  Note: --claude-otlp also routes Claude Desktop and the VS Code extension through the proxy; ' +
-      'disconnect --claude-otlp removes that route.'
+      '  Note: --claude-otlp routes Claude Desktop and the VS Code extension through the proxy ' +
+      'only when they are not configured yet; disconnect --claude-otlp removes that route.'
     );
     expect(lines[lastRow + 3]).toBe('');
     expect(lines.filter((line) => line.includes('Note:'))).toHaveLength(1);

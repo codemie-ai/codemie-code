@@ -1,0 +1,169 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17434_reset-claude-desktop-mcp-auth",
+  "head": "8435a28eb2845698b20caed207c8d41fd7123786",
+  "runner": "npm",
+  "started_at": "2026-11-18T18:30:33Z",
+  "completed_at": "2026-11-18T18:37:05Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2607,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 26135,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "package.json lint script also lints src/agents/plugins/pi/extension/*.js; guide describes src+tests ts only"
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9179,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15163,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 180293,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 101048,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 270,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\" (scripts/validate-secrets.js scans the staged diff only; Docker is up). Enable locally by staging changes; CI secrets-detection scans unconditionally and remains owed."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 578,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 732,
+      "command": "npx commitlint --from 252233ba1658a506b6d38fbf6707ea8a8c0926fa --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Equivalent of .husky/commit-msg (commitlint --edit) over every commit in merge_base..HEAD; guide gate commitlint:last covers HEAD~1..HEAD only"
+    },
+    {
+      "id": "lint-staged-eslint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 4861,
+      "command": "git diff --name-only --diff-filter=d 252233ba1658a506b6d38fbf6707ea8a8c0926fa...HEAD -- '*.ts' | xargs npx eslint --max-warnings=0 --no-warn-ignored",
+      "exit_code": 0,
+      "notes": "Equivalent of .husky/pre-commit lint-staged *.ts eslint step, applied to .ts files changed in merge_base...HEAD (nothing is staged)"
+    },
+    {
+      "id": "lint-staged-vitest-related",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 16374,
+      "command": "git diff --name-only --diff-filter=d 252233ba1658a506b6d38fbf6707ea8a8c0926fa...HEAD -- '*.ts' | xargs npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude tests/integration/cli-commands/models.test.ts",
+      "exit_code": 0,
+      "notes": "Equivalent of .husky/pre-commit lint-staged *.ts vitest related step, applied to .ts files changed in merge_base...HEAD (nothing is staged)"
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run check:pre-commit",
+      "exit_code": null,
+      "notes": "Composed of typecheck and lint, both run individually above"
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Composed of license-check, lint, build, unit, integration, all run individually above"
+    },
+    {
+      "id": "cross-platform-windows",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": null,
+      "exit_code": null,
+      "notes": "Guide section without a Run command; needs a windows-latest runner (CI test-windows job), cannot run locally"
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "uses codemie-ai/ci-workflows reusable-secrets-detection.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow; local equivalent is the secrets guide gate (SKIPPED, nothing staged)"
+    },
+    {
+      "id": "ci-pr-title-lint",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "uses codemie-ai/ci-workflows reusable-commit-lint.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow validating the PR title; PR not created yet"
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "uses codemie-ai/ci-workflows reusable-codeql.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow, language: actions only; no workflow files changed in this diff"
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit; npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Needs a Windows runner; same commands passed on Linux"
+    }
+  ],
+  "failures": {}
+}
