@@ -96,6 +96,22 @@ describe('012-heal-gemini-hook-cmd-shim', () => {
     expect(await readdir(join(file, '..'))).toEqual(['hooks.json']);
   });
 
+  it('retries the rename when the file is briefly locked (EPERM), then succeeds', async () => {
+    const file = await seed(geminiDir);
+    const renameMock = vi.fn();
+    vi.doMock('fs/promises', async (imp) => {
+      const actual = await imp<typeof import('fs/promises')>();
+      renameMock.mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+      renameMock.mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+      renameMock.mockImplementation(actual.rename);
+      return { ...actual, rename: renameMock };
+    });
+    const res = await run();
+    expect(res).toMatchObject({ success: true, migrated: true });
+    expect(renameMock).toHaveBeenCalledTimes(3);
+    expect(await readdir(join(file, '..'))).toEqual(['hooks.json']);
+  });
+
   it('is a no-op on non-win32', async () => {
     platSpy?.mockReturnValue('linux');
     const file = await seed(geminiDir);

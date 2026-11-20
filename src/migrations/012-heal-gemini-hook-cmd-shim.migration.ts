@@ -19,14 +19,28 @@ class HealGeminiHookCmdShimMigration extends RewriteHookCommandPathsMigration {
     const tmp = `${file}.${process.pid}.tmp`;
     try {
       await fs.writeFile(tmp, content, 'utf-8');
-      await fs.rename(tmp, file);
+      await this.renameWithRetry(tmp, file);
     } catch (error) {
       await fs.rm(tmp, { force: true }).catch(() => undefined);
       throw error;
     }
   }
 
-  async up(): Promise<MigrationResult> {
+  // On Windows, Gemini or antivirus may briefly hold hooks.json open, failing the rename with EPERM/EBUSY.
+  private async renameWithRetry(from: string, to: string, attempts = 3, delayMs = 50): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fs.rename(from, to);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= attempts || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+      }
+    }
+  }
+
+  async up():Promise<MigrationResult> {
     if (process.platform !== 'win32') {
       return { success: true, migrated: false, reason: 'not-windows' };
     }
