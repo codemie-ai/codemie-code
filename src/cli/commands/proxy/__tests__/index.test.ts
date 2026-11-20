@@ -53,6 +53,10 @@ vi.mock('@/utils/cli-updater.js', async (importOriginal) => ({
   getCurrentCliVersion: vi.fn(async () => '0.17.0'),
 }));
 
+vi.mock('../doctor/compose.js', () => ({
+  composeProxyDoctor: vi.fn(),
+}));
+
 vi.mock('../health-check.js', () => ({
   checkProxyHealth: vi.fn(),
 }));
@@ -65,6 +69,8 @@ vi.mock('../connectors/claude-code-otlp-endpoint.js', () => ({
 
 vi.mock('../analytics-connectors.js', () => ({
   hasActiveAnalyticsConnector: vi.fn().mockResolvedValue(false),
+  // No connector holds a project list, so connect's scope confirmation asks nothing.
+  ANALYTICS_CONNECTORS: [],
 }));
 
 vi.mock('../delivery-health.js', async (importOriginal) => ({
@@ -286,7 +292,7 @@ afterEach(async () => {
   vi.mocked(readDesktopGateway).mockResolvedValue(null);
 });
 
-describe('proxy connect desktop', () => {
+describe('proxy connect --claude-desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -334,7 +340,7 @@ describe('proxy connect desktop', () => {
 
     const command = createProxyCommand();
     await expect(
-      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -342,7 +348,7 @@ describe('proxy connect desktop', () => {
       expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
   });
 
@@ -376,7 +382,7 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie-preview.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie-preview.lab.epam.com'
     );
     expect(getStoredCredentials).toHaveBeenNthCalledWith(
       1,
@@ -413,7 +419,7 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+      '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
   });
 
@@ -441,7 +447,7 @@ describe('proxy connect desktop', () => {
 
     const command = createProxyCommand();
     await expect(
-      command.parseAsync(['connect', 'desktop', '--profile', 'codemie-new'], { from: 'user' })
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -488,7 +494,7 @@ describe('proxy connect desktop', () => {
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
 
     const command = createProxyCommand();
-    await command.parseAsync(['connect', 'desktop', '--profile', 'test-profile'], { from: 'user' });
+    await command.parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], { from: 'user' });
 
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
     expect(syncPluginSkills).toHaveBeenCalledOnce();
@@ -529,7 +535,7 @@ describe('proxy connect desktop', () => {
       '/etc/claude-desktop/managed-settings.json exists. Claude Desktop applies managed settings instead of local configuration, so this write may have no effect.'
     );
 
-    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], {
       from: 'user',
     });
 
@@ -571,7 +577,7 @@ describe('proxy connect desktop', () => {
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
     vi.mocked(describeManagedSettingsOverride).mockReturnValue(null);
 
-    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], {
       from: 'user',
     });
 
@@ -611,7 +617,7 @@ describe('proxy connect desktop', () => {
     } as Awaited<ReturnType<typeof spawnDaemon>>);
     vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
 
-    await createProxyCommand().parseAsync(['connect', 'desktop'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--claude-desktop'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
     expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
@@ -627,7 +633,7 @@ describe('proxy command registration', () => {
     const analytics = proxy.commands.find((c) => c.name() === 'analytics');
     expect(analytics).toBeDefined();
     const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
-    expect(subcommandNames).toEqual(['connect-folder', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(subcommandNames).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
   });
 });
 
@@ -652,18 +658,24 @@ describe('proxy start', () => {
     exitSpy.mockRestore();
   });
 
-  it('starts a transparent daemon without model configuration', async () => {
+  it.each([
+    ['no model', undefined, undefined],
+    ['a blank model', '  ', undefined],
+    ['model m1', 'm1', 'm1'],
+  ])('starts a daemon with the profile\'s model, given a config with %s', async (_label, configModel, expectedModel) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce(null);
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'default',
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
       codeMieProject: 'team-project',
+      model: configModel,
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
@@ -684,7 +696,75 @@ describe('proxy start', () => {
       profile: 'default',
       project: 'team-project',
     });
-    expect(options).not.toHaveProperty('model');
+    if (expectedModel) {
+      expect(options.model).toBe(expectedModel);
+    } else {
+      expect(options).not.toHaveProperty('model');
+    }
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
+  });
+
+  it('loads the config by the active profile\'s name when no --profile is given', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://127.0.0.1:4001',
+      profile: 'work',
+      port: 4001,
+      gatewayKey: 'local-key',
+      startedAt: new Date().toISOString(),
+    });
+
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+  });
+
+  it('starts a daemon a later connect of the same profile reuses', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { buildRequestedConfig, daemonMatchesRequest } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    const config = {
+      name: 'p',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieProject: 'team-project',
+      model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>;
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue(config);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://127.0.0.1:4001',
+      profile: 'p',
+      port: 4001,
+      gatewayKey: 'local-key',
+      startedAt: new Date().toISOString(),
+    });
+
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
+
+    const spawned = vi.mocked(spawnDaemon).mock.calls[0][0];
+    const state = { ...spawned, url: 'http://127.0.0.1:4001', gatewayKey: 'local-key', startedAt: '' };
+    expect(daemonMatchesRequest(state, buildRequestedConfig('p', config, undefined, 4001))).toBe(true);
   });
 
   it('keeps explicit profile selection', async () => {
@@ -713,6 +793,7 @@ describe('proxy start', () => {
     await createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
+    expect(ConfigLoader.getActiveProfileName).not.toHaveBeenCalled();
   });
 
   it('starts with no identity on Desktop\'s gateway port while Claude Desktop is connected and nothing else names a port', async () => {
@@ -870,7 +951,7 @@ describe('proxy start', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://custom.example.com'
+      '  Sign in first — run: codemie profile login --url https://custom.example.com'
     );
   });
 
@@ -891,7 +972,7 @@ describe('proxy start', () => {
     return ConfigLoader;
   }
 
-  it('spawns the loaded config\'s values without a model when no daemon runs', async () => {
+  it('spawns the loaded config\'s values with its model when no daemon runs', async () => {
     const ConfigLoader = await arrangeProfileP();
     const { checkStatus, readConnectionRecord, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
@@ -907,7 +988,7 @@ describe('proxy start', () => {
 
     expect(vi.mocked(spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', project: 'A', projectBinding: 'own',
-      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true,
+      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true, model: 'm1',
     });
   });
 
@@ -1347,9 +1428,31 @@ describe('proxy inspect desktop', () => {
   it('reads no state when there is no state file', async () => {
     expect(await inspectWithoutDaemon()).toEqual([[false, null, { limit: 5 }]]);
   });
+
+  it('still works, and prints one deprecation notice to stderr pointing to proxy doctor --verbose', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(await inspectWithoutDaemon()).toHaveLength(1);
+      const notices = stderrSpy.mock.calls.map((call) => String(call[0])).join('').split('\n').filter(Boolean);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('codemie proxy inspect desktop');
+      expect(notices[0]).toContain('codemie proxy doctor --verbose');
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('is hidden from the proxy help, as is its inspect group', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const inspect = proxy.commands.find((c) => c.name() === 'inspect')!;
+
+    expect(proxy.helpInformation()).not.toMatch(/^\s+inspect\b/m);
+    expect(inspect.helpInformation()).not.toMatch(/^\s+desktop\b/m);
+  });
 });
 
-describe('proxy connect vscode', () => {
+describe('proxy connect --vscode', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -1413,7 +1516,7 @@ describe('proxy connect vscode', () => {
     });
 
     await createProxyCommand().parseAsync(
-      ['connect', 'vscode', '--profile', 'custom'],
+      ['connect', '--vscode', '--profile', 'custom'],
       { from: 'user' }
     );
 
@@ -1466,7 +1569,7 @@ describe('proxy connect vscode', () => {
     });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
 
-    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--vscode', '--profile', 'custom'], { from: 'user' });
 
     expect(stopDaemon).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
@@ -1519,7 +1622,7 @@ describe('proxy connect vscode', () => {
       startedAt: new Date().toISOString(),
     } as Awaited<ReturnType<typeof spawnDaemon>>);
 
-    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+    await createProxyCommand().parseAsync(['connect', '--vscode', '--profile', 'custom'], { from: 'user' });
 
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
@@ -1528,262 +1631,288 @@ describe('proxy connect vscode', () => {
 });
 
 describe('proxy status', () => {
+  const runningState = {
+    pid: process.pid,
+    port: 4001,
+    url: 'http://127.0.0.1:4001',
+    profile: 'work',
+    gatewayKey: 'local-key',
+    project: 'team-project',
+    version: '0.17.0',
+    startedAt: new Date().toISOString(),
+  };
+  type Sections = Awaited<ReturnType<(typeof import('../doctor/compose.js'))['composeProxyDoctor']>>['sections'];
+  const OK_SECTIONS: Sections = [{ id: 'daemon', status: 'ok', message: 'Running' }];
+  const ISSUES_LINE = chalk.yellow('Issues found — run: codemie proxy doctor');
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let stderrSpy: ReturnType<typeof vi.spyOn>;
+
+  async function arrangeStatus(
+    state: Record<string, unknown> | null,
+    sections: Sections = OK_SECTIONS
+  ): Promise<void> {
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { composeProxyDoctor } = await import('../doctor/compose.js');
+    vi.mocked(checkStatus).mockResolvedValue(
+      state
+        ? { running: true, state: state as Awaited<ReturnType<typeof checkStatus>>['state'] }
+        : { running: false, state: null }
+    );
+    vi.mocked(composeProxyDoctor).mockReset().mockResolvedValue({ sections, nothingConnected: false });
+  }
+
+  async function runStatus(args: string[]): Promise<string[]> {
+    const { createProxyCommand } = await import('../index.js');
+    consoleLogSpy.mockClear();
+    await createProxyCommand().parseAsync(args, { from: 'user' });
+    return consoleLogSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  async function runStatusJson(args: string[] = []): Promise<Record<string, unknown>> {
+    return JSON.parse((await runStatus(['status', '--json', ...args])).join('\n')) as Record<string, unknown>;
+  }
+
+  const stderrText = (): string => stderrSpy.mock.calls.map((call) => String(call[0])).join('');
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
   afterEach(async () => {
+    consoleLogSpy.mockRestore();
+    stderrSpy.mockRestore();
     const { getCommandPath } = await import('@/utils/processes.js');
     vi.mocked(getCommandPath).mockResolvedValue(null);
   });
 
-  it('shows the version and project context, and no client', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        // A state file of this daemon still holds its default client for an older CLI; nothing here reads it.
-        clientType: 'vscode-byok',
-        project: 'team-project',
-        version: '0.17.0',
-        startedAt: new Date().toISOString(),
-      } as Awaited<ReturnType<typeof checkStatus>>['state'],
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+  it('prints the facts only: state, URL, port, masked key, profile, project, version and uptime', async () => {
+    await arrangeStatus(runningState);
 
-    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+    const lines = await runStatus(['status']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Version: 0.17.0');
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Project: team-project');
-    const lines = consoleLogSpy.mock.calls.map((call) => String(call[0]));
-    expect(lines.some((line) => line.startsWith('  Client:'))).toBe(false);
-    consoleLogSpy.mockRestore();
+    expect(lines).toEqual([
+      `Status:  ${chalk.green('running, healthy')}`,
+      '  URL:     http://127.0.0.1:4001',
+      '  Port:    4001',
+      '  API Key: ****',
+      '  Client keys: ****.<client> — written by codemie proxy connect',
+      '  Profile: work',
+      '  Project: team-project',
+      '  Version: 0.17.0',
+      lines[8],
+    ]);
+    expect(lines[8]).toMatch(/^ {2}Uptime: {2}\d+s$/);
+    expect(lines.join('\n')).not.toContain('local-key');
   });
 
-  it('shows the API key', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+  it('omits the Project line when the daemon has no project', async () => {
+    await arrangeStatus({ ...runningState, project: undefined });
 
-    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+    const lines = await runStatus(['status']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith('  API Key: local-key');
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Client keys: local-key.<client> — written by codemie proxy connect');
-    consoleLogSpy.mockRestore();
+    expect(lines.some((line) => line.startsWith('  Project:'))).toBe(false);
   });
 
-  it('emits JSON when --json is passed (running, healthy)', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        clientType: 'vscode-byok',
-        project: 'team-project',
-        version: '0.17.0',
-        startedAt: new Date().toISOString(),
-      } as Awaited<ReturnType<typeof checkStatus>>['state'],
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+  it('--show-key prints the key in full, on the API Key and the Client keys lines', async () => {
+    await arrangeStatus(runningState);
 
-    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+    const lines = await runStatus(['status', '--show-key']);
 
-    const printed = consoleLogSpy.mock.calls.map((call) => call[0]).join('\n');
-    const payload = JSON.parse(printed);
+    expect(lines).toContain('  API Key: local-key');
+    expect(lines).toContain('  Client keys: local-key.<client> — written by codemie proxy connect');
+  });
+
+  it('prints the version of a daemon of an older CLI as a fact, with no repair advice', async () => {
+    await arrangeStatus({ ...runningState, version: undefined });
+
+    const lines = await runStatus(['status']);
+
+    expect(lines).toContain('  Version: older CLI');
+    expect(lines.some((line) => line.includes('restart'))).toBe(false);
+  });
+
+  it('prints one Issues found line when the doctor composition reports a warning', async () => {
+    await arrangeStatus(runningState, [
+      ...OK_SECTIONS,
+      { id: 'clients', status: 'warn', message: 'Codex desktop points at port 52311', hint: 'x — run: codemie proxy connect --codex-desktop' },
+      { id: 'cli-path', status: 'warn', message: 'An older CodeMie CLI is first on PATH' },
+    ]);
+
+    const lines = await runStatus(['status']);
+
+    expect(lines.at(-1)).toBe(ISSUES_LINE);
+    expect(lines.filter((line) => line.includes('Issues found'))).toHaveLength(1);
+    expect(lines.some((line) => line.includes('Codex desktop') || line.includes('older CodeMie CLI'))).toBe(false);
+    const { composeProxyDoctor } = await import('../doctor/compose.js');
+    expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: false, verbose: false });
+  });
+
+  it('prints the Issues found line for an error, and none for info sections', async () => {
+    await arrangeStatus(runningState, [...OK_SECTIONS, { id: 'delivery', status: 'error', message: 'Analytics delivery: unhealthy' }]);
+    expect((await runStatus(['status'])).at(-1)).toBe(ISSUES_LINE);
+
+    await arrangeStatus(runningState, [...OK_SECTIONS, { id: 'clients', status: 'info', message: 'No clients connected' }]);
+    expect((await runStatus(['status'])).some((line) => line.includes('Issues found'))).toBe(false);
+  });
+
+  it('reports a daemon whose /health fails as running but unhealthy, with no reason and the Issues line', async () => {
+    await arrangeStatus(runningState, [{ id: 'daemon', status: 'error', message: 'Proxy not responding on http://127.0.0.1:4001' }]);
+
+    const lines = await runStatus(['status']);
+    const payload = await runStatusJson();
+
+    expect(lines[0]).toBe(`Status:  ${chalk.yellow('running but UNHEALTHY')}`);
+    expect(lines.some((line) => line.includes('Reason:') || line.includes('not responding'))).toBe(false);
+    expect(lines.at(-1)).toBe(ISSUES_LINE);
+    expect(payload.status).toBe('unhealthy');
+    expect(payload).not.toHaveProperty('reason');
+  });
+
+  it('emits JSON with only the facts and the masked key (running, healthy)', async () => {
+    await arrangeStatus(runningState, [...OK_SECTIONS, { id: 'clients', status: 'warn', message: 'shared key' }]);
+
+    const printed = await runStatus(['status', '--json']);
+    const payload = JSON.parse(printed.join('\n')) as Record<string, unknown>;
+
     expect(payload).toEqual({
       status: 'healthy',
-      apiKey: 'local-key',
+      apiKey: '****',
       url: 'http://127.0.0.1:4001',
       port: 4001,
       profile: 'work',
       project: 'team-project',
-      uptimeSec: payload.uptimeSec,
-      level: 'shallow',
       version: '0.17.0',
+      uptimeSec: payload.uptimeSec,
     });
     expect(typeof payload.uptimeSec).toBe('number');
-    consoleLogSpy.mockRestore();
+    expect(printed.join('\n')).not.toContain('Issues found');
+    expect(printed.join('\n')).not.toContain('local-key');
   });
 
-  it('emits JSON with a reason when unhealthy', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  it('emits JSON with the key in full under --show-key, null version for an older CLI and no project when unset', async () => {
+    await arrangeStatus({ ...runningState, version: undefined, project: undefined });
+
+    const payload = await runStatusJson(['--show-key']);
+
+    expect(payload.apiKey).toBe('local-key');
+    expect(payload.version).toBeNull();
+    expect(payload).not.toHaveProperty('project');
+  });
+
+  it('carries none of the old diagnostic fields in JSON', async () => {
+    await arrangeStatus({ ...runningState, health: 'unhealthy', healthReason: 'timed out once' }, [
+      ...OK_SECTIONS,
+      { id: 'claude-code-otlp', status: 'error', message: 'mismatch' },
+    ]);
+
+    const payload = await runStatusJson();
+
+    for (const key of [
+      'level', 'reason', 'lastRecordedIssue', 'otlpEndpointMismatch', 'desktop', 'analytics',
+      'clientPortMismatch', 'clientSharedKey', 'olderCliOnPath', 'hooksOfAnotherInstall', 'analyticsClients',
+    ]) {
+      expect(payload).not.toHaveProperty(key);
+    }
+  });
+
+  it('prints no recorded give-up reason in the text', async () => {
+    await arrangeStatus({ ...runningState, health: 'unhealthy', healthReason: 'timed out once' });
+
+    const lines = await runStatus(['status']);
+
+    expect(lines.some((line) => line.includes('timed out once'))).toBe(false);
+  });
+
+  it('emits { status: "stopped" } JSON and "Status: stopped" text when the daemon is not running, composing nothing', async () => {
+    await arrangeStatus(null);
+    const { composeProxyDoctor } = await import('../doctor/compose.js');
+
+    expect(await runStatus(['status'])).toEqual(['Status: stopped']);
+    expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
+    expect(composeProxyDoctor).not.toHaveBeenCalled();
+  });
+
+  describe('--deep (deprecated)', () => {
+    it('still runs the authenticated check and prints one deprecation notice to stderr pointing to proxy doctor', async () => {
+      await arrangeStatus({ ...runningState, health: 'unhealthy', healthReason: 'timed out once' }, [
+        ...OK_SECTIONS,
+        { id: 'auth', status: 'ok', message: 'Signed in to CodeMie' },
+        { id: 'upstream', status: 'ok', message: 'CodeMie reachable through the proxy' },
+      ]);
+      const { writeState } = await import('../daemon-manager.js');
+      const { composeProxyDoctor } = await import('../doctor/compose.js');
+
+      const lines = await runStatus(['status', '--deep']);
+
+      expect(lines[0]).toBe(`Status:  ${chalk.green('running, healthy (upstream OK)')}`);
+      expect(lines.some((line) => line.includes('timed out once'))).toBe(false);
+      expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: true, verbose: false });
+      expect(writeState).not.toHaveBeenCalled();
+      const notices = stderrText().split('\n').filter(Boolean);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('codemie proxy status --deep');
+      expect(notices[0]).toContain('codemie proxy doctor');
+    });
+
+    it('reports a failed upstream check as unhealthy with the Issues line', async () => {
+      await arrangeStatus(runningState, [...OK_SECTIONS, { id: 'upstream', status: 'error', message: 'CodeMie did not answer' }]);
+
+      const lines = await runStatus(['status', '--deep']);
+
+      expect(lines[0]).toBe(`Status:  ${chalk.yellow('running but UNHEALTHY')}`);
+      expect(lines.at(-1)).toBe(ISSUES_LINE);
+    });
+
+    it('under --json keeps the facts-only payload on stdout and the one notice on stderr', async () => {
+      await arrangeStatus(runningState);
+
+      const payload = await runStatusJson(['--deep']);
+
+      expect(payload.status).toBe('healthy');
+      expect(payload).not.toHaveProperty('level');
+      expect(stderrText().split('\n').filter(Boolean)).toHaveLength(1);
+    });
+
+    it('is hidden from the status help', async () => {
+      const { createProxyCommand } = await import('../index.js');
+      const status = createProxyCommand().commands.find((c) => c.name() === 'status')!;
+
+      expect(status.helpInformation()).not.toContain('--deep');
+      expect(status.helpInformation()).toContain('--show-key');
+    });
+  });
+
+  /**
+   * The client and PATH notices and the Desktop collection `proxy doctor` reads, built from their collectors.
+   * Gives the notice lines and the JSON fields they make.
+   */
+  async function diagnose(): Promise<{ lines: string[]; payload: Record<string, unknown> }> {
     const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({
-      healthy: false,
-      level: 'shallow',
-      code: 'unreachable',
-      reason: 'connection refused',
-    });
+    const delivery = await import('../analytics-delivery-lines.js');
+    const { findOlderCliOnPath, formatOlderCliWarning } = await import('../connect-orchestrator.js');
+    const state = (await checkStatus()).state!;
+    const [desktop, clients, olderCli] = await Promise.all([
+      delivery.collectDesktopCollection(state),
+      delivery.collectClientNotices(state),
+      findOlderCliOnPath(),
+    ]);
+    const lines: string[] = [];
+    const payload: Record<string, unknown> = {};
+    if (desktop) payload.desktop = desktop;
+    lines.push(...clients.lines);
+    if (clients.clientPortMismatch.length > 0) payload.clientPortMismatch = clients.clientPortMismatch;
+    if (clients.clientSharedKey.length > 0) payload.clientSharedKey = clients.clientSharedKey;
+    if (olderCli) {
+      lines.push(chalk.yellow(`  ${formatOlderCliWarning(olderCli)}`));
+      payload.olderCliOnPath = olderCli;
+    }
+    if (clients.hooksOfAnotherInstall.length > 0) payload.hooksOfAnotherInstall = clients.hooksOfAnotherInstall;
+    return { lines, payload };
+  }
 
-    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
-
-    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
-    expect(payload.status).toBe('unhealthy');
-    expect(payload.reason).toBe('connection refused');
-    consoleLogSpy.mockRestore();
-  });
-
-  it('emits JSON with level "deep" when --deep is passed', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
-
-    await createProxyCommand().parseAsync(['status', '--deep', '--json'], { from: 'user' });
-
-    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
-    expect(payload.level).toBe('deep');
-    consoleLogSpy.mockRestore();
-  });
-
-  it('emits { status: "stopped" } JSON when the daemon is not running', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-
-    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ status: 'stopped' }, null, 2));
-    consoleLogSpy.mockRestore();
-  });
-
-  it('emits lastRecordedIssue in JSON when a prior unhealthy state recovered', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-        health: 'unhealthy',
-        healthReason: 'timed out once',
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
-
-    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
-
-    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
-    expect(payload.status).toBe('healthy');
-    expect(payload.lastRecordedIssue).toBe('timed out once');
-    consoleLogSpy.mockRestore();
-  });
-
-  it('--deep over a recorded issue and a passing check prints no stale issue and writes no state', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus, writeState } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-        health: 'unhealthy',
-        healthReason: 'timed out once',
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
-
-    await createProxyCommand().parseAsync(['status', '--deep'], { from: 'user' });
-
-    const output = consoleLogSpy.mock.calls.map((call) => String(call[0])).join('\n');
-    expect(output).toContain('running, healthy (upstream OK)');
-    expect(output).not.toContain('last recorded issue');
-    expect(writeState).not.toHaveBeenCalled();
-    consoleLogSpy.mockRestore();
-  });
-
-  it('leaves the default (non-JSON) output byte-identical aside from the new API Key line', async () => {
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
-
-    await createProxyCommand().parseAsync(['status'], { from: 'user' });
-
-    const lines = consoleLogSpy.mock.calls.map((call) => call[0]);
-    expect(lines).toContain('  URL:     http://127.0.0.1:4001');
-    expect(lines).toContain('  Port:    4001');
-    expect(lines).toContain('  API Key: local-key');
-    expect(lines).toContain('  Profile: work');
-    consoleLogSpy.mockRestore();
-  });
-
-  describe('Analytics line', () => {
-    const analyticsState = {
+  describe('Desktop collection (the collector proxy doctor reads)', () => {
+    const desktopState = {
       pid: process.pid,
       port: 4001,
       url: 'http://127.0.0.1:4001',
@@ -1792,320 +1921,52 @@ describe('proxy status', () => {
       version: '0.17.0',
       startedAt: new Date().toISOString(),
     };
-    let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
-    async function runStatus(args: string[]): Promise<string[]> {
-      const { createProxyCommand } = await import('../index.js');
-      await createProxyCommand().parseAsync(args, { from: 'user' });
-      return consoleLogSpy.mock.calls.map((call) => String(call[0]));
-    }
-
-    async function arrange(options: {
-      connectorActive: boolean;
-      delivery: { status: 'healthy' | 'unhealthy' | 'unknown'; reason?: string; pendingBytes: number };
-      reply?: { credentials: 'ok' | 'stale' };
-    }): Promise<void> {
+    async function arrangeDesktop(gatewayPort: number, state: Record<string, unknown>): Promise<void> {
       const { checkStatus } = await import('../daemon-manager.js');
-      const { checkProxyHealth } = await import('../health-check.js');
-      const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      vi.mocked(checkStatus).mockResolvedValue({ running: true, state: analyticsState });
-      vi.mocked(checkProxyHealth).mockResolvedValue({
-        healthy: true,
-        level: 'shallow',
-        code: 'ok',
-        ...(options.reply ? { analytics: options.reply } : {}),
-      });
-      vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(options.connectorActive);
-      vi.mocked(collectDeliveryHealth).mockResolvedValue(
-        options.delivery as Awaited<ReturnType<typeof collectDeliveryHealth>>
-      );
-    }
-
-    beforeEach(() => {
-      consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      consoleLogSpy.mockRestore();
-    });
-
-    it('prints a green healthy line after Uptime when a connector is active', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
-
-      const lines = await runStatus(['status']);
-
-      const uptimeIndex = lines.findIndex((line) => line.startsWith('  Uptime:'));
-      expect(uptimeIndex).toBeGreaterThan(-1);
-      expect(lines[uptimeIndex + 1]).toBe(`Analytics: ${chalk.green('healthy')}`);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
-
-      const { checkProxyHealth } = await import('../health-check.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      expect(checkProxyHealth).toHaveBeenCalledWith(expect.objectContaining({ expectedPid: analyticsState.pid }));
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, { credentials: 'ok' });
-    });
-
-    it('prints the analytics line before the Claude Code OTLP warning', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
-      const { checkClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
-      vi.mocked(checkClaudeCodeOtlpEndpoint).mockResolvedValueOnce({
-        configured: 'http://127.0.0.1:9999',
-        expected: 'http://127.0.0.1:4001',
-        matches: false,
-      } as Awaited<ReturnType<typeof checkClaudeCodeOtlpEndpoint>>);
-
-      const lines = await runStatus(['status']);
-
-      const analyticsIndex = lines.findIndex((line) => line.startsWith('Analytics:'));
-      const warningIndex = lines.findIndex((line) => line.includes('Warning:'));
-      expect(analyticsIndex).toBeGreaterThan(-1);
-      expect(warningIndex).toBeGreaterThan(analyticsIndex);
-    });
-
-    it.each([
-      ['credentials_expired', 'CodeMie sign-in has expired', 'codemie profile login'],
-      ['auth_rejected', 'CodeMie asked you to sign in again', 'codemie profile login'],
-      [
-        'identity_mismatch',
-        "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-        'codemie proxy restart',
-      ],
-    ])('prints a yellow unhealthy line and a Run tip for %s', async (reason, label, run) => {
-      await arrange({
-        connectorActive: true,
-        delivery: { status: 'unhealthy', reason, pendingBytes: 10 },
-        reply: { credentials: 'stale' },
-      });
-
-      const lines = await runStatus(['status']);
-
-      const index = lines.indexOf(`Analytics: ${chalk.yellow(`unhealthy (${label})`)}`);
-      expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]).toBe(`  Run: ${run}`);
-    });
-
-    it('prints a yellow unhealthy line and no Run tip for send_failed, which the user cannot act on', async () => {
-      await arrange({
-        connectorActive: true,
-        delivery: { status: 'unhealthy', reason: 'send_failed', pendingBytes: 10 },
-        reply: { credentials: 'ok' },
-      });
-
-      const lines = await runStatus(['status']);
-
-      const index = lines.indexOf(`Analytics: ${chalk.yellow('unhealthy (last send to CodeMie failed, retrying)')}`);
-      expect(index).toBeGreaterThan(-1);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
-    });
-
-    it('prints a dim unknown line with no Run tip when the daemon sent no analytics block', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'unknown', pendingBytes: 0 } });
-
-      const lines = await runStatus(['status']);
-
-      const index = lines.indexOf(`Analytics: ${chalk.dim('unknown (restart the proxy to enable all checks)')}`);
-      expect(index).toBeGreaterThan(-1);
-      expect(lines[index + 1]?.trimStart().startsWith('Run:') ?? false).toBe(false);
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(analyticsState, undefined);
-    });
-
-    it('prints a dim unknown line naming the unreadable local data, not a restart, when the spool is incomplete', async () => {
-      await arrange({ connectorActive: true, delivery: { status: 'unknown', incomplete: true }, reply: { credentials: 'ok' } });
-
-      const lines = await runStatus(['status']);
-
-      expect(lines).toContain(`Analytics: ${chalk.dim('unknown (local analytics data could not be read)')}`);
-      expect(lines.some((line) => line.includes('restart the proxy'))).toBe(false);
-    });
-
-    it('hides the line when nothing is connected, even if the spool holds unsent data', async () => {
-      await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
-
-      const lines = await runStatus(['status']);
-
-      expect(lines.some((line) => line.startsWith('Analytics:'))).toBe(false);
-      expect(lines.some((line) => line.includes('Run:'))).toBe(false);
-    });
-
-    it('hides the line and keeps the default output unchanged when nothing is connected or pending', async () => {
-      await arrange({ connectorActive: false, delivery: { status: 'unhealthy', reason: 'send_failed', pendingBytes: 0 } });
-
-      const lines = await runStatus(['status']);
-
-      expect(lines).toEqual([
-        `Status:  ${chalk.green('running, healthy')}`,
-        '  URL:     http://127.0.0.1:4001',
-        '  Port:    4001',
-        '  API Key: local-key',
-        '  Client keys: local-key.<client> — written by codemie proxy connect',
-        '  Profile: work',
-        '  Version: 0.17.0',
-        lines[7],
-      ]);
-      expect(lines[7]).toMatch(/^ {2}Uptime: {2}\d+s$/);
-    });
-
-    it('adds analytics to the JSON payload when a connector is active', async () => {
-      await arrange({
-        connectorActive: true,
-        delivery: {
-          status: 'unhealthy',
-          reason: 'send_failed',
-          pendingBytes: 5,
-          sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
-        },
-        reply: { credentials: 'ok' },
-      });
-
-      const lines = await runStatus(['status', '--json']);
-
-      const payload = JSON.parse(lines.join('\n'));
-      expect(payload.analytics).toEqual({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 5,
-        sendFailure: { nextAt: 1_800_000_000_000, detail: 'http_503' },
-      });
-      expect(payload.status).toBe('healthy');
-      expect(payload.apiKey).toBe('local-key');
-      expect(payload.level).toBe('shallow');
-    });
-
-    it('omits analytics from the JSON payload when nothing is connected', async () => {
-      await arrange({ connectorActive: false, delivery: { status: 'unknown', pendingBytes: 0 } });
-
-      const lines = await runStatus(['status', '--json']);
-
-      expect(JSON.parse(lines.join('\n'))).not.toHaveProperty('analytics');
-    });
-
-    it('omits analytics from the JSON payload when nothing is connected, even if the spool holds unsent data', async () => {
-      await arrange({ connectorActive: false, delivery: { status: 'healthy', pendingBytes: 2048 } });
-
-      const lines = await runStatus(['status', '--json']);
-
-      expect(JSON.parse(lines.join('\n'))).not.toHaveProperty('analytics');
-    });
-
-    it('leaves the stopped output untouched and collects nothing', async () => {
-      const { checkStatus } = await import('../daemon-manager.js');
-      const { checkProxyHealth } = await import('../health-check.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
       const { readDesktopGateway } = await import('../connectors/desktop.js');
-      vi.mocked(checkProxyHealth).mockClear();
-      vi.mocked(collectDeliveryHealth).mockClear();
-      vi.mocked(readDesktopGateway).mockClear();
-      vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+      vi.mocked(checkStatus).mockResolvedValue({
+        running: true,
+        state: { ...desktopState, ...state } as Awaited<ReturnType<typeof checkStatus>>['state'],
+      });
+      vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
+    }
 
-      expect(await runStatus(['status'])).toEqual(['Status: stopped']);
-      consoleLogSpy.mockClear();
-      expect(await runStatus(['status', '--json'])).toEqual([JSON.stringify({ status: 'stopped' }, null, 2)]);
-      expect(checkProxyHealth).not.toHaveBeenCalled();
-      expect(collectDeliveryHealth).not.toHaveBeenCalled();
-      expect(readDesktopGateway).not.toHaveBeenCalled();
+    it('gives collecting once the daemon noticed Desktop on its own port', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+
+      expect((await diagnose()).payload.desktop).toEqual({ connected: true, collecting: true });
     });
 
-    describe('Desktop line', () => {
-      beforeEach(() => {
-        vi.stubEnv('TZ', 'America/New_York'); // the drop time prints in the local zone; November, after DST ended (EST, -05:00)
+    it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
+      await arrangeDesktop(4001, {});
+
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Desktop is not connected to this proxy yet',
       });
+    });
 
-      afterEach(() => {
-        vi.unstubAllEnvs();
-      });
+    it('gives no Desktop collection for a daemon whose state has no version', async () => {
+      await arrangeDesktop(4001, { version: undefined, telemetryMode: 'claude-desktop', clientType: 'claude-desktop' });
 
-      const dropAt = Date.parse('2026-11-11T10:00:00.000Z');
-      const latestDrop = { reason: 'cli_analytics_disabled', stream: 'hooks', at: dropAt, local: false };
+      expect((await diagnose()).payload).not.toHaveProperty('desktop');
+    });
 
-      async function arrangeDesktop(gatewayPort: number, state: Record<string, unknown>): Promise<void> {
-        await arrange({ connectorActive: true, delivery: { status: 'healthy', pendingBytes: 0 }, reply: { credentials: 'ok' } });
-        const { checkStatus } = await import('../daemon-manager.js');
-        const { readDesktopGateway } = await import('../connectors/desktop.js');
-        const { collectDeliveryHealth } = await import('../delivery-health.js');
-        vi.mocked(checkStatus).mockResolvedValue({
-          running: true,
-          state: { ...analyticsState, ...state } as Awaited<ReturnType<typeof checkStatus>>['state'],
-        });
-        vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
-        vi.mocked(collectDeliveryHealth).mockResolvedValue(
-          { status: 'healthy', pendingBytes: 0, latestDrop } as Awaited<ReturnType<typeof collectDeliveryHealth>>
-        );
-      }
+    it('names both ports when Desktop points at another port than the daemon listens on', async () => {
+      await arrangeDesktop(4001, { port: 4002, url: 'http://127.0.0.1:4002' });
 
-      const connectedSince = { desktopConnectedSince: '2026-11-16T10:00:00.000Z' };
-
-      it('prints collecting, then the Analytics and Last dropped lines after Uptime', async () => {
-        await arrangeDesktop(4001, connectedSince);
-
-        const lines = await runStatus(['status']);
-
-        const uptimeIndex = lines.findIndex((line) => line.startsWith('  Uptime:'));
-        expect(lines.slice(uptimeIndex + 1, uptimeIndex + 4)).toEqual([
-          '  Desktop: collecting',
-          `Analytics: ${chalk.green('healthy')}`,
-          '  Last dropped: cli_analytics_disabled (hooks, 2026-11-11 05:00:00 -05:00)',
-        ]);
-      });
-
-      it('adds desktop and analytics.latestDrop to the JSON payload', async () => {
-        await arrangeDesktop(4001, connectedSince);
-
-        const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
-
-        expect(payload.desktop).toEqual({ connected: true, collecting: true });
-        expect(payload.analytics.latestDrop).toEqual(latestDrop);
-      });
-
-      it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
-        await arrangeDesktop(4001, {});
-
-        const lines = await runStatus(['status']);
-        const payload = (await runStatus(['status', '--json'])).at(-1) as string;
-
-        expect(lines).toContain(chalk.yellow('  Desktop: NOT collecting — Desktop is not connected to this proxy yet'));
-        expect(JSON.parse(payload).desktop).toEqual({
-          connected: true,
-          collecting: false,
-          reason: 'Desktop is not connected to this proxy yet',
-        });
-      });
-
-      it('prints the older-CLI line and no Desktop line for a daemon whose state has no version', async () => {
-        await arrangeDesktop(4001, { version: undefined, telemetryMode: 'claude-desktop', clientType: 'claude-desktop' });
-
-        const lines = await runStatus(['status']);
-        consoleLogSpy.mockClear();
-        const payload = JSON.parse((await runStatus(['status', '--json'])).join('\n'));
-
-        expect(lines).toContain(chalk.yellow('  Version: older CLI — Run: codemie proxy restart'));
-        expect(lines.some((line) => line.includes('Desktop:'))).toBe(false);
-        expect(payload.version).toBeNull();
-        expect(payload).not.toHaveProperty('desktop');
-      });
-
-      it('names both ports when Desktop points at another port than the daemon listens on', async () => {
-        await arrangeDesktop(4001, { port: 4002, url: 'http://127.0.0.1:4002' });
-
-        const lines = await runStatus(['status']);
-        const payload = (await runStatus(['status', '--json'])).at(-1) as string;
-
-        expect(lines).toContain(chalk.yellow(
-          '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 4002; ' +
-          'run: codemie proxy connect --claude-desktop'
-        ));
-        expect(JSON.parse(payload).desktop).toEqual({
-          connected: true,
-          collecting: false,
-          reason: 'Claude Desktop points at port 4001, the proxy listens on 4002',
-          remedy: 'run: codemie proxy connect --claude-desktop',
-        });
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Claude Desktop points at port 4001, the proxy listens on 4002',
+        remedy: 'run: codemie proxy connect --claude-desktop',
       });
     });
   });
 
-  describe('the clients the status names', () => {
+  describe('the client notices proxy doctor reads (once printed by the status)', () => {
     // This install: the package these sources run from.
     const ownPackage = fileURLToPath(new URL('../../../../../', import.meta.url));
     const ownScript = join(ownPackage, 'bin', 'codemie.js');
@@ -2118,34 +1979,20 @@ describe('proxy status', () => {
       version: '0.17.0',
       startedAt: new Date().toISOString(),
     };
-    let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(async () => {
-      consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const { checkStatus } = await import('../daemon-manager.js');
-      const { checkProxyHealth } = await import('../health-check.js');
       const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
       vi.mocked(checkStatus).mockResolvedValue({ running: true, state: baseState });
-      vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
       vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(false);
     });
 
-    afterEach(() => {
-      consoleLogSpy.mockRestore();
-    });
-
     async function status(): Promise<string[]> {
-      const { createProxyCommand } = await import('../index.js');
-      consoleLogSpy.mockClear();
-      await createProxyCommand().parseAsync(['status'], { from: 'user' });
-      return consoleLogSpy.mock.calls.map((call) => String(call[0]));
+      return (await diagnose()).lines;
     }
 
     async function statusJson(): Promise<Record<string, unknown>> {
-      const { createProxyCommand } = await import('../index.js');
-      consoleLogSpy.mockClear();
-      await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
-      return JSON.parse(consoleLogSpy.mock.calls.map((call) => String(call[0])).join('\n')) as Record<string, unknown>;
+      return (await diagnose()).payload;
     }
 
     async function writeFileAt(path: string, content: string): Promise<void> {
@@ -2241,7 +2088,7 @@ describe('proxy status', () => {
       await codexConfig(managedCodex('http://127.0.0.1:52311/v1', 'Bearer codemie-proxy.codex-desktop'));
 
       expect(await status()).toContain(yellow(
-        '  Codex desktop: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect --codex-desktop'
+        '  Codex desktop: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect --codex-desktop'
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'codex-desktop', configuredPort: 52311, flag: '--codex-desktop' },
@@ -2252,7 +2099,7 @@ describe('proxy status', () => {
       await extensionSettings(false, 'http://127.0.0.1:60122', 'codemie-proxy');
 
       expect(await status()).toContain(yellow(
-        '  VS Code Claude Code extension: uses the shared key — Run: codemie proxy connect --vscode-claude-code'
+        '  VS Code Claude Code extension: uses the shared key — run: codemie proxy connect --vscode-claude-code'
       ));
       expect((await statusJson()).clientSharedKey).toEqual([{ client: 'vscode-claude-code', flag: '--vscode-claude-code' }]);
 
@@ -2277,12 +2124,11 @@ describe('proxy status', () => {
         vi.mocked(checkStatus).mockResolvedValue({ running: true, state: { ...baseState, version: undefined } });
       });
 
-      it('names no extension config holding the shared key, beside the restart line', async () => {
+      it('names no extension config holding the shared key', async () => {
         await extensionSettings(false, 'http://127.0.0.1:60122', 'codemie-proxy');
 
         const lines = await status();
 
-        expect(lines).toContain(yellow('  Version: older CLI — Run: codemie proxy restart'));
         expect(lines.some((line) => line.includes('uses the shared key'))).toBe(false);
         expect(await statusJson()).not.toHaveProperty('clientSharedKey');
       });
@@ -2306,7 +2152,7 @@ describe('proxy status', () => {
 
         expect(await status()).toContain(yellow(
           '  VS Code Claude Code extension: points at port 4001, the proxy listens on 60122 — ' +
-          'Run: codemie proxy connect --vscode-claude-code'
+          'run: codemie proxy connect --vscode-claude-code'
         ));
         expect((await statusJson()).clientPortMismatch).toEqual([
           { client: 'vscode-claude-code', configuredPort: 4001, flag: '--vscode-claude-code' },
@@ -2321,11 +2167,11 @@ describe('proxy status', () => {
       const lines = await status();
       expect(lines).toContain(yellow(
         '  VS Code Claude Code extension: points at port 4001, the proxy listens on 60122 — ' +
-        'Run: codemie proxy connect --vscode-claude-code'
+        'run: codemie proxy connect --vscode-claude-code'
       ));
       expect(lines).toContain(yellow(
         '  VS Code Insiders Claude Code extension: points at port 4002, the proxy listens on 60122 — ' +
-        'Run: codemie proxy connect --vscode-claude-code --insiders'
+        'run: codemie proxy connect --vscode-claude-code --insiders'
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'vscode-claude-code', configuredPort: 4001, flag: '--vscode-claude-code' },
@@ -2341,18 +2187,15 @@ describe('proxy status', () => {
       expect(payload).not.toHaveProperty('clientSharedKey');
     });
 
-    it('names nothing for an unreadable reader file and the command succeeds', async () => {
+    it('names nothing for an unreadable reader file and does not fail', async () => {
       await codexConfig('# >>> codemie proxy connect (codex-desktop) provider - managed block, do not edit\n[[[');
 
       const lines = await status();
       expect(lines.some((line) => line.includes('Codex desktop'))).toBe(false);
-      expect(lines[0]).toBe(`Status:  ${chalk.green('running, healthy')}`);
     });
 
-    it('names Desktop on another port by its Desktop line alone, beside the analytics lines', async () => {
+    it('names Desktop on another port by its Desktop collection alone, with no client notice line', async () => {
       const { readDesktopGateway } = await import('../connectors/desktop.js');
-      const { hasActiveAnalyticsConnector } = await import('../analytics-connectors.js');
-      const { collectDeliveryHealth } = await import('../delivery-health.js');
       const { getClaudeDesktopBaseDir } = await import('@/telemetry/clients/claude-desktop/claude-desktop.paths.js');
       const libDir = join(getClaudeDesktopBaseDir(), 'configLibrary');
       await writeFileAt(join(libDir, '_meta.json'), JSON.stringify({ appliedId: 'cfg' }));
@@ -2362,17 +2205,16 @@ describe('proxy status', () => {
         inferenceGatewayApiKey: 'codemie-proxy.claude-desktop',
       }));
       vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
-      vi.mocked(hasActiveAnalyticsConnector).mockResolvedValue(true);
-      vi.mocked(collectDeliveryHealth).mockResolvedValue({ status: 'healthy', pendingBytes: 0 });
 
-      const lines = await status();
+      const { lines, payload } = await diagnose();
 
-      expect(lines).toContain(`Analytics: ${chalk.green('healthy')}`);
-      expect(lines).toContain(yellow(
-        '  Desktop: NOT collecting — Claude Desktop points at port 4001, the proxy listens on 60122; ' +
-        'run: codemie proxy connect --claude-desktop'
-      ));
-      expect(lines.filter((line) => line.includes('Claude Desktop'))).toHaveLength(1);
+      expect(payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        reason: 'Claude Desktop points at port 4001, the proxy listens on 60122',
+        remedy: 'run: codemie proxy connect --claude-desktop',
+      });
+      expect(lines.some((line) => line.includes('Claude Desktop'))).toBe(false);
     });
 
     it('names a Desktop config holding the shared key', async () => {
@@ -2386,7 +2228,7 @@ describe('proxy status', () => {
       }));
 
       expect(await status()).toContain(yellow(
-        '  Claude Desktop: uses the shared key — Run: codemie proxy connect --claude-desktop'
+        '  Claude Desktop: uses the shared key — run: codemie proxy connect --claude-desktop'
       ));
       expect((await statusJson()).clientSharedKey).toEqual([{ client: 'claude-desktop', flag: '--claude-desktop' }]);
     });
@@ -2423,24 +2265,18 @@ describe('proxy status', () => {
           'on the daemon\'s port, Desktop noticed',
           60122,
           { desktopConnectedSince: '2026-11-16T10:00:00.000Z' },
-          '  Desktop: collecting',
           { connected: true, collecting: true },
         ],
         [
           'on the daemon\'s port, not noticed yet',
           60122,
           {},
-          chalk.yellow('  Desktop: NOT collecting — Desktop is not connected to this proxy yet'),
           { connected: true, collecting: false, reason: 'Desktop is not connected to this proxy yet' },
         ],
         [
           'on another port',
           4123,
           {},
-          chalk.yellow(
-            '  Desktop: NOT collecting — Claude Desktop points at port 4123, the proxy listens on 60122; ' +
-            'run: codemie proxy connect --claude-desktop'
-          ),
           {
             connected: true,
             collecting: false,
@@ -2448,26 +2284,26 @@ describe('proxy status', () => {
             remedy: 'run: codemie proxy connect --claude-desktop',
           },
         ],
-      ])('%s: the Desktop line and no key line', async (_case, port, extra, line, desktop) => {
+      ])('%s: the Desktop collection and no key line', async (_case, port, extra, desktop) => {
         await sealedDesktop(port, extra);
 
         const lines = await status();
         const payload = await statusJson();
 
-        expect(lines).toContain(line);
         expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
         expect(payload.desktop).toEqual(desktop);
         expect(payload).not.toHaveProperty('clientSharedKey');
       });
 
-      it('edge: the daemon of an older CLI: no key line and no Desktop line', async () => {
+      it('edge: the daemon of an older CLI: no key line and no Desktop collection', async () => {
         await sealedDesktop(60122, { version: undefined });
 
         const lines = await status();
+        const payload = await statusJson();
 
         expect(lines.some((printed) => printed.includes('Claude Desktop:'))).toBe(false);
-        expect(lines.some((printed) => printed.includes('Desktop:'))).toBe(false);
-        expect(await statusJson()).not.toHaveProperty('clientSharedKey');
+        expect(payload).not.toHaveProperty('desktop');
+        expect(payload).not.toHaveProperty('clientSharedKey');
       });
     });
 
@@ -2501,7 +2337,7 @@ describe('proxy status', () => {
       }]));
 
       expect(await status()).toContain(yellow(
-        `  ${label}: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect ${flag}`
+        `  ${label}: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect ${flag}`
       ));
       expect((await statusJson()).clientPortMismatch).toEqual([
         { client: 'vscode-byok', configuredPort: 52311, flag },
@@ -2529,10 +2365,10 @@ describe('proxy status', () => {
       await copilotCliHooks(script);
 
       expect(await status()).toContain(yellow(
-        `  Copilot CLI hooks: run another install (${script}) — Run: codemie proxy connect --copilot-cli-otlp`
+        `  Copilot CLI hooks: run another install (${script}) — run: codemie proxy connect --copilot-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
-        { connector: 'copilot-cli-otlp', path: script, flag: '--copilot-cli-otlp' },
+        { connector: 'copilot-cli-otlp', path: script, flag: '--copilot-otlp' },
       ]);
 
       await copilotCliHooks(ownScript);
@@ -2550,7 +2386,6 @@ describe('proxy status', () => {
 
       const lines = await status();
 
-      expect(lines[0]).toBe(`Status:  ${chalk.green('running, healthy')}`);
       expect(lines.some((line) => line.includes('run another install'))).toBe(false);
     });
 
@@ -2561,17 +2396,15 @@ describe('proxy status', () => {
       }));
 
       expect(await status()).toContain(yellow(
-        `  Copilot Chat hooks: run another install (${script}) — Run: codemie proxy connect --copilot-chat-otlp`
+        `  Copilot Chat hooks: run another install (${script}) — run: codemie proxy connect --copilot-otlp`
       ));
       expect((await statusJson()).hooksOfAnotherInstall).toEqual([
-        { connector: 'copilot-chat-otlp', path: script, flag: '--copilot-chat-otlp' },
+        { connector: 'copilot-chat-otlp', path: script, flag: '--copilot-otlp' },
       ]);
     });
 
-    it('reads the clients\' configs and Claude Code\'s OTLP endpoint while the PATH lookup is still open', async () => {
+    it('reads the clients\' configs while the PATH lookup is still open', async () => {
       const { getCommandPath } = await import('@/utils/processes.js');
-      const { checkClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
-      vi.mocked(checkClaudeCodeOtlpEndpoint).mockClear();
       const pending: Array<(path: string | null) => void> = [];
       vi.mocked(getCommandPath).mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
       const { shim } = await otherInstall();
@@ -2582,17 +2415,16 @@ describe('proxy status', () => {
       // Two lookups open — the older-CLI check's and the one for Claude Code's hooks of another install — means the
       // reader loop has read the Codex config and Claude Code's settings.
       await vi.waitFor(() => expect(pending).toHaveLength(2));
-      expect(checkClaudeCodeOtlpEndpoint).toHaveBeenCalled();
       await rm(join(clientHome, '.codex'), { recursive: true, force: true });
       await rm(join(clientHome, '.claude'), { recursive: true, force: true });
       for (const release of pending) release(null);
 
       const lines = await printed;
       expect(lines).toContain(yellow(
-        '  Codex desktop: points at port 52311, the proxy listens on 60122 — Run: codemie proxy connect --codex-desktop'
+        '  Codex desktop: points at port 52311, the proxy listens on 60122 — run: codemie proxy connect --codex-desktop'
       ));
       expect(lines).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — Run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-otlp`
       ));
     });
 
@@ -2601,7 +2433,7 @@ describe('proxy status', () => {
       await claudeCodeHooks(`${hookPath(shim)} hook --agent claude-code-otlp`);
 
       expect(await status()).toContain(yellow(
-        `  Claude Code hooks: run another install (${shim}) — Run: codemie proxy connect --claude-code-otlp`
+        `  Claude Code hooks: run another install (${shim}) — run: codemie proxy connect --claude-otlp`
       ));
     });
 
@@ -2613,7 +2445,7 @@ describe('proxy status', () => {
 
       expect(await status()).toContain(yellow(
         `  Claude Code hooks: run another install (${shim}) — ` +
-        'put this install first on PATH, then run: codemie proxy connect --claude-code-otlp'
+        'put this install first on PATH, then run: codemie proxy connect --claude-otlp'
       ));
     });
 
@@ -2645,19 +2477,8 @@ describe('proxy status', () => {
       expect((await status()).some((line) => line.includes('Claude Code hooks'))).toBe(false);
     });
 
-    it('prints the output of a daemon with no client and no JSON client keys when no reader finds a file', async () => {
-      const lines = await status();
-
-      expect(lines).toEqual([
-        `Status:  ${chalk.green('running, healthy')}`,
-        '  URL:     http://127.0.0.1:60122',
-        '  Port:    60122',
-        '  API Key: codemie-proxy',
-        '  Client keys: codemie-proxy.<client> — written by codemie proxy connect',
-        '  Profile: work',
-        '  Version: 0.17.0',
-        lines[7],
-      ]);
+    it('names no client, no older CLI and no hooks when no reader finds a file', async () => {
+      expect(await status()).toEqual([]);
       const payload = await statusJson();
       for (const key of ['clientPortMismatch', 'clientSharedKey', 'olderCliOnPath', 'hooksOfAnotherInstall']) {
         expect(payload).not.toHaveProperty(key);
@@ -2819,6 +2640,22 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
   });
 
+  it('starts with the new profile\'s own model when --profile is given', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockImplementation(async (_cwd, options) => ({
+      name: (options as { name?: string } | undefined)?.name ?? 'work',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieProject: 'config-project',
+      model: 'm1',
+    }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'other' });
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'other', model: 'm1' });
+  });
+
   it('leaves the running daemon untouched when SSO credentials are missing', async () => {
     const { daemon, command } = await setup({ running: true, state: runningState });
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -2947,6 +2784,29 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('global-model');
   });
 
+  it('re-spawns a running daemon whose state has no model with the loaded config\'s when the global profile has none', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
+    vi.mocked(ConfigLoader.loadGlobalConfigProfile).mockResolvedValueOnce({});
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
+  });
+
+  it('keeps the state\'s model over the loaded config\'s when no --profile is given', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m');
+  });
+
   it.each([
     ['disappeared', { running: false, state: null }],
     ['was replaced by another run', { running: true, state: { ...runningState, pid: 9191 } }],
@@ -2978,7 +2838,18 @@ describe('proxy restart', () => {
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile, port: 52311 });
   });
 
-  it('starts a stopped daemon with the loaded config\'s values and no model', async () => {
+  it('starts a stopped daemon with no record on the active profile\'s name', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'work');
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'work', port: 4001 });
+  });
+
+  it('starts a stopped daemon with the loaded config\'s values and its model', async () => {
     const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
     vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -2990,8 +2861,31 @@ describe('proxy restart', () => {
 
     expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', project: 'A', projectBinding: 'own',
-      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true,
+      syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true, model: 'm1',
     });
+  });
+
+  it('starts a stopped daemon without a model when the profile\'s model is blank', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
+    vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'p', provider: 'ai-run-sso', baseUrl: 'https://t', codeMieProject: 'A', model: '  ',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
+  });
+
+  it('starts without a model when --profile names a profile whose model is blank', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'other', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: '  ',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
+
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
   });
 
   describe('while Claude Desktop is connected', () => {
@@ -3141,5 +3035,67 @@ describe('proxy restart', () => {
       expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: expected });
       expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('proxy connect: which Claude client routes were typed', () => {
+  const connectTargets = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    vi.resetModules();
+    connectTargets.mockClear();
+    vi.doMock('../connect-orchestrator.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../connect-orchestrator.js')>()),
+      connectTargets,
+    }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../connect-orchestrator.js');
+    vi.restoreAllMocks();
+  });
+
+  async function connectWith(...args: string[]): Promise<{ explicitRoutes?: unknown; targets: Record<string, boolean> }> {
+    const { createProxyCommand } = await import('../index.js');
+    await createProxyCommand().parseAsync(['connect', ...args], { from: 'user' });
+    expect(connectTargets).toHaveBeenCalledTimes(1);
+    return (connectTargets.mock.calls[0] as unknown as [{ explicitRoutes?: unknown; targets: Record<string, boolean> }])[0];
+  }
+
+  it('--claude-otlp implies both clients but types neither', async () => {
+    const options = await connectWith('--claude-otlp');
+    expect(options.targets).toMatchObject({ claudeDesktop: true, vscodeClaudeCode: true });
+    expect(options.explicitRoutes).toEqual({ claudeDesktop: false, vscodeClaudeCode: false });
+  });
+
+  it('a typed --claude-desktop or --vscode-claude-code is explicit, with or without --claude-otlp', async () => {
+    expect((await connectWith('--claude-desktop')).explicitRoutes).toEqual({ claudeDesktop: true, vscodeClaudeCode: false });
+    connectTargets.mockClear();
+    expect((await connectWith('--claude-otlp', '--vscode-claude-code')).explicitRoutes)
+      .toEqual({ claudeDesktop: false, vscodeClaudeCode: true });
+  });
+});
+
+describe('proxy connect help of the routing flags', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function description(long: string): Promise<string> {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    return connect?.options.find((option) => option.long === long)?.description ?? '';
+  }
+
+  it('--claude-desktop says it routes the model requests through the proxy', async () => {
+    const text = await description('--claude-desktop');
+    expect(text).toContain('through the proxy');
+    expect(text).toContain('model');
+    expect(text).toContain('MCP');
+  });
+
+  it('--vscode-claude-code says it routes the extension through the proxy', async () => {
+    expect(await description('--vscode-claude-code')).toContain('through the proxy');
   });
 });
