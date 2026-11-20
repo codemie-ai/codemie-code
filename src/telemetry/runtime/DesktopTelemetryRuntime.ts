@@ -130,7 +130,6 @@ export class DesktopTelemetryRuntime {
     await this.poll();
   }
 
-
   /**
    * One poll. Only while Desktop's applied config points at this daemon (its port and key) does it discover and
    * collect new sessions and run the listing re-delivery. Otherwise it runs the Cowork producer for the sessions it is
@@ -193,9 +192,7 @@ export class DesktopTelemetryRuntime {
         // started is still live work the moment the user types into it, and keying on
         // createdAt made every proxy restart orphan all existing chats permanently.
         // Sessions genuinely idle since collection began are still skipped, so no backlog is replayed.
-        if (discovered.updatedAt < this.connection.collectingSince) {
-          continue;
-        }
+        if (discovered.updatedAt < this.connection.collectingSince) continue;
         try {
           await this.pollSession(discovered);
         } catch (error) {
@@ -361,13 +358,9 @@ export class DesktopTelemetryRuntime {
   ): Promise<Session | 'idle' | undefined | null> {
     if (knownSessionId) {
       const retracked = await this.retrackUnderLock(knownSessionId, discovered);
-      if (retracked !== null) {
-        return retracked;
-      }
+      if (retracked !== null) return retracked;
     }
-    if (!takeNew) {
-      return null;
-    }
+    if (!takeNew) return null;
 
     const attribution = await detectAttribution(discovered.workingDirectory, this.config.profile);
     const [gitBranch, repository, project] = attribution;
@@ -478,6 +471,7 @@ export class DesktopTelemetryRuntime {
       lastSeenActivityAt: discovered.updatedAt
     });
     await this.sessionStore.saveSession(existing);
+    this.analyticsSwitch.confirmRebased(existing.sessionId);
     return existing;
   }
 
