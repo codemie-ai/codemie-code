@@ -2242,7 +2242,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(failure).toBeGreaterThan(-1);
       const errors = vi.mocked(console.error).mock;
       const ssoError = errors.calls.findIndex(([message]) =>
-        stripAnsi(String(message)).startsWith("✗ No SSO credentials found for profile 'p'."));
+        stripAnsi(String(message)).startsWith("✗ No active CodeMie session for profile 'p'."));
       expect(ssoError).toBeGreaterThan(-1);
       expect(logs.invocationCallOrder[failure]).toBeLessThan(errors.invocationCallOrder[ssoError]);
     });
@@ -3005,7 +3005,7 @@ describe('ensureOtlpProxy', () => {
       expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
       expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }));
       expect(warnings(s.warn)).toEqual([
-        expect.stringContaining("No SSO credentials found for profile 'work'"),
+        expect.stringContaining("No active CodeMie session for profile 'work'"),
         expect.stringContaining('no recorded proxy connection'),
       ]);
       expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: work)');
@@ -3090,7 +3090,7 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
     expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
-    expect(warnings(s.warn)).toEqual([expect.stringContaining("No SSO credentials found for profile 'p'")]);
+    expect(warnings(s.warn)).toEqual([expect.stringContaining("No active CodeMie session for profile 'p'")]);
     expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: p, local scope)');
     expect(warnings(s.warn)[0]).toContain('holds the port until you sign in');
     expectNoConsoleNoExit();
@@ -4013,12 +4013,14 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigurationError } = await import('../../../../utils/errors.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect((thrown as Error).message).toBe(
-      "No SSO credentials found for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(lookup).toHaveBeenCalledWith({
@@ -4028,6 +4030,45 @@ describe('assertSsoCredentials', () => {
     });
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('prints the bare login command when the profile is the active one', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('p');
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login"
+    );
+  });
+
+  it('keeps --url for a profile that is not the active one', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+    );
+  });
+
+  it('falls back to --url when the active profile cannot be resolved', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockRejectedValueOnce(new Error('config unreadable'));
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+    );
   });
 
   it('throws Failed to verify credentials when the lookup throws, without double-wrapping', async () => {
