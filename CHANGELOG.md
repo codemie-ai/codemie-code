@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Fixed
 
 - `codemie analytics` without `--include-external` no longer parses the Claude Code, Copilot CLI and Gemini logs of sessions CodeMie did not start before leaving them out (Codex and Pi logs are still parsed: they link sub-agents and forks), so it takes much less time and memory (`--last 7d` could run out of memory). The output is unchanged; runs with `--include-external` are unaffected
+- `--from/--to` runs keep memory and time bounded: sessions outside the range are dropped as they're read, and Claude logs that start after `--to` aren't parsed
 
 ## [0.17.0] - 2026-11-19
 

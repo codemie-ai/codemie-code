@@ -248,6 +248,7 @@ describe('loadNativeSessions — pi', () => {
       parse: async () => conversation,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
       ...overrides,
     };
   }
@@ -316,6 +317,7 @@ describe('loadNativeSessions — pi fork families', () => {
           : conversation,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
       ...overrides,
     };
   }
@@ -364,6 +366,7 @@ describe('loadNativeSessions — pi fork families', () => {
       parse: async (_agent, filePath) => (filePath === forkPath ? forkWithNewTurn : conversation),
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
 
     const out = await loadNativeSessions({ sessionId: 'root' }, deps);

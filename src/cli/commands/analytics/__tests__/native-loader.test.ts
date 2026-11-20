@@ -2,11 +2,12 @@
  * Native session discovery + synthesis unit tests (dependency-injected — no fs/registry).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { synthesizeRawSession, loadNativeSessions, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
+import { synthesizeRawSession, loadNativeSessions, realNativeDeps, transcriptPathKey, type NativeLoaderDeps } from '../native-loader.js';
+import type { RawSessionData } from '../data-loader.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 import { AgentRegistry } from '../../../../agents/registry.js';
 
@@ -176,6 +177,7 @@ describe('loadNativeSessions', () => {
         }) as never,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['fresh']); // tracked one deduped out
@@ -193,6 +195,7 @@ describe('loadNativeSessions', () => {
       },
       realPath: (p) => transcriptPathKey(p, 'win32'),
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
 
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
@@ -207,6 +210,7 @@ describe('loadNativeSessions', () => {
       parse: async () => null,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
@@ -230,6 +234,7 @@ describe('loadNativeSessions', () => {
       parse,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     const sessions = await loadNativeSessions(undefined, deps);
@@ -258,6 +263,7 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
       parse,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     const results = await loadNativeSessions({ sessionId: 'target' }, deps);
@@ -280,6 +286,7 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
       parse,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     const results = await loadNativeSessions({ sessionId: 'target' }, deps);
@@ -299,6 +306,7 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
       parse,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     const results = await loadNativeSessions({ sessionId: 'nonexistent' }, deps);
@@ -320,6 +328,7 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
       parse,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     await loadNativeSessions(undefined, deps);
@@ -337,6 +346,7 @@ describe('loadNativeSessions — windowDays', () => {
       parse: async () => null,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     await loadNativeSessions({ sessionId: 'target' }, deps);
@@ -352,6 +362,7 @@ describe('loadNativeSessions — windowDays', () => {
       parse: async () => null,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
 
     await loadNativeSessions(undefined, deps);
@@ -367,6 +378,7 @@ describe('loadNativeSessions — windowDays', () => {
       parse: async () => null,
       realPath: (p) => p,
       hasOwnershipMarker: () => true,
+      firstCountedTimestamp: () => null,
     };
     const fromDate = new Date(Date.now() - 5 * 86_400_000);
 
@@ -469,6 +481,7 @@ describe('loadNativeSessions — external session labeling', () => {
       parse: async () => parsedSession,
       realPath: (p) => p,
       hasOwnershipMarker: () => hasMarker,
+      firstCountedTimestamp: () => null,
     };
   }
 
@@ -530,6 +543,7 @@ describe('loadNativeSessions — ownership gate for managed Copilot CLI', () => 
       parse: async () => parsedSession as never,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
   }
 
@@ -756,6 +770,7 @@ describe('loadNativeSessions — gemini ownership gate', () => {
       parse: async () => parsedSession as never,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
   }
 
@@ -793,6 +808,7 @@ describe('loadNativeSessions — gemini ownership gate', () => {
       parse: async () => geminiParsed as never,
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
 
     const results = await loadNativeSessions(undefined, deps);
@@ -829,6 +845,7 @@ describe('loadNativeSessions codex child dedup', () => {
         } as never),
       realPath: (p) => p,
       hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
     };
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['parent-uuid']);
@@ -866,6 +883,7 @@ describe('loadNativeSessions — external sessions not wanted', () => {
     },
     realPath: (p) => p,
     hasOwnershipMarker: (filePath) => filePath === '/logs/A.jsonl',
+    firstCountedTimestamp: () => null,
   };
 
   // Codex parent P has no marker; its rollout names child thread K, which has one.
@@ -890,6 +908,7 @@ describe('loadNativeSessions — external sessions not wanted', () => {
     },
     realPath: (p) => p,
     hasOwnershipMarker: (filePath) => filePath === '/logs/K.jsonl',
+    firstCountedTimestamp: () => null,
   };
 
   beforeEach(() => {
@@ -942,6 +961,7 @@ describe('loadNativeSessions — external sessions not wanted', () => {
     },
     realPath: (p) => p,
     hasOwnershipMarker: (filePath) => filePath === '/logs/pi-owned.jsonl',
+    firstCountedTimestamp: () => null,
   };
 
   const idsAndProviders = (out: Awaited<ReturnType<typeof loadNativeSessions>>) =>
@@ -965,5 +985,166 @@ describe('loadNativeSessions — external sessions not wanted', () => {
       ['pi-unowned', 'native-external'],
     ]);
     expect(idsAndProviders(out)).toEqual(idsAndProviders(await loadNativeSessions(filter, piDeps)));
+  });
+});
+
+/**
+ * `--from/--to` runs: SessionsSource drops every session that starts outside the range, so the
+ * loader drops them as it reads (`keep`) and does not parse a Claude log that starts after `--to`.
+ */
+describe('loadNativeSessions — --from/--to ranges', () => {
+  const at = (iso: string) => Date.parse(iso);
+  const claudeLog = (sessionId: string, timestamp: string) =>
+    ({
+      sessionId,
+      agentName: 'claude',
+      metadata: {},
+      messages: [{ type: 'assistant', timestamp, message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      metrics: { tools: {} },
+    }) as never;
+
+  it('drops the sessions keep rejects before returning, after they are tagged', async () => {
+    const starts: Record<string, string> = {
+      before: '2026-11-13T23:59:00Z',
+      inside: '2026-11-15T12:00:00Z',
+      after: '2026-11-17T00:01:00Z',
+    };
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () =>
+        Object.keys(starts).map((sessionId, i) => ({
+          agentName: 'claude',
+          descriptor: { sessionId, filePath: `/logs/${sessionId}.jsonl`, createdAt: i, agentName: 'claude' },
+        })),
+      parse: async (_agent, _filePath, sessionId) => claudeLog(sessionId, starts[sessionId]),
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+      firstCountedTimestamp: () => null,
+    };
+    const providers: Array<string | undefined> = [];
+    const keep = (s: RawSessionData) => {
+      providers.push(s.startEvent?.data.provider);
+      const start = s.startEvent!.data.startTime;
+      return start >= at('2026-11-14T00:00:00Z') && start <= at('2026-11-16T23:59:59.999Z');
+    };
+
+    const kept = await loadNativeSessions(undefined, deps, { keep });
+
+    expect(kept.map((s) => s.sessionId)).toEqual(['inside']);
+    expect(providers).toEqual(['native-external', 'native-external', 'native-external']);
+    expect((await loadNativeSessions(undefined, deps)).map((s) => s.sessionId)).toEqual(['before', 'inside', 'after']);
+  });
+
+  describe('a Claude log whose first counted line is after --to', () => {
+    const toDate = new Date('2026-11-16T23:59:59.999Z');
+    const firstTimes: Record<string, number | null> = {
+      '/logs/late.jsonl': toDate.getTime() + 1,
+      '/logs/edge.jsonl': toDate.getTime(),
+      '/logs/unknown.jsonl': null,
+    };
+    const others = [
+      { agentName: 'codex', sessionId: 'codex-1' },
+      { agentName: 'pi', sessionId: 'pi-1' },
+      { agentName: 'gemini', sessionId: 'gemini-1' },
+      { agentName: 'copilot-cli', sessionId: 'copilot-1' },
+    ];
+    let parsed: string[];
+    let firstCountedTimestamp: Mock<(filePath: string) => number | null>;
+    let deps: NativeLoaderDeps;
+
+    beforeEach(() => {
+      parsed = [];
+      firstCountedTimestamp = vi.fn((filePath: string) => firstTimes[filePath] ?? null);
+      deps = {
+        trackedLogPaths: () => new Set<string>(),
+        discover: async () => [
+          ...['late', 'edge', 'unknown'].map((sessionId) => ({
+            agentName: 'claude',
+            descriptor: { sessionId, filePath: `/logs/${sessionId}.jsonl`, createdAt: 1, agentName: 'claude' },
+          })),
+          ...others.map(({ agentName, sessionId }) => ({
+            agentName,
+            descriptor: { sessionId, filePath: `/logs/${sessionId}.jsonl`, createdAt: 1, agentName },
+          })),
+        ],
+        parse: async (_agent, _filePath, sessionId) => {
+          parsed.push(sessionId);
+          return claudeLog(sessionId, '2026-11-16T12:00:00Z');
+        },
+        realPath: (p) => p,
+        hasOwnershipMarker: () => false,
+        firstCountedTimestamp,
+      };
+    });
+
+    it('is never parsed when --to is set; one starting at --to or of unknown start is', async () => {
+      await loadNativeSessions({ toDate }, deps);
+
+      expect(parsed).not.toContain('late');
+      expect(parsed).toEqual(expect.arrayContaining(['edge', 'unknown']));
+    });
+
+    it('pre-reads only Claude logs: never Codex, Pi, Gemini or Copilot CLI ones', async () => {
+      await loadNativeSessions({ toDate }, deps);
+
+      expect(firstCountedTimestamp.mock.calls.map(([filePath]) => filePath).sort()).toEqual(
+        ['/logs/edge.jsonl', '/logs/late.jsonl', '/logs/unknown.jsonl']
+      );
+      expect(parsed).toEqual(expect.arrayContaining(others.map((o) => o.sessionId)));
+    });
+
+    it('is neither pre-read nor skipped without --to', async () => {
+      await loadNativeSessions({ fromDate: new Date('2026-11-14T00:00:00Z') }, deps);
+      await loadNativeSessions(undefined, deps);
+
+      expect(firstCountedTimestamp).not.toHaveBeenCalled();
+      expect(parsed.filter((id) => id === 'late')).toHaveLength(2);
+    });
+  });
+});
+
+describe('realNativeDeps.firstCountedTimestamp', () => {
+  let dir: string;
+  const write = (name: string, lines: unknown[]) => {
+    const filePath = join(dir, name);
+    writeFileSync(filePath, lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n') + '\n');
+    return filePath;
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'codemie-first-counted-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('skips lines without a timestamp and lines Claude does not count', () => {
+    const filePath = write('a.jsonl', [
+      { type: 'summary', summary: 'Earlier work', leafUuid: 'u0' },
+      { type: 'api-request-blob', timestamp: '2026-11-01T00:00:00Z', message: { role: 'user', content: 'copy' } },
+      { type: 'user', timestamp: '2026-11-15T10:00:00Z', message: { role: 'user', content: 'hi' } },
+    ]);
+
+    expect(realNativeDeps.firstCountedTimestamp(filePath)).toBe(Date.parse('2026-11-15T10:00:00Z'));
+  });
+
+  it('skips a line that is not JSON', () => {
+    const filePath = write('b.jsonl', ['{"type":"user","timestamp":"2026-11-1', { type: 'user', timestamp: '2026-11-15T11:00:00Z' }]);
+
+    expect(realNativeDeps.firstCountedTimestamp(filePath)).toBe(Date.parse('2026-11-15T11:00:00Z'));
+  });
+
+  it('is null when no timestamped counted line starts within the first 64 KB', () => {
+    const filePath = write('c.jsonl', [
+      { type: 'summary', summary: 'x'.repeat(70_000) },
+      { type: 'user', timestamp: '2026-11-15T12:00:00Z' },
+    ]);
+
+    expect(realNativeDeps.firstCountedTimestamp(filePath)).toBeNull();
+  });
+
+  it('is null for a file that does not exist', () => {
+    expect(realNativeDeps.firstCountedTimestamp(join(dir, 'missing.jsonl'))).toBeNull();
   });
 });
