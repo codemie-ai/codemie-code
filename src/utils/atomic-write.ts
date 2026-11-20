@@ -42,35 +42,22 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
 }
 
 /**
- * Write JSON atomically: a uniquely named temp file in the same directory, then a
- * rename over the target. The existing file mode is kept (new files get 0600), a
- * symlinked target is written through, and a failed write leaves no temp file.
+ * Write text atomically: a uniquely named temp file beside the target, then a rename
+ * over it. A symlink is written through (its target replaced, the link kept); a
+ * dangling link (its target missing) is replaced by a regular file. The
+ * target's mode is kept (new files get 0600), a missing parent directory is created,
+ * and a failed write leaves no temp file.
  */
-export async function writeJsonFileAtomic(
+export async function writeFileAtomic(
   filePath: string,
-  data: unknown,
-  options: AtomicJsonWriteOptions = {}
+  content: string,
+  options: { directoryMode?: number } = {}
 ): Promise<void> {
   const target = await realTarget(filePath);
   let mode = 0o600;
   try {
-    const stat = await fs.stat(target);
-    mode = stat.mode & 0o777;
-    if (options.refuseUnparsable) {
-      const content = await fs.readFile(target, 'utf-8');
-      if (content.trim().length > 0) {
-        try {
-          JSON.parse(content);
-        } catch {
-          throw new ConfigurationError(
-            `${options.label ?? 'Config file'} at ${target} is not valid JSON; not overwriting it. ` +
-              'Fix or move the file, then retry.'
-          );
-        }
-      }
-    }
+    mode = (await fs.stat(target)).mode & 0o777;
   } catch (error) {
-    if (error instanceof ConfigurationError) throw error;
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
   }
 
@@ -80,10 +67,43 @@ export async function writeJsonFileAtomic(
   });
   const tempPath = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    await fs.writeFile(tempPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode });
+    await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode });
     await renameWithRetry(tempPath, target);
   } catch (error) {
     await fs.unlink(tempPath).catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Write JSON atomically through `writeFileAtomic` (a symlink written through, the
+ * target's mode kept). With `refuseUnparsable`, an existing non-empty file that is not
+ * valid JSON is left alone and a `ConfigurationError` thrown.
+ */
+export async function writeJsonFileAtomic(
+  filePath: string,
+  data: unknown,
+  options: AtomicJsonWriteOptions = {}
+): Promise<void> {
+  if (options.refuseUnparsable) {
+    const target = await realTarget(filePath);
+    let content: string | undefined;
+    try {
+      content = await fs.readFile(target, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+    }
+    if (content !== undefined && content.trim().length > 0) {
+      try {
+        JSON.parse(content);
+      } catch {
+        throw new ConfigurationError(
+          `${options.label ?? 'Config file'} at ${target} is not valid JSON; not overwriting it. ` +
+            'Fix or move the file, then retry.'
+        );
+      }
+    }
+  }
+
+  await writeFileAtomic(filePath, JSON.stringify(data, null, 2), { directoryMode: options.directoryMode });
 }
