@@ -68,6 +68,78 @@ describe('hook-command resolver', () => {
     expect(sh.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: `${bin} hook` });
   });
 
+  describe('win32 .cmd shim healing (EPMCDME-16975)', () => {
+    const shim = 'C:/npm/codemie';
+    const mockFs = (existing: string[]) =>
+      vi.doMock('fs', async (orig) => ({
+        ...(await orig<typeof import('fs')>()),
+        existsSync: (p: string) => existing.includes(p),
+      }));
+    let platSpy: ReturnType<typeof vi.spyOn> | undefined;
+    const setPlatform = (platform: NodeJS.Platform) => {
+      platSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
+    };
+    afterEach(() => {
+      platSpy?.mockRestore();
+      vi.doUnmock('fs');
+    });
+
+    it('rewrites an extensionless shim to the .cmd shim beside it', async () => {
+      mockFs([shim, `${shim}.cmd`]);
+      setPlatform('win32');
+      const { resolveHookCommand } = await import('../hook-command.js');
+      expect(resolveHookCommand(`${shim} hook`, 'C:/x/codemie.cmd')).toBe(`${shim}.cmd hook`);
+    });
+
+    it('keeps the .cmd inside the quotes of a quoted head', async () => {
+      const q = 'C:/Program Files/npm/codemie';
+      mockFs([q, `${q}.cmd`]);
+      setPlatform('win32');
+      const { resolveHookCommand } = await import('../hook-command.js');
+      expect(resolveHookCommand(`"${q}" hook`, 'C:/x/codemie.cmd')).toBe(`"${q}.cmd" hook`);
+    });
+
+    it('keeps the `& ` prefix and the powershell pin in powershell mode', async () => {
+      const q = 'C:/Program Files/npm/codemie';
+      mockFs([q, `${q}.cmd`]);
+      setPlatform('win32');
+      const { rewriteHooksCommandTree } = await import('../hook-command.js');
+      const tree = { Stop: [{ hooks: [{ type: 'command', command: `"${q}" hook` }] }] };
+      expect(rewriteHooksCommandTree(tree, 'C:/x/codemie.cmd', true)).toBe(true);
+      expect(tree.Stop[0].hooks[0]).toMatchObject({ command: `& "${q}.cmd" hook`, shell: 'powershell' });
+    });
+
+    it('is idempotent on an already-.cmd command', async () => {
+      mockFs([shim, `${shim}.cmd`]);
+      setPlatform('win32');
+      const { resolveHookCommand } = await import('../hook-command.js');
+      expect(resolveHookCommand(`${shim}.cmd hook`, 'C:/x/codemie.cmd')).toBe(`${shim}.cmd hook`);
+    });
+
+    it('leaves the command unchanged when no .cmd sits beside the shim', async () => {
+      mockFs([shim]);
+      setPlatform('win32');
+      const { resolveHookCommand } = await import('../hook-command.js');
+      expect(resolveHookCommand(`${shim} hook`, 'C:/x/codemie.cmd')).toBe(`${shim} hook`);
+    });
+
+    it('leaves the command unchanged on non-win32', async () => {
+      mockFs([shim, `${shim}.cmd`]);
+      setPlatform('linux');
+      const { resolveHookCommand } = await import('../hook-command.js');
+      expect(resolveHookCommand(`${shim} hook`, '/x/codemie')).toBe(`${shim} hook`);
+    });
+
+    it('heals a Claude-shaped command without touching the existing pin', async () => {
+      mockFs([shim, `${shim}.cmd`]);
+      setPlatform('win32');
+      const { rewriteHooksCommandTree } = await import('../hook-command.js');
+      const tree = { Stop: [{ hooks: [{ type: 'command', command: `${shim} hook` }] }] };
+      expect(rewriteHooksCommandTree(tree, 'C:/x/codemie.cmd', false)).toBe(true);
+      expect(tree.Stop[0].hooks[0]).toEqual({ type: 'command', command: `${shim}.cmd hook` });
+    });
+  });
+
   it('resolveCodemieBinary prefers getCommandPath and quotes spaces', async () => {
     vi.doMock('../processes.js', () => ({ getCommandPath: vi.fn().mockResolvedValue('/opt/my apps/codemie') }));
     const { resolveCodemieBinary, resolveHookCommand } = await import('../hook-command.js');
