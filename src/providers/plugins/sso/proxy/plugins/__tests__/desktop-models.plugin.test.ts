@@ -14,6 +14,8 @@ vi.mock('../../../../../../utils/config.js', () => ({ ConfigLoader: { getProfile
 
 import { DesktopModelsPlugin, isModelsListRequest } from '../desktop-models.plugin.js';
 import { desktopExtraModelAlias } from '../../../sso.desktop-models.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 
 const CLAUDE_TIERS = {
   simple: { model: 'claude-haiku-5-5' },
@@ -22,12 +24,22 @@ const CLAUDE_TIERS = {
   reasoning: { model: 'claude-sonnet-5' },
 };
 
+type RawCredentials = { cookies: Record<string, string>; apiUrl: string } | { token: string; apiUrl: string };
+
+/** The SSOAuth the resolver would build from a stored record. */
+function auth(raw: RawCredentials): SSOAuth {
+  return 'cookies' in raw
+    ? toSSOAuth({ type: 'cookie', record: raw }, raw.apiUrl)
+    : toSSOAuth({ type: 'jwt', record: raw }, raw.apiUrl);
+}
+
 function makePluginContext(
-  overrides: { clientType?: string; project?: string; profile?: string; credentials?: object | null } = {}
+  overrides: { clientType?: string; project?: string; profile?: string; credentials?: RawCredentials | null } = {}
 ): PluginContext {
-  const credentials = overrides.credentials === undefined
+  const raw = overrides.credentials === undefined
     ? { cookies: { session: 'c' }, apiUrl: 'https://codemie.example.com/code-assistant-api' }
     : overrides.credentials;
+  const credentials = raw ? auth(raw) : null;
   return {
     config: {
       targetApiUrl: 'https://codemie.example.com/code-assistant-api',

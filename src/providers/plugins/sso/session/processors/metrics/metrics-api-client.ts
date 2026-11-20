@@ -75,6 +75,7 @@ class MetricsApiClient {
       baseUrl: config.baseUrl,
       cookies: config.cookies || '',
       apiKey: config.apiKey || '',
+      jwtToken: config.jwtToken || '',
       timeout: config.timeout || 30000,
       retryAttempts: config.retryAttempts ?? 3,
       retryDelays: config.retryDelays || [1000, 2000, 5000],
@@ -123,6 +124,7 @@ class MetricsApiClient {
             baseUrl: this.config.baseUrl,
             cookies: this.config.cookies,
             apiKey: this.config.apiKey,
+            jwtToken: this.config.jwtToken,
             credentialsSuperseded: this.config.credentialsSuperseded
           });
         }
@@ -145,7 +147,7 @@ class MetricsApiClient {
 
     logger.debug('[MetricsApiClient] Sending metric payload', {
       url,
-      authMode: this.config.apiKey ? 'apiKey' : this.config.cookies ? 'cookies' : 'none',
+      authMode: this.config.apiKey ? 'apiKey' : this.config.cookies ? 'cookies' : this.config.jwtToken ? 'jwtToken' : 'none',
       metricName: metric.name,
       attributes: {
         agent: metric.attributes.agent,
@@ -195,6 +197,8 @@ class MetricsApiClient {
       headers['user-id'] = this.config.apiKey;
     } else if (this.config.cookies) {
       headers['Cookie'] = this.config.cookies;
+    } else if (this.config.jwtToken) {
+      headers['authorization'] = `Bearer ${this.config.jwtToken}`;
     }
 
     const request = boundedRequest(this.config.timeout, this.bounds, group);
@@ -340,6 +344,7 @@ export interface MetricsSenderOptions {
   baseUrl: string;
   cookies?: string;
   apiKey?: string;    // API key for localhost development (user-id header)
+  jwtToken?: string;  // JWT bearer token, used instead of cookies (reverse-proxy-stripped-cookies fallback)
   timeout?: number;
   /** RETRIES after the first request (0 = one request, no retry); default 3 */
   retryAttempts?: number;
@@ -381,6 +386,7 @@ export class MetricsSender {
       baseUrl: options.baseUrl,
       cookies: options.cookies,
       apiKey: options.apiKey,
+      jwtToken: options.jwtToken,
       timeout: options.timeout,
       retryAttempts: options.retryAttempts,
       version: options.version,

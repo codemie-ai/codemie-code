@@ -27,11 +27,15 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
 
-const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
-  },
+const storeMock = vi.hoisted(() => ({
+  retrieveSSOCredentials: vi.fn(),
+  retrieveJWTCredentials: vi.fn(async (): Promise<unknown> => null),
+}));
+// The SSO resolver reads stored logins from CredentialStore: per-URL cookie slot first, JWT slot
+// second (both empty here unless a test seeds them).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: { getInstance: () => storeMock },
 }));
 
 import {
@@ -269,31 +273,33 @@ describe('resolveCodexModel SSO lookup (profile baseUrl first)', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    ssoMock.getStoredCredentials.mockReset();
+    storeMock.retrieveSSOCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockResolvedValue(null);
   });
 
   it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'C' })]);
 
     const result = await resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile });
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
     expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, undefined);
     expect(result.selectedModel).toBe('gpt-5-codex');
   });
 
   it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'C' })]);
 
     await resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_BASE_URL: 'http://localhost:4321' });
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
   });
 
   it('reports the resolved URL when SSO credentials are missing', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(null);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(null);
 
     await expect(resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
       'codemie profile login --url https://profile.example.com'

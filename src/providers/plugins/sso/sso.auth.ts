@@ -10,13 +10,14 @@ import { spawn } from 'child_process';
 import { URL } from 'url';
 import open from 'open';
 import chalk from 'chalk';
-import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
-import { CredentialStore } from '../../../utils/security.js';
+import type { SSOAuthConfig, SSOAuthResult } from '../../core/types.js';
 import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.js';
 import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
-import { effectiveExpiresAt } from './sso.expiry.js';
+import { deriveExpiresAt } from './auth/strategies/cookie.strategy.js';
+import { storeSSOAuth, clearSSOAuth, hasUsableCookies, buildCookieHeader } from './auth/index.js';
+import type { SSOLoginResult } from './auth/index.js';
 
 function escapeHtml(str: string): string {
   return str
@@ -27,44 +28,7 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#x27;');
 }
 
-/**
- * Normalize URL to base (protocol + host)
- * E.g., https://host.com/path -> https://host.com
- */
-function normalizeToBase(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return url;
-  }
-}
-
-/**
- * Derive credential expiresAt from codemie_access_token JWT exp claim.
- * Returns undefined when the cookie is absent or the JWT has no decodable exp:
- * cookie-only sessions (e.g. _oauth2_proxy) have no locally known expiry.
- */
-export function deriveExpiresAt(cookies: Record<string, string>): number | undefined {
-  if (cookies.codemie_access_token) {
-    try {
-      const parts = cookies.codemie_access_token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(
-          Buffer.from(parts[1], 'base64').toString('utf8'),
-        );
-        if (payload.exp && typeof payload.exp === 'number') {
-          return payload.exp * 1000;
-        }
-      }
-    } catch {
-      // malformed JWT — no known expiry
-    }
-  }
-  return undefined;
-}
-
-export { effectiveExpiresAt };
+export { deriveExpiresAt };
 
 /**
  * CodeMie SSO Authentication
@@ -80,8 +44,10 @@ export class CodeMieSSO {
 
   /**
    * Authenticate via browser SSO
+   *
+   * On success the credential is stored through the SSO auth resolver and returned as `auth`.
    */
-  async authenticate(config: SSOAuthConfig): Promise<SSOAuthResult> {
+  async authenticate(config: SSOAuthConfig): Promise<SSOLoginResult> {
     this.codeMieUrl = config.codeMieUrl;
     this.isAuthenticating = true;
     this.abortController = new AbortController();
@@ -137,25 +103,16 @@ export class CodeMieSSO {
         this.abortController.signal
       );
 
-      // 5. Store credentials if successful
-      if (result.success && result.apiUrl && result.cookies) {
-        const expiresAt = deriveExpiresAt(result.cookies);
-        const credentials: SSOCredentials = {
-          cookies: result.cookies,
-          apiUrl: result.apiUrl,
-          ...(expiresAt !== undefined ? { expiresAt } : {}),
-        };
-
-        const store = CredentialStore.getInstance();
-        // Key must match getStoredCredentials() lookup, which normalizes to protocol+host
-        await store.storeSSOCredentials(credentials, this.codeMieUrl);
-        // Establish the signed-in email for these cookies now (best-effort; a failed lookup is retried at most every 30 s by the hook/daemon)
-        await withVerifiedOwner(credentials);
+      // 5. Store credentials if successful. The resolver picks cookie vs JWT and clears the other type's slot.
+      const auth = result.success ? await storeSSOAuth(result, this.codeMieUrl) : null;
+      // Establish the signed-in email now (best-effort; a failed lookup is retried at most every 30 s by the hook/daemon)
+      const verified = auth ? await withVerifiedOwner(auth) : null;
+      if (verified) {
         // Fresh credentials — analytics auth is healthy again
         await clearAnalyticsAuthStatus();
       }
 
-      return result;
+      return { ...result, ...(verified ? { auth: verified } : {}) };
 
     } catch (error) {
       // Handle abort as user cancellation
@@ -182,55 +139,12 @@ export class CodeMieSSO {
   }
 
   /**
-   * Get stored SSO credentials with fallback and URL validation
-   *
-   * @param url - Base URL or API URL to look up credentials for
-   * @param allowFallback - Whether to fall back to global credentials (default: true)
-   * @returns Credentials if found and valid, null otherwise
-   */
-  async getStoredCredentials(url?: string, allowFallback = true): Promise<SSOCredentials | null> {
-    if (!url) {
-      const store = CredentialStore.getInstance();
-      return store.retrieveSSOCredentials();
-    }
-
-    const store = CredentialStore.getInstance();
-    const baseUrl = normalizeToBase(url);
-
-    // Pass the caller's URL through unnormalized: CredentialStore derives the key
-    // itself, and it needs the original form to find credentials an older version
-    // stored under the raw-URL key. Pre-normalizing here would hide them.
-    let credentials = await store.retrieveSSOCredentials(url);
-
-    // Fallback to global credentials for backward compatibility
-    if (!credentials && allowFallback) {
-      credentials = await store.retrieveSSOCredentials();
-
-      // Verify that fallback credentials match the requested URL
-      if (credentials) {
-        const credentialBase = normalizeToBase(credentials.apiUrl);
-        if (credentialBase !== baseUrl) {
-          credentials = null;
-        }
-      }
-    }
-
-    // Check if credentials are expired
-    const expiresAt = credentials ? effectiveExpiresAt(credentials) : undefined;
-    if (credentials && expiresAt && Date.now() > expiresAt) {
-      await store.clearSSOCredentials(url);
-      return null;
-    }
-
-    return credentials;
-  }
-
-  /**
-   * Clear stored credentials
+   * Clear stored credentials — every credential type (SSO cookies and the JWT stored when a reverse
+   * proxy in front of the backend stripped cookies). A caller asking to clear "the SSO login" means
+   * either shape, not just whichever one happens to exist.
    */
   async clearStoredCredentials(baseUrl?: string): Promise<void> {
-    const store = CredentialStore.getInstance();
-    await store.clearSSOCredentials(baseUrl);
+    await clearSSOAuth(baseUrl);
   }
 
   /**
@@ -363,19 +277,29 @@ export class CodeMieSSO {
       // Decode base64 token (following plugin pattern)
       const token = JSON.parse(Buffer.from(raw, 'base64').toString('ascii'));
 
-      if (!token.cookies) {
-        throw new Error('Token missing cookies field');
+      const hasCookies = hasUsableCookies(token.cookies);
+      // The backend's `authorization` field carries a JWT, optionally already prefixed with
+      // `Bearer ` (case-insensitive) — strip it so the stored token is the raw JWT; the resolved
+      // JWT credential's `headers` add their own `Bearer ` prefix when injecting the header.
+      const jwt = typeof token.authorization === 'string' && token.authorization.trim()
+        ? token.authorization.trim().replace(/^Bearer\s+/i, '')
+        : undefined;
+
+      if (!hasCookies && !jwt) {
+        throw new Error('Token missing cookies and authorization fields');
       }
 
-      // Try to fetch config.js to resolve actual API URL
+      // Try to fetch config.js to resolve actual API URL. Authenticates with cookies when
+      // present; a cookie-stripping reverse proxy leaves none, so fall back to the JWT as a
+      // Bearer Authorization header instead. One of the two is guaranteed by the check above.
       let apiUrl = ensureApiBase(this.codeMieUrl);
       try {
         const configResponse = await fetch(`${apiUrl}/config.js`, {
-          headers: {
-            'cookie': Object.entries(token.cookies)
-              .map(([key, value]) => `${key}=${value}`)
-              .join(';')
-          }
+          headers: hasCookies
+            ? { 'cookie': buildCookieHeader(token.cookies) }
+            : {
+                'authorization': `Bearer ${jwt}`
+              }
         });
 
         if (configResponse.ok) {
@@ -392,7 +316,8 @@ export class CodeMieSSO {
       return {
         success: true,
         apiUrl,
-        cookies: token.cookies
+        ...(hasCookies ? { cookies: token.cookies } : {}),
+        ...(jwt ? { jwt } : {}),
       };
 
     } catch (error) {

@@ -8,7 +8,8 @@ import ora from 'ora';
 import chalk from 'chalk';
 import { CodeMieClient } from 'codemie-sdk';
 import type { CodeMieConfigOptions } from '../env/types.js';
-import { getPlatformUrl, getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
+import { getPlatformUrl } from '../providers/core/codemie-auth-helpers.js';
+import { resolveSSOAuth, toSdkAuthOptions } from '../providers/plugins/sso/auth/index.js';
 import { ConfigLoader } from './config.js';
 import { ConfigurationError } from './errors.js';
 import { logger } from './logger.js';
@@ -54,20 +55,20 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
     hasBaseUrl: !!config.baseUrl
   });
 
-  const credentials = (await getStoredPlatformCredentials(config))?.credentials;
+  const auth = await resolveSSOAuth(config);
 
   logger.debug('SSO credentials retrieval result', {
-    hasCredentials: !!credentials,
-    hasCookies: !!credentials?.cookies,
-    hasApiUrl: !!credentials?.apiUrl
+    hasCredentials: !!auth,
+    authType: auth?.type,
+    hasApiUrl: !!auth?.apiUrl
   });
 
-  if (!credentials?.cookies || !credentials.apiUrl) {
+  if (!auth || !auth.apiUrl) {
     if (spinner) {
       spinner.fail(chalk.red('No valid SSO credentials found'));
     }
     logger.error('SSO credentials not found or incomplete', {
-      credentials: credentials ? 'exists but incomplete' : 'not found',
+      credentials: auth ? 'exists but incomplete' : 'not found',
       baseUrl: config.baseUrl
     });
     throw new ConfigurationError(
@@ -76,27 +77,28 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
   }
 
   logger.debug('Retrieved SSO credentials', {
-    apiUrl: credentials.apiUrl,
-    hasCookies: !!credentials.cookies
+    apiUrl: auth.apiUrl,
+    authType: auth.type
   });
 
-  // 3. Initialize CodeMie SDK client with cookies
+  // 3. Initialize CodeMie SDK client with the resolved credential (toSdkAuthOptions maps cookies
+  // to the SDK's `cookies` option and a JWT to its `jwt_token` option).
   if (spinner) {
     spinner.text = 'Initializing SDK...';
   }
 
   // The SDK talks over axios, which resolves proxies from the environment per
   // request; on Windows the corporate proxy lives in Internet Settings only.
-  await applySystemProxyEnvironment(credentials.apiUrl);
+  await applySystemProxyEnvironment(auth.apiUrl);
 
   try {
     const client = new CodeMieClient({
-      codemie_api_domain: credentials.apiUrl,
-      cookies: credentials.cookies,
+      codemie_api_domain: auth.apiUrl,
+      ...toSdkAuthOptions(auth),
       verify_ssl: process.env.CODEMIE_INSECURE !== '1'
     });
 
-    logger.debug('CodeMieClient created with cookies', { apiUrl: credentials.apiUrl });
+    logger.debug('CodeMieClient created', { apiUrl: auth.apiUrl, authType: auth.type });
     if (spinner) {
       spinner.succeed(chalk.green('Connected to CodeMie'));
     }

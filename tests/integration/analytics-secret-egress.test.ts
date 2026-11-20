@@ -34,6 +34,7 @@ vi.mock('../../src/agents/core/hook-credentials.js', () => ({
 
 import { OtlpAgentAdapter, type ForwardDecision, type OtlpHookContext } from '../../src/agents/core/OtlpAgentAdapter.js';
 import { forwardOtlpEventsToSpool } from '../../src/agents/plugins/utils.js';
+import { toSSOAuth } from '../../src/providers/plugins/sso/auth/selection.js';
 import { OtlpPlugin } from '../../src/providers/plugins/sso/proxy/plugins/otlp.plugin.js';
 import { forwardSession } from '../../src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { streamFile, type SpoolStream } from '../../src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js';
@@ -344,7 +345,11 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     }
 
     // 4. Real forwarder drains the spool to the (recorded) backend.
-    await forwardSession(SESSION_ID, false, { cookies: { codemie_access_token: 'fake-token' }, apiUrl: BACKEND_URL });
+    await forwardSession(
+      SESSION_ID,
+      false,
+      toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'fake-token' }, apiUrl: BACKEND_URL } }, BACKEND_URL)
+    );
   });
 
   afterAll(() => {

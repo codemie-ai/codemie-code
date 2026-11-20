@@ -22,7 +22,7 @@ import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { CodexSessionAdapter } from './codex.session.js';
 import { recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
-import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { analyticsAuthFields, hasAnalyticsAuth, readAnalyticsAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
 
 export interface StartCodexIncrementalSyncOptions {
   /** CodeMie session id (file naming key). */
@@ -176,15 +176,14 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-  if (!cookies) {
+  const auth = await readAnalyticsAuth(ssoUrl, env);
+  if (!hasAnalyticsAuth(auth)) {
     logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
   return {
     apiBaseUrl: syncApiUrl,
-    cookies,
-    credentialsSuperseded,
+    ...analyticsAuthFields(auth),
     clientType: env?.CODEMIE_CLIENT_TYPE || 'codemie-codex',
     version,
     dryRun: false,

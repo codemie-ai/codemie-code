@@ -1,6 +1,6 @@
 import { HTTPClient } from '@/providers/core/base/http-client.js';
 import { buildAuthHeaders } from '@/providers/core/codemie-auth-helpers.js';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { authMaterial, resolveSSOAuthForUrl } from '@/providers/plugins/sso/auth/index.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { isTlsVerificationEnabled } from '@/utils/system-proxy.js';
@@ -130,27 +130,26 @@ export async function fetchManagedMcpServers(
 ): Promise<CanonicalMcpEntry[] | null> {
   try {
     if (!codeMieUrl) return null;
-    const sso = new CodeMieSSO();
-    const creds = await sso.getStoredCredentials(codeMieUrl);
-    if (!creds?.cookies || !creds.apiUrl) {
+    const auth = await resolveSSOAuthForUrl(codeMieUrl);
+    if (!auth?.apiUrl) {
       logger.warn('[proxy] Managed MCP fetch skipped: no SSO credentials');
       return null;
     }
     // Preserve any base path on the API URL (e.g. `/code-assistant-api`): build
     // from the full apiUrl, not a root-absolute path which would drop it.
-    const endpoint = new URL(`${creds.apiUrl.replace(/\/+$/, '')}/v1/mcp/managed-servers`);
+    const endpoint = new URL(`${auth.apiUrl.replace(/\/+$/, '')}/v1/mcp/managed-servers`);
     endpoint.searchParams.set('client', client);
 
     // Go through the shared HTTPClient like fetchCodeMieUserInfo: it honors the
     // common proxy/TLS policy, bounds the request with a timeout, and
-    // buildAuthHeaders attaches the cookie plus the standard CLI-identifying
+    // buildAuthHeaders attaches the credential plus the standard CLI-identifying
     // headers every other CodeMie request sends.
     const httpClient = new HTTPClient({
       timeout: 10000,
       maxRetries: 3,
       rejectUnauthorized: isTlsVerificationEnabled(),
     });
-    const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(creds.cookies));
+    const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(authMaterial(auth)));
 
     const status = response.statusCode ?? 0;
     if (status < 200 || status >= 300) {

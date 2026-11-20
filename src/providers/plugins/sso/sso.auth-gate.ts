@@ -1,9 +1,9 @@
 import {
   getAnalyticsPlatformSource,
   getPlatformUrl,
-  getStoredAnalyticsCredentials,
   type PlatformUrlSource,
 } from '@/providers/core/codemie-auth-helpers.js';
+import { resolveAnalyticsSSOAuth } from './auth/index.js';
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import {
   describeLogin,
@@ -145,11 +145,11 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
 
     if (!hasValidAuth && loginUrl) {
       try {
-        const found = await getStoredAnalyticsCredentials(input.ssoUrl, input.env, {
+        const found = await resolveAnalyticsSSOAuth(input.ssoUrl, input.env, {
           provider: input.provider,
           baseUrl: input.baseUrl,
         });
-        hasValidAuth = Boolean(found?.credentials.cookies);
+        hasValidAuth = found !== null;
       } catch (error) {
         logger.debug('[sso-auth-gate] Failed to load SSO credentials:', error);
       }

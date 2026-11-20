@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor, AnalyticsHealthReply } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import type { SSOAuth } from '../../auth/index.js';
 import { withVerifiedOwner } from '../../../../core/credential-owner.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
@@ -16,7 +16,7 @@ import { hookEventProjectNames } from './otlp-spool/session-project.js';
 import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
-import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
+import { CREDENTIAL_REFRESH_INTERVAL_MS, type CredentialRefresher } from './credential-refresh.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
 /**
@@ -62,11 +62,30 @@ class OtlpInterceptor implements ProxyInterceptor {
   private ticking = false;
   private lastStoredRead = 0;
   private stopped = false;
+  /** Result of this interceptor's own store re-read; used until the shared refresher adopts a newer snapshot. */
+  private reread: SSOAuth | undefined;
+  /** The shared refresher's snapshot last seen by `currentCredentials()`. */
+  private lastShared: SSOAuth | undefined;
 
   constructor(
-    private credentials: SSOCredentials | JWTCredentials | undefined,
+    private readonly credentialRefresher: CredentialRefresher | undefined,
     private readonly config: ProxyConfig | undefined
   ) {}
+
+  /**
+   * The credential telemetry is forwarded with, read at forward time: the shared refresher's
+   * last known-good snapshot (no store read), or this interceptor's own re-read when that is
+   * newer. A credential type change adopted by either reaches telemetry without a restart.
+   */
+  private currentCredentials(): SSOAuth | undefined {
+    const shared = this.credentialRefresher?.get();
+    if (shared !== this.lastShared) {
+      // The refresher adopted a fresh store read after ours: it is at least as new.
+      this.lastShared = shared;
+      this.reread = undefined;
+    }
+    return this.reread ?? shared;
+  }
 
   healthStatus(): AnalyticsHealthReply {
     return { credentials: areCredentialsStale() ? 'stale' : 'ok' };
@@ -143,13 +162,14 @@ class OtlpInterceptor implements ProxyInterceptor {
    * successful SSO re-login the user completes while this daemon keeps running
    * is picked up without a restart. Outside the tick it is a no-op whenever credentials aren't stale;
    * the tick (`periodic`) also re-reads the store at most once per `CREDENTIAL_REFRESH_INTERVAL_MS`.
+   * An explicit credential (`source: 'explicit'`) is never re-read.
    */
   private async refreshCredentialsIfStale(periodic = false): Promise<void> {
     const stale = areCredentialsStale();
     // The tick also re-reads on a throttle: hooks stamp with the stored login, and a re-login (account
     // switch) rejects nothing outgoing, so no stale marker would ever move this snapshot to it.
     const due = periodic && Date.now() - this.lastStoredRead >= CREDENTIAL_REFRESH_INTERVAL_MS;
-    if ((!stale && !due) || !this.config) {
+    if ((!stale && !due) || !this.config || this.currentCredentials()?.source === 'explicit') {
       return;
     }
     this.lastStoredRead = Date.now();
@@ -157,7 +177,8 @@ class OtlpInterceptor implements ProxyInterceptor {
     try {
       const refreshed = await resolveFreshCredentials(this.config);
       if (refreshed) {
-        this.credentials = refreshed;
+        this.currentCredentials(); // first take in any refresher snapshot, so this read is not discarded by it
+        this.reread = refreshed;
         if (stale) clearCredentialsStale();
       }
     } catch (err) {
@@ -170,7 +191,8 @@ class OtlpInterceptor implements ProxyInterceptor {
     await this.refreshCredentialsIfStale(true);
 
     // Same owner the hook stamps with: the forwarder's evidence key must match it.
-    const creds = this.credentials && (await withVerifiedOwner(this.credentials));
+    const current = this.currentCredentials();
+    const creds = current && (await withVerifiedOwner(current));
     if (!creds) {
       await processPendingOwner(undefined); // still expires held hook events
       return;
@@ -437,9 +459,6 @@ export class OtlpPlugin implements ProxyPlugin {
   priority = 10;
 
   createInterceptor(context: PluginContext): ProxyInterceptor {
-    return new OtlpInterceptor(
-      context.syncCredentials || context.credentials,
-      context.config
-    );
+    return new OtlpInterceptor(context.syncCredentialRefresher ?? context.credentialRefresher, context.config);
   }
 }

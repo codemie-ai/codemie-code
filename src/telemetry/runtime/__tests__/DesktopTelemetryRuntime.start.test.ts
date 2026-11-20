@@ -49,11 +49,18 @@ vi.mock('@/providers/plugins/sso/session/SessionSyncer.js', () => ({
   })
 }));
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(function (this: Record<string, unknown>) {
-    this.getStoredCredentials = mockGetStoredCredentials;
-  })
-}));
+// The stored sign-in is seeded as a raw cookie record; wrap it into the SSOAuth the resolver hands out.
+vi.mock('@/providers/plugins/sso/auth/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/providers/plugins/sso/auth/index.js')>();
+  const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+  return {
+    ...actual,
+    resolveSSOAuthForUrl: vi.fn(async (url: string) => {
+      const record = await mockGetStoredCredentials(url);
+      return record ? toSSOAuth({ type: 'cookie', record: { apiUrl: url, ...record } }, url) : null;
+    })
+  };
+});
 
 // The process table: this test process is the live daemon, every other owner is gone.
 vi.mock('@/utils/processes.js', async (importOriginal) => ({

@@ -20,7 +20,7 @@ import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { AgentMetadata } from '@/agents/core/types.js';
 import { logger } from '@/utils/logger.js';
-import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { analyticsAuthFields, hasAnalyticsAuth, readAnalyticsAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
 import { readPiRunLedger } from './pi.extension.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { PiMetricsProcessingContext } from './session/processors/pi.metrics-processor.js';
@@ -340,15 +340,14 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-  if (!cookies) {
+  const auth = await readAnalyticsAuth(ssoUrl, env);
+  if (!hasAnalyticsAuth(auth)) {
     logger.debug('[pi-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
   return {
     apiBaseUrl: syncApiUrl,
-    cookies,
-    credentialsSuperseded,
+    ...analyticsAuthFields(auth),
     clientType: 'codemie-pi',
     version,
     dryRun: false,

@@ -8,7 +8,7 @@
 import { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'http';
 import { ProxyConfig, ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
-import { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import type { SSOAuth } from '../../auth/index.js';
 import type { CodeMieConfigOptions } from '../../../../../env/types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { CredentialRefresher } from './credential-refresh.js';
@@ -51,23 +51,22 @@ export interface ProxyPlugin {
 export interface PluginContext {
   config: ProxyConfig;
   logger: typeof logger;
-  credentials?: SSOCredentials | JWTCredentials;
-  syncCredentials?: SSOCredentials | JWTCredentials;
+  credentials?: SSOAuth;
+  syncCredentials?: SSOAuth;
   /**
-   * Shared throttled re-reader for `credentials` (the main auth method's snapshot — SSO or
-   * JWT; JWT `refresh()` is a no-op), built once in `sso.proxy.ts`. Used by the auth-injection
-   * interceptor (SSO only) and the Claude/Codex model-catalogue fetch (either type). Undefined
-   * when there are no credentials at all.
+   * Shared throttled re-reader for `credentials` (the main auth method's credential, cookie or
+   * JWT; an explicit token is never re-read), built once in `sso.proxy.ts`. Used by the
+   * auth-injection interceptor and the Claude/Codex model-catalogue fetch. A re-read adopts
+   * whatever credential type the store now holds. Undefined when there are no credentials at all.
    */
-  credentialRefresher?: CredentialRefresher<SSOCredentials | JWTCredentials>;
+  credentialRefresher?: CredentialRefresher;
   /**
-   * Shared throttled re-reader for whichever of `syncCredentials`/`credentials` actually has SSO
-   * cookies, built once in `sso.proxy.ts` and used by session sync. Kept separate from
-   * `credentialRefresher` because the two can wrap different identities (e.g. JWT main auth +
-   * an independently-authenticated SSO sync endpoint) — see `credential-refresh.ts`. Undefined
-   * when neither source has cookies.
+   * Shared throttled re-reader for `syncCredentials`, falling back to `credentials`, built once
+   * in `sso.proxy.ts` and used by session sync. Kept separate from `credentialRefresher` because
+   * the two can wrap different identities (e.g. an independently-authenticated sync endpoint) —
+   * see `credential-refresh.ts`. Undefined when neither source has any credentials at all.
    */
-  syncCredentialRefresher?: CredentialRefresher<SSOCredentials>;
+  syncCredentialRefresher?: CredentialRefresher;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }

@@ -321,4 +321,56 @@ describe('MetricsSender with a superseded-credentials check', () => {
       expect(existsSync(markerPath)).toBe(true);
     });
   });
+
+  describe('JWT bearer auth (cookie-stripping reverse proxy)', () => {
+    const sentHeaders = (): Record<string, string> =>
+      (fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers;
+
+    it('sends the JWT as a Bearer Authorization header when it is the only credential', async () => {
+      fetchMock.mockImplementation(async () => jsonOk());
+      const sender = new MetricsSender({ baseUrl: 'http://api.test', cookies: '', jwtToken: 'jwt-tok', retryAttempts: 0 });
+
+      await send(sender);
+
+      expect(sentHeaders().authorization).toBe('Bearer jwt-tok');
+      expect(sentHeaders().Cookie).toBeUndefined();
+    });
+
+    it('prefers cookies over the JWT, and an api key over both', async () => {
+      fetchMock.mockImplementation(async () => jsonOk());
+      await send(new MetricsSender({ baseUrl: 'http://api.test', cookies: SENT_COOKIES, jwtToken: 'jwt-tok', retryAttempts: 0 }));
+      expect(sentHeaders()).toMatchObject({ Cookie: SENT_COOKIES });
+      expect(sentHeaders().authorization).toBeUndefined();
+
+      fetchMock.mockClear();
+      await send(new MetricsSender({ baseUrl: 'http://api.test', apiKey: 'dev-user', cookies: SENT_COOKIES, jwtToken: 'jwt-tok', retryAttempts: 0 }));
+      expect(sentHeaders()['user-id']).toBe('dev-user');
+      expect(sentHeaders().Cookie).toBeUndefined();
+      expect(sentHeaders().authorization).toBeUndefined();
+    });
+
+    it('asks the supersede check with the rejected JWT and writes no marker when it was superseded', async () => {
+      fetchMock.mockImplementation(async () => unauthorized());
+      const credentialsSuperseded = vi.fn(async () => true);
+      const sender = new MetricsSender({
+        baseUrl: 'http://api.test', cookies: '', jwtToken: 'jwt-tok', retryAttempts: 0, credentialsSuperseded
+      });
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(credentialsSuperseded).toHaveBeenCalledWith('jwt-tok');
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('writes the marker for a rejected JWT the check does not report superseded', async () => {
+      fetchMock.mockImplementation(async () => unauthorized());
+      const sender = new MetricsSender({
+        baseUrl: 'http://api.test', cookies: '', jwtToken: 'jwt-tok', retryAttempts: 0, credentialsSuperseded: async () => false
+      });
+
+      await expect(send(sender)).rejects.toThrow(/401/);
+
+      expect(existsSync(markerPath)).toBe(true);
+    });
+  });
 });

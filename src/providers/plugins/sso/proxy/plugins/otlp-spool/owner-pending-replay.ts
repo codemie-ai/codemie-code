@@ -15,7 +15,7 @@ import {
   type PendingOwnerEntry,
 } from '@/agents/core/evidence/owner-pending.js';
 import { credentialFingerprint } from '@/providers/core/credential-owner.js';
-import { isSSOCredentials, type JWTCredentials, type SSOCredentials } from '@/providers/core/types.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 import { heldRetentionMs } from './spool-config.js';
 import { appendSpool, recordStampLoss } from './spool-io.js';
 import { hookEventProjectNames } from './session-project.js';
@@ -130,17 +130,17 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
  * Entries of any other login/environment are untouched. Never throws.
  */
 export async function processPendingOwner(
-  credentials: SSOCredentials | JWTCredentials | undefined,
+  auth: SSOAuth | undefined,
   now: number = Date.now()
 ): Promise<void> {
   try {
     await sweepPending(now);
-    if (!credentials || !isSSOCredentials(credentials)) return;
-    const email = resolveEmailFromCredentials(credentials);
+    if (!auth) return;
+    const email = resolveEmailFromCredentials(auth);
     if (!email) return;
-    const fp = credentialFingerprint(credentials);
+    const fp = credentialFingerprint(auth);
     const dir = join(pendingOwnerDir(), fpDirName(fp));
-    const api = apiIdentity(credentials.apiUrl);
+    const api = apiIdentity(auth.apiUrl);
     const blocked = new Set<string>(); // a deferred entry blocks later entries of its session (order)
     for (const file of (await list(dir)).filter((f) => f.endsWith('.json')).sort()) {
       try {

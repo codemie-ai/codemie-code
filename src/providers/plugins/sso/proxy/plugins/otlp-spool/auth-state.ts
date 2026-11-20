@@ -1,7 +1,6 @@
 import { logger } from '@/utils/logger.js';
-import type { JWTCredentials, SSOCredentials } from '../../../../../core/types.js';
+import type { SSOAuth } from '../../../auth/types.js';
 import type { ProxyConfig } from '../../proxy-types.js';
-import { getStoredPlatformCredentials } from '../../../../../core/codemie-auth-helpers.js';
 
 /**
  * Once the backend rejects the in-memory credentials, every further forward would
@@ -35,24 +34,18 @@ export function clearCredentialsStale(): void {
 
 /**
  * Re-resolves credentials from the credential store using the same priority as
- * `CodeMieProxy.start()`: sync credentials first, then platform credentials.
+ * `CodeMieProxy.start()`: the sync URL's stored login first, then the profile's platform login.
+ * The resolver picks the credential type (cookies or an SSO-issued JWT) for each.
  */
-export async function resolveFreshCredentials(
-  config: ProxyConfig
-): Promise<SSOCredentials | JWTCredentials | null> {
-  if (config.syncCodeMieUrl) {
-    // Load the SSO implementation only when recovery needs its analytics credentials.
-    const { CodeMieSSO } = await import('../../../sso.auth.js');
-    const syncCredentials = await new CodeMieSSO().getStoredCredentials(config.syncCodeMieUrl);
-    if (syncCredentials) {
-      return syncCredentials;
-    }
-  }
-
-  const stored = await getStoredPlatformCredentials({
-    provider: config.provider,
-    baseUrl: config.targetApiUrl,
-    codeMieUrl: config.syncCodeMieUrl,
-  });
-  return stored?.credentials ?? null;
+export async function resolveFreshCredentials(config: ProxyConfig): Promise<SSOAuth | null> {
+  // Load the SSO resolver only when recovery needs its analytics credentials.
+  const { resolveSSOAuth, resolveSSOAuthForUrl } = await import('../../../auth/index.js');
+  return (
+    (config.syncCodeMieUrl ? await resolveSSOAuthForUrl(config.syncCodeMieUrl) : null) ??
+    (await resolveSSOAuth({
+      provider: config.provider,
+      baseUrl: config.targetApiUrl,
+      codeMieUrl: config.syncCodeMieUrl,
+    }))
+  );
 }

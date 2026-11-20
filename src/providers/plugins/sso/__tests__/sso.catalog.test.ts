@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LlmModel } from '../sso.http-client.js';
 
 const fetchMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<LlmModel[]>>());
-const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
 
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
@@ -11,9 +10,28 @@ vi.mock('../sso.http-client.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../sso.http-client.js')>()),
   fetchCodeMieLlmModels: (...args: unknown[]) => fetchMock(...args),
 }));
-vi.mock('../sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+
+// In-memory credential store: the resolver reads the cookie slot and the jwt- slot per URL, and
+// the global slot (no URL) when a URL has none.
+const { ssoByUrl, jwtByUrl, mockRetrieveSSOCredentials, mockRetrieveJWTCredentials } = vi.hoisted(() => {
+  const ssoByUrl = new Map<string | undefined, unknown>();
+  const jwtByUrl = new Map<string | undefined, unknown>();
+  return {
+    ssoByUrl,
+    jwtByUrl,
+    mockRetrieveSSOCredentials: vi.fn(async (url?: string): Promise<unknown> => ssoByUrl.get(url) ?? null),
+    mockRetrieveJWTCredentials: vi.fn(async (url?: string): Promise<unknown> => jwtByUrl.get(url) ?? null),
+  };
+});
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: mockRetrieveSSOCredentials,
+      retrieveJWTCredentials: mockRetrieveJWTCredentials,
+      clearSSOCredentials: vi.fn(),
+      clearJWTCredentials: vi.fn(),
+    }),
   },
 }));
 
@@ -21,14 +39,24 @@ import { fetchCodeMieCatalogForEnv, projectFromEnv } from '../sso.catalog.js';
 import { ConfigurationError } from '../../../../utils/errors.js';
 
 const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
-const ssoEnv = { CODEMIE_URL: 'https://workspace.example.com' };
+const W = 'https://workspace.example.com';
+const ssoEnv = { CODEMIE_URL: W };
 const models: LlmModel[] = [{ base_name: 'claude-router-standard', deployment_name: 'claude-router-standard', label: 'r', enabled: true }];
 
 describe('fetchCodeMieCatalogForEnv', () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    ssoMock.getStoredCredentials.mockReset();
+    ssoByUrl.clear();
+    jwtByUrl.clear();
+    mockRetrieveSSOCredentials.mockClear();
+    mockRetrieveJWTCredentials.mockClear();
     fetchMock.mockResolvedValue(models);
+  });
+
+  it('fetches with the stored JWT when the SSO login left no cookies', async () => {
+    jwtByUrl.set(W, { token: 'jwt-tok', apiUrl: creds.apiUrl });
+    await fetchCodeMieCatalogForEnv({ ...ssoEnv, CODEMIE_PROJECT: 'router-demo' }, { logPrefix: '[t]' });
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, 'jwt-tok', 'router-demo');
   });
 
   it('sends the JWT launch project', async () => {
@@ -49,33 +77,31 @@ describe('fetchCodeMieCatalogForEnv', () => {
   });
 
   it('sends the SSO launch project with the stored credentials', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    ssoByUrl.set(W, creds);
     await fetchCodeMieCatalogForEnv({ ...ssoEnv, CODEMIE_PROJECT: 'router-demo' }, { logPrefix: '[t]' });
     expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, 'router-demo');
   });
 
   it('asks for the whole catalog when the launch has no project', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    ssoByUrl.set(W, creds);
     await fetchCodeMieCatalogForEnv({ ...ssoEnv, CODEMIE_PROJECT: '  ' }, { logPrefix: '[t]' });
     expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, undefined);
   });
 
   it('throws a login hint when a platform is configured but not logged in', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(null);
     await expect(fetchCodeMieCatalogForEnv(ssoEnv, { logPrefix: '[t]' }))
       .rejects.toThrow(ConfigurationError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns undefined instead of throwing when credentials are optional', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(null);
     await expect(fetchCodeMieCatalogForEnv(ssoEnv, { logPrefix: '[t]', requireCredentials: false }))
       .resolves.toBeUndefined();
   });
 
   it('returns undefined when the environment has no CodeMie auth at all', async () => {
     await expect(fetchCodeMieCatalogForEnv({}, { logPrefix: '[t]' })).resolves.toBeUndefined();
-    expect(ssoMock.getStoredCredentials).not.toHaveBeenCalled();
+    expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
   });
 });
 

@@ -44,6 +44,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
 
 import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { logger } from '@/utils/logger.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
@@ -1300,7 +1301,10 @@ describe('CoworkEventProducer and the pruning of served marks', () => {
 });
 
 describe('CoworkEventProducer and the forwarder\'s send', () => {
-  const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+  const credentials = toSSOAuth(
+    { type: 'cookie', record: { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api' } },
+    'https://api.example.com'
+  );
   const fetchMock = vi.fn();
 
   beforeEach(() => {
@@ -1324,7 +1328,7 @@ describe('CoworkEventProducer and the forwarder\'s send', () => {
   }
 
   async function forward(): Promise<void> {
-    await forwardSession(CLI, true, credentials as never);
+    await forwardSession(CLI, true, credentials);
   }
 
   it('sends the producer\'s events to event-hooks under the session\'s project', async () => {

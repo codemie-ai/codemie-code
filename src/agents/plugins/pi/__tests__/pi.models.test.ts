@@ -31,11 +31,15 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   const actual = await importOriginal<typeof import('../../../../providers/plugins/sso/sso.http-client.js')>();
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
-const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
-  },
+const storeMock = vi.hoisted(() => ({
+  retrieveSSOCredentials: vi.fn(),
+  retrieveJWTCredentials: vi.fn(async (): Promise<unknown> => null),
+}));
+// The SSO resolver reads stored logins from CredentialStore: per-URL cookie slot first, JWT slot
+// second (both empty here unless a test seeds them).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: { getInstance: () => storeMock },
 }));
 vi.mock('../../../../providers/plugins/ollama/ollama.models.js', () => ({
   OllamaModelProxy: class {
@@ -329,7 +333,9 @@ describe('fetchAndBuildPiModels SSO lookup (profile baseUrl first)', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    ssoMock.getStoredCredentials.mockReset();
+    storeMock.retrieveSSOCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockResolvedValue(null);
     vi.mocked(lookupPrice).mockReturnValue(undefined as never);
     cwd = mkdtempSync(join(tmpdir(), 'pi-models-'));
   });
@@ -339,17 +345,17 @@ describe('fetchAndBuildPiModels SSO lookup (profile baseUrl first)', () => {
   });
 
   it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([llmModel()]);
 
     await fetchAndBuildPiModels({ CODEMIE_PROFILE_CONFIG: profile }, cwd);
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
     expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, undefined);
   });
 
   it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([llmModel()]);
 
     await fetchAndBuildPiModels(
@@ -357,7 +363,7 @@ describe('fetchAndBuildPiModels SSO lookup (profile baseUrl first)', () => {
       cwd,
     );
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
   });
 });
 

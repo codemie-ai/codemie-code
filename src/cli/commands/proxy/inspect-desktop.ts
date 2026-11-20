@@ -6,7 +6,7 @@ import {
   getSessionConversationPath,
   getSessionMetricsPath
 } from '@/agents/core/session/session-config.js';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { resolveSSOAuthForUrl, type SSOAuthType } from '@/providers/plugins/sso/auth/index.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import {
   getClaudeDesktopBaseDir,
@@ -26,6 +26,7 @@ interface DesktopInspectionResult {
   codeSessionsRoot: string;
   credentialsUrl?: string;
   hasCredentials: boolean;
+  authType?: SSOAuthType;
   sessions: DesktopSessionInspection[];
 }
 
@@ -129,8 +130,8 @@ export async function inspectDesktopProxy(
   const codeSessionsRoot = getClaudeDesktopCodeSessionsRoot();
   const desktopBaseDir = getClaudeDesktopBaseDir();
   const credentialsUrl = daemonState?.syncCodeMieUrl || daemonState?.targetUrl;
-  const credentials = credentialsUrl
-    ? await new CodeMieSSO().getStoredCredentials(credentialsUrl).catch(() => null)
+  const auth = credentialsUrl
+    ? await resolveSSOAuthForUrl(credentialsUrl).catch(() => null)
     : null;
   const discovered = await discoverClaudeDesktopSessions(0);
   const sortedSessions = discovered
@@ -144,7 +145,8 @@ export async function inspectDesktopProxy(
     localSessionsRoot,
     codeSessionsRoot,
     credentialsUrl,
-    hasCredentials: Boolean(credentials?.cookies),
+    hasCredentials: auth !== null,
+    authType: auth?.type,
     // The kept state of a daemon that is not running fills the header alone: its sessions have no daemon.
     sessions: await inspectSessions(sortedSessions, daemonRunning ? daemonState : null)
   };
@@ -166,7 +168,7 @@ export async function printDesktopInspection(
   console.log(`Desktop base dir:    ${result.desktopBaseDir} (${formatBoolean(existsSync(result.desktopBaseDir))})`);
   console.log(`Local sessions root: ${result.localSessionsRoot} (${formatBoolean(existsSync(result.localSessionsRoot))})`);
   console.log(`Code sessions root:  ${result.codeSessionsRoot} (${formatBoolean(existsSync(result.codeSessionsRoot))})`);
-  console.log(`SSO credentials:     ${formatBoolean(result.hasCredentials)}${result.credentialsUrl ? ` (${result.credentialsUrl})` : ''}`);
+  console.log(`SSO credentials:     ${formatBoolean(result.hasCredentials)}${result.authType ? ` [${result.authType}]` : ''}${result.credentialsUrl ? ` (${result.credentialsUrl})` : ''}`);
   console.log('');
 
   if (result.sessions.length === 0) {

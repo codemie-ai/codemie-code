@@ -197,7 +197,7 @@ Two URLs can point at the CodeMie platform, and they have different jobs:
 
 For `ai-run-sso` and `bearer-auth` profiles, P is tried first and W second (a same-origin P and W is looked up once).
 Subscription providers (`anthropic-subscription`, `moonshot-subscription`) use W only, because their `baseUrl` is a vendor endpoint, not CodeMie.
-The resolver lives in `src/providers/core/codemie-auth-helpers.ts` (`getPlatformUrl`, `getStoredPlatformCredentials`); agent-side code resolves from `CODEMIE_PROFILE_CONFIG` because `CODEMIE_BASE_URL` is rewritten to the local proxy before the agent starts.
+The resolver lives in `src/providers/core/codemie-auth-helpers.ts` (`getPlatformUrl`, `getPlatformUrlCandidates`); stored credentials are read through `resolveSSOAuth` / `resolveSSOAuthForUrl` from `src/providers/plugins/sso/auth`, which return a typed `SSOAuth`; agent-side code resolves from `CODEMIE_PROFILE_CONFIG` because `CODEMIE_BASE_URL` is rewritten to the local proxy before the agent starts.
 
 ### CI/CD overrides
 

@@ -18,11 +18,15 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
 
-const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
-  },
+const storeMock = vi.hoisted(() => ({
+  retrieveSSOCredentials: vi.fn(),
+  retrieveJWTCredentials: vi.fn(async (): Promise<unknown> => null),
+}));
+// The SSO resolver reads stored logins from CredentialStore: per-URL cookie slot first, JWT slot
+// second (both empty here unless a test seeds them).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: { getInstance: () => storeMock },
 }));
 
 import {
@@ -135,21 +139,23 @@ describe('validateGeminiModel SSO lookup (profile baseUrl first)', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    ssoMock.getStoredCredentials.mockReset();
+    storeMock.retrieveSSOCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockResolvedValue(null);
   });
 
   it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([model({ deployment_name: 'gemini-3-pro', base_name: 'gemini-3-pro', label: 'G' })]);
 
     await validateGeminiModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_MODEL: 'gemini-3-pro' });
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
     expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, undefined);
   });
 
   it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchMock.mockResolvedValue([]);
 
     await validateGeminiModel({
@@ -158,11 +164,11 @@ describe('validateGeminiModel SSO lookup (profile baseUrl first)', () => {
       CODEMIE_MODEL: 'gemini-3-pro',
     });
 
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith('https://profile.example.com');
   });
 
   it('skips validation when no credentials are stored', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(null);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(null);
 
     await expect(
       validateGeminiModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_MODEL: 'gemini-3-pro' })

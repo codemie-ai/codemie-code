@@ -1,6 +1,6 @@
 /**
  * SSO Session Expiry Detector
- * Priority: 11 (directly after SSOAuthPlugin/JWTAuthPlugin)
+ * Priority: 11 (directly after AuthInjectionPlugin)
  *
  * SOLID: Single responsibility = detect a rejected oauth2-proxy session — the
  * session-expiry redirect (302/303 to /oauth2/start) or the backend's own
@@ -17,25 +17,30 @@
  * before acting on either rejection.
  *
  * A redirect on a request that was sent with credentials a finished sign-in has since replaced is not
- * an expiry: the request is replayed once with the stored cookies and that response is returned. If
+ * an expiry: the request is replayed once with the stored credential and that response is returned. If
  * the replay is itself the redirect the session really is gone and the expiry path below runs; if
  * the replay throws the client gets a 401 asking it to re-send. No marker is written and no sign-in
  * is started for a superseded request.
  *
  * A session-shaped 401, as decided by `isSessionRejection401` (session-rejection.ts), takes the same
- * path as the redirect: superseded cookies are replayed once, otherwise the marker is written, one
+ * path as the redirect: a superseded credential is replayed once, otherwise the marker is written, one
  * detached sign-in is started and the synthetic 401 is returned. The predicate looks at the body
  * (see its header), so a 401 with another cause (a LiteLLM error relayed by the LLM proxy) is
  * passed through with its body intact and starts no sign-in. The loop guard bounds the rest: when
- * this interceptor acts on a 401 it records a hash of the rejected cookies (never the values). A
+ * this interceptor acts on a 401 it records the rejected credential's fingerprint (`SSOAuth.fingerprint`,
+ * never the values). A
  * later session-shaped 401 is passed through, its body unchanged, only within two minutes of a
  * sign-in that has
- * completed since then (`getLastSignInAt`) AND the stored cookies still hash the same: that sign-in
+ * completed since then (`getLastSignInAt`) AND the stored credential still has the same fingerprint: that sign-in
  * returned the very credentials the server rejected, so they were not the cause. Without a
  * completed sign-in the 401 is acted on again, so a user who ignored the browser tab still
- * recovers. The guard clears when the stored cookies change or a redirect rejection is seen. It
+ * recovers. The guard clears when the stored credential changes or a redirect rejection is seen. It
  * lives in memory only; a proxy daemon restart resets it (at worst one extra sign-in, bounded by
  * the lock and cooldown). A 403 is never acted on.
+ *
+ * "The credential" is whatever SSO login the auth interceptor injected (`ProxyContext.sentAuth`):
+ * cookies or an SSO-issued JWT alike. A request with no `sentAuth` (nothing was injected) counts as
+ * sent without a credential, so it is never treated as superseded.
  *
  * KNOWN GAP: an HTML 200 rejection still bypasses this plugin (it is handled on the metrics path —
  * see metrics-api-client.ts). The metrics client (401, HTML) and the OTLP forwarder (401, 403, 302)
@@ -43,7 +48,7 @@
  *
  * KNOWN GAP: the synthetic 401 body below is always Anthropic-shaped (`{type, error: {type,
  * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see
- * `createInterceptor`'s guard, which only checks for SSO cookies, not client type) and expects an
+ * `createInterceptor`'s guard, which only checks the auth method, not client type) and expects an
  * OpenAI-shaped error instead. Left as-is for this PR (third review round, 2026-10-20); a
  * follow-up should branch on the request's client (`context.agentName`).
  *
@@ -54,7 +59,6 @@
  */
 
 import type { IncomingMessage } from 'http';
-import { createHash } from 'crypto';
 import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
@@ -65,10 +69,10 @@ import {
   getLastSignInAt,
   DetachedLoginOutcome,
 } from '../../sso.detached-login.js';
-import { buildCookieHeader, supersedingCookieHeader } from '../../session/cookie-auth.js';
 import { isSessionRejection401 } from './session-rejection.js';
 import type { CredentialRefresher } from './credential-refresh.js';
-import type { SSOCredentials } from '@/providers/core/types.js';
+import { AuthMethod } from '@/providers/core/types.js';
+import type { SSOAuth } from '../../auth/index.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
@@ -139,13 +143,8 @@ async function assess(response: IncomingMessage, tools: UpstreamResponseTools): 
   return { rejected, response: rejected ? response : tools.fromBuffer(response, body), body };
 }
 
-/** One-way hash of a Cookie header, so the loop guard never keeps credential values. */
-function fingerprintOf(cookieHeader: string): string {
-  return createHash('sha256').update(cookieHeader, 'utf-8').digest('hex');
-}
-
-/** The cookies a 401 this interceptor acted on was sent with, and when it acted. */
-interface RejectedCookies {
+/** The credential (by fingerprint) a 401 this interceptor acted on was sent with, and when it acted. */
+interface RejectedCredential {
   fingerprint: string;
   recordedAt: number;
 }
@@ -160,19 +159,17 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
    * PR #655 review asked whether this should skip `startDetachedSsoLogin` when an API key is
    * configured, the way `sso.auth-gate.ts`'s own `!input.apiKey` guard does for the
    * `UserPromptSubmit` hook path. It cannot: `CodeMieProxy.start()` (sso.proxy.ts) resolves
-   * `authMethod` to exactly one of JWT or SSO once at daemon startup, mutually exclusively — an
-   * API-key/JWT profile's `PluginContext.credentials` never has a `cookies` key, so the guard
-   * below already makes this plugin a permanent no-op for it. There is no code path where this
-   * interceptor's `onUpstreamResponse` runs AND an API key is the active auth method.
+   * `authMethod` to exactly one of JWT or SSO once at daemon startup, mutually exclusively — the
+   * guard below makes this plugin a permanent no-op for the bearer-auth (`AuthMethod.JWT`)
+   * profile. There is no code path where this interceptor's `onUpstreamResponse` runs AND an API
+   * key is the active auth method. An SSO login is covered whatever its type (cookies or an
+   * SSO-issued JWT).
    */
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    if (!context.credentials || !('cookies' in context.credentials)) {
-      return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: JWT profiles unaffected
+    if (!context.credentialRefresher || context.config.authMethod === AuthMethod.JWT) {
+      return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: bearer-auth profiles unaffected
     }
-    return new SSOSessionExpiryInterceptor(
-      context.config.targetApiUrl,
-      context.credentialRefresher as CredentialRefresher<SSOCredentials> | undefined
-    );
+    return new SSOSessionExpiryInterceptor(context.config.targetApiUrl, context.credentialRefresher);
   }
 }
 
@@ -180,11 +177,11 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
   name = 'sso-session-expiry';
 
   /** Loop guard state: in memory only, see the header comment. */
-  private rejected401: RejectedCookies | null = null;
+  private rejected401: RejectedCredential | null = null;
 
   constructor(
     private readonly targetApiUrl: string,
-    private readonly credentialRefresher?: CredentialRefresher<SSOCredentials>
+    private readonly credentialRefresher?: CredentialRefresher
   ) {}
 
   async onUpstreamResponse(
@@ -196,8 +193,8 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     if (!seen.rejected) return seen.response;
     if (isOauthRedirect(response)) this.rejected401 = null;
 
-    const freshCookies = await supersedingCookieHeader(context.headers['cookie'], this.credentialRefresher);
-    if (freshCookies !== null) {
+    const fresh = await this.supersedingAuth(context.sentAuth);
+    if (fresh !== null) {
       logger.debug(`[${this.name}] request carried superseded credentials; not treating the rejection as an expiry`);
       if (seen.body === undefined) {
         try {
@@ -206,7 +203,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
           logger.debug(`[${this.name}] draining the rejected response body failed`, error);
         }
       }
-      const replayed = await this.replayWithFreshCookies(context, tools, freshCookies);
+      const replayed = await this.replayWithFreshCredential(context, tools, fresh);
       if (!replayed) {
         return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
       }
@@ -224,7 +221,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
         logger.debug(`[${this.name}] 401 repeated after a sign-in returned the same credentials; passing it through`);
         return tools.fromBuffer(response, seen.body ?? Buffer.alloc(0)); // the body was read to classify it; hand it back whole
       }
-      this.rejected401 = { fingerprint: fingerprintOf(context.headers['cookie'] ?? ''), recordedAt: Date.now() };
+      this.rejected401 = { fingerprint: context.sentAuth?.fingerprint ?? '', recordedAt: Date.now() };
     }
 
     let outcome: DetachedLoginOutcome | undefined;
@@ -256,15 +253,15 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
 
   /**
    * Whether a 401 is passed through by the loop guard: a 401 was acted on before, a sign-in has
-   * completed since, and the store still holds the very cookies that were rejected. Clears the
-   * guard when the stored cookies differ. An unreadable store or sign-in time never suppresses.
+   * completed since, and the store still holds the very credential that was rejected. Clears the
+   * guard when the stored credential differs. An unreadable store or sign-in time never suppresses.
    */
   private async suppressedByLoopGuard(): Promise<boolean> {
     const guard = this.rejected401;
     if (!guard) return false;
-    const stored = await this.storedCookieHeader();
+    const stored = await this.storedAuth();
     if (stored === null) return false;
-    if (fingerprintOf(stored) !== guard.fingerprint) {
+    if (stored.fingerprint !== guard.fingerprint) {
       this.rejected401 = null;
       return false;
     }
@@ -272,32 +269,45 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     return signedInAt !== null && signedInAt > guard.recordedAt && Date.now() - signedInAt < LOOP_GUARD_WINDOW_MS;
   }
 
-  /** The Cookie header the store holds now, or null when it cannot be read or is empty. */
-  private async storedCookieHeader(): Promise<string | null> {
+  /** The credential the store holds now, or null when it cannot be read or has no usable auth value. */
+  private async storedAuth(): Promise<SSOAuth | null> {
     if (!this.credentialRefresher) return null;
     try {
       const stored = await this.credentialRefresher.refreshNow();
-      const header = stored ? buildCookieHeader(stored.cookies) : '';
-      return header === '' ? null : header;
+      return stored && stored.authValue !== '' ? stored : null;
     } catch (error) {
-      logger.debug(`[${this.name}] reading the stored credentials for the loop guard failed`, error);
+      logger.debug(`[${this.name}] reading the stored credentials failed`, error);
       return null;
     }
   }
 
   /**
-   * Sends the request once more with the cookies a finished sign-in stored. `tools.retry` reuses
-   * `context.headers` as they are rather than re-running the request interceptors, so the fresh
-   * cookie header is put there first. A request without a buffered body (GET, HEAD, DELETE) is
-   * replayed with that null body. Resolves null when the replay throws.
+   * The stored credential when a finished sign-in replaced the one the request was sent with
+   * (different fingerprint), otherwise null. A request sent without a credential is never superseded.
    */
-  private async replayWithFreshCookies(
+  private async supersedingAuth(sent: SSOAuth | undefined): Promise<SSOAuth | null> {
+    if (!sent) return null;
+    const stored = await this.storedAuth();
+    return stored !== null && stored.fingerprint !== sent.fingerprint ? stored : null;
+  }
+
+  /**
+   * Sends the request once more with the credential a finished sign-in stored. `tools.retry` reuses
+   * `context.headers` as they are rather than re-running the request interceptors, so the fresh
+   * auth headers are put there first. Both `cookie` and `authorization` are removed before, so a
+   * credential type change never sends both. A request without a buffered body (GET, HEAD, DELETE)
+   * is replayed with that null body. Resolves null when the replay throws.
+   */
+  private async replayWithFreshCredential(
     context: ProxyContext,
     tools: UpstreamResponseTools,
-    freshCookies: string
+    fresh: SSOAuth
   ): Promise<IncomingMessage | null> {
     try {
-      context.headers['cookie'] = freshCookies;
+      delete context.headers['cookie'];
+      delete context.headers['authorization'];
+      Object.assign(context.headers, fresh.headers);
+      context.sentAuth = fresh;
       return await tools.retry(context.requestBody);
     } catch (error) {
       logger.debug(`[${this.name}] replaying the request with the renewed credentials failed`, error);

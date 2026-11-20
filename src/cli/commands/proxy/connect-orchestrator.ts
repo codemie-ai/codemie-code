@@ -407,9 +407,10 @@ export async function assertSsoCredentials(
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
-    const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
-    if (!creds) {
+    const { resolveSSOAuth } = await import('../../../providers/plugins/sso/auth/index.js');
+    // Any stored login counts, whichever credential type it holds.
+    const auth = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    if (!auth) {
       loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
     }
   } catch (err) {

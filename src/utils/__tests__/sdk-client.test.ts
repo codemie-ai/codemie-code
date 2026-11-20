@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockGetStoredCredentials = vi.fn();
 const mockConfigLoad = vi.fn();
 const mockCodeMieClient = vi.fn();
 const mockRetrieveSSOCredentials = vi.fn();
 const mockClearSSOCredentials = vi.fn();
-let useRealSso = false;
+const mockRetrieveJWTCredentials = vi.fn();
 
 vi.mock('ora', () => ({ default: () => ({ start: () => ({ text: '', succeed: vi.fn(), fail: vi.fn() }) }) }));
 vi.mock('codemie-sdk', () => ({
@@ -23,21 +22,10 @@ vi.mock('../security.js', async (importOriginal) => ({
     getInstance: () => ({
       retrieveSSOCredentials: (...args: unknown[]) => mockRetrieveSSOCredentials(...args),
       clearSSOCredentials: (...args: unknown[]) => mockClearSSOCredentials(...args),
+      retrieveJWTCredentials: (...args: unknown[]) => mockRetrieveJWTCredentials(...args),
     }),
   },
 }));
-vi.mock('../../providers/plugins/sso/sso.auth.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../providers/plugins/sso/sso.auth.js')>();
-  return {
-    CodeMieSSO: class {
-      getStoredCredentials = (...args: unknown[]) =>
-        useRealSso
-          ? new actual.CodeMieSSO().getStoredCredentials(...(args as [string?, boolean?]))
-          : mockGetStoredCredentials(...args);
-    },
-  };
-});
-
 import { getCodemieClient } from '../sdk-client.js';
 import { getAuthenticatedClient } from '../auth.js';
 
@@ -45,45 +33,80 @@ const P = 'https://profile.example.com';
 const W = 'https://workspace.example.com';
 const creds = { cookies: { session: 'abc' }, apiUrl: `${P}/code-assistant-api` };
 
+/** Seeds the per-URL cookie slot; the global slot (read without a URL) stays empty. */
+function seedCookies(byUrl: Record<string, unknown>): void {
+  mockRetrieveSSOCredentials.mockImplementation(async (url?: string) => (url ? byUrl[url] ?? null : null));
+}
+
+/** The URLs the resolver asked the cookie slot for, in order (global-slot reads carry no URL). */
+function cookieLookupUrls(): unknown[] {
+  return mockRetrieveSSOCredentials.mock.calls.map(c => c[0]).filter(Boolean);
+}
+
 describe('getCodemieClient credential lookup', () => {
   beforeEach(() => {
-    mockGetStoredCredentials.mockReset();
     mockConfigLoad.mockReset();
     mockCodeMieClient.mockReset();
     mockRetrieveSSOCredentials.mockReset();
     mockClearSSOCredentials.mockReset();
-    useRealSso = false;
+    mockRetrieveJWTCredentials.mockReset();
+    mockRetrieveJWTCredentials.mockResolvedValue(null);
   });
 
   it('finds credentials via the profile baseUrl for a baseUrl-only SSO profile', async () => {
     mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
-    mockGetStoredCredentials.mockResolvedValue(creds);
+    seedCookies({ [P]: creds });
 
     await getCodemieClient(true);
 
-    expect(mockGetStoredCredentials).toHaveBeenCalledWith(P);
+    expect(mockRetrieveSSOCredentials).toHaveBeenCalledWith(P);
     expect(mockCodeMieClient).toHaveBeenCalledWith(expect.objectContaining({ codemie_api_domain: creds.apiUrl }));
   });
 
   it('falls back to codeMieUrl when the baseUrl lookup misses', async () => {
     mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-    mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce(creds);
+    seedCookies({ [W]: creds });
 
     await getCodemieClient(true);
 
-    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([P, W]);
+    expect(cookieLookupUrls()).toEqual([P, W]);
     expect(mockCodeMieClient).toHaveBeenCalled();
   });
 
   it('throws when no credentials are found under any candidate', async () => {
     mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-    mockGetStoredCredentials.mockResolvedValue(null);
+    seedCookies({});
 
     await expect(getCodemieClient(true)).rejects.toThrow('SSO authentication required');
   });
 
+  it('builds the client with jwt_token when only a stored JWT exists', async () => {
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+    seedCookies({});
+    // Issued for the profile's own API host, stored under the workspace URL fallback
+    const jwt = { token: 'jwt-token', apiUrl: `${P}/code-assistant-api` };
+    mockRetrieveJWTCredentials.mockImplementation(async (url: string) => (url === W ? jwt : null));
+
+    await getCodemieClient(true);
+
+    const opts = mockCodeMieClient.mock.calls[0][0];
+    expect(opts).toMatchObject({ codemie_api_domain: jwt.apiUrl, jwt_token: 'jwt-token' });
+    expect(opts).not.toHaveProperty('cookies');
+  });
+
+  it('prefers usable SSO cookies over a stored JWT', async () => {
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+    seedCookies({ [P]: creds });
+    mockRetrieveJWTCredentials.mockResolvedValue({ token: 'jwt-token', apiUrl: creds.apiUrl });
+
+    await getCodemieClient(true);
+
+    const opts = mockCodeMieClient.mock.calls[0][0];
+    expect(opts).toMatchObject({ cookies: creds.cookies });
+    expect(opts).not.toHaveProperty('jwt_token');
+  });
+
   it('creates the client for a stale cookie-only credential without clearing it', async () => {
-    useRealSso = true;
     const stale = {
       cookies: { _oauth2_proxy: 'cookie-value' },
       apiUrl: `${P}/code-assistant-api`,
@@ -101,7 +124,6 @@ describe('getCodemieClient credential lookup', () => {
   });
 
   it('loads a stale cookie-only credential on the assistants-chat path without clearing it', async () => {
-    useRealSso = true;
     const stale = {
       cookies: { _oauth2_proxy: 'cookie-value' },
       apiUrl: `${P}/code-assistant-api`,

@@ -29,7 +29,8 @@ vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
 }));
 
 import { CredentialStore } from '../../src/utils/security.js';
-import { CodeMieSSO } from '../../src/providers/plugins/sso/sso.auth.js';
+import { resolveSSOAuthForUrl } from '../../src/providers/plugins/sso/auth/index.js';
+import type { CookieSSOAuth } from '../../src/providers/plugins/sso/auth/index.js';
 import { SSOSetupSteps } from '../../src/providers/plugins/sso/sso.setup-steps.js';
 import { CODEMIE_ENDPOINTS } from '../../src/providers/plugins/sso/sso.http-client.js';
 import type { SSOCredentials } from '../../src/providers/core/types.js';
@@ -163,13 +164,12 @@ describe('SSO Per-URL Credential Management', () => {
 
     it('should fallback to global credentials when URL-specific not found', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store only global credentials
       await store.storeSSOCredentials(GLOBAL_CREDENTIALS);
 
       // Try to retrieve for specific URL (should fallback to global via SSO)
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1);
 
       expect(retrieved).toMatchObject({
         apiUrl: TEST_API_URL_1,
@@ -212,13 +212,12 @@ describe('SSO Per-URL Credential Management', () => {
   describe('CodeMieSSO - URL Normalization', () => {
     it('should normalize API URL to base URL when retrieving credentials', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store credentials with base URL
       await store.storeSSOCredentials(VALID_CREDENTIALS_1, TEST_BASE_URL_1);
 
       // Retrieve using full API URL (should normalize to base)
-      const retrieved = await sso.getStoredCredentials(TEST_API_URL_1);
+      const retrieved = await resolveSSOAuthForUrl(TEST_API_URL_1);
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.apiUrl).toBe(TEST_API_URL_1);
@@ -226,26 +225,24 @@ describe('SSO Per-URL Credential Management', () => {
 
     it('should handle URLs with trailing slashes', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store with base URL
       await store.storeSSOCredentials(VALID_CREDENTIALS_1, TEST_BASE_URL_1);
 
       // Retrieve with trailing slash
-      const retrieved = await sso.getStoredCredentials(`${TEST_BASE_URL_1}/`);
+      const retrieved = await resolveSSOAuthForUrl(`${TEST_BASE_URL_1}/`);
 
       expect(retrieved).not.toBeNull();
     });
 
     it('should handle URLs with different paths', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store with base URL
       await store.storeSSOCredentials(VALID_CREDENTIALS_1, TEST_BASE_URL_1);
 
       // Retrieve with different path
-      const retrieved = await sso.getStoredCredentials(`${TEST_BASE_URL_1}/some/path`);
+      const retrieved = await resolveSSOAuthForUrl(`${TEST_BASE_URL_1}/some/path`);
 
       expect(retrieved).not.toBeNull();
     });
@@ -398,13 +395,12 @@ describe('SSO Per-URL Credential Management', () => {
   describe('Credential Expiration Handling', () => {
     it('should automatically clear expired credentials on retrieval', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store expired credentials
       await store.storeSSOCredentials(EXPIRED_CREDENTIALS, TEST_BASE_URL_1);
 
       // Retrieve should return null and clear the expired credentials
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1);
       expect(retrieved).toBeNull();
 
       // Verify credentials were actually cleared
@@ -414,13 +410,12 @@ describe('SSO Per-URL Credential Management', () => {
 
     it('should not clear or expire cookie-only credentials locally', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       await store.storeSSOCredentials(COOKIE_ONLY_CREDENTIALS, TEST_BASE_URL_1);
 
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1);
       expect(retrieved).not.toBeNull();
-      expect(retrieved?.cookies.session).toBe('cookie-only-session');
+      expect((retrieved as CookieSSOAuth).cookies.session).toBe('cookie-only-session');
 
       const config: CodeMieConfigOptions = {
         provider: 'ai-run-sso',
@@ -490,41 +485,38 @@ describe('SSO Per-URL Credential Management', () => {
 
     it('should prefer URL-specific over global when both exist', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store both global and URL-specific credentials
       await store.storeSSOCredentials(GLOBAL_CREDENTIALS);
       await store.storeSSOCredentials(VALID_CREDENTIALS_1, TEST_BASE_URL_1);
 
       // Should get URL-specific credentials
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1);
 
-      expect(retrieved?.cookies.session).toBe('test-session-1');
+      expect((retrieved as CookieSSOAuth).cookies.session).toBe('test-session-1');
     });
 
     it('should fallback to global if URL-specific not found and URLs match', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store only global credentials for URL 1
       await store.storeSSOCredentials(VALID_CREDENTIALS_1);
 
       // Retrieve for URL 1 (should fallback to global)
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1, true);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1);
 
       expect(retrieved).not.toBeNull();
-      expect(retrieved?.cookies.session).toBe('test-session-1');
+      expect((retrieved as CookieSSOAuth).cookies.session).toBe('test-session-1');
     });
 
     it('should not fallback to global if allowFallback is false', async () => {
       const store = CredentialStore.getInstance();
-      const sso = new CodeMieSSO();
 
       // Store only global credentials
       await store.storeSSOCredentials(VALID_CREDENTIALS_1);
 
       // Retrieve with allowFallback=false
-      const retrieved = await sso.getStoredCredentials(TEST_BASE_URL_1, false);
+      const retrieved = await resolveSSOAuthForUrl(TEST_BASE_URL_1, { allowGlobalFallback: false });
 
       expect(retrieved).toBeNull();
     });

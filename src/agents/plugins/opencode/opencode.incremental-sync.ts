@@ -19,7 +19,7 @@ import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
 import { logger } from '../../../utils/logger.js';
-import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { analyticsAuthFields, hasAnalyticsAuth, readAnalyticsAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
 
 export interface StartOpenCodeIncrementalSyncOptions {
   /** CodeMie session id (file naming key); its record's run selects the OpenCode session. */
@@ -156,15 +156,14 @@ async function buildUploadContext(
   version = '0.0.0',
   clientType = 'codemie-opencode'
 ): Promise<ProcessingContext | null> {
-  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-  if (!cookies) {
+  const auth = await readAnalyticsAuth(ssoUrl, env);
+  if (!hasAnalyticsAuth(auth)) {
     logger.debug('[opencode-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
   return {
     apiBaseUrl: syncApiUrl,
-    cookies,
-    credentialsSuperseded,
+    ...analyticsAuthFields(auth),
     clientType,
     version,
     dryRun: false,

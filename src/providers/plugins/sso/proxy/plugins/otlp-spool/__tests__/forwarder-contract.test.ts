@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,7 +85,7 @@ vi.mock('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js', () 
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
-const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 } }, 'https://api');
 const record = {
   schema: 1, session_id: 's1', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven', organization: 'Acme',
   project: 'Proj A', project_source: 'none', api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0,

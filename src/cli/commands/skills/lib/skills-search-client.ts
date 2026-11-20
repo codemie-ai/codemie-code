@@ -22,7 +22,7 @@
  */
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
-import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import { resolveSSOAuth } from '@/providers/plugins/sso/auth/index.js';
 import type { PlatformUrlSource } from '@/providers/core/codemie-auth-helpers.js';
 import { stripControlChars } from './sanitize.js';
 
@@ -132,23 +132,18 @@ async function buildInternalHeaders(source?: PlatformUrlSource): Promise<Record<
     try {
       resolvedSource = await ConfigLoader.load();
     } catch {
-      // fall through; we just won't have cookies
+      // fall through; we just won't have credentials
     }
   }
   if (!resolvedSource) return headers;
 
   try {
-    const credentials = (await getStoredPlatformCredentials(resolvedSource))?.credentials;
-    if (credentials?.cookies) {
-      const cookieHeader = Object.entries(credentials.cookies)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('; ');
-      if (cookieHeader) {
-        headers.Cookie = cookieHeader;
-      }
+    const auth = await resolveSSOAuth(resolvedSource);
+    if (auth) {
+      Object.assign(headers, auth.headers);
     }
   } catch (error) {
-    logger.debug('[skills] Failed to attach SSO cookies for internal search', error);
+    logger.debug('[skills] Failed to attach SSO credentials for internal search', error);
   }
   return headers;
 }

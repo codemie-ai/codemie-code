@@ -11,8 +11,8 @@ import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { SSOModelProxy } from './sso.models.js';
-import { effectiveExpiresAt } from './sso.expiry.js';
-import { getPlatformUrl, getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
+import { resolveSSOAuth } from './auth/index.js';
+import { getPlatformUrl } from '../../core/codemie-auth-helpers.js';
 import { renderHint } from '@/utils/hint.js';
 
 /**
@@ -63,8 +63,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
     });
 
     // 2. Check credentials
-    const found = await getStoredPlatformCredentials(platformSource);
-    if (!found) {
+    const auth = await resolveSSOAuth(platformSource);
+    if (!auth) {
       details.push({
         status: 'error',
         message: 'SSO credentials not found',
@@ -78,7 +78,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       };
     }
 
-    const { credentials, url: credentialsUrl } = found;
+    const credentialsUrl = auth.url;
 
     details.push({
       status: 'ok',
@@ -86,7 +86,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
     });
 
     // 3. Check expiration
-    const expiresAt = effectiveExpiresAt(credentials);
+    const expiresAt = auth.expiresAt;
     if (expiresAt && expiresAt < Date.now()) {
       details.push({
         status: 'error',

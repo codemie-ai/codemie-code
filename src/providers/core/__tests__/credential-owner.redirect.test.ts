@@ -13,6 +13,7 @@ import { join } from 'node:path';
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), isDebugMode: () => false } }));
 
 const { withVerifiedOwner } = await import('../credential-owner.js');
+const { toSSOAuth } = await import('../../plugins/sso/auth/selection.js');
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
   return new Promise((resolve) => {
@@ -47,7 +48,7 @@ describe('owner lookup does not follow redirects', () => {
       res.end();
     });
     try {
-      const creds = { cookies: { _oauth2_proxy: 'SYNTHETIC-redirect' }, apiUrl: api.url };
+      const creds = toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: 'SYNTHETIC-redirect' }, apiUrl: api.url } }, api.url);
       const result = await withVerifiedOwner(creds);
       expect(result.email).toBeUndefined();
       expect(seen).toEqual([]); // the second origin was never contacted
@@ -63,7 +64,9 @@ describe('owner lookup does not follow redirects', () => {
       res.end(JSON.stringify({ email: 'Slim@Example.com' }));
     });
     try {
-      const result = await withVerifiedOwner({ cookies: { _oauth2_proxy: 'SYNTHETIC-slim' }, apiUrl: api.url });
+      const result = await withVerifiedOwner(
+        toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: 'SYNTHETIC-slim' }, apiUrl: api.url } }, api.url),
+      );
       expect(result.email).toBe('Slim@Example.com');
     } finally {
       api.server.close();

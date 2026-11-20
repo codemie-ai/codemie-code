@@ -17,6 +17,7 @@ import { ProviderName, AuthMethod } from '@/providers/core/types.js';
 import { JWT_TOKEN_DEFAULT_ENV_VAR, resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 import { ensureApiBase, selectCodeMieProject } from '../../core/codemie-auth-helpers.js';
+import { explicitJwtAuth } from '../sso/auth/index.js';
 
 /** Seams for tests. */
 export interface JwtProjectStepDeps {
@@ -74,7 +75,7 @@ export async function selectJwtProfileProject(
     return undefined;
   }
   try {
-    const { project } = await select({ apiUrl, jwtToken: token });
+    const { project } = await select(explicitJwtAuth(token, apiUrl));
     return project;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

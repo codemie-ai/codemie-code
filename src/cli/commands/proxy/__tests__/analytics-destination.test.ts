@@ -27,14 +27,17 @@ vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), er
 const { ConfigLoader } = await import('@/utils/config.js');
 const { spawnForProfile } = await import('../launch-daemon.js');
 const { resolveAnalyticsEndpoint } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/classification.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
 
 const PREVIEW = 'https://preview.example.com/code-assistant-api';
 const PROD = 'https://prod.example.com';
-const creds = (apiUrl: string) => ({
-  cookies: { codemie_access_token: `h.${Buffer.from(JSON.stringify({ email: 'dev@example.com' })).toString('base64url')}.s` },
-  apiUrl,
-  timestamp: 0,
-});
+const creds = (apiUrl: string) => toSSOAuth({
+  type: 'cookie',
+  record: {
+    cookies: { codemie_access_token: `h.${Buffer.from(JSON.stringify({ email: 'dev@example.com' })).toString('base64url')}.s` },
+    apiUrl,
+  },
+}, apiUrl);
 
 let root: string;
 let saved: string | undefined;
@@ -75,8 +78,8 @@ describe('P=Preview baseUrl, W=prod workspace: what the daemon actually uses', (
       const native = await ConfigLoader.load(repo, { name: 'p' });
       await spawnForProfile(native as never, 'p', {});
       const endpoint = {
-        prodCreds: await resolveAnalyticsEndpoint(creds(`${PROD}/code-assistant-api`) as never),
-        previewCreds: await resolveAnalyticsEndpoint(creds(PREVIEW) as never),
+        prodCreds: await resolveAnalyticsEndpoint(creds(`${PROD}/code-assistant-api`)),
+        previewCreds: await resolveAnalyticsEndpoint(creds(PREVIEW)),
       };
       console.log(JSON.stringify({ label, project: native.codeMieProject, daemon: { targetUrl: daemon.state?.targetUrl, syncCodeMieUrl: daemon.state?.syncCodeMieUrl, syncApiUrl: daemon.state?.syncApiUrl, project: daemon.state?.project }, endpoint: { prodCreds: endpoint.prodCreds?.baseUrl ?? null, previewCreds: endpoint.previewCreds?.baseUrl ?? null } }));
       expect(native.codeMieProject).toBe('global-proj');

@@ -11,8 +11,7 @@ import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
 import { GatewayKeyPlugin } from './gateway-key.plugin.js';
 import { ClientAttributionPlugin } from './client-attribution.plugin.js';
 import { DesktopModelsPlugin } from './desktop-models.plugin.js';
-import { SSOAuthPlugin } from './sso-auth.plugin.js';
-import { JWTAuthPlugin } from './jwt-auth.plugin.js';
+import { AuthInjectionPlugin } from './auth-injection.plugin.js';
 import { SSOSessionExpiryPlugin } from './sso-session-expiry.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
@@ -41,8 +40,7 @@ export function registerCorePlugins(): void {
   registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
   registry.register(new ClientAttributionPlugin()); // Priority 8, after the gateway key's 7 - settles the request's client (a shared-key Cowork request is claude-desktop) and its Desktop repository
   registry.register(new DesktopModelsPlugin()); // Priority 9, after the client attribution - answers Claude Desktop's /v1/models from the project's catalog
-  registry.register(new SSOAuthPlugin());
-  registry.register(new JWTAuthPlugin());
+  registry.register(new AuthInjectionPlugin()); // Priority 10 - injects the resolved credential's headers (cookies or a JWT)
   registry.register(new SSOSessionExpiryPlugin()); // Priority 11 - relabels a rejected session (an oauth2-proxy redirect to /oauth2/start, or the backend's "Authentication failed" 401; acted on alone — see the plugin's own header comment for why) as a parseable 401 and triggers re-auth before any other onUpstreamResponse plugin sees it
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new BackgroundRequestNormalizerPlugin()); // Priority 14 - forces cheap background calls (e.g. title-gen) onto haiku
@@ -69,8 +67,7 @@ export {
   GatewayKeyPlugin,
   ClientAttributionPlugin,
   DesktopModelsPlugin,
-  SSOAuthPlugin,
-  JWTAuthPlugin,
+  AuthInjectionPlugin,
   SSOSessionExpiryPlugin,
   HeaderInjectionPlugin,
   RequestSanitizerPlugin,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as os from 'node:os';
-import type { JWTCredentials } from '@/providers/core/types.js';
+import { explicitJwtAuth } from '@/providers/plugins/sso/auth/resolver.js';
 
 /** Builds a minimal unsigned JWT with the given payload claims. */
 function makeJwt(payload: Record<string, unknown>): string {
@@ -17,10 +17,7 @@ describe('resolveIdentity', () => {
   it('resolves from the jwt tier when the token carries a valid email claim', async () => {
     const { resolveIdentity } = await import('../identity-resolver.js');
 
-    const credentials: JWTCredentials = {
-      token: makeJwt({ email: 'dev@example.com' }),
-      apiUrl: 'https://codemie.example.com',
-    };
+    const credentials = explicitJwtAuth(makeJwt({ email: 'dev@example.com' }), 'https://codemie.example.com');
 
     const result = await resolveIdentity(credentials, 'C:/some/project');
 
@@ -38,9 +35,8 @@ describe('resolveIdentity', () => {
 
     const { resolveIdentity } = await import('../identity-resolver.js');
 
-    // Empty token: isJWTCredentials() still matches the shape, but decodeJwtClaims
-    // yields no usable email, so the jwt tier is a miss.
-    const credentials: JWTCredentials = { token: '', apiUrl: '' };
+    // Empty token: decodeJwtClaims yields no usable email, so the jwt tier is a miss.
+    const credentials = explicitJwtAuth('', '');
 
     const result = await resolveIdentity(credentials, 'C:/some/project');
 
@@ -61,7 +57,7 @@ describe('resolveIdentity', () => {
 
     const { resolveIdentity } = await import('../identity-resolver.js');
 
-    const credentials: JWTCredentials = { token: '', apiUrl: '' };
+    const credentials = explicitJwtAuth('', '');
 
     const result = await resolveIdentity(credentials, 'C:/some/project');
 

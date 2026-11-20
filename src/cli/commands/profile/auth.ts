@@ -5,10 +5,8 @@ import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { logger } from '../../../utils/logger.js';
-import {
-  getPlatformUrl,
-  getStoredPlatformCredentials
-} from '../../../providers/core/codemie-auth-helpers.js';
+import { getPlatformUrl } from '../../../providers/core/codemie-auth-helpers.js';
+import { clearSSOAuth, resolveSSOAuth } from '../../../providers/plugins/sso/auth/index.js';
 
 // Export individual commands for profile (not nested under 'auth')
 export function createLoginCommand(): Command {
@@ -110,9 +108,8 @@ async function handleLogout(): Promise<void> {
     // Clear only the URL that holds this profile's credentials, so logging out of
     // one environment never wipes the login of another. With no URL, clear the
     // default slot.
-    const sso = new CodeMieSSO();
-    const found = await getStoredPlatformCredentials(config);
-    await sso.clearStoredCredentials(found?.url ?? getPlatformUrl(config));
+    const auth = await resolveSSOAuth(config);
+    await clearSSOAuth(auth?.url ?? getPlatformUrl(config));
 
     spinner.succeed(chalk.green('Successfully logged out'));
     console.log(chalk.white('SSO credentials have been cleared'));
@@ -134,7 +131,7 @@ async function handleRefresh(): Promise<void> {
   }
 
   // Refresh the URL that actually holds the credentials, else the first candidate
-  const url = (await getStoredPlatformCredentials(config))?.url ?? getPlatformUrl(config);
+  const url = (await resolveSSOAuth(config))?.url ?? getPlatformUrl(config);
   if (!url) {
     console.log(chalk.red('❌ No AI/Run CodeMie URL configured'));
     console.log(chalk.white('Run: codemie setup'));
@@ -142,8 +139,7 @@ async function handleRefresh(): Promise<void> {
   }
 
   // Clear existing credentials and re-authenticate against the same URL
-  const sso = new CodeMieSSO();
-  await sso.clearStoredCredentials(url);
+  await clearSSOAuth(url);
 
   await handleLogin(url);
 }

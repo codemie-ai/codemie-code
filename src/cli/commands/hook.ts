@@ -21,7 +21,8 @@ import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } fro
 import type { PidLock } from '@/utils/pid-lock.js';
 import { isSessionFileLockTimeout } from '@/utils/errors.js';
 import { buildProcessingContext } from './hook/processing-context.js';
-import { loadAnalyticsCookies } from './hook/analytics-cookies.js';
+import { loadAnalyticsAuth } from './hook/analytics-auth.js';
+import { analyticsAuthFields, hasAnalyticsAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
 import { closeUnclosedLocally, GENERATION_CLOSE_BUDGET_MS, markIfBudgetSpent, moveUnclosedGeneration, runCloseAttempt, sendsThroughThisLaunch, setGenerationAside } from './hook/generation-close.js';
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
@@ -1261,10 +1262,10 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       logger.debug('[hook:SessionStart] Setup scan failed, continuing without scan data', error);
     }
 
-    // Load SSO credentials if not provided in config
-    const { cookies: cookieHeader, credentialsSuperseded } = await loadAnalyticsCookies('[hook:SessionStart]', ssoUrl, config);
+    // Load the stored SSO credential (cookies or JWT) if not provided in config
+    const auth = await loadAnalyticsAuth('[hook:SessionStart]', ssoUrl, config);
 
-    if (!cookieHeader) {
+    if (!hasAnalyticsAuth(auth)) {
       if (syncApiUrl) {
         logger.info(
           `[hook:SessionStart] CodeMie analytics sync is configured for ${syncApiUrl}, but no stored credentials were found. Run: codemie profile login --url ${ssoUrl}`
@@ -1284,8 +1285,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
 
     const sender = new MetricsSender({
       baseUrl: apiUrl,
-      cookies: cookieHeader,
-      credentialsSuperseded,
+      ...analyticsAuthFields(auth),
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,

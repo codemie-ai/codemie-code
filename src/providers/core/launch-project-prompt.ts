@@ -9,6 +9,8 @@ import type { CodeMieIntegrationInfo } from '../../env/types.js';
 import { sanitizeDisplayText } from '../../utils/project-binding.js';
 import { logger } from '../../utils/logger.js';
 import { accountProjects, fetchCodeMieUserInfo, type ProjectListAuth } from './codemie-auth-helpers.js';
+import { authMaterial } from '../plugins/sso/auth/material.js';
+import type { SSOAuth } from '../plugins/sso/auth/index.js';
 
 /** Short limits: this runs on every launch of an unowned profile and must not stall it. */
 const LAUNCH_FETCH_TIMEOUT_MS = 5000;
@@ -35,25 +37,22 @@ export interface ProjectPromptInput {
 export interface ProjectPromptDeps {
   fetchProjects?: (auth: ProjectListAuth) => Promise<string[]>;
   prompt?: typeof inquirer.prompt;
-  selectIntegration?: (apiUrl: string, cookies: Record<string, string>, project: string) => Promise<CodeMieIntegrationInfo | undefined>;
+  selectIntegration?: (auth: SSOAuth, project: string) => Promise<CodeMieIntegrationInfo | undefined>;
   exit?: (code: number) => never;
 }
 
 async function defaultFetchProjects(auth: ProjectListAuth): Promise<string[]> {
   const options = { timeout: LAUNCH_FETCH_TIMEOUT_MS, maxRetries: 0 };
-  const userInfo = 'jwtToken' in auth
-    ? await fetchCodeMieUserInfo(auth.apiUrl, auth.jwtToken, options)
-    : await fetchCodeMieUserInfo(auth.apiUrl, auth.cookies, options);
+  const userInfo = await fetchCodeMieUserInfo(auth.apiUrl, authMaterial(auth), options);
   return accountProjects(userInfo);
 }
 
 async function defaultSelectIntegration(
-  apiUrl: string,
-  cookies: Record<string, string>,
+  auth: SSOAuth,
   project: string
 ): Promise<CodeMieIntegrationInfo | undefined> {
   const { selectIntegrationForProject } = await import('../plugins/sso/sso.setup-steps.js');
-  return selectIntegrationForProject(apiUrl, cookies, project, { onFetchError: 'throw' });
+  return selectIntegrationForProject(auth.apiUrl, authMaterial(auth), project, { onFetchError: 'throw' });
 }
 
 /**
@@ -136,11 +135,11 @@ export async function promptProfileProject(
         if (!confirmed) continue;
       }
 
-      if (!input.requiresIntegration || !('cookies' in input.auth)) {
+      if (!input.requiresIntegration) {
         return { kind: 'picked', project };
       }
       try {
-        const integration = await selectIntegration(input.auth.apiUrl, input.auth.cookies, project);
+        const integration = await selectIntegration(input.auth, project);
         return { kind: 'picked', project, integration };
       } catch (error) {
         logger.debug('[launch-project] integration list unavailable', {

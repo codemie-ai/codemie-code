@@ -14,6 +14,13 @@ import {
   type ConnectOptions,
   type RequestedDaemonConfig,
 } from '../connect-orchestrator.js';
+import { toSSOAuth } from '../../../../providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '../../../../providers/plugins/sso/auth/types.js';
+
+/** A resolved cookie login for the test profile host. */
+function storedCookieAuth(): SSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies: { session: 't' }, apiUrl: 'https://x.example.com/api' } }, 'https://x.example.com');
+}
 
 vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
@@ -126,8 +133,18 @@ vi.mock('../connectors/managed-mcp-remote.js', () => ({
 vi.mock('../../../../providers/integration/setup-ui.js', () => ({
   displaySetupInstructions: vi.fn(),
 }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(),
+// The SSO cookie record stored for each URL the resolver looks up; no JWT and no global record are stored.
+const storedCookies = vi.hoisted(() => vi.fn());
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string) => (url === undefined ? null : storedCookies(url)),
+      retrieveJWTCredentials: async () => null,
+      clearSSOCredentials: async () => undefined,
+      clearJWTCredentials: async () => undefined,
+    }),
+  },
 }));
 vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
   syncRegisteredSkills: vi.fn().mockResolvedValue(undefined),
@@ -208,7 +225,6 @@ afterEach(async () => {
 async function setupHappyMocks(configOverrides: Record<string, unknown> = {}): Promise<void> {
   const { ConfigLoader } = await import('../../../../utils/config.js');
   const { ProviderRegistry } = await import('../../../../providers/index.js');
-  const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
   vi.mocked(ConfigLoader.load).mockResolvedValue({
     name: 'p',
     provider: 'ai-run-sso',
@@ -221,9 +237,7 @@ async function setupHappyMocks(configOverrides: Record<string, unknown> = {}): P
     name: 'ai-run-sso',
     authType: 'sso',
   } as ReturnType<typeof ProviderRegistry.getProvider>);
-  vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-    return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 't' }) };
-  } as unknown as typeof CodeMieSSO);
+  storedCookies.mockResolvedValue({ cookies: { session: 't' } });
 }
 
 /** A daemon state written by this CLI's version (`0.17.0`, see the cli-updater mock). */
@@ -501,7 +515,6 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
       const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
       const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
       const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
-      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
       vi.mocked(isNonInteractiveEnvironment).mockReturnValueOnce(true);
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -512,7 +525,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
       expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--yes'));
       expect(ConfigLoader.load).not.toHaveBeenCalled();
-      expect(CodeMieSSO).not.toHaveBeenCalled();
+      expect(storedCookies).not.toHaveBeenCalled();
       expect(promptAnalyticsConfirmation).not.toHaveBeenCalled();
       expect(checkStatus).not.toHaveBeenCalled();
       expect(spawnDaemon).not.toHaveBeenCalled();
@@ -2226,12 +2239,9 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     it('--claude-otlp --yes, no CodeMie URL, the SSO check fails: the Desktop line, then the SSO error', async () => {
       await withFreshDaemon();
       await setupHappyMocks({ codeMieUrl: undefined });
+      storedCookies.mockResolvedValue(null);
       await onMachine('desktop', 'claude');
       await writers();
-      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-      vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-        return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
-      } as unknown as typeof CodeMieSSO);
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await expect(connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true }))
@@ -2868,9 +2878,10 @@ describe('ensureOtlpProxy', () => {
     vi.clearAllMocks();
     loggerSpies = [];
     lookup.mockReset();
-    lookup.mockResolvedValue({ token: 't' });
-    vi.doMock('../../../../providers/core/codemie-auth-helpers.js', () => ({
-      getStoredPlatformCredentials: lookup,
+    lookup.mockResolvedValue(storedCookieAuth());
+    vi.doMock('../../../../providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../../providers/plugins/sso/auth/index.js')>()),
+      resolveSSOAuth: lookup,
     }));
     consoleSpies = (['log', 'info', 'warn', 'error'] as const).map((method) =>
       vi.spyOn(console, method).mockImplementation(() => {})
@@ -2883,7 +2894,7 @@ describe('ensureOtlpProxy', () => {
   afterEach(() => {
     for (const spy of [...consoleSpies, ...loggerSpies]) spy.mockRestore();
     exitSpy.mockRestore();
-    vi.doUnmock('../../../../providers/core/codemie-auth-helpers.js');
+    vi.doUnmock('../../../../providers/plugins/sso/auth/index.js');
     vi.resetModules();
   });
 
@@ -3993,8 +4004,9 @@ describe('assertSsoCredentials', () => {
   beforeEach(() => {
     vi.resetModules();
     lookup.mockReset();
-    vi.doMock('../../../../providers/core/codemie-auth-helpers.js', () => ({
-      getStoredPlatformCredentials: lookup,
+    vi.doMock('../../../../providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../../providers/plugins/sso/auth/index.js')>()),
+      resolveSSOAuth: lookup,
     }));
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
@@ -4005,7 +4017,7 @@ describe('assertSsoCredentials', () => {
   afterEach(() => {
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
-    vi.doUnmock('../../../../providers/core/codemie-auth-helpers.js');
+    vi.doUnmock('../../../../providers/plugins/sso/auth/index.js');
     vi.resetModules();
   });
 
@@ -4044,7 +4056,17 @@ describe('assertSsoCredentials', () => {
   });
 
   it('resolves silently when credentials are stored', async () => {
-    lookup.mockResolvedValue({ cookies: {} });
+    lookup.mockResolvedValue(storedCookieAuth());
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+
+    await expect(assertSsoCredentials(BASE_URL, 'p')).resolves.toBeUndefined();
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('counts a stored JWT (a reverse proxy stripped the cookies) as logged in', async () => {
+    lookup.mockResolvedValue(toSSOAuth({ type: 'jwt', record: { token: 'jwt', apiUrl: BASE_URL } }, BASE_URL));
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
 
     await expect(assertSsoCredentials(BASE_URL, 'p')).resolves.toBeUndefined();
@@ -4137,8 +4159,9 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    vi.doMock('../../../../providers/core/codemie-auth-helpers.js', () => ({
-      getStoredPlatformCredentials: vi.fn().mockResolvedValue({ token: 't' }),
+    vi.doMock('../../../../providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../../providers/plugins/sso/auth/index.js')>()),
+      resolveSSOAuth: vi.fn().mockResolvedValue(storedCookieAuth()),
     }));
     outputSpies = [
       vi.spyOn(process.stdout, 'write').mockImplementation(() => true),
@@ -4149,7 +4172,7 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
 
   afterEach(() => {
     for (const spy of outputSpies) spy.mockRestore();
-    vi.doUnmock('../../../../providers/core/codemie-auth-helpers.js');
+    vi.doUnmock('../../../../providers/plugins/sso/auth/index.js');
     vi.resetModules();
   });
 
@@ -4328,7 +4351,6 @@ describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
       const write = await writerFor(c.id);
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
       vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
-      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
       const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
       const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -4341,7 +4363,7 @@ describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
 
       expect(process.exitCode).toBe(1);
       expect(console.error).toHaveBeenCalledWith(expect.stringContaining('--yes'));
-      expect(CodeMieSSO).not.toHaveBeenCalled();
+      expect(storedCookies).not.toHaveBeenCalled();
       expect(checkStatus).not.toHaveBeenCalled();
       expect(spawnDaemon).not.toHaveBeenCalled();
       expect(promptScopeDropConfirmation).not.toHaveBeenCalled();

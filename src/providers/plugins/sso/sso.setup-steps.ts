@@ -9,7 +9,7 @@
  * - Model fetching from SSO API
  */
 
-import { CodeMieError } from '../../../utils/errors.js';
+import { CodeMieError, ConfigurationError } from '../../../utils/errors.js';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -22,7 +22,7 @@ import type {
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { CodeMieSSO } from './sso.auth.js';
-import { effectiveExpiresAt } from './sso.expiry.js';
+import { authMaterial, resolveSSOAuth } from './auth/index.js';
 import { SSOModelProxy } from './sso.models.js';
 import { fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
@@ -31,8 +31,7 @@ import {
   authenticateWithCodeMie,
   promptForCodeMieUrl,
   selectCodeMieProject,
-  getPlatformUrl,
-  getStoredPlatformCredentials
+  getPlatformUrl
 } from '../../core/codemie-auth-helpers.js';
 
 /**
@@ -56,7 +55,7 @@ export class IntegrationFetchError extends CodeMieError {
  */
 export async function selectIntegrationForProject(
   apiUrl: string,
-  cookies: Record<string, string>,
+  auth: Record<string, string> | string,
   project: string | undefined,
   options: { onFetchError?: 'none' | 'throw' } = {}
 ): Promise<CodeMieIntegrationInfo | undefined> {
@@ -65,8 +64,8 @@ export async function selectIntegrationForProject(
 
   const integrationsSpinner = ora('Fetching user integrations...').start();
   try {
-    // Use the caller's cookies directly (same as the userInfo fetch) instead of retrieving from storage
-    const allIntegrations = await fetchCodeMieIntegrations(apiUrl, cookies);
+    // Use the caller's auth directly (same as the userInfo fetch) instead of retrieving from storage.
+    const allIntegrations = await fetchCodeMieIntegrations(apiUrl, auth);
 
     integrationsSpinner.stop();
 
@@ -147,12 +146,12 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     try {
       console.log(chalk.cyan('📂 Fetching available projects...\n'));
 
-      // Ensure API URL and cookies are available
-      if (!authResult.apiUrl || !authResult.cookies) {
-        throw new Error('API URL or cookies not found in authentication result');
+      // The login result carries the credential the resolver stored (cookie or JWT)
+      if (!authResult.apiUrl || !authResult.auth) {
+        throw new ConfigurationError('API URL or credentials not found in authentication result');
       }
 
-      ({ project: selectedProject, userEmail: selectedUserEmail } = await selectCodeMieProject(authResult));
+      ({ project: selectedProject, userEmail: selectedUserEmail } = await selectCodeMieProject(authResult.auth));
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
@@ -161,7 +160,11 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       throw new Error(`Project selection required: ${errorMsg}`);
     }
 
-    const integrationInfo = await selectIntegrationForProject(authResult.apiUrl, authResult.cookies, selectedProject);
+    const integrationInfo = await selectIntegrationForProject(
+      authResult.auth.apiUrl,
+      authMaterial(authResult.auth),
+      selectedProject
+    );
 
     return {
       baseUrl: authResult.apiUrl,
@@ -174,7 +177,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         // Reused by fetchModels() below so it hits the API with the same
         // authenticated session instead of re-resolving credentials from
         // storage (which can race with the credential store write on Windows).
-        cookies: authResult.cookies
+        auth: authResult.auth
       }
     };
   },
@@ -189,7 +192,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     const models = await modelProxy.fetchModels({
       codeMieUrl: credentials.additionalConfig?.codeMieUrl,
       baseUrl: credentials.baseUrl,
-      cookies: credentials.additionalConfig?.cookies
+      auth: credentials.additionalConfig?.auth
     } as CodeMieConfigOptions);
 
     return models.map(m => m.id);
@@ -237,20 +240,19 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         };
       }
 
-      const found = await getStoredPlatformCredentials(config);
+      const auth = await resolveSSOAuth(config);
 
-      if (!found) {
+      if (!auth) {
         return {
           valid: false,
           error: `No SSO credentials found for ${baseUrl}. Please run: codemie profile login --url ${baseUrl}`
         };
       }
-      const { credentials } = found;
 
       // Test API access
       try {
         // Only checks that the session can read the catalog; no project narrowing needed.
-        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies, undefined);
+        await fetchCodeMieModels(auth.apiUrl, authMaterial(auth), undefined);
       } catch (error) {
         return {
           valid: false,
@@ -260,7 +262,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       return {
         valid: true,
-        expiresAt: effectiveExpiresAt(credentials)
+        expiresAt: auth.expiresAt
       };
     } catch (error) {
       return {
@@ -327,17 +329,16 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async getAuthStatus(config: CodeMieConfigOptions): Promise<AuthStatus> {
     try {
-      const found = await getStoredPlatformCredentials(config);
+      const auth = await resolveSSOAuth(config);
 
-      if (!found) {
+      if (!auth) {
         return { authenticated: false };
       }
-      const { credentials } = found;
 
       return {
         authenticated: true,
-        expiresAt: effectiveExpiresAt(credentials),
-        apiUrl: credentials.apiUrl
+        expiresAt: auth.expiresAt,
+        apiUrl: auth.apiUrl
       };
     } catch (error) {
       logger.error('Failed to get auth status:', error);
