@@ -206,6 +206,7 @@ function execCommand(
       encoding: "utf-8",
       maxBuffer: 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
     return { stdout: stdout || "", stderr: "", exitCode: 0 };
   } catch (err: any) {
@@ -226,6 +227,7 @@ function execCommandAsync(
     env: { ...process.env, ...env },
     stdio: ["pipe", "ignore", "ignore"],
     detached: true,
+    windowsHide: true,
   });
   // A ChildProcess or stdin 'error' with no listener is an UNHANDLED error
   // event, which throws inside the host OpenCode process. Stop is configured
