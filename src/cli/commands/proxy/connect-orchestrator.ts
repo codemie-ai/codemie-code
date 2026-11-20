@@ -38,13 +38,14 @@ import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState }
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  getDesktopConfigPath,
   readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
 } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
-import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig, type ConnectorGateway } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
 import { decideDesktopRoute, decideVsCodeRoute } from './claude-client-config-state.js';
@@ -83,13 +84,16 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { isNonInteractiveEnvironment } from '@/utils/interactive.js';
+import { canPromptForProject, isNonInteractiveEnvironment } from '@/utils/interactive.js';
 import { verifyActiveCli } from '@/utils/active-cli.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import {
   CLAUDE_DESKTOP,
   VSCODE_BYOK,
 } from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import type { ProviderSettingsConnectTargets, ProviderSettingsProfile } from '@/agents/core/types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from '@/agents/core/provider-settings-check.js';
 import { renderHint } from '@/utils/hint.js';
 import {
   ANALYTICS_TARGETS,
@@ -463,6 +467,62 @@ export function printProxyError(error: unknown, label: string): never {
   }
 
   process.exit(1);
+}
+
+// ── Claude provider settings check ───────────────────────────────────────────
+
+/** The agent whose own settings the Claude targets (Desktop, VS Code extension, Claude Code analytics) read. */
+const CLAUDE_AGENT = 'claude';
+
+/**
+ * The settings file of the one VS Code edition this run configures (stable, or Insiders with `--insiders`);
+ * empty when that edition has no user-data directory.
+ */
+function resolveVsCodeSettingsFiles(insiders: boolean): string[] {
+  try {
+    return [getVsCodeClaudeCodeSettingsPath(insiders)];
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) throw error;
+    return [];
+  }
+}
+
+/** The client files this run is about to configure, or null when no Claude target is selected. */
+async function claudeConnectTargets(
+  targets: ConnectTargets,
+  insiders: boolean
+): Promise<ProviderSettingsConnectTargets | null> {
+  if (!targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.claudeCodeOtlp) return null;
+  return {
+    ...(targets.claudeDesktop
+      ? { desktop: { configFile: await getDesktopConfigPath(), managedFile: getClaudeDesktopManagedSettingsPath() } }
+      : {}),
+    ...(targets.vscodeClaudeCode ? { vscodeSettingsFiles: resolveVsCodeSettingsFiles(insiders) } : {}),
+    claudeCodeOtlp: targets.claudeCodeOtlp,
+  };
+}
+
+/**
+ * Asks the Claude adapter, through the registry, about settings that would send Claude traffic around the
+ * gateway. Every stop (cancel, managed, unknown, no terminal) aborts the command through the caller's error
+ * path; nothing is changed until the returned switch is applied.
+ */
+async function checkClaudeProviderSettings(
+  targets: ConnectTargets,
+  profile: ProviderSettingsProfile,
+  options: { silent: boolean; insiders: boolean }
+): Promise<ProviderSettingsSwitch | null> {
+  const { silent, insiders } = options;
+  const connect = await claudeConnectTargets(targets, insiders);
+  if (!connect) return null;
+  const { AgentRegistry } = await import('@/agents/registry.js');
+  const claude = AgentRegistry.getAgent(CLAUDE_AGENT);
+  if (!claude) return null;
+  return runProviderSettingsCheck(
+    claude,
+    { flow: 'connect', canPrompt: canPromptForProject() && !silent, profile, connect },
+    'throw'
+  );
 }
 
 // ── Unified connect orchestrator ─────────────────────────────────────────────
@@ -1118,6 +1178,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
   let projectBinding: ProjectBindingState | undefined;
+  let settingsSwitch: ProviderSettingsSwitch | null = null;
   let scopeBaselines: ScopeBaselines;
   try {
     // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
@@ -1177,6 +1238,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       config.codeMieUrl,
       () => printFailures(results)
     );
+
+    // Before anything is started or written: Bedrock settings in Claude's own configuration would send
+    // Claude traffic around the gateway this command is about to connect. Only the clients that will be
+    // configured (an aggregate flag leaves out the ones not found on this machine) are checked.
+    settingsSwitch = await checkClaudeProviderSettings(activeTargets, config, { silent: Boolean(opts.yes), insiders });
+
     if (activeTargets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
         scope,
@@ -1205,6 +1272,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     }
     if (!routePlanPrinted) printClaudeRoutePlan(routePlan);
 
+    await settingsSwitch?.apply();
+
     const cwd = process.cwd();
     await Promise.allSettled([
       syncRegisteredSkills(profile, cwd),
@@ -1227,6 +1296,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       await rollbackDaemon();
     }
     printFailures(results);
+    settingsSwitch?.printBackupNote();
     printProxyError(error, 'Failed to connect proxy');
     // printProxyError calls process.exit and never returns; this explicit return
     // guarantees control can never fall through to the dispatch below with
@@ -1300,6 +1370,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // already printed their own line.
   printFailures(results);
   if (anyFailed) {
+    settingsSwitch?.printBackupNote();
     process.exitCode = 1;
   }
   const olderCli = await findOlderCliOnPath();
