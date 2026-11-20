@@ -41,12 +41,11 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
-import type { LlmModel } from '../../src/providers/plugins/sso/sso.http-client.js';
 import { canonicalizeModelId } from '../../src/utils/pricing.js';
+import { isRouterModel } from '../../src/utils/model-family.js';
 import type { ReportPayload } from '../../src/cli/commands/analytics/report/types.js';
 import {
   runAgentTaskSmoke,
@@ -54,56 +53,11 @@ import {
   teardownSsoAutotestProfile,
   getTempDir,
   getCodemieTestUrl,
+  fetchLiveCatalog,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI_BIN = join(REPO_ROOT, 'bin', 'codemie.js');
-
-/**
- * Fetch the live model catalog in a throwaway CHILD process, not in-process.
- *
- * The `agent` vitest project pins `CODEMIE_HOME` to a fixed per-worker temp dir (see
- * vitest.config.ts) for every test file in it. `CredentialStore`'s `CREDENTIALS_DIR` (in
- * src/utils/security.ts) is computed once, at module-load time, from that same env var — so
- * importing `CodeMieSSO`/`CredentialStore` in-process here would look for credentials under the
- * project's fake test home, not the real `~/.codemie` where `copySsoCredentials()` (used
- * everywhere else in this file) reads them from. Spawning a bare node process with `CODEMIE_*`
- * stripped gives that process a fresh, correct module load against the real home instead.
- */
-function fetchLiveCatalog(codeMieUrl: string): LlmModel[] {
-  const distSsoAuth = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.auth.js');
-  const distHttpClient = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.http-client.js');
-  const scriptPath = join(tmpdir(), `codemie-catalog-fetch-${process.pid}.mjs`);
-  const script = `
-import { CodeMieSSO } from ${JSON.stringify(distSsoAuth)};
-import { fetchCodeMieLlmModels } from ${JSON.stringify(distHttpClient)};
-const url = ${JSON.stringify(codeMieUrl)};
-const creds = await new CodeMieSSO().getStoredCredentials(url);
-if (!creds) {
-  console.error('NO_CREDENTIALS');
-  process.exit(2);
-}
-const models = await fetchCodeMieLlmModels(creds.apiUrl, creds.cookies);
-process.stdout.write(JSON.stringify(models));
-`;
-  writeFileSync(scriptPath, script, 'utf-8');
-  try {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of Object.keys(env)) {
-      if (key.startsWith('CODEMIE_')) delete env[key];
-    }
-    const result = spawnSync(process.execPath, [scriptPath], { encoding: 'utf-8', env, timeout: 30_000 });
-    if (result.status !== 0) {
-      throw new Error(
-        `catalog fetch failed (exit ${result.status ?? 'null'}): ${result.stderr}\n` +
-          `Run: codemie profile login --url ${codeMieUrl}`,
-      );
-    }
-    return JSON.parse(result.stdout) as LlmModel[];
-  } finally {
-    rmSync(scriptPath, { force: true });
-  }
-}
 
 /** Upper bound per live "hi" run; actual trivial-prompt turns finish far sooner. */
 const PER_MODEL_TIMEOUT_MS = 120_000;
@@ -245,8 +199,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-live-mode
 
     // ── Fetch the live catalog and partition into mapped/skipped ──────────────────────
     const codeMieUrl = getCodemieTestUrl();
-    const allModels = fetchLiveCatalog(codeMieUrl);
-    const enabledModels = allModels.filter((m) => m.enabled);
+    const allModels = fetchLiveCatalog(codeMieUrl, 'catalog-fetch');
+    // Routers dispatch to other models and carry no `deployment_name`; only concrete models are driven.
+    const enabledModels = allModels.filter((m) => m.enabled && !isRouterModel(m));
 
     for (const model of enabledModels) {
       const binName = mapModelToBin(model.deployment_name);

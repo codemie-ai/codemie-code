@@ -119,7 +119,7 @@ export function buildToolEvent(
     delete event.error_message;
     delete event.error_context;
   } else if (opts.end?.errorMessage !== undefined && event.error_message === undefined) {
-    event.error_message = opts.end.errorMessage.slice(0, 300);
+    event.error_message = opts.end.errorMessage;
   }
   return event;
 }

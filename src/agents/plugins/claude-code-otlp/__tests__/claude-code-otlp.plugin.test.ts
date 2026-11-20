@@ -1830,6 +1830,64 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     });
   });
 
+  describe('injected context and auto prompts', () => {
+    const send = async (raw: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+      await plugin.processOtlpEvent(promptEvent(raw, overrides), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      return forwardedEvents()[0];
+    };
+    const openedFile = (path: string): string =>
+      `<ide_opened_file>The user opened the file ${path} in the IDE. This may or may not be related to the current task.</ide_opened_file>`;
+
+    it('drops the IDE open-file block from prompt and prompt_body', async () => {
+      const forwarded = await send(`${openedFile('/repo/a.ts')}\nfix the build`);
+
+      expect(forwarded['prompt']).toBe('fix the build');
+      expect(forwarded['prompt_body']).toBe('fix the build');
+      expect(forwarded['prompt_source']).toBe('user');
+      expect(JSON.stringify(forwarded)).not.toContain('ide_opened_file');
+    });
+
+    it('drops IDE selection and system-reminder blocks, then the pasted-content tags', async () => {
+      const forwarded = await send(
+        '<ide_selection>The user selected lines 1-2:\nx\n</ide_selection><system-reminder>r</system-reminder>' +
+          'see <pasted_content id="p">log</pasted_content id="p">'
+      );
+
+      expect(forwarded['prompt']).toBe('see log');
+    });
+
+    it('detects a slash command and tickets behind IDE context, not tickets from the file path', async () => {
+      const raw = `${openedFile('/repo/EPMCDME-777/a.ts')}/simplify story: abc-12`;
+      const forwarded = await send(raw);
+
+      expect(forwarded['command_name']).toBe('simplify');
+      expect(forwarded['story_marker']).toBe('ABC-12');
+      expect(forwarded['ticket_mentions']).toEqual(['ABC-12']);
+      expect(forwarded['prompt_length']).toBe(raw.length);
+    });
+
+    it('flags a task notification and keeps its text', async () => {
+      const raw = '<task-notification>\n<task-id>a1</task-id>\n<summary>done</summary>\n</task-notification>';
+      const forwarded = await send(raw);
+
+      expect(forwarded['prompt_source']).toBe('task_notification');
+      expect(forwarded['prompt']).toBe(raw);
+    });
+
+    it('flags an agent message', async () => {
+      const forwarded = await send('<agent-message from="reviewer">done</agent-message>');
+
+      expect(forwarded['prompt_source']).toBe('agent_message');
+    });
+
+    it('sets prompt_source over a same-named key in the hook payload', async () => {
+      const forwarded = await send('hello', { prompt_source: 'task_notification' });
+
+      expect(forwarded['prompt_source']).toBe('user');
+      expect(forwarded['prompt']).toBe('hello');
+    });
+  });
+
   it('forwards session_title unchanged on UserPromptSubmit and omits it when absent', async () => {
     await plugin.processOtlpEvent(promptEvent('hello', { session_title: 'my-name' }), {
       ensureOtlpProxy,

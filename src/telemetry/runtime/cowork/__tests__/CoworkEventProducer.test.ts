@@ -42,7 +42,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
   readState: readStateMock,
 }));
 
-import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/OtlpAgentAdapter.js';
+import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { logger } from '@/utils/logger.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';

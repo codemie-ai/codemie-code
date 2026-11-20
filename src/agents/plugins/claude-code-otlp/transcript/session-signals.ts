@@ -1,4 +1,5 @@
 import { countContentLines } from '@/utils/file-operations.js';
+import { autoPromptSource } from '../event-fields/prompt-fields.js';
 
 /**
  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
@@ -120,9 +121,6 @@ const SELF_WRITTEN_PREFIXES = [
   '<bash-input>',
 ];
 
-/** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
-const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
-
 function startsWithAny(text: string, prefixes: readonly string[]): boolean {
   const start = text.trimStart();
   return prefixes.some((prefix) => start.startsWith(prefix));
@@ -242,7 +240,7 @@ function isPrecededByCompactBoundary(lines: readonly SignalLine[], i: number): b
     }
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
-    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    if (isSelfWrittenUserText(text) || autoPromptSource(text) !== undefined) continue;
     if (!sawBoundary) return false;
     return !isTypedCompactText(text);
   }
@@ -262,7 +260,7 @@ export function countTurns(lines: readonly SignalLine[]): number {
     const line = lines[i];
     if (!isGenuineUserTurn(line)) continue;
     const text = userLineText(line);
-    if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
+    if (isSelfWrittenUserText(text) || autoPromptSource(text) !== undefined) continue;
     const isLocal = isMarkedLocalCommand(lines, i);
     const rescuedAsCompact = isLocal && isCompactCommand(text) && isPrecededByCompactBoundary(lines, i);
     if (isLocal && !rescuedAsCompact) continue;
