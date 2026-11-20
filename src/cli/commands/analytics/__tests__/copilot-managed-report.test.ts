@@ -21,7 +21,8 @@ const DAY = 24 * HOUR;
 let codemieHome: string;
 let copilotHome: string;
 let outDir: string;
-const saved = { codemie: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME };
+let claudeHome: string;
+const saved = { codemie: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME, claude: process.env.CLAUDE_CONFIG_DIR };
 
 function nativeSession(id: string, startMs: number, opts: { turns: number; tokens: boolean }): string {
   const dir = join(copilotHome, 'session-state', id);
@@ -70,8 +71,12 @@ beforeEach(() => {
   codemieHome = mkdtempSync(join(tmpdir(), 'copilot-rep-codemie-'));
   copilotHome = mkdtempSync(join(tmpdir(), 'copilot-rep-home-'));
   outDir = mkdtempSync(join(tmpdir(), 'copilot-rep-out-'));
+  // Claude native discovery reads $CLAUDE_CONFIG_DIR/projects (default ~/.claude): without this the
+  // report scans the developer's real Claude history, slow enough to time out — or run out of memory.
+  claudeHome = mkdtempSync(join(tmpdir(), 'copilot-rep-claude-'));
   process.env.CODEMIE_HOME = codemieHome;
   process.env.COPILOT_HOME = copilotHome;
+  process.env.CLAUDE_CONFIG_DIR = claudeHome;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   vi.spyOn(ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({ userEmail: 'dev@example.com' } as never);
@@ -98,11 +103,11 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  for (const [key, value] of [['CODEMIE_HOME', saved.codemie], ['COPILOT_HOME', saved.copilot]] as const) {
+  for (const [key, value] of [['CODEMIE_HOME', saved.codemie], ['COPILOT_HOME', saved.copilot], ['CLAUDE_CONFIG_DIR', saved.claude]] as const) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-  for (const d of [codemieHome, copilotHome, outDir]) rmSync(d, { recursive: true, force: true });
+  for (const d of [codemieHome, copilotHome, outDir, claudeHome]) rmSync(d, { recursive: true, force: true });
 });
 
 describe('analytics --agent copilot-cli --last 24h --export json', () => {
