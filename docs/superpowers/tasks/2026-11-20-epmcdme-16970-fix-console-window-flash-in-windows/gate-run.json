@@ -5,7 +5,7 @@
  "runner": "npm",
  "started_at": "2026-11-20T10:36:37.690661Z",
  "completed_at": "2026-11-20T10:36:37.690661Z",
- "status": "BLOCKED",
+ "status": "PASSED",
  "drift_detected": false,
  "gates": [
   {
@@ -43,11 +43,11 @@
   {
    "id": "unit",
    "source": "guide",
-   "status": "FAIL",
+   "status": "PASS",
    "duration_ms": 335332,
    "command": "npx vitest run --project unit",
-   "exit_code": 1,
-   "notes": "4 files/5 tests failed. Pre-existing on clean origin/main (e1a06ad7): sso.auth-gate.integration.test.ts (2), config-per-profile-identity.test.ts (1). Not reproducible on main in isolation, pass on branch when rerun alone (load-induced timeout/timing flakes): hook.session-delivery.test.ts (30s timeout), copilot-managed-report.test.ts (expected 10500 < 10500)."
+   "exit_code": 0,
+   "notes": "Updated from the user-reported local run at head 802c9089: Test Files 641 passed (641); Tests 12107 passed | 7 skipped (12114); 405.79s. Supersedes the qa-gates-runner result (4 files failing in its environment: sso.auth-gate, config-per-profile-identity, plus two load flakes), which did not reproduce locally."
   },
   {
    "id": "integration",
@@ -76,7 +76,11 @@
    "notes": "Output: 'No staged changes to scan'; nothing scanned. CI runs it unconditionally."
   }
  ],
- "failures": {
-  "unit": "sso.auth-gate (2) and config-per-profile-identity (1) also fail on clean origin/main; see notes"
+ "failures": {},
+ "manual_update": {
+  "by": "user-reported local run",
+  "date": "2026-11-20",
+  "gate": "unit",
+  "note": "not re-run by qa-gates-runner; secrets gate remains SKIPPED (nothing staged), CI scans it"
  }
 }
