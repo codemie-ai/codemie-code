@@ -72,6 +72,35 @@ function resolveIncludeExternal(raw: string | true | undefined, json: boolean): 
   return null;
 }
 
+/** The space-separated path from `root` to its descendant command named `name`, e.g. `sync bootstrap`. */
+function findSubcommandPath(root: Command, name: string): string | undefined {
+  for (const child of root.commands) {
+    if (child.name() === name) return child.name();
+    const nested = findSubcommandPath(child, name);
+    if (nested) return `${child.name()} ${nested}`;
+  }
+  return undefined;
+}
+
+/**
+ * `analytics` has its own action, so commander hands a mistyped subcommand to it as a stray
+ * operand instead of failing. Run as the bare report, `codemie analytics bootstrap` loaded every
+ * native transcript on disk and ran the process out of memory. Report it as an unknown command,
+ * naming the nested one it most likely meant. Returns true after reporting (exitCode 1).
+ */
+function rejectStrayOperand(command: Command): boolean {
+  const [operand] = command.args;
+  if (operand === undefined) return false;
+  const match = findSubcommandPath(command, operand);
+  process.stderr.write(
+    `Error: unknown command "${operand}" for "codemie analytics"` +
+      (match ? ` — did you mean "codemie analytics ${match}"?` : ' — run "codemie analytics --help" for the commands') +
+      '\n'
+  );
+  process.exitCode = 1;
+  return true;
+}
+
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
     .description('Display aggregated metrics and analytics from sessions')
@@ -87,7 +116,8 @@ export function createAnalyticsCommand(): Command {
       '--include-external [policy]',
       `Also count native agent sessions CodeMie did not launch (e.g. plain \`claude\`): ${INCLUDE_EXTERNAL_ACCEPTED}`
     )
-    .action((options: AnalyticsOptions & { includeExternal?: string | true }) => {
+    .action((options: AnalyticsOptions & { includeExternal?: string | true }, self: Command) => {
+      if (rejectStrayOperand(self)) return;
       const includeExternal = resolveIncludeExternal(options.includeExternal, false);
       if (includeExternal === null) return;
       return runAnalytics({ ...options, includeExternal }, new SessionsSource());
