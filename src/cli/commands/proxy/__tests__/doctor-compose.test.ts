@@ -486,6 +486,20 @@ describe('composeProxyDoctor', () => {
     expect(delivery.find((s) => s.message.startsWith('Last dropped'))?.hint).toContain('codemie setup');
   });
 
+  it('delivery explains a project-conflict discard as the last drop, with no command to run', async () => {
+    collectDeliveryHealth.mockResolvedValue({
+      status: 'healthy',
+      pendingBytes: 0,
+      latestDrop: { reason: 'project_conflict_discard', stream: 'hooks', at: Date.now(), local: true },
+    });
+
+    const report = await compose();
+
+    const drop = report.sections.find((s) => s.id === 'delivery' && s.message.startsWith('Last dropped'));
+    expect(drop?.message).toMatch(/Last dropped: project_conflict_discard \(hooks, \d{4}-\d{2}-\d{2} /);
+    expect(drop?.hint).toBe('the session used folders that belong to different CodeMie projects; part of its data was not sent');
+  });
+
   it('surfaces the daemon watcher recorded health problem', async () => {
     readDaemonStatus.mockResolvedValue({
       running: true,

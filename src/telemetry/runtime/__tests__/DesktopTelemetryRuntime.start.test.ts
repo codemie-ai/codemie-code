@@ -85,7 +85,7 @@ const config: DesktopTelemetryRuntimeConfig = {
   // Desktop connected to this daemon on every poll
   port: 4001,
   gatewayKey: 'codemie-proxy',
-  readDesktopGateway: async () => ({ port: 4001, apiKey: 'codemie-proxy' })
+  readDesktopGateway: async () => ({ gateway: { port: 4001, apiKey: 'codemie-proxy' }, namesGateway: true })
 };
 
 let codemieHome: string;

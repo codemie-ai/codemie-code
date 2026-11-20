@@ -1,0 +1,352 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "deterministic",
+    "rationale": "Check round (targeted verifier, confidence high): CR-001 resolved (index.ts:124 appends the restart and Reconnect steps to proxy --help). CR-002..CR-006 are advisory and stay fix-later."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "deterministic",
+      "rationale": "Final round (profile full, all lenses and standards ran, confidence medium): 1 blocking (CR-001: proxy --help omits restart and Reconnect steps, AC9), 5 minor advisories (CR-002..CR-006) not fixed by the route. Verdict code-review-final.json."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "deterministic",
+      "rationale": "Check round (targeted verifier, confidence high): CR-001 resolved (index.ts:124 appends the restart and Reconnect steps to proxy --help). CR-002..CR-006 are advisory and stay fix-later."
+    }
+  ],
+  "reviewed_head": "8435a28eb2845698b20caed207c8d41fd7123786",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 is resolved: src/cli/commands/proxy/index.ts:124 now appends RESET_NEXT_STEPS (restart and Reconnect steps) to `codemie proxy --help`, confirmed against the source at HEAD. CR-002 to CR-006 are advisory and outside the fix set, so they were not re-graded; the business_review and standards_review rows, AC9 included, are carried forward unchanged from the prior verdict. The only other changes are file-mode flips on three bin/*-acp.js files.",
+  "confidence": "medium",
+  "check_confidence": "high",
+  "risk_flags": [
+    "auth",
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 437,
+      "title": "proxy --help omits restart and Reconnect steps",
+      "problem": "AC9 requires `codemie proxy --help`, docs/COMMANDS.md and README.md to list reset-mcp-auth with the restart and Reconnect steps. README.md and COMMANDS.md carry them, but `proxy --help` shows only the one-line description (index.ts:439); the steps are attached solely to `reset-mcp-auth --help` through addHelpText (index.ts:441). The code comment at index.ts:436 states this.",
+      "impact": "Partial on a required story criterion, so graded critical: a user reading `codemie proxy --help` sees the command without the Reconnect and re-run steps. Reachability confirmed by reading the registration; the consequence is limited to help-text discoverability.",
+      "recommendation": "Show RESET_NEXT_STEPS next to reset-mcp-auth in `codemie proxy --help` (for example `proxy.addHelpText('after', ...)` on the parent command) and keep the subcommand help as it is.",
+      "status": "resolved",
+      "check_notes": "index.ts:124 chains .addHelpText('after', ...RESET_NEXT_STEPS) onto the parent proxy command, so `proxy --help` ends with the restart, Reconnect and re-run lines; the subcommand help at index.ts:442 is kept",
+      "fix": {
+        "change": "proxy command now appends the restart and Reconnect steps (RESET_NEXT_STEPS) to `proxy --help` via addHelpText('after')",
+        "test": "n/a (tests only on request per AGENTS.md); scratchpad probe asserts proxy --help carries RESET_NEXT_STEPS, RED before, GREEN after"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop-mcp-auth.ts",
+      "line": 29,
+      "title": "Duplicate error-code helper in two modules",
+      "problem": "`errorCode` (desktop-mcp-auth.ts:29-32) and `errorCodeOf` (reset-mcp-auth-orchestrator.ts:52-55) are the same function written twice.",
+      "impact": "No behavior consequence today; the copies can drift apart. Trigger: a later edit to only one of them. Reachability confirmed by reading both modules.",
+      "recommendation": "Export one helper (from desktop-mcp-auth.ts or a shared util) and import it in the orchestrator.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop-mcp-auth.ts",
+      "line": 56,
+      "title": "Read-modify-write can overwrite a concurrent Desktop write",
+      "problem": "clearDesktopMcpSignIns reads config.json (line 56), then writes the parsed object minus one key (line 72) with no re-check in between. If Claude Desktop writes the file in that window, its newer settings are replaced by the stale copy, contradicting the docs' claim that every other setting is left as it was. Read of the function confirms there is no lock or mtime check.",
+      "impact": "Narrow trigger: a Desktop write inside the milliseconds between read and rename, with Desktop open as AC10 expects. Loss is limited to settings written in that window; workaround is re-running after quitting Desktop, which the closing message already advises.",
+      "recommendation": "Compare the file mtime before the rename and return write-failed on a mismatch, or note the window beside the quit-first advice.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop-mcp-auth.ts",
+      "line": 62,
+      "title": "BOM-prefixed config.json reported as invalid JSON",
+      "problem": "readFile(..., 'utf-8') keeps a leading U+FEFF and JSON.parse rejects it, so a BOM-prefixed config.json (for example saved by Windows PowerShell 5) returns outcome invalid-json (desktop-mcp-auth.ts:56-63).",
+      "impact": "Narrow trigger: a hand-edited, BOM-prefixed file on Windows; a file Desktop itself wrote has no BOM. It fails safe (file untouched, exit 1) but the user gets a misleading 'is not valid JSON' message and cannot reset until the BOM is removed.",
+      "recommendation": "Strip a leading U+FEFF from the text before calling parseJson.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/reset-mcp-auth-orchestrator.ts",
+      "line": 62,
+      "title": "Server names printed with C1 controls and bidi unescaped",
+      "problem": "The header and formatServerNames claim a name cannot rewrite the lines after it, but JSON.stringify escapes only C0 controls, not C1 (U+0080-U+009F, including U+009B CSI) or bidi overrides (U+202E). Names have no length cap, only the count is capped at 20, and `path` is printed raw.",
+      "impact": "Narrow trigger: a server-name key holding C1 or bidi characters, or megabytes of text, which needs control over the MCP server list or config.json. Effect is spoofed or flooded terminal output only; no token or file excerpt is disclosed.",
+      "recommendation": "Replace C1 (U+007F-U+009F) and bidi (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) characters in each stringified name and truncate each name to about 80 characters, or soften the header comment.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/reset-mcp-auth-orchestrator.ts",
+      "line": 126,
+      "title": "Result printing sits inside the platform-failure catch",
+      "problem": "reportResult runs inside the same try as getClaudeDesktopBaseDir and clearDesktopMcpSignIns, and reportUnexpectedFailure always prints 'Could not reset ... on platform <platform>' whatever was thrown, logging only the error code. A throw while printing or logging after the file was rewritten would report a platform failure with exit 1 though the sign-ins were cleared.",
+      "impact": "Reachability unconfirmed: no throw path was found in reportResult, but logger and sanitizeLogArgs internals were not traced. Today only the unsupported-platform throw reaches the catch, where the text is accurate, so this is a latent mis-report.",
+      "recommendation": "Keep getClaudeDesktopBaseDir and clearDesktopMcpSignIns in the try and call reportResult outside it, or word the catch text without naming the platform and log the error name.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Behavior: reset-mcp-auth --claude-desktop; no flag lists clients; daemon and configLibrary untouched; atomic rewrite keeps permissions",
+      "status": "pass",
+      "notes": "Registered at index.ts:437-444; bare call prints the list; writeJsonFileAtomic keeps file mode; no daemon or configLibrary code touched"
+    },
+    {
+      "kind": "spec",
+      "item": "Behavior table: entry removed but not an object -> 'sign-ins cleared', no names, restart + Reconnect, exit 0",
+      "status": "pass",
+      "notes": "desktop-mcp-auth.ts:77 returns servers []; orchestrator printCleared prints the message and RESET_NEXT_STEPS; exit code unset"
+    },
+    {
+      "kind": "spec",
+      "item": "Behavior table: unsupported platform -> fixed text naming the platform, nothing changed, exit 1",
+      "status": "pass",
+      "notes": "getClaudeDesktopBaseDir() throws inside the try; reportUnexpectedFailure prints fixed text with the platform and sets exitCode 1"
+    },
+    {
+      "kind": "spec",
+      "item": "Contract: file logic takes baseDir, never throws, one result per row with path and error code; parse message not kept",
+      "status": "pass",
+      "notes": "clearDesktopMcpSignIns returns seven outcomes; parseJson drops the parser error; codes carried on unreadable and write-failed"
+    },
+    {
+      "kind": "spec",
+      "item": "Contract: handler alone owns text, logs, exit code; one catch around the whole action incl. getClaudeDesktopBaseDir",
+      "status": "pass",
+      "notes": "Single try/catch in resetMcpAuth; reportUnexpectedFailure logs only the code via sanitizeLogArgs; no error.message forwarded"
+    },
+    {
+      "kind": "spec",
+      "item": "Contract: rename blocked on Windows (EBUSY, EPERM, EACCES) prints the AC12 re-run line",
+      "status": "pass",
+      "notes": "WINDOWS_BLOCKED_WRITE_CODES plus win32 check in printFailure prints RESET_RERUN_HINT on write-failed"
+    },
+    {
+      "kind": "spec",
+      "item": "Approach: new subcommand and module; not folded into disconnect / removeDesktopConfig",
+      "status": "pass",
+      "notes": "disconnect-orchestrator and connectors/desktop.ts untouched; new desktop-mcp-auth.ts and reset-mcp-auth-orchestrator.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: custom3pMcpOAuth entry removed, other settings unchanged, user told to quit, restart and press Reconnect",
+      "status": "pass",
+      "notes": "Rest-spread drops only MCP_OAUTH_KEY; printCleared prints RESET_NEXT_STEPS; 2-space re-indent accepted by the spec"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: config.json directly in Claude-3p per OS (Linux honours XDG_CONFIG_HOME, macOS Application Support, Windows LOCALAPPDATA)",
+      "status": "pass",
+      "notes": "getClaudeDesktopBaseDir() read: yields the three paths and throws elsewhere; config.json joined directly"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: no entry or an empty one -> nothing changed, 'nothing to clear', exit 0",
+      "status": "pass",
+      "notes": "hasNothingToClear covers undefined, null and {}; returns before any write; no exit code set"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: names printed; no token value or config excerpt printed or logged on any outcome; failures name path and kind",
+      "status": "pass",
+      "notes": "Names via JSON.stringify capped at 20; logs carry path, outcome, count; parser error dropped; error reduced to code"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: proxy keeps running; gateway settings and managed MCP server list unchanged",
+      "status": "pass",
+      "notes": "No daemon, configLibrary or gateway code in the diff; only the custom3pMcpOAuth key is dropped"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: no client flag -> lists the clients it can reset, changes nothing",
+      "status": "pass",
+      "notes": "resetMcpAuth prints RESET_TARGET_LIST and returns; exit 0 per spec decision"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: missing config.json -> message naming the path checked, nothing changed, non-zero exit",
+      "status": "pass",
+      "notes": "ENOENT -> missing; FAILURES.missing text with path; process.exitCode = 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: unreadable or invalid-JSON config.json -> path named, file not changed, no content quoted, non-zero exit",
+      "status": "pass",
+      "notes": "unreadable, invalid-json and not-object rows say 'file was not changed' with path and optional code; exit 1"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: proxy --help, docs/COMMANDS.md and README.md list the command with the restart and Reconnect steps",
+      "status": "partial",
+      "notes": "proxy --help lists reset-mcp-auth by description only (index.ts:439); steps are in reset-mcp-auth --help (index.ts:441), README.md and docs/COMMANDS.md"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: per-OS manual check with Desktop open; entry stays gone; result recorded in the merge request",
+      "status": "pending-stage-7",
+      "notes": "Implementation present; remaining proof is manual per-OS run evidence for the merge request"
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: failed rewrite -> message naming path and kind of failure, file as it was, non-zero exit",
+      "status": "pass",
+      "notes": "write-failed result; 'could not be rewritten ... file left as it was' with path and code; atomic-write.ts:86 removes the temp file; exit 1"
+    },
+    {
+      "kind": "spec",
+      "item": "AC12: closing message, --help, docs/COMMANDS.md and README.md carry the quit-first re-run line",
+      "status": "pass",
+      "notes": "RESET_RERUN_HINT is part of RESET_NEXT_STEPS (printed on success and in the subcommand help); same line in README.md and COMMANDS.md"
+    },
+    {
+      "kind": "spec",
+      "item": "AC13: sentinel in invalid and valid config.json appears in no stdout, stderr or log line",
+      "status": "pending-stage-7",
+      "notes": "Design supports it (no file content or parser text reaches output or logs); the sentinel run is manual execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "NG1: quitting, relaunching or pressing Reconnect for the user",
+      "status": "pass",
+      "notes": "Command only prints the steps; no process control"
+    },
+    {
+      "kind": "spec",
+      "item": "NG2: finding why an expired token cannot refresh over the proxy",
+      "status": "pass",
+      "notes": "No root-cause or proxy refresh code in the diff"
+    },
+    {
+      "kind": "spec",
+      "item": "NG3: backup copy of config.json",
+      "status": "pass",
+      "notes": "No backup written; only the atomic temp file, renamed over the target"
+    },
+    {
+      "kind": "spec",
+      "item": "NG4: clients other than Claude Desktop",
+      "status": "pass",
+      "notes": "Only the --claude-desktop target exists"
+    },
+    {
+      "kind": "spec",
+      "item": "NG5: clearing one named server",
+      "status": "pass",
+      "notes": "Whole MCP_OAUTH_KEY entry is removed; no per-server option"
+    },
+    {
+      "kind": "spec",
+      "item": "NG6: detecting or warning that Desktop is running",
+      "status": "pass",
+      "notes": "No process detection; the generic closing steps are printed regardless"
+    },
+    {
+      "kind": "spec",
+      "item": "NG7: Windows 10 MSIX directory and %APPDATA%\\Claude-3p\\",
+      "status": "pass",
+      "notes": "Only getClaudeDesktopBaseDir() (LOCALAPPDATA) is used; no extra locations probed"
+    },
+    {
+      "kind": "spec",
+      "item": "Decision: logs carry path, outcome and server count, never server names",
+      "status": "pass",
+      "notes": "reportResult logs path, outcome and servers.length only"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "4 subjects in range match <type>(<scope>): <subject>; types feat/docs and scope proxy are allowed, imperative mood, each under 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "3 changed source files meet code-quality.md: import style, explicit return types, no any, naming, size limits, JSDoc; README and COMMANDS.md updated; diagnostics go through logger"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Logs carry only path, outcome, count via sanitizeLogArgs; no parser text, file content or error messages printed; names JSON.stringify-escaped; path not from CLI input; no secrets"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "AC9 is partial: `codemie proxy --help` lists reset-mcp-auth by description only, with the restart and Reconnect steps only in its own --help (1 blocking). All four lenses and standards ran; 5 minor advisories (one, the catch scope, with reachability unconfirmed), 0 deferred, 13 dismissed (mostly spec-sanctioned behaviour and test-on-request policy, see code-review-dismissed.local.md); AC10 and AC13 stay pending-stage-7.",
+    "confidence": "medium",
+    "risk_flags": [
+      "auth",
+      "security"
+    ]
+  }
+}

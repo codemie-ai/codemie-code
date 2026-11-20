@@ -215,15 +215,18 @@ describe('summarizeSpoolDelivery', () => {
     expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
   });
 
-  it('reports the newest drop across sessions: a local no_project loss after a backend discard', async () => {
-    await session('discarded', {}, (s) => {
-      s.lastDiscard = { reason: 'cli_analytics_disabled', stream: 'hooks', bytes: 10, at: 1_000 };
-    });
-    await session('no-project', {}, (s) => {
-      s.lastLoss = { reason: 'no_project', at: 2_000, bytes: 200, stream: 'hooks' };
-    });
-    expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason: 'no_project', stream: 'hooks', at: 2_000, local: true });
-  });
+  it.each(['no_project', 'project_conflict_discard'] as const)(
+    'reports the newest drop across sessions: a local %s loss after a backend discard',
+    async (reason) => {
+      await session('discarded', {}, (s) => {
+        s.lastDiscard = { reason: 'cli_analytics_disabled', stream: 'hooks', bytes: 10, at: 1_000 };
+      });
+      await session('local-loss', {}, (s) => {
+        s.lastLoss = { reason, at: 2_000, bytes: 200, stream: 'hooks' };
+      });
+      expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason, stream: 'hooks', at: 2_000, local: true });
+    }
+  );
 
   it('reports a retention-bound loss newer than every discard, without a stream', async () => {
     await session('mixed', {}, (s) => {

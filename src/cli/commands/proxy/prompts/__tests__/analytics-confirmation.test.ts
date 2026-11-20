@@ -85,6 +85,45 @@ describe('buildAnalyticsConfirmationMessage — Global (default)', () => {
   });
 });
 
+describe('buildAnalyticsConfirmationMessage — routed clients', () => {
+  it('names the routed client and says it leaves the Claude login', () => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(message).toContain('Claude Desktop will be routed through the proxy');
+    expect(message).toContain('not your Claude login');
+  });
+
+  it('names two routed clients with "and"', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(
+        options({ kind: 'absent' }, { routedClients: ['VS Code Claude Code extension', 'Claude Desktop'] }),
+      ),
+    );
+
+    expect(lines.slice(2).join(' ')).toContain('VS Code Claude Code extension and Claude Desktop will be routed');
+  });
+
+  it.each([[undefined], [[]]])('adds nothing for routedClients %j', (routedClients) => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients })),
+    );
+
+    expect(message).not.toContain('not your Claude login');
+    expect(message).not.toContain('routed');
+  });
+
+  it('puts the note after the unreadable-allowlist note', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(lines.indexOf(INVALID_NOTE)).toBeGreaterThan(-1);
+    expect(lines.findIndex((l) => l.includes('will be routed'))).toBeGreaterThan(lines.indexOf(INVALID_NOTE));
+  });
+});
+
 describe('buildAnalyticsConfirmationMessage — Project scope (explicit opt-in)', () => {
   it.each(ALLOWLISTS)('adds the analytics repository name for %s', (_label, allowlist) => {
     const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName: 'owner/repo' })));
