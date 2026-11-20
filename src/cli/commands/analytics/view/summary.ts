@@ -1,0 +1,388 @@
+/**
+ * Every number of `codemie analytics view --export summary`, computed from report records.
+ *
+ * The formulas are the HTML report's own (`report/client/app.js`); each one names the function
+ * it mirrors. `report/__tests__/view-parity.test.ts` runs app.js's `traceEntries`, "Avg context /
+ * call" and `successRate` against this module; the other formulas (dead sessions, depth buckets,
+ * heavy rows, tool rows, `dispatchCounts`) are pinned by hand-computed numbers in the view tests.
+ */
+
+import { agentMatchesAnalyticsFilter } from '../cost/codex-agent.js';
+import type { ReportPayload, ReportSessionRecord } from '../report/types.js';
+import { ViewInputError } from './input.js';
+import {
+  SUMMARY_SCHEMA,
+  type AnalyticsSummary,
+  type HeavySessionRow,
+  type NamedCallStats,
+  type SeriesBucket,
+  type SessionRow,
+  type SummaryTotals,
+  type ViewFilter,
+} from './types.js';
+
+type StepKind = 'agent' | 'skill' | 'command';
+
+const DAY_MS = 86_400_000;
+/** Ranges longer than this many days are bucketed by week. */
+const MAX_DAY_BUCKETS = 35;
+/** At most this many week buckets (about 19 years): a longer range is refused before any is made. */
+const MAX_WEEK_BUCKETS = 1000;
+/** `--compare` is left out when more of the current range than this share was never observed. */
+const MAX_UNOBSERVED_SHARE = 0.01;
+/** Rows in the dead and heavy session lists. */
+const TOP_ROWS = 8;
+// VIEWS.efficiency "Session depth" buckets; the last label is "51+" (app.js prints "50+" for the same > 50 test).
+const DEPTH_BUCKETS: ReadonlyArray<readonly [string, (turns: number) => boolean]> = [
+  ['1', (t) => t <= 1],
+  ['2–5', (t) => t >= 2 && t <= 5],
+  ['6–10', (t) => t >= 6 && t <= 10],
+  ['11–25', (t) => t >= 11 && t <= 25],
+  ['26–50', (t) => t >= 26 && t <= 50],
+  ['51+', (t) => t > 50],
+];
+
+function sum(records: readonly ReportSessionRecord[], value: (s: ReportSessionRecord) => number | undefined): number {
+  let total = 0;
+  for (const s of records) total += value(s) || 0;
+  return total;
+}
+
+function lastSegment(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+/**
+ * Sessions that started in [from, to] and match every given text filter. `agent` matches as
+ * `codemie analytics --agent` does (`codex` covers the Codex family); `project` is a full path or
+ * its last segment; `branch` is the session's main branch.
+ */
+export function filterRecords(records: ReportSessionRecord[], f: ViewFilter): ReportSessionRecord[] {
+  return records.filter(
+    (s) =>
+      (f.from === undefined || s.startTime >= f.from) &&
+      (f.to === undefined || s.startTime <= f.to) &&
+      (!f.agent || agentMatchesAnalyticsFilter(s.agentName, f.agent)) &&
+      (!f.project || s.project === f.project || lastSegment(s.project) === f.project) &&
+      (!f.branch || s.branch === f.branch)
+  );
+}
+
+/**
+ * A priced session has a `costSource`: both pricing paths (the native enricher and the OTEL loader)
+ * set it exactly when they set `priced`. A per-model cost line is not enough: an OTEL session whose
+ * only model fell through unpriced has one.
+ */
+export function isPriced(s: ReportSessionRecord): boolean {
+  return s.costSource !== undefined;
+}
+
+// app.js successRate: Σ success / Σ calls as a percent with one decimal.
+function successRate(records: readonly ReportSessionRecord[]): number {
+  const total = sum(records, (s) => s.toolCallsTotal);
+  const ok = sum(records, (s) => s.toolCallsSuccess);
+  return total ? Math.round((ok / total) * 1000) / 10 : 0;
+}
+
+// app.js dispatchCounts: the timed dispatches, unless they are incomplete and tracked counts exist.
+function stepCounts(s: ReportSessionRecord, kind: StepKind): Array<{ name: string; totalCalls: number }> {
+  const tracked = (kind === 'agent' ? s.agentInvocations : kind === 'skill' ? s.skillInvocations : s.commandInvocations) ?? [];
+  if (!s.dispatchesComplete && tracked.length) return tracked;
+  const counts = new Map<string, number>();
+  for (const d of s.dispatches ?? []) {
+    if (d.kind === kind) counts.set(d.name, (counts.get(d.name) ?? 0) + 1);
+  }
+  return [...counts].map(([name, totalCalls]) => ({ name, totalCalls }));
+}
+
+function stepCalls(s: ReportSessionRecord, kind: StepKind): number {
+  return stepCounts(s, kind).reduce((total, step) => total + step.totalCalls, 0);
+}
+
+function rowOf(s: ReportSessionRecord): SessionRow {
+  return {
+    sessionId: s.sessionId,
+    title: s.title,
+    agentName: s.agentName,
+    project: s.project,
+    branch: s.branch,
+    models: s.models,
+    startTime: s.startTime,
+    durationMs: s.durationMs,
+    turns: s.turns,
+    linesAdded: s.linesAdded,
+    linesRemoved: s.linesRemoved,
+    filesChanged: s.filesChanged,
+    costUSD: s.costUSD,
+    hadLog: s.hadLog,
+    sessionSource: s.sessionSource,
+    steps: { agents: stepCalls(s, 'agent'), skills: stepCalls(s, 'skill'), commands: stepCalls(s, 'command') },
+  };
+}
+
+// VIEWS.overview KPI and token sums; the success rate as meta.totals rounds it.
+function totalsOf(records: readonly ReportSessionRecord[]): SummaryTotals {
+  return {
+    sessions: records.length,
+    pricedSessions: records.filter(isPriced).length,
+    costUSD: sum(records, (s) => s.costUSD),
+    cacheReadCostUSD: sum(records, (s) => s.cacheReadCostUSD),
+    durationMs: sum(records, (s) => s.durationMs),
+    turns: sum(records, (s) => s.turns),
+    linesAdded: sum(records, (s) => s.linesAdded),
+    linesRemoved: sum(records, (s) => s.linesRemoved),
+    netLines: sum(records, (s) => s.netLines),
+    filesChanged: sum(records, (s) => s.filesChanged),
+    toolCalls: sum(records, (s) => s.toolCallsTotal),
+    toolSuccessRate: successRate(records),
+    tokens: {
+      input: sum(records, (s) => s.tokens?.input),
+      output: sum(records, (s) => s.tokens?.output),
+      cacheRead: sum(records, (s) => s.tokens?.cacheRead),
+      cacheCreation: sum(records, (s) => s.tokens?.cacheCreation),
+      total: sum(records, (s) => s.tokens?.total),
+    },
+  };
+}
+
+/**
+ * Local calendar days from `from` to `to`, or weeks starting Monday when the range is longer than 35
+ * days. The first bucket starts at `from` and the last ends at `to`, so no bucket covers time
+ * outside the range.
+ */
+function bucketsFor(from: number, to: number): { bucket: 'day' | 'week'; slots: Array<{ from: number; to: number }> } {
+  const bucket = Math.round((to - from + 1) / DAY_MS) > MAX_DAY_BUCKETS ? 'week' : 'day';
+  const start = new Date(from);
+  start.setHours(0, 0, 0, 0);
+  if (bucket === 'week') {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    start.setHours(0, 0, 0, 0);
+  }
+  const slots: Array<{ from: number; to: number }> = [];
+  // Step by calendar date, never by 24 h: a day across a DST change has 23 or 25 hours. setDate
+  // keeps the wall-clock time, so return to midnight after each step: where DST skips midnight
+  // that day starts at 01:00, and the days after it must not.
+  while (start.getTime() <= to) {
+    const next = new Date(start);
+    next.setDate(next.getDate() + (bucket === 'week' ? 7 : 1));
+    next.setHours(0, 0, 0, 0);
+    slots.push({ from: start.getTime(), to: next.getTime() - 1 });
+    start.setTime(next.getTime());
+  }
+  if (slots.length) {
+    slots[0].from = Math.max(slots[0].from, from);
+    slots[slots.length - 1].to = Math.min(slots[slots.length - 1].to, to);
+  }
+  return { bucket, slots };
+}
+
+// appendToolsAndModels tool rows: per-tool calls and a whole-percent success rate, by calls.
+function toolRows(records: readonly ReportSessionRecord[]): AnalyticsSummary['tools'] {
+  const byName = new Map<string, { calls: number; success: number; failure: number }>();
+  for (const s of records) {
+    for (const t of s.tools ?? []) {
+      const cur = byName.get(t.toolName) ?? { calls: 0, success: 0, failure: 0 };
+      cur.calls += t.totalCalls;
+      cur.success += t.successCount;
+      cur.failure += t.failureCount;
+      byName.set(t.toolName, cur);
+    }
+  }
+  return [...byName]
+    .map(([name, t]) => ({ name, ...t, successRate: t.calls ? Math.round((t.success / t.calls) * 100) : 0 }))
+    .sort((a, b) => b.calls - a.calls);
+}
+
+// appendInvocationCharts: calls per name from dispatchCounts, by calls.
+function stepRows(records: readonly ReportSessionRecord[], kind: StepKind): NamedCallStats[] {
+  const byName = new Map<string, NamedCallStats>();
+  for (const s of records) {
+    const seen = new Set<string>();
+    for (const { name, totalCalls } of stepCounts(s, kind)) {
+      const cur = byName.get(name) ?? { name, calls: 0, sessions: 0 };
+      cur.calls += totalCalls;
+      if (!seen.has(name)) cur.sessions += 1;
+      seen.add(name);
+      byName.set(name, cur);
+    }
+  }
+  return [...byName.values()].sort((a, b) => b.calls - a.calls);
+}
+
+// appendToolsAndModels model rows from perModelCost, here by cost with each model's share of it.
+function modelRows(records: readonly ReportSessionRecord[]): AnalyticsSummary['models'] {
+  const byModel = new Map<string, { costUSD: number; tokens: number; sessions: Set<string> }>();
+  for (const s of records) {
+    for (const m of s.perModelCost ?? []) {
+      const cur = byModel.get(m.model) ?? { costUSD: 0, tokens: 0, sessions: new Set<string>() };
+      cur.costUSD += m.costUSD;
+      cur.tokens += m.tokens?.total ?? 0;
+      cur.sessions.add(s.sessionId);
+      byModel.set(m.model, cur);
+    }
+  }
+  let allCost = 0;
+  for (const m of byModel.values()) allCost += m.costUSD;
+  return [...byModel]
+    .map(([model, m]) => ({ model, costUSD: m.costUSD, tokens: m.tokens, sessions: m.sessions.size, share: allCost > 0 ? m.costUSD / allCost : 0 }))
+    .sort((a, b) => b.costUSD - a.costUSD);
+}
+
+function groupBy<K, V>(records: readonly ReportSessionRecord[], key: (s: ReportSessionRecord) => K, init: (k: K) => V, add: (acc: V, s: ReportSessionRecord) => void): V[] {
+  const groups = new Map<K, V>();
+  for (const s of records) {
+    const k = key(s);
+    const acc = groups.get(k) ?? init(k);
+    add(acc, s);
+    groups.set(k, acc);
+  }
+  return [...groups.values()];
+}
+
+// VIEWS.efficiency: dead sessions, bloat, context per turn and session depth.
+function efficiencyOf(records: readonly ReportSessionRecord[], totals: SummaryTotals): AnalyticsSummary['efficiency'] {
+  const totalCost = totals.costUSD;
+  const dead = records.filter((s) => s.costUSD > 0 && (s.filesChanged || 0) === 0 && s.netLines === 0);
+  const deadCost = sum(dead, (s) => s.costUSD);
+  const turns = records.map((s) => s.turns || 0).sort((a, b) => a - b);
+  const mid = Math.floor(turns.length / 2);
+  const median = !turns.length ? 0 : turns.length % 2 ? turns[mid] : Math.round((turns[mid - 1] + turns[mid]) / 2);
+  // "Most bloated sessions": cache-read tokens per turn, and cache-read cost as a percent of cost.
+  const heavy: HeavySessionRow[] = records
+    .map((s) => ({ s, ctx: s.turns ? (s.tokens?.cacheRead ?? 0) / s.turns : 0 }))
+    .filter((x) => x.ctx > 0)
+    .sort((a, b) => b.ctx - a.ctx)
+    .slice(0, TOP_ROWS)
+    .map(({ s, ctx }) => ({
+      ...rowOf(s),
+      contextPerTurn: ctx,
+      bloatPct: s.costUSD > 0 ? Math.round(((s.cacheReadCostUSD || 0) / s.costUSD) * 1000) / 10 : 0,
+    }));
+  return {
+    costPerFileUSD: totals.filesChanged ? totalCost / totals.filesChanged : null,
+    toolSuccessRate: totals.toolSuccessRate,
+    // "Avg context / call": every session's cache reads over every session's turns.
+    contextPerTurn: totals.turns ? totals.tokens.cacheRead / totals.turns : 0,
+    cacheReadCostShare: totalCost > 0 ? totals.cacheReadCostUSD / totalCost : 0,
+    dead: {
+      sessions: dead.length,
+      costUSD: deadCost,
+      shareOfCost: totalCost > 0 ? deadCost / totalCost : 0,
+      shareOfSessions: records.length ? dead.length / records.length : 0,
+      top: dead.slice().sort((a, b) => b.costUSD - a.costUSD).slice(0, TOP_ROWS).map(rowOf),
+    },
+    depth: {
+      buckets: DEPTH_BUCKETS.map(([label, test]) => ({ label, sessions: records.filter((s) => test(s.turns || 0)).length })),
+      median,
+      average: records.length ? Math.round(totals.turns / records.length) : 0,
+    },
+    heavy,
+  };
+}
+
+function changeOf(current: number, previous: number): number | null {
+  return previous ? (current - previous) / previous : null;
+}
+
+/**
+ * How far the export observed: the earlier of `meta.generatedAt` and `meta.periodEnd`. A periodEnd
+ * equal to the last session's end (start + duration, as `payload-builder` derives it for an export
+ * made without --to) says nothing about how far it read, so only generatedAt counts then. Undefined
+ * when the input says neither.
+ */
+function observedUntil(payload: ReportPayload): number | undefined {
+  const generatedAt = Date.parse(payload.meta.generatedAt ?? '');
+  const periodEnd = Date.parse(payload.meta.periodEnd ?? '');
+  let lastEnd = -Infinity;
+  for (const s of payload.sessions) {
+    if (!(s.startTime > 0)) continue;
+    lastEnd = Math.max(lastEnd, s.startTime + (Number.isFinite(s.durationMs) ? Math.max(s.durationMs, 0) : 0));
+  }
+  const ends = [generatedAt, periodEnd === lastEnd ? NaN : periodEnd].filter(Number.isFinite);
+  return ends.length ? Math.min(...ends) : undefined;
+}
+
+/**
+ * The `codemie.analytics.summary/1` document for the sessions of `payload` that match `f`.
+ * Without `--from` the range starts at the earlier of the export's `periodStart` and the earliest
+ * matching session, so the series and the totals count the same sessions; without `--to` it ends
+ * `now`.
+ */
+export function buildSummary(payload: ReportPayload, f: ViewFilter, opts: { compare: boolean; now: number }): AnalyticsSummary {
+  const records = filterRecords(payload.sessions, f);
+  const periodStart = payload.meta.periodStart ? Date.parse(payload.meta.periodStart) : NaN;
+  const to = f.to ?? opts.now;
+  let from = f.from;
+  if (from === undefined) {
+    from = Number.isFinite(periodStart) ? periodStart : to;
+    for (const s of records) from = Math.min(from, s.startTime);
+  }
+  // A malformed export or an extreme --from would otherwise ask for millions of buckets.
+  if ((to - from) / (7 * DAY_MS) > MAX_WEEK_BUCKETS) {
+    const years = Math.floor((MAX_WEEK_BUCKETS * 7) / 365);
+    const origin = f.from === undefined ? ' (it starts at the export’s earliest session)' : '';
+    throw new ViewInputError(`The range is longer than ${years} years${origin} — narrow it with --from/--to or --last`);
+  }
+  const totals = totalsOf(records);
+
+  let previous: SummaryTotals | null = null;
+  let change: AnalyticsSummary['change'] = null;
+  const length = to - from + 1;
+  // The current range up to now that the export never saw. An input that says neither when it was
+  // generated nor where its range ended (a store merged from many exports) is taken as current.
+  const seenUntil = observedUntil(payload);
+  const unobserved = seenUntil === undefined ? 0 : Math.max(0, Math.min(to, opts.now) - seenUntil);
+  // Only when the export reaches back to the previous range's start and saw nearly all of the
+  // current one; otherwise a missing stretch would read as a drop.
+  if (opts.compare && periodStart <= from - length && unobserved <= length * MAX_UNOBSERVED_SHARE) {
+    previous = totalsOf(filterRecords(payload.sessions, { ...f, from: from - length, to: from - 1 }));
+    change = {
+      costUSD: changeOf(totals.costUSD, previous.costUSD),
+      sessions: changeOf(totals.sessions, previous.sessions),
+      durationMs: changeOf(totals.durationMs, previous.durationMs),
+    };
+  }
+
+  const { bucket, slots } = bucketsFor(from, to);
+  const series: SeriesBucket[] = slots.map((slot) => {
+    const inSlot = records.filter((s) => s.startTime >= slot.from && s.startTime <= slot.to);
+    return {
+      ...slot,
+      sessions: inSlot.length,
+      costUSD: sum(inSlot, (s) => s.costUSD),
+      tokens: sum(inSlot, (s) => s.tokens?.total),
+      durationMs: sum(inSlot, (s) => s.durationMs),
+    };
+  });
+
+  return {
+    schema: SUMMARY_SCHEMA,
+    range: { from, to, bucket },
+    filter: { agent: f.agent ?? null, project: f.project ?? null, branch: f.branch ?? null },
+    coverage: groupBy(records, (s) => s.agentName, (agentName) => ({ agentName, sessions: 0, priced: 0, withLog: 0 }), (acc, s) => {
+      acc.sessions += 1;
+      if (isPriced(s)) acc.priced += 1;
+      if (s.hadLog) acc.withLog += 1;
+    }).sort((a, b) => b.sessions - a.sessions),
+    totals,
+    previous,
+    change,
+    series,
+    tools: toolRows(records),
+    skills: stepRows(records, 'skill'),
+    agents: stepRows(records, 'agent'),
+    commands: stepRows(records, 'command'),
+    models: modelRows(records),
+    projects: groupBy(records, (s) => s.project, (project) => ({ project, costUSD: 0, sessions: 0, netLines: 0 }), (acc, s) => {
+      acc.costUSD += s.costUSD;
+      acc.sessions += 1;
+      acc.netLines += s.netLines;
+    }).sort((a, b) => b.costUSD - a.costUSD),
+    agentsUsed: groupBy(filterRecords(payload.sessions, { ...f, agent: undefined }), (s) => s.agentName, (agentName) => ({ agentName, sessions: 0, costUSD: 0 }), (acc, s) => {
+      acc.sessions += 1;
+      acc.costUSD += s.costUSD;
+    }).sort((a, b) => b.sessions - a.sessions),
+    efficiency: efficiencyOf(records, totals),
+    sessions: records.slice().sort((a, b) => b.startTime - a.startTime).map(rowOf),
+  };
+}

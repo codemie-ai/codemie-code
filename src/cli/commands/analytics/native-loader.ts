@@ -812,10 +812,18 @@ function foldPiForkFamilies(transcripts: PiTranscript[]): Set<string> {
  * Discover native (untracked) sessions and return them as RawSessionData, ready to merge
  * with the tracked sessions from {@link MetricsDataLoader}. Sessions whose native log is
  * already tracked by CodeMie are skipped (deduped by real path).
+ *
+ * `opts.includeExternal: false` says the caller drops `native-external` sessions, so a
+ * Claude-family log without an ownership marker is skipped before it is parsed. Undefined keeps
+ * every session, as before.
+ *
+ * `opts.keep` is the caller's own filter: a session it rejects is dropped as soon as it is
+ * synthesized and tagged, so its parsed log is not held until the caller filters the list.
  */
 export async function loadNativeSessions(
   filter?: AnalyticsFilter,
-  deps: NativeLoaderDeps = realNativeDeps
+  deps: NativeLoaderDeps = realNativeDeps,
+  opts: { includeExternal?: boolean; keep?: (session: RawSessionData) => boolean } = {}
 ): Promise<RawSessionData[]> {
   const tracked = deps.trackedLogPaths();
   const discovered = await deps.discover(windowDays(filter));
@@ -880,6 +888,13 @@ export async function loadNativeSessions(
       parsed = codexParsed.get(descriptor.filePath) ?? null;
     } else if (isPiFamilyAgent(agentName)) {
       parsed = piByRealPath.get(deps.realPath(descriptor.filePath))?.parsed ?? null;
+    } else if (
+      opts.includeExternal === false &&
+      !isAnalyticsOnlyAgent(agentName) &&
+      !deps.hasOwnershipMarker(descriptor.filePath)
+    ) {
+      // Would be tagged 'native-external' below and dropped by the caller: never parse it.
+      continue;
     } else {
       parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
     }
@@ -897,6 +912,7 @@ export async function loadNativeSessions(
         ? 'native-unmanaged'
         : 'native-external';
     }
+    if (opts.keep && !opts.keep(raw)) continue;
     out.push(raw);
   }
   return out;

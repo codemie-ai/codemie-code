@@ -16,9 +16,13 @@ export class SessionsSource implements AnalyticsSource {
     // ALL usage. Deduped against tracked logs inside the loader.
     try {
       const { loadNativeSessions } = await import('../native-loader.js');
-      const natives = (await loadNativeSessions(opts.filter))
-        .filter((s) => loader.sessionMatchesFilter(s, opts.filter))
-        .filter((s) => opts.includeExternal || s.startEvent?.data.provider !== 'native-external');
+      // The loader applies `keep` as it reads, so a dropped session's parsed log is freed at once.
+      const natives = await loadNativeSessions(opts.filter, undefined, {
+        includeExternal: Boolean(opts.includeExternal),
+        keep: (s) =>
+          loader.sessionMatchesFilter(s, opts.filter) &&
+          (opts.includeExternal || s.startEvent?.data.provider !== 'native-external'),
+      });
       rawSessions.push(...natives);
     } catch (error) {
       logger.debug('Native session discovery failed (continuing with tracked sessions):', error);

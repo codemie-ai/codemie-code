@@ -401,6 +401,63 @@ codemie analytics otel --file <path> [options]
 
 All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.
 
+### View subcommand
+
+```
+codemie analytics view --input <file> [options]
+
+  --input <file>            A file written by `codemie analytics --export json` (required)
+  --from <date>             Start, inclusive: YYYY-MM-DD (a UTC day) or an ISO timestamp
+  --to <date>               End, inclusive: YYYY-MM-DD (the whole UTC day) or an ISO timestamp
+  --last <duration>         Sessions from the last duration (7d, 24h, 30m); overrides --from/--to
+  --agent <name>            Only this agent (claude, codex, ...)
+  --project <path>          Only this project: its exact project path or its folder name
+  --branch <name>           Only sessions whose main branch is this one
+  --compare                 Add the totals of the same-length range just before, and the change
+  --session <id>            Print one session with its step trace instead of a summary
+  --export <format>         summary (JSON, the default) or html
+  -o, --output <path>       Write to this file instead of stdout (required for html)
+  --redact                  As `codemie analytics --redact`: no titles, project folder names only
+```
+
+`view` computes from an existing export and never opens an agent log, so it answers at once for any range the file covers. `--open`, `--verbose` and `--include-external` mean nothing for an export file and are rejected.
+
+**Output contract.** stdout carries only JSON, or nothing when `-o` is given (an HTML report is always written to the `-o` file). No prompts, no colours, no start-up notices. A problem (unreadable or non-export file, bad date or duration, reversed range, unknown session id, `-o` that is a directory, `--export html` without `-o`, an unsupported flag) is one `✗ ...` line on stderr, exit code 1 and nothing on stdout.
+
+**Units.** Money is USD, times are epoch milliseconds, durations are milliseconds. A `...Rate` or `...Pct` field is a percent (0-100); a `share...`, `...Share` or `share` field is a fraction (0-1). Field names and units are a contract; they change only with a new schema version. Money, shares and `change` values are not rounded; only the fields marked as rounded in the tables below are.
+
+#### `codemie.analytics.summary/1`
+
+| Field | Meaning |
+|---|---|
+| `schema` | `"codemie.analytics.summary/1"` |
+| `range` | `{ from, to, bucket }`. `to` is `--to`, or now. `from` is `--from`, or the earlier of the export's `periodStart` and the earliest matching session, so `series` and `totals` count the same sessions. `bucket` is `"day"`, or `"week"` when the range is longer than 35 days |
+| `filter` | `{ agent, project, branch }`, each `null` when not given (`project` is `"<redacted>"` when `--project` is given with `--redact`) |
+| `coverage[]` | Per agent: `agentName`, `sessions`, `priced` (sessions with a `costSource`), `withLog` |
+| `totals` | `sessions`, `pricedSessions`, `costUSD`, `cacheReadCostUSD`, `durationMs`, `turns`, `linesAdded`, `linesRemoved`, `netLines`, `filesChanged`, `toolCalls`, `toolSuccessRate` (percent, one decimal), `tokens` `{ input, output, cacheRead, cacheCreation, total }` |
+| `previous` | The same `totals` for the range just before, of the same length. `null` without `--compare`, when the export does not reach back that far, or when the export observed less than 99% of the current range up to now, so an archived export never reads as a drop. An export observed up to the earlier of `meta.generatedAt` and `meta.periodEnd`; a `periodEnd` that is only its last session's end (an export made without `--to`) is not a limit. An input with neither (a store merged from many exports) is taken as current |
+| `change` | `{ costUSD, sessions, durationMs }` as (current - previous) / previous; a field is `null` when its previous value is 0. `null` when `previous` is `null` |
+| `series[]` | One bucket per local calendar day (Monday-start weeks for `bucket: "week"`): `from`, `to`, `sessions`, `costUSD`, `tokens` (total), `durationMs`. The first bucket starts at `range.from` and the last ends at `range.to`, so no bucket covers time outside the range |
+| `tools[]` | `name`, `calls`, `success`, `failure`, `successRate` (whole percent); most calls first |
+| `skills[]`, `agents[]`, `commands[]` | `name`, `calls`, `sessions` (sessions with at least one call); most calls first |
+| `models[]` | `model`, `costUSD`, `tokens` (total), `sessions`, `share` (the model's part of all model cost, 0-1); highest cost first |
+| `projects[]` | `project`, `costUSD`, `sessions`, `netLines`; highest cost first |
+| `agentsUsed[]` | `agentName`, `sessions`, `costUSD`, with every filter but `--agent` applied, for an agent picker |
+| `efficiency` | `costPerFileUSD` (`null` when no file changed), `toolSuccessRate`, `contextPerTurn` (cache-read tokens per turn), `cacheReadCostShare` (0-1), `dead` `{ sessions, costUSD, shareOfCost, shareOfSessions, top[] }` (sessions with cost but no file or line change), `depth` `{ buckets[{ label, sessions }], median, average }` (turns per session, rounded to whole turns), `heavy[]` (up to 8 sessions by cache-read tokens per turn, each a session row plus `contextPerTurn` and `bloatPct`, the cache-read cost as a percent of cost, one decimal) |
+| `sessions[]` | Newest first. Per session: `sessionId`, `title`, `agentName`, `project`, `branch`, `models`, `startTime`, `durationMs`, `turns`, `linesAdded`, `linesRemoved`, `filesChanged`, `costUSD`, `hadLog`, `sessionSource`, `steps` `{ agents, skills, commands }` (calls per step kind) |
+
+The date-only `--from`/`--to` are UTC days; the series buckets are local days.
+
+#### `codemie.analytics.session/1`
+
+Printed by `--session <id>`:
+
+| Field | Meaning |
+|---|---|
+| `schema` | `"codemie.analytics.session/1"` |
+| `session` | The session's record exactly as in the export (redacted under `--redact`) |
+| `trace[]` | The step trace: `key`, `kind` (`agent`, `skill` or `command`), `name`, `label` (`name`, or `name #n` when the kind and name repeat), `level`, `parentKey` (`null` at the top), `childKeys`, `issue` (why the step could not be placed under a parent, or `null`) |
+
 ---
 
 ## Scheduled delivery (`analytics sync`)

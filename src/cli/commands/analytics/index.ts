@@ -18,6 +18,7 @@ import { logger } from '../../../utils/logger.js';
 import { parseDateOnly } from '@/utils/date-filter.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
+import { createViewCommand } from './view/view-command.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { parseDuration } from './date-args.js';
@@ -108,6 +109,10 @@ export function createAnalyticsCommand(): Command {
       return runAnalytics(opts, new OtelSource(opts.file, opts.user));
     });
   command.addCommand(otel);
+
+  // `codemie analytics view --input <export.json>` — numbers, a session trace or the HTML report
+  // from an existing export, without reading agent logs.
+  command.addCommand(createViewCommand());
 
   // `codemie analytics sync` — a daily per-user OS job that sends this machine's analytics
   // reports one way to the team's webhook and/or a team git repository. A pure group (no

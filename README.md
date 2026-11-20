@@ -584,6 +584,7 @@ codemie models list      # List models available for the current provider
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie analytics --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
 codemie analytics --export json  # Same priced report data as JSON (--export html | json | both)
+codemie analytics view --input report.json  # Summary JSON, a session trace or HTML from an export
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie sdk <resource>   # Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users)
 codemie skill <cmd>      # Manage skills for CodeMie agents (list, validate, reload)
@@ -594,6 +595,14 @@ codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
 codemie proxy <cmd>      # Manage the local CodeMie proxy and its integrations
 codemie codebase ui      # Start and open Codebase Memory graph UI
 codemie doctor           # Health check and diagnostics
+```
+
+### Analytics from an export file
+
+`codemie analytics view` reads a file written by `codemie analytics --export json` and never opens an agent log, so it answers at once for any range the file covers. By default it prints a JSON summary (`codemie.analytics.summary/1`) with the report's totals, a day or week series, tools, models, projects, efficiency figures and the session list. `--session <id>` prints one session with its step trace instead, and `--export html -o <file>` writes the usual HTML report for the matching sessions. Filters are `--from`/`--to` (a UTC day or an ISO timestamp), `--last`, `--agent`, `--project` (the exact project path or its folder name) and `--branch` (the session's main branch); `--compare` adds the previous range of the same length, and `--redact` leaves out prompt text and absolute paths as in `codemie analytics --redact`. The series buckets are local calendar days (weeks beyond 35 days); the first and last bucket are cut to the range. Flags, errors and every field of both schemas: [View subcommand](docs/ANALYTICS-REPORT.md#view-subcommand).
+
+```bash
+codemie analytics view --input report.json --last 30d --compare
 ```
 
 ### Analytics for a separate Claude Code profile
