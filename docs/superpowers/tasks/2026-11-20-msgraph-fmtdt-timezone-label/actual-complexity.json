@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 10,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Diffstat shows 5 files, but only one source file (msgraph.js) and one new integration test changed; the other three are task docs." },
+    { "dimension": "component_scope", "reason": "Change is confined to the date-formatting helper in the msgraph skill script, a single self-contained component." }
+  ],
+  "red_flags_applied": []
+}

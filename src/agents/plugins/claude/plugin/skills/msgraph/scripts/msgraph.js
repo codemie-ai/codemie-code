@@ -403,6 +403,32 @@ function fmtDtTz(dtz) {
   return fmtDt(s);
 }
 
+// Formats a calendar event start/end as local time with an offset label, e.g.
+// "2026-11-20 12:00 (UTC+3)". All-day events print the date only.
+// Zone-less values with a non-UTC timeZone are not handled; this cannot happen today
+// because no `Prefer: outlook.timezone` header is sent, so Graph returns UTC.
+function fmtCalDt(ev, which) {
+  const dtz = ev?.[which];
+  if (!dtz?.dateTime) return 'N/A';
+  if (ev.isAllDay) {
+    if (which !== 'end') return `${dtz.dateTime.slice(0, 10)} (all day)`;
+    // Graph returns an all-day end as next-day midnight (exclusive); show the last day
+    const last = new Date(dtz.dateTime.slice(0, 10) + 'T00:00:00Z');
+    last.setUTCDate(last.getUTCDate() - 1);
+    return `${last.toISOString().slice(0, 10)} (all day)`;
+  }
+  let s = dtz.dateTime;
+  if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(s) && (dtz.timeZone || '').toUpperCase() === 'UTC') s += 'Z';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return fmtDtTz(dtz);
+  const p = (n) => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const abs = Math.abs(off);
+  const mm = abs % 60;
+  const label = off === 0 ? 'UTC' : `UTC${off < 0 ? '-' : '+'}${Math.floor(abs / 60)}${mm ? ':' + p(mm) : ''}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} (${label})`;
+}
+
 function fmtSize(n) {
   if (!n) return '';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -703,7 +729,7 @@ async function cmdCalendar(args) {
     const view  = await graphGet('/me/calendarView', token, {
       startDateTime: start,
       endDateTime:   end,
-      $select:       'subject,start,end,showAs',
+      $select:       'subject,start,end,showAs,isAllDay',
       $orderby:      'start/dateTime',
     });
     const events = view.value || [];
@@ -712,7 +738,7 @@ async function cmdCalendar(args) {
     } else {
       console.log(`\nBusy slots (${events.length} events):`);
       for (const e of events)
-        console.log(`  ${fmtDt(e.start.dateTime)} — ${fmtDt(e.end.dateTime)}: ${e.subject || '(no title)'}`);
+        console.log(`  ${fmtCalDt(e, 'start')} — ${fmtCalDt(e, 'end')}: ${e.subject || '(no title)'}`);
     }
     return;
   }
@@ -724,7 +750,7 @@ async function cmdCalendar(args) {
     startDateTime: now.toISOString().slice(0, 19) + 'Z',
     endDateTime:   yearEnd.toISOString().slice(0, 19) + 'Z',
     $top:          limit,
-    $select:       'id,subject,start,end,location,organizer,isOnlineMeeting',
+    $select:       'id,subject,start,end,location,organizer,isOnlineMeeting,isAllDay',
     $orderby:      'start/dateTime',
   });
   const events = data.value || [];
@@ -732,14 +758,14 @@ async function cmdCalendar(args) {
   if (args.json) { console.log(JSON.stringify(events, null, 2)); return; }
   if (!events.length) { console.log('No upcoming events.'); return; }
 
-  console.log(`\n${'Date & Time'.padEnd(20)}    Title`);
+  console.log(`\n${'Date & Time'.padEnd(28)}    Title`);
   console.log('─'.repeat(80));
   for (const e of events) {
     const online    = e.isOnlineMeeting ? '🎥' : '  ';
     const title     = (e.subject || '(no title)').slice(0, 45);
     const organizer = (e.organizer?.emailAddress?.name || '').slice(0, 20);
     const loc       = (e.location?.displayName || '').slice(0, 20);
-    console.log(`${fmtDt(e.start?.dateTime).padEnd(20)}  ${online}  ${title}  (${organizer})${loc ? `  @ ${loc}` : ''}`);
+    console.log(`${fmtCalDt(e, 'start').padEnd(28)}  ${online}  ${title}  (${organizer})${loc ? `  @ ${loc}` : ''}`);
   }
 }
 
@@ -1216,7 +1242,7 @@ async function cmdTranscriptsInsights(args, token) {
   const data = await graphGet('/me/calendarView', token, {
     startDateTime: startDate + 'T00:00:00Z',
     endDateTime:   endDate + 'T23:59:59Z',
-    $select:  'subject,start,isOnlineMeeting,onlineMeeting',
+    $select:  'subject,start,isOnlineMeeting,onlineMeeting,isAllDay',
     $top:     50,
     $orderby: 'start/dateTime',
   });
@@ -1236,7 +1262,7 @@ async function cmdTranscriptsInsights(args, token) {
       console.log(`Could not resolve meeting ID for "${e.subject}": ${err.message}`);
     }
     if (!meetingId) continue;
-    console.log(`\nMeeting: ${e.subject}  (${fmtDt(e.start?.dateTime)})  — ${meetingId}`);
+    console.log(`\nMeeting: ${e.subject}  (${fmtCalDt(e, 'start')})  — ${meetingId}`);
     await printMeetingInsights(token, oid, meetingId, args);
   }
 }
@@ -1255,7 +1281,7 @@ async function cmdTranscripts(args) {
     const data = await graphGet('/me/calendarView', token, {
       startDateTime: startDT,
       endDateTime:   endDT,
-      $select: 'id,subject,start,end,isOnlineMeeting,onlineMeeting',
+      $select: 'id,subject,start,end,isOnlineMeeting,onlineMeeting,isAllDay',
       $top: 50,
       $orderby: 'start/dateTime',
     });
@@ -1269,7 +1295,7 @@ async function cmdTranscripts(args) {
       }
       for (const e of filtered) {
         console.log(`\nMeeting: ${e.subject}`);
-        console.log(`Start  : ${fmtDt(e.start?.dateTime)}`);
+        console.log(`Start  : ${fmtCalDt(e, 'start')}`);
         const joinUrl = e.onlineMeeting.joinUrl;
         let meetingId = null;
         try {
@@ -1306,7 +1332,7 @@ async function cmdTranscripts(args) {
     console.log(`\nOnline meetings (${startDate} – ${endDate}):`);
     console.log('─'.repeat(80));
     for (const e of events)
-      console.log(`  ${fmtDt(e.start?.dateTime).padEnd(20)}  ${e.subject || '(no title)'}`);
+      console.log(`  ${fmtCalDt(e, 'start').padEnd(28)}  ${e.subject || '(no title)'}`);
     return;
   }
 
