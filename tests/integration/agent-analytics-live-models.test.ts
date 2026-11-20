@@ -43,7 +43,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import type { LlmModel } from '../../src/providers/plugins/sso/sso.http-client.js';
 import { canonicalizeModelId } from '../../src/utils/pricing.js';
@@ -71,8 +71,9 @@ const CLI_BIN = join(REPO_ROOT, 'bin', 'codemie.js');
  * stripped gives that process a fresh, correct module load against the real home instead.
  */
 function fetchLiveCatalog(codeMieUrl: string): LlmModel[] {
-  const distSsoAuth = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.auth.js');
-  const distHttpClient = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.http-client.js');
+  // ESM imports need file:// URLs: a raw `C:\...` path is read as a `c:` scheme on Windows.
+  const distSsoAuth = pathToFileURL(join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.auth.js')).href;
+  const distHttpClient = pathToFileURL(join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.http-client.js')).href;
   const scriptPath = join(tmpdir(), `codemie-catalog-fetch-${process.pid}.mjs`);
   const script = `
 import { CodeMieSSO } from ${JSON.stringify(distSsoAuth)};
@@ -246,7 +247,8 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-live-mode
     // ── Fetch the live catalog and partition into mapped/skipped ──────────────────────
     const codeMieUrl = getCodemieTestUrl();
     const allModels = fetchLiveCatalog(codeMieUrl);
-    const enabledModels = allModels.filter((m) => m.enabled);
+    // Routers dispatch to other models and carry no `deployment_name`; only concrete models are driven.
+    const enabledModels = allModels.filter((m) => m.enabled && !m.is_router);
 
     for (const model of enabledModels) {
       const binName = mapModelToBin(model.deployment_name);

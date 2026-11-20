@@ -28,7 +28,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import type { LlmModel } from '../../src/providers/plugins/sso/sso.http-client.js';
 import { resolvePrice } from '../../src/utils/pricing.js';
@@ -49,8 +49,9 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * instead. Mirrors agent-analytics-live-models.test.ts's `fetchLiveCatalog` (T2).
  */
 function fetchLiveCatalog(codeMieUrl: string): LlmModel[] {
-  const distSsoAuth = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.auth.js');
-  const distHttpClient = join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.http-client.js');
+  // ESM imports need file:// URLs: a raw `C:\...` path is read as a `c:` scheme on Windows.
+  const distSsoAuth = pathToFileURL(join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.auth.js')).href;
+  const distHttpClient = pathToFileURL(join(REPO_ROOT, 'dist', 'providers', 'plugins', 'sso', 'sso.http-client.js')).href;
   const scriptPath = join(tmpdir(), `codemie-pricing-catalog-fetch-${process.pid}.mjs`);
   const script = `
 import { CodeMieSSO } from ${JSON.stringify(distSsoAuth)};
@@ -86,7 +87,7 @@ process.stdout.write(JSON.stringify(models));
 describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-pricing-reconciliation (T3): catalog pricing reconciliation', () => {
   it('every enabled catalog model resolves through resolvePrice', () => {
     const codeMieUrl = getCodemieTestUrl();
-    const enabledModels = fetchLiveCatalog(codeMieUrl).filter((m) => m.enabled);
+    const enabledModels = fetchLiveCatalog(codeMieUrl).filter((m) => m.enabled && !m.is_router);
 
     const unresolved = enabledModels
       .map((m) => m.deployment_name)
