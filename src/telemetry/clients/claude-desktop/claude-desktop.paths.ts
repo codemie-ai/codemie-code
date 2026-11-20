@@ -36,6 +36,38 @@ export function getClaudeDesktopBaseDir(): string {
 }
 
 /**
+ * Claude Desktop's own (first-party) data directory, where the app keeps the state of a user who signed in with a
+ * Claude account. `Claude-3p` (see {@link getClaudeDesktopBaseDir}) is its sibling for a gateway deployment.
+ */
+export function getClaudeDesktopFirstPartyDir(): string {
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
+    return join(appData, 'Claude');
+  }
+
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'Claude');
+  }
+
+  if (process.platform === 'linux') {
+    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const configDir =
+      xdgConfigHome && isAbsolute(xdgConfigHome) ? xdgConfigHome : join(homedir(), '.config');
+    return join(configDir, 'Claude');
+  }
+
+  throw new ConfigurationError(
+    `Claude Desktop proxy is not supported on platform "${process.platform}"`,
+  );
+}
+
+/** Install locations of the Claude Desktop application; empty where no install location is known. */
+export function getClaudeDesktopAppCandidates(): string[] {
+  if (process.platform !== 'darwin') return [];
+  return ['/Applications/Claude.app', join(homedir(), 'Applications', 'Claude.app')];
+}
+
+/**
  * Path to the managed (MDM) settings source, where the platform exposes one as
  * a plain file. A managed source overrides local configLibrary entries
  * entirely, so its presence makes a local write ineffective.

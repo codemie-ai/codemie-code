@@ -230,31 +230,66 @@ export class DesktopSessionDelivery {
    * `restart`, `legacy` and `foreign-gone` record is handled, first: one left `active` would be re-tracked by the
    * first poll with the downtime inside its stretch. Of the `undelivered` ones each pass takes at most
    * {@link RECONCILE_PER_START}, newest `startTime` first, so their sends stay bounded; the rest wait for a later
-   * pass, and a host that never answers keeps its records in the queue.
+   * pass, and a host that never answers keeps its records in the queue. Returns the ids of this pass that are still
+   * undelivered, one held by another process included.
    */
-  async reconcileRecords(atStart: boolean): Promise<void> {
+  async reconcileRecords(atStart: boolean): Promise<string[]> {
+    const undelivered: string[] = [];
     for (const sessionId of await this.listCandidates(atStart)) {
-      try {
-        const lock = await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' });
-        if (!lock) {
-          logger.debug('[desktop-telemetry] Record held by another process; skipped', { sessionId });
-          continue;
-        }
-        try {
-          const record = await readLiveRecord(sessionId);
-          const kind = record && await this.classifyRecord(record, atStart);
-          if (record && kind) {
-            await this.reconcileRecord(record, kind);
-          }
-        } finally {
-          await lock.release();
-        }
-      } catch (error) {
-        logger.warn('[desktop-telemetry] Record reconciliation failed', {
-          sessionId,
-          error: error instanceof Error ? error.message : String(error)
-        });
+      if (await this.reconcileById(sessionId, atStart)) undelivered.push(sessionId);
+    }
+    return undelivered;
+  }
+
+  /**
+   * A re-delivery pass over the given ids alone, in their order, each handled as {@link reconcileRecords} handles an
+   * undelivered record, with no listing of the session store: how a daemon that does not list it (Desktop not
+   * connected) delivers the records it finalized and could not send. Never throws; the ids still undelivered.
+   */
+  async redeliverById(sessionIds: readonly string[]): Promise<string[]> {
+    const undelivered: string[] = [];
+    for (const sessionId of sessionIds) {
+      if (await this.reconcileById(sessionId, false)) undelivered.push(sessionId);
+    }
+    return undelivered;
+  }
+
+  /**
+   * One record of a pass under its reconcile lock, re-read and classified under it; a failure is logged. Whether it
+   * is still undelivered after its turn: held by another process, or its live record a `completed` one to deliver;
+   * true also when that re-read failed. Never throws.
+   */
+  private async reconcileById(sessionId: string, atStart: boolean): Promise<boolean> {
+    try {
+      const lock = await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' });
+      if (!lock) {
+        logger.debug('[desktop-telemetry] Record held by another process; skipped', { sessionId });
+        return true;
       }
+      try {
+        const record = await readLiveRecord(sessionId);
+        const kind = record && await this.classifyRecord(record, atStart);
+        if (record && kind) {
+          await this.reconcileRecord(record, kind);
+        }
+      } finally {
+        await lock.release();
+      }
+    } catch (error) {
+      logger.warn('[desktop-telemetry] Record reconciliation failed', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    try {
+      const live = await readLiveRecord(sessionId);
+      return live !== undefined && await this.classifyRecord(live, false) === 'undelivered';
+    } catch (error) {
+      logger.warn('[desktop-telemetry] Record not re-read after its reconciliation; kept as undelivered', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return true;
     }
   }
 
