@@ -133,11 +133,36 @@ interface ConfigWithSources {
   "workspace": {},
   "profiles": {
     "default": { "provider": "bedrock", "authMethod": "sso", "model": "claude-3-5-sonnet", "awsRegion": "us-east-1" },
-    "work":    { "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project" },
+    "work":    {
+      "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project", "model": "claude-sonnet-5",
+      "agentModels": {
+        "claude": { "models": ["claude-sonnet-5", "claude-haiku-5"], "activeModel": "claude-sonnet-5" },
+        "codex":  { "models": ["gpt-5.6-terra"], "activeModel": "gpt-5.6-terra" }
+      }
+    },
     "personal": { "provider": "anthropic-subscription", "codeMieProject": null }
   }
 }
 ```
+
+`agentModels` is optional and additive. `codemie setup` fills it from a per-agent
+wizard (agents, then each agent's models and active model), keyed by base agent
+name (ACP variants share it): `models` is what the agent may use, `activeModel` its
+active model, and optional `confirmedModels` the ids accepted despite the agent's
+model-name rule. The top-level `model`
+mirrors the first agent's active model. A profile without `agentModels` (like
+`default` above) is legacy: read as `[model]`, never migrated, and a launch with
+an incompatible model only warns; with `agentModels` that launch is blocked unless
+`--model` or `CODEMIE_MODEL` overrides the model.
+
+At launch each agent sees only its own set: `CODEMIE_MODEL` is its active model
+and `CODEMIE_PROFILE_MODELS` its `models` (empty for a legacy profile or an agent
+not in `agentModels`), which narrows Claude/Codex/OpenCode/codemie-code/Pi's
+in-session model menus. `codemie models switch [--agent <name>]` changes one
+agent's active model in the scope that owns `agentModels`. Gemini, Copilot CLI, Kimi
+and OpenWiki have no menu CodeMie can fill, so the proxy's `profile-model-follower`
+plugin applies a switch to their running session: it re-reads the profile and
+rewrites the launch model to the new active model on the next request.
 
 ---
 
