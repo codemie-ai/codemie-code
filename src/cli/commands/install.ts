@@ -128,6 +128,17 @@ export function createInstallCommand(): Command {
           if (await agent.isInstalled()) {
             const installedVersion = await agent.getVersion();
 
+            // OpenCode v1 and v2 use different npm packages but own the same binary.
+            // Do not silently uninstall or overwrite the user's existing installation.
+            if ((agent.name === 'opencode' || agent.name === 'opencode-acp') &&
+                installedVersion && /(?:^|\s)v?1\.\d+\.\d+\b/i.test(installedVersion)) {
+              console.error(chalk.yellow(`${agent.displayName} ${installedVersion} is installed, but CodeMie requires OpenCode v2.`));
+              console.error('Remove OpenCode v1 using its original package manager, then retry this command.');
+              console.error('If v1 was installed with npm: npm uninstall -g opencode-ai');
+              process.exitCode = 1;
+              return;
+            }
+
             // If requesting specific version, check if it matches
             if (actualVersionToInstall && installedVersion) {
               if (installedVersion === actualVersionToInstall) {

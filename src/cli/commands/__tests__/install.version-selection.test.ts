@@ -185,4 +185,52 @@ describe('install command version selection', () => {
     expect(getVersion).toHaveBeenCalled(); // fallback path exercised
     expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
   });
+
+  it.each([
+    ['opencode', '1.19.5', []],
+    ['opencode-acp', 'v1.19.5', []],
+    ['opencode', 'opencode v1.19.5', ['2.3.0']],
+  ])('guides %s users with v1 through migration', async (name, version, args) => {
+    const install = vi.fn();
+    const installVersion = vi.fn();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    getAgentMock.mockReturnValue({
+      name,
+      displayName: 'OpenCode',
+      isInstalled: vi.fn().mockResolvedValue(true),
+      getVersion: vi.fn().mockResolvedValue(version),
+      install,
+      installVersion,
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    try {
+      await createInstallCommand().parseAsync(['node', 'codemie', name, ...args]);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('requires OpenCode v2'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('npm uninstall -g opencode-ai'));
+      expect(process.exitCode).toBe(1);
+      expect(install).not.toHaveBeenCalled();
+      expect(installVersion).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it('keeps an existing OpenCode v2 installation', async () => {
+    const install = vi.fn();
+    getAgentMock.mockReturnValue({
+      name: 'opencode',
+      displayName: 'OpenCode',
+      isInstalled: vi.fn().mockResolvedValue(true),
+      getVersion: vi.fn().mockResolvedValue('opencode v2.3.0'),
+      install,
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    await createInstallCommand().parseAsync(['node', 'codemie', 'opencode']);
+    expect(install).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('already installed'));
+  });
 });

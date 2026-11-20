@@ -235,8 +235,8 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Codex ACP | `codemie install codex-acp` | `codemie-codex-acp` | `@agentclientprotocol/codex-acp` |
 | Gemini CLI | `codemie install gemini` | `codemie-gemini` | `@google/gemini-cli` |
 | Gemini CLI ACP | `codemie install gemini-acp` | `codemie-gemini-acp` | `@google/gemini-cli` (`--acp` mode) |
-| OpenCode | `codemie install opencode` | `codemie-opencode` | `opencode-ai` |
-| OpenCode ACP | `codemie install opencode-acp` | `codemie-opencode-acp` | `opencode-ai` (`acp` mode) |
+| OpenCode | `codemie install opencode` | `codemie-opencode` | `@opencode/cli` |
+| OpenCode ACP | `codemie install opencode-acp` | `codemie-opencode-acp` | `@opencode/cli` (`acp` mode) |
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
