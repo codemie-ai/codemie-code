@@ -97,7 +97,7 @@ function Get-PackageVersion {
 
   $versionLines = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
   if ($npmExitCode -ne 0 -or $versionLines.Count -eq 0) {
-    $outputText = (@($output) | ForEach-Object { $_.ToString() }) -join ' '
+    $outputText = (@($output | Where-Object { $null -ne $_ }) | ForEach-Object { $_.ToString() }) -join ' '
     $message = @(
       "Package $PackageSpec was not found in registry $RegistryUrl.",
       'Ask IT to expose @codemieai/code through the approved virtual npm repository, or rerun with -ScopeRegistryUrl pointing to the approved registry.',
