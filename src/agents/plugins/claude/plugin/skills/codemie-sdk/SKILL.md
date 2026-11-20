@@ -1,13 +1,14 @@
 ---
 name: codemie-sdk
 description: >-
-  Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users, assistant-categories) directly from CLI
+  Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users, projects, assistant-categories) directly from CLI
   using CodeMie SDK. Use when user says "create assistant from this config", "list workflows", "update datasource",
   "delete assistant", "show my assistants", "get workflow details", "manage integrations",
   "create integration", "list integrations", "list llm models", "list embedding models",
   "list skills", "get skill", "create skill", "update skill", "delete skill", "publish skill",
   "import skill", "export skill", "attach skill", "list assistant categories", "get assistant category",
   "create assistant category", "delete assistant category", "who am i", "current user", "my profile", "user info",
+  "list projects", "get project", "does project exist", "create project", "assign user to project", "project members",
   or any request to manage CodeMie platform resources.
   NOTE: For analytics requests (usage analytics, summaries, spending, users activity, leaderboards, etc.) use the codemie-analytics skill instead.
   NOTE: To build an assistant for a purpose, test it against scenarios, or tune/improve an assistant's behavior, use the codemie-assistant-builder skill instead.
@@ -19,7 +20,7 @@ Manage CodeMie platform assets from the CLI.
 
 > **Analytics requests** (usage data, summaries, spending, activity, etc.) are handled by the **codemie-analytics** skill — use that instead.
 
-**Asset Types:** `assistants`, `workflows`, `datasources`, `integrations`, `skills`, `users`, `assistant-categories`
+**Asset Types:** `assistants`, `workflows`, `datasources`, `integrations`, `skills`, `users`, `projects`, `assistant-categories`
 
 **Operations:** `list`, `get`, `create`, `update`, `delete`
 
@@ -63,7 +64,21 @@ Aks the user what project to use with the options as follows:
 **Note:**  
 Only select a project automatically if the user has explicitly named it, or used clear phrases indicating the default (e.g., "my project", "my default project"). In all other situations, always ask for project clarification.
 
-### Step 4 — Proceed
+### Step 4 — Confirm the Project Exists
+
+Run this before creating or changing assets in a project:
+
+- **Default project** (the email-named personal project): skip the check.
+- **Any other named project** (admin or not): run `codemie sdk projects exists '<project>'`.
+
+Exit codes of `exists`:
+- **0** — project exists, proceed.
+- **2** — project not found or not accessible: tell the user, then stop and ask which project to use. Do not retry or loop.
+- **1** — error (auth or server): report it as an error, never as "not found".
+
+**Quoting:** always single-quote project names (`'<project>'`). Refuse names containing shell metacharacters (including the single quote `'`, spaces, `;`, `$`, backtick, `|`, `&`, `<`, `>`, `\`, `"`, `(`, `)`) and ask the user for a safe name.
+
+### Step 5 — Proceed
 
 Once the project is known, use it in all subsequent commands:
 - Assistants, skills, assistant-categories: `"project": "<name>"`
@@ -83,6 +98,7 @@ Once the project is known, use it in all subsequent commands:
 | Integrations | [examples/integrations.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/integrations.md) |
 | Skills | [examples/skills.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/skills.md) |
 | Users | [examples/users.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/users.md) |
+| Projects | [examples/projects.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/projects.md) |
 | Assistant Categories | [examples/categories.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/categories.md) |
 
 Do **not** guess field names or skip this step — all required/optional fields, nested schemas, and asset cross-reference commands are documented there.
@@ -228,6 +244,34 @@ codemie sdk skills remove-reactions <id>
 codemie sdk users me [--json]
 codemie sdk users data [--json]
 ```
+
+---
+
+## Projects
+
+> See [examples/projects.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/projects.md) for full field reference and examples.
+
+```bash
+codemie sdk projects list [--search <text>] [--page <n>] [--per-page <n>] [--sort-by name|created_at] [--sort-order asc|desc] [--json]
+codemie sdk projects get '<project>' [--json]
+codemie sdk projects exists '<project>' [--json]
+codemie sdk projects members '<project>' [--json]
+codemie sdk projects create --data '<json>' | --json <file>
+codemie sdk projects update '<project>' --data '<json>' | --json <file>
+codemie sdk projects delete '<project>'
+codemie sdk projects transfer-ownership '<project>' <userId>
+codemie sdk projects assign '<project>' <userId> [--admin]
+codemie sdk projects update-member '<project>' <userId> --admin|--no-admin
+codemie sdk projects remove-member '<project>' <userId>
+codemie sdk projects bulk-assign '<project>' --file <users.json>
+codemie sdk projects bulk-remove '<project>' <userId> [<userId>...]
+codemie sdk projects csv-validate '<project>' <file.csv>
+codemie sdk projects csv-import '<project>' <file.csv>
+```
+
+**Exit codes** (`exists`, `get`, `members`): `0` ok, `2` project not found or not accessible, `1` error (auth/server).
+
+**Safety:** ask the user before `delete`, `transfer-ownership` and `bulk-remove`. After exit 1 on any mutation, check state with `get` or `members` before retrying, since the change may have been applied. For assign, update-member, remove-member and csv-import, a 404 cannot tell a missing project from a missing user.
 
 ---
 

@@ -1,0 +1,10 @@
+{"schema":1,"branch":"feat/EPMCDME-16734-sdk-projects-cli","head":"66b7a3d6e66c1f5e5fb303db9143789d42536766","runner":"npm","started_at":"2026-11-03T00:00:00Z","completed_at":"2026-11-03T00:01:00Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":5389,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":11511,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":5245,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":9627,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npx vitest run --project unit","exit_code":null,"notes":"Tests not run: AGENTS.md says tests only on explicit request; caller did not request."},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":2131,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Stage changes (and have Docker running) to scan locally; CI scans unconditionally."},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":1390,"command":"npm run commitlint:last","exit_code":0}],
+"failures":{}}
