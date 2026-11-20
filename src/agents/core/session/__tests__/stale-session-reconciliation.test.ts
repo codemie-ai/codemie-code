@@ -1024,21 +1024,46 @@ describe('a close whose rename meets a held metrics lock stops at the attempt de
   });
 
   it('an unqueued record (no CodeMie host): returns at the deadline', async () => {
-    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here. The wait itself
-    // polls with real fs calls (not fake-timed); once the fake clock reaches the deadline the hold lets those real
-    // reads/writes finish for free, so their latency does not get counted as elapsed time.
+    // Discovery and the reconcile-lock read precede the attempt. Observe the actual deadline handed to the real
+    // rename consumer rather than counting this setup I/O against a budget that does not exist yet.
     const unqueued = record({ status: 'completed', codemieUrl: undefined });
     saveWithHeldMetricsLock(unqueued);
     let startedAt = 0;
     let doneAt = 0;
+    let deadlineMs = 0;
+    const { renameSessionFiles } = await import('../session-generation.js');
+    const hook = {
+      ...pipeline(),
+      renameSessionFiles: async (...args: Parameters<typeof renameSessionFiles>) => {
+        deadlineMs = args[1]?.deadlineMs ?? 0;
+        return renameSessionFiles(...args);
+      },
+    };
+    const readFile = vi.mocked(fsPromises.readFile);
+    const originalRead = readFile.getMockImplementation()!;
+    let delayed = false;
+    readFile.mockImplementation(async (...args: Parameters<typeof fsPromises.readFile>) => {
+      if (!delayed && String(args[0]) === join(sessionsDir, `${unqueued.sessionId}.json`)) {
+        delayed = true;
+        // Discovery precedes the per-attempt deadline; make its otherwise load-dependent latency deterministic.
+        vi.setSystemTime(Date.now() + 600);
+      }
+      return originalRead(...args);
+    });
+    try {
+      await onFakeClock(async () => {
+        startedAt = Date.now();
+        await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+        doneAt = Date.now();
+      }, { while: () => deadlineMs !== 0 && Date.now() >= deadlineMs, maxRealMs: 2_000 });
+    } finally {
+      readFile.mockImplementation(originalRead);
+    }
 
-    await onFakeClock(async () => {
-      startedAt = Date.now();
-      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: pipeline() }).done;
-      doneAt = Date.now();
-    }, { while: () => startedAt !== 0 && Date.now() >= startedAt + 10_000, maxRealMs: 2_000 });
-
-    expect(doneAt - startedAt).toBeLessThan(10_500);
+    expect(delayed).toBe(true);
+    expect(deadlineMs - startedAt).toBeGreaterThanOrEqual(10_600);
+    expect(doneAt).toBeGreaterThanOrEqual(deadlineMs);
+    expect(doneAt - deadlineMs).toBeLessThan(500);
     expectStillLive(unqueued.sessionId);
   });
 });

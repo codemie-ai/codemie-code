@@ -45,8 +45,9 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
 import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { logger } from '@/utils/logger.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
+import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
-import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { getClaudeDesktopBaseDir, getClaudeDesktopFirstPartyDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
 import { markCoworkSessionServed } from '../cowork-served-mark.js';
 import { COWORK_ACCOUNT_SEGMENTS, coworkFixtureFile, installCoworkFixture } from './cowork-fixture.js';
@@ -404,16 +405,15 @@ describe('CoworkEventProducer.run', () => {
     expect(promptIds()).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000e1`);
   });
 
-  it('appends without a project name or a project binding when no project is resolved, and logs nothing about it', async () => {
+  it('appends nothing and saves no cursor or pin while the project is unresolved', async () => {
     rmSync(join(codemieHome, 'codemie-cli.config.json'));
 
     await settle(newProducer(), LAST_LINE_MS + 20_000);
 
-    const written = events();
-    expect(written).toHaveLength(FIRST_PROCESSING_TYPES.length);
-    expect(written.filter((event) => 'codemie_project_name' in event)).toEqual([]);
-    expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBeUndefined();
-    expect(warnings()).toEqual([]);
+    expect(events()).toEqual([]);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(false);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-attribution.json`))).toBe(false);
+    expect(warnings()).toHaveLength(1);
   });
 
   it('appends nothing and saves no cursor while the local config cannot be loaded, and appends the full set once after it is fixed', async () => {
@@ -967,6 +967,22 @@ describe('CoworkEventProducer while Desktop is not connected', () => {
   const RESUMED_AT = Date.parse('2026-11-10T10:20:05.000Z');
   const UNPARSABLE_CURSOR = '[cowork-producer] Unparsable cursor; the session is read again from its start';
 
+  it('does not read personal-account transcripts from the first-party directory, even with the same session id', async () => {
+    vi.stubEnv('APPDATA', join(home, 'AppData', 'Roaming'));
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = events().length;
+    const personalBase = getClaudeDesktopFirstPartyDir();
+    installCoworkFixture(personalBase);
+    const personalMain = join(personalBase, 'local-agent-mode-sessions', ACCOUNT_DIR, '1a2b3c4d', '.claude', 'projects', 'session', `${CLI}.jsonl`);
+    appendFileSync(personalMain, userLine('personal-prompt', '2026-11-10T10:20:00.000Z', 'Personal-account work'));
+    appendFileSync(personalMain, assistantLine('personal-answer', '2026-11-10T10:20:05.000Z', 'msg_personal', [{ type: 'text', text: 'Personal response' }]));
+    await settle(producer, RESUMED_AT + INACTIVITY_TIMEOUT_MS + 20_000, false);
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(events().some((event) => event['message_id'] === 'msg_personal')).toBe(false);
+    expect(events().some((event) => event['prompt_body'] === 'Personal-account work')).toBe(false);
+  });
+
   function appendTurn(): void {
     appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d1', '2026-11-10T10:20:00.000Z', 'One more synthetic question'));
     appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000d2', '2026-11-10T10:20:05.000Z', 'msg_synthetic_D', [{ type: 'text', text: 'Answered.' }]));
@@ -1353,6 +1369,418 @@ describe('CoworkEventProducer and the forwarder\'s send', () => {
     const resent = sent(before).map(({ event }) => event['event_id']);
     expect(new Set(resent)).toEqual(firstIds);
     expect(resent).toHaveLength(firstIds.size);
+  });
+});
+
+describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)', () => {
+  const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+  const fetchMock = vi.fn();
+  const FIRST = LAST_LINE_MS + 20_000;
+  const END = LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000;
+  const attributionPath = () => join(codemieHome, 'analytics', 'state', `${CLI}.cowork-attribution.json`);
+  const status = () => JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string; projectConflict?: string[]; projectSeal?: unknown };
+
+  const PROFILE = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com' };
+
+  /** A profile without a project of its own: the shared (global workspace) project applies, as for a session with no folder. */
+  function writeSharedProject(project: string): void {
+    writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: project } }));
+  }
+
+  beforeEach(() => {
+    writeSharedProject('synthetic-project');
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A folder of another project joins the session: its own config now names `other-project`, as `.codemie/codemie-cli.config.json` of a linked repository does. */
+  async function linkFolderOfOtherProject(): Promise<void> {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: 'other-project' } }));
+  }
+
+  /** Every event of every request sent so far, with the request's X-CodeMie headers. */
+  function sentRequests(): Array<{ headers: Record<string, string>; events: WireEvent[] }> {
+    return fetchMock.mock.calls.map(([, init]) => {
+      const request = init as { headers: Record<string, string>; body: string };
+      return {
+        headers: request.headers,
+        events: request.body.split('\n').filter((body) => body.length > 0).map((body) => JSON.parse(body) as WireEvent),
+      };
+    });
+  }
+
+  it('keeps the first project for the end and the summaries after a folder of another project joined, and the spool sees no conflict', async () => {
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    await linkFolderOfOtherProject();
+    const before = spooled().length;
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(status().project).toBe('synthetic-project');
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+  });
+
+  it('delivers the session end under the first project through the forwarder (synthetic HTTP): the final summary is sent, not discarded', async () => {
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    await forwardSession(CLI, true, credentials as never);
+    await linkFolderOfOtherProject();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+    await forwardSession(CLI, true, credentials as never);
+
+    const requests = sentRequests();
+    const types = requests.flatMap(({ events: sentEvents }) => sentEvents.map((event) => event['type']));
+    expect(types).toContain('agent.session.end');
+    expect(requests.flatMap(({ events: sentEvents }) => sentEvents).find((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toBeDefined();
+    for (const { headers, events: sentEvents } of requests) {
+      expect(headers['X-CodeMie-Project']).toBe('synthetic-project');
+      for (const event of sentEvents) expect(event['codemie_project_name']).toBe('synthetic-project');
+    }
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  /** A folder of its own under the temp home whose `.codemie` config links it to `project`. */
+  function linkedFolder(name: string, project: string): string {
+    const folder = join(home, name);
+    mkdirSync(join(folder, '.codemie'), { recursive: true });
+    writeFileSync(join(folder, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: project } }));
+    return folder;
+  }
+
+  // Desktop's own transition: userSelectedFolders changes (a DISTINCT directory resolving another project) while the
+  // task keeps working. Synthetic fixture: real producer, spool and forwarder, mocked HTTP; not a live backend.
+  it.each([
+    { change: 'a folder is added', initial: [], next: ['p2'], first: 'synthetic-project', restart: false },
+    { change: 'the folders are reordered, then the daemon restarts', initial: ['p2', 'p3'], next: ['p3', 'p2'], first: 'other-project', restart: true },
+    { change: 'the only folder is removed, then the daemon restarts', initial: ['p2'], next: [], first: 'other-project', restart: true },
+  ])('sends work done after the folders change under the first project, and delivers the final summary and end: $change', async ({ initial, next, first, restart }) => {
+    const dirs: Record<string, string> = { p2: linkedFolder('folder-p2', 'other-project'), p3: linkedFolder('folder-p3', 'third-project') };
+    const select = (keys: string[]): void => writeMetadata(LOCAL, { userSelectedFolders: keys.map((key) => dirs[key]) });
+    const cwdOf = async (): Promise<string> => (await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS))[0].workingDirectory;
+    select(initial);
+    const initialCwd = await cwdOf();
+    let producer = newProducer();
+    await settle(producer, FIRST);
+    await forwardSession(CLI, true, credentials as never);
+    const firstRequests = fetchMock.mock.calls.length;
+    expect(firstRequests).toBeGreaterThan(0);
+
+    // Desktop now lists other folders, and the task does new work: a prompt, a tool call and its result, an answer with usage.
+    select(next);
+    expect(await cwdOf()).not.toBe(initialCwd);
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h1', '2026-11-10T10:01:00.000Z', 'Create notes2.md in the new folder'));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h2', '2026-11-10T10:01:05.000Z', 'msg_synthetic_H1',
+      [{ type: 'tool_use', id: 'toolu_synthetic_h', name: 'Write', input: { file_path: 'notes2.md', content: 'x' } }]));
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h3', '2026-11-10T10:01:10.000Z',
+      [{ type: 'tool_result', tool_use_id: 'toolu_synthetic_h', content: 'ok' }]));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h4', '2026-11-10T10:01:15.000Z', 'msg_synthetic_H2', [{ type: 'text', text: 'Done.' }]));
+
+    // Inside the discovery window (the producer still holds its cached folder), then after the refresh, then the end.
+    await settle(producer, FIRST + 60_000);
+    await forwardSession(CLI, true, credentials as never);
+    if (restart) producer = newProducer();
+    await settle(producer, FIRST + INACTIVITY_TIMEOUT_MS + 60_000);
+    await settle(producer, FIRST + 2 * INACTIVITY_TIMEOUT_MS + 120_000);
+    await forwardSession(CLI, true, credentials as never);
+
+    const requests = sentRequests();
+    const afterChange = requests.slice(firstRequests).flatMap(({ events: sentEvents }) => sentEvents);
+    const idsAfter = afterChange.map((event) => event['event_id']);
+    expect(idsAfter).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000h1`);
+    expect(afterChange.filter((event) => event['type'] === 'agent.tool.start' || event['type'] === 'agent.tool.end').length).toBeGreaterThanOrEqual(2);
+    expect(afterChange.filter((event) => event['type'] === 'agent.usage.request').map((event) => event['message_id'])).toContain('msg_synthetic_H2');
+    expect(afterChange.some((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toBe(true);
+    expect(afterChange.some((event) => event['type'] === 'agent.session.end')).toBe(true);
+    for (const { headers, events: sentEvents } of requests) {
+      expect(headers['X-CodeMie-Project']).toBe(first);
+      for (const event of sentEvents) expect(event['codemie_project_name']).toBe(first);
+    }
+    for (const event of events()) expect(event['codemie_project_name']).toBe(first);
+    expect(status().projectConflict).toBeUndefined();
+    expect(status().project).toBe(first);
+  });
+
+  it('keeps the first project over a daemon restart (a new producer) when the folder\'s or the profile\'s project changed meanwhile', async () => {
+    await settle(newProducer(), FIRST);
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    const restarted = newProducer();
+    await restarted.run(END);
+    await restarted.run(END + 10_000);
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  it('keeps the project of a session first resolved from a linked folder after the folder is removed', async () => {
+    await linkFolderOfOtherProject();
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    rmSync(join(session.workingDirectory, '.codemie'), { recursive: true });
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'other-project', projectSource: 'linked_folder' });
+    for (const event of events()) expect(event['codemie_project_name']).toBe('other-project');
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  it('retries an initially unresolved project without losing the transcript when configuration recovers', async () => {
+    rmSync(join(codemieHome, 'codemie-cli.config.json'));
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    expect(events()).toEqual([]);
+    expect(existsSync(attributionPath())).toBe(false);
+    writeProfile('late-project');
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    expect(events().length).toBeGreaterThan(0);
+    for (const event of events()) expect(event['codemie_project_name']).toBe('late-project');
+    expect(status().project).toBe('late-project');
+    expect(events().some((event) => event['type'] === 'agent.session.end')).toBe(true);
+  });
+
+  it('does not pin or append over an unreadable legacy status, and recovers the original binding on retry', async () => {
+    await settle(newProducer(), FIRST);
+    rmSync(attributionPath());
+    const statusPath = spoolPath(CLI, '.status');
+    const saved = readFileSync(statusPath, 'utf-8');
+    writeFileSync(statusPath, '{broken');
+    await linkFolderOfOtherProject();
+    const before = events().length;
+    await settle(newProducer(), END);
+    expect(existsSync(attributionPath())).toBe(false);
+    expect(events()).toHaveLength(before);
+    expect(readFileSync(statusPath, 'utf-8')).toBe('{broken');
+    writeFileSync(statusPath, saved);
+    await settle(newProducer(), END + 30_000);
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8')).project).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(events().some((event) => event['type'] === 'agent.session.end')).toBe(true);
+  });
+
+  it('boundary: a session already bound by the spool with no pin keeps the spool\'s project and is pinned to it', async () => {
+    await settle(newProducer(), FIRST);
+    // A session collected before pins existed: spool bound to synthetic-project, no attribution file.
+    rmSync(attributionPath());
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    const producer = newProducer();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    // Its source cannot be told from the new folder's: no funding declaration is made for it (see the funding tests).
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'none' });
+  });
+
+  it('boundary: an unreadable pin cannot move a session whose project the spool already holds', async () => {
+    await settle(newProducer(), FIRST);
+    writeFileSync(attributionPath(), '{nope');
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    await producer2RunAtEnd();
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8')).project).toBe('synthetic-project');
+  });
+
+  async function producer2RunAtEnd(): Promise<void> {
+    const producer = newProducer();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+  }
+
+  it('boundary: a session with a cursor and neither pin nor spool binding is pinned at its next processing', async () => {
+    await settle(newProducer(), FIRST);
+    rmSync(attributionPath());
+    rmSync(spoolPath(CLI, '.status'));
+    rmSync(spoolPath());
+
+    await settle(newProducer(), END);
+
+    expect(existsSync(attributionPath())).toBe(true);
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+  });
+
+  it('writes no pin while the local config cannot be loaded', async () => {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ synthetic: true }));
+
+    await settle(newProducer(), FIRST);
+
+    expect(existsSync(attributionPath())).toBe(false);
+    expect(existsSync(spoolPath())).toBe(false);
+  });
+
+  describe('funding (EPMCDME-17410), through the real forwarder with a stubbed fetch', () => {
+    // The sender adds X-CodeMie-CLI and X-CodeMie-Client to every request; only the attribution headers are compared.
+    const fundingHeaders = (headers: Record<string, string>) => Object.fromEntries(
+      Object.entries(headers).filter(([name]) => name.startsWith('X-CodeMie') && !['X-CodeMie-CLI', 'X-CodeMie-Client'].includes(name)));
+
+    it('declares CodeMie funding with the pinned project and source on every request of a served Cowork session, and no consent or contract', async () => {
+      await settle(newProducer(), FIRST);
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) {
+        expect(fundingHeaders(headers)).toEqual({
+          'X-CodeMie-Session-Id': CLI,
+          'X-CodeMie-Routed-Via-CodeMie': 'true',
+          'X-CodeMie-Subscription-Type': 'codemie',
+          'X-CodeMie-Project': 'synthetic-project',
+          'X-CodeMie-Project-Source': 'profile',
+        });
+      }
+    });
+
+    it('declares the linked-folder source when the project came from the folder', async () => {
+      await linkFolderOfOtherProject();
+      await settle(newProducer(), FIRST);
+      await forwardSession(CLI, true, credentials as never);
+
+      for (const { headers } of sentRequests()) {
+        expect(fundingHeaders(headers)).toMatchObject({ 'X-CodeMie-Project': 'other-project', 'X-CodeMie-Project-Source': 'linked_folder', 'X-CodeMie-Subscription-Type': 'codemie' });
+      }
+    });
+
+    it('upgrades pending ended sessions from the existing durable pin without replaying their events', async () => {
+      await settle(newProducer(), END);
+      const before = events().length;
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      const restarted = newProducer();
+      await restarted.run(END + 30_000, false);
+      await restarted.run(END + 40_000, false);
+      expect(events()).toHaveLength(before);
+      await forwardSession(CLI, true, credentials as never);
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) expect(headers).toMatchObject({
+        'X-CodeMie-Project': 'synthetic-project', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project-Source': 'profile',
+      });
+    });
+
+    it('sends the legacy Project header alone for a collected session with no served mark (legacy cursor-only boundary)', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-served`));
+      // A pre-upgrade spool has no producer metadata, even though this fixture was initially generated by the new producer.
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) expect(fundingHeaders(headers)).toEqual({ 'X-CodeMie-Project': 'synthetic-project' });
+    });
+
+    it('sends the legacy Project header alone for a session pinned without a source (spool-bound boundary)', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(attributionPath());
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      writeSharedProject('profile-project-2');
+      await producer2Run();
+      await forwardSession(CLI, true, credentials as never);
+
+      for (const { headers } of sentRequests()) expect(fundingHeaders(headers)).toEqual({ 'X-CodeMie-Project': 'synthetic-project' });
+    });
+
+    it('a transient project-origin lookup failure appends and pins nothing, and the retry declares funding with the real source', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await settle(newProducer(), FIRST);
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(existsSync(spoolPath())).toBe(false);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Recovery: the same producer retries before any append.
+      const producer = newProducer();
+      await settle(producer, FIRST + 60_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) {
+        expect(fundingHeaders(headers)).toMatchObject({ 'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project': 'synthetic-project', 'X-CodeMie-Project-Source': 'profile' });
+      }
+    });
+
+    it('a failure for a session the spool already holds (no pin yet) appends nothing, and the retry pins the real source under the bound project', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(attributionPath()); // collected before pins existed: spool bound, no pin
+      const before = events().length;
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await producer2Run();
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(events()).toHaveLength(before);
+      } finally {
+        spy.mockRestore();
+      }
+
+      const producer = newProducer();
+      await producer.run(END + 60_000);
+      await producer.run(END + 70_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+      expect(events().length).toBeGreaterThan(before);
+    });
+
+    /** One more processing so the pin is rewritten for the bound session. */
+    async function producer2Run(): Promise<void> {
+      const producer = newProducer();
+      await producer.run(END);
+      await producer.run(END + 10_000);
+    }
+
+    it('control: a native (not Cowork) session is sent exactly as before, with the Project header alone', async () => {
+      const NATIVE = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+      const hook = { session_id: NATIVE, type: 'agent.session.start', codemie_project_name: 'native-project', event_id: 'native-1', timestamp: '2026-11-10T10:00:00.000Z' };
+      await appendSpool(NATIVE, 'hooks', JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(hook) }) + '\n', ['native-project']);
+
+      await forwardSession(NATIVE, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests).toHaveLength(1);
+      expect(fundingHeaders(requests[0].headers)).toEqual({ 'X-CodeMie-Project': 'native-project' });
+    });
   });
 });
 
