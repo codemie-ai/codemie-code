@@ -50,7 +50,7 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 try {
   if (await MigrationRunner.hasPending()) {
     const migrationResult = await MigrationRunner.runPending({
-      // Show migration messages to user, except in a hook, an unattended run or for --json output
+      // Keep hook, scheduled run, and JSON output clean
       silent: isHookProcess || isScheduledRun || isMachineOutput
     });
     // A silent run prints no failure line, and the logger writes errors to the console only in
@@ -86,9 +86,8 @@ if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput)
 // CODEMIE_TIPS off switch with feature tips). Non-blocking, minimal stdout.
 // shouldRunUpgradeNotice skips non-TTY stdout, `hook` invocations, and
 // invocations with their own output contract (--version/-V/--task/--help);
-// a hook process (`hook`, `sound`) or a `--json` invocation never reaches it. A
-// skipped notice writes no marker, so it shows on the next run in a terminal.
-// Also skipped for the unattended scheduled analytics sync job.
+// Hook processes (`hook`, `sound`), scheduled runs, and `--json` invocations never reach it.
+// A skipped notice writes no marker, so it shows on the next run in a terminal.
 if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
   try {
     const { readFileSync } = await import('node:fs');
