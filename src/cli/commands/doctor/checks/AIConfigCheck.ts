@@ -6,6 +6,7 @@ import { ConfigLoader } from '../../../../utils/config.js';
 import { ProviderRegistry } from '../../../../providers/core/registry.js';
 import { getPlatformUrl } from '../../../../providers/core/codemie-auth-helpers.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
+import { renderHint } from '@/utils/hint.js';
 
 export class AIConfigCheck implements HealthCheck {
   name = 'Active Profile';
@@ -26,7 +27,7 @@ export class AIConfigCheck implements HealthCheck {
         details.push({
           status: 'error',
           message: 'No configuration found',
-          hint: 'Run: codemie setup'
+          hint: renderHint({ reason: 'Not configured', command: 'codemie setup' })
         });
         success = false;
         return { name: this.name, success, details };
@@ -128,7 +129,7 @@ export class AIConfigCheck implements HealthCheck {
         details.push({
           status: 'error',
           message: `Missing configuration: ${missingFields.join(', ')}`,
-          hint: 'Run: codemie setup'
+          hint: renderHint({ reason: 'Not configured', command: 'codemie setup' })
         });
         success = false;
       }
@@ -141,7 +142,7 @@ export class AIConfigCheck implements HealthCheck {
       details.push({
         status: 'error',
         message: `Configuration error: ${errorMessage}`,
-        hint: 'Run: codemie setup'
+        hint: renderHint({ reason: 'Not configured', command: 'codemie setup' })
       });
       success = false;
     }
