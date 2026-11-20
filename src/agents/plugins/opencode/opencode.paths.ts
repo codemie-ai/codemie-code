@@ -18,6 +18,11 @@ export function getOpenCodeStorageBase(): string {
   return join(getCodemieHome(), 'opencode-storage');
 }
 
+/** CodeMie-owned XDG_CONFIG_HOME base for codemie-code runs. Must differ from the data base (engine dir is `<base>/opencode`). */
+export function getOpenCodeConfigBase(): string {
+  return join(getCodemieHome(), 'opencode-config');
+}
+
 /**
  * The OpenCode storage dir (`…/opencode/storage`) an agent's runs write: codemie-code's private
  * data home, or — for opencode / opencode-acp — the user's XDG_DATA_HOME, else the platform default.
@@ -245,6 +250,7 @@ export function getOpenCodeHome(): string {
 
 /**
  * Get OpenCode config directory
+ * (the user's real OpenCode config, read by the plain `opencode` agent; not codemie-code's isolated one)
  */
 export function getOpenCodeConfigDir(): string {
   if (process.env.XDG_CONFIG_HOME) {

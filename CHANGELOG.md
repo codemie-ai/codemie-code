@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Changed
+
+- `codemie-code` runs, `--task` and interactive, now use a CodeMie-owned OpenCode config location under the CodeMie home, so the user's global OpenCode config (`~/.config/opencode`: settings, agents, commands, tools, MCP) no longer applies; a broken global tool file no longer crashes runs; project-level `.opencode` is still loaded. Known gaps: a `~/.opencode` directory is still loaded, and tools that read their config from the XDG config home (for example `gh`) no longer see the user's settings when run from inside a `codemie-code` session
+
 ### Fixed
 
 - A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before, and a call whose result has not arrived yet is counted only once that result succeeds. In the per-record agent metrics of a live session, a call whose turn is still held back at the end of the session (for example, a sibling tool call that never got a result) and that is followed by a later turn can be missed; the session summary count is not affected. Skill counts are unchanged
