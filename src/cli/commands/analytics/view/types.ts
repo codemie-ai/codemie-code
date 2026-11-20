@@ -30,7 +30,7 @@ export interface SummaryTokens {
 
 export interface SummaryTotals {
   sessions: number;
-  /** Sessions whose usage was priced (a per-model cost line exists). */
+  /** Sessions whose usage was priced (they have a `costSource`). */
   pricedSessions: number;
   costUSD: number;
   cacheReadCostUSD: number;
@@ -75,9 +75,13 @@ export interface HeavySessionRow extends SessionRow {
 }
 
 export interface SeriesBucket {
-  /** First ms of the local calendar day, or of the week starting Monday. */
+  /**
+   * First ms of the local calendar day, or of the week starting Monday; the first bucket starts at
+   * `range.from` instead when that is later. Buckets are local days, even though a date-only
+   * `--from`/`--to` is a UTC day.
+   */
   from: number;
-  /** Last ms of that day or week. */
+  /** Last ms of that day or week; the last bucket ends at `range.to` when that is earlier. */
   to: number;
   sessions: number;
   costUSD: number;

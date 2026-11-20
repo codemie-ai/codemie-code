@@ -111,6 +111,27 @@ describe('codemie analytics view', () => {
     expect(embedded.meta.agents).toEqual(['claude']);
   });
 
+  it('rebuilds the HTML meta for the filtered sessions: range, period, coverage and the project filter', async () => {
+    const file = join(dir, 'meta.html');
+    const { exitCode } = await run(['--input', input, '--from', '2026-11-01', '--to', '2026-11-19', '--agent', 'claude', '--export', 'html', '-o', file]);
+
+    const { meta } = embeddedPayload(readFileSync(file, 'utf-8')) as unknown as { meta: Record<string, unknown> };
+    expect(exitCode).toBe(0);
+    expect(meta).toMatchObject({
+      rangeLabel: 'custom',
+      periodStart: '2026-11-01T00:00:00.000Z',
+      periodEnd: '2026-11-19T23:59:59.999Z',
+      agents: ['claude'],
+      projectFilter: 'all',
+      coverage: [{ agentName: 'claude', total: 2, priced: 2, withLog: 2 }],
+      totals: { sessions: 2, pricedSessions: 2 },
+    });
+
+    const last = join(dir, 'meta-last.html');
+    await run(['--input', input, '--last', '3650d', '--export', 'html', '-o', last]);
+    expect((embeddedPayload(readFileSync(last, 'utf-8')) as unknown as { meta: { rangeLabel: string } }).meta.rangeLabel).toBe('3650d');
+  });
+
   it('fails with one line and exit 1 for a missing file, a non-export file, an unknown session id and a bad date', async () => {
     const notExport = join(dir, 'notes.json');
     writeFileSync(notExport, JSON.stringify({ hello: 'world' }));
@@ -182,6 +203,8 @@ describe('codemie analytics view', () => {
       expect(html.exitCode).toBe(0);
       expect(leaks(JSON.stringify(embedded))).toEqual([]);
       expect(embedded.sessions).toHaveLength(3); // filtered on the full path before redaction
+
+      expect(embedded.meta).toMatchObject({ projectFilter: '<redacted>' });
 
       const summaryRun = await cli(['--redact', '--project', '/Users/taylor/projects/garden-planner', '--compare']);
       const summary = JSON.parse(summaryRun.stdout);

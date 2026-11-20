@@ -192,12 +192,12 @@ describe('buildSummary', () => {
     const weekRange = { from: new Date(2026, 9, 1).getTime(), to: new Date(2026, 10, 5, 23, 59, 59, 999).getTime() };
     const weeks = buildSummary(p, weekRange, opts);
     expect(weeks.range.bucket).toBe('week');
-    expect(weeks.series[0].from).toBe(new Date(2026, 8, 28).getTime()); // the Monday before 1 Oct
-    expect(weeks.series.every((b) => new Date(b.from).getDay() === 1 && new Date(b.from).getHours() === 0)).toBe(true);
+    expect(weeks.series[0].from).toBe(weekRange.from); // the week of Monday 28 Sep, cut to the range
+    expect(weeks.series.slice(1).every((b) => new Date(b.from).getDay() === 1 && new Date(b.from).getHours() === 0)).toBe(true);
     for (let i = 1; i < weeks.series.length; i++) {
       expect(weeks.series[i].from).toBe(weeks.series[i - 1].to + 1);
     }
-    expect(weeks.series.at(-1)!.to).toBeGreaterThanOrEqual(weekRange.to);
+    expect(weeks.series.at(-1)!.to).toBe(weekRange.to);
     expect(weeks.series.find((b) => b.sessions === 1)!.from).toBe(new Date(2026, 9, 19).getTime());
   });
 
@@ -293,6 +293,81 @@ describe('buildSummary', () => {
         expect(series[i].from).toBe(series[i - 1].to + 1);
       }
       expect(series.at(-1)!.to).toBe(range.to);
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
+
+  it('counts a session as priced only when it has a costSource, not when it has a per-model line', () => {
+    // An OTEL session whose only model fell through unpriced: a per-model line, but priced: false.
+    const otelUnpriced = record({
+      sessionId: 'otel-unpriced', costUSD: 0, costSource: undefined,
+      perModelCost: [{ model: 'mystery', tokens: tokens(), costUSD: 0, unpriced: true }],
+    });
+
+    const s = buildSummary(payload([record({ sessionId: 'priced' }), otelUnpriced]), NOV, opts);
+
+    expect(s.totals.sessions).toBe(2);
+    expect(s.totals.pricedSessions).toBe(1);
+    expect(s.coverage).toEqual([{ agentName: 'claude', sessions: 2, priced: 1, withLog: 2 }]);
+  });
+
+  it('filters by --branch on the session\'s main branch', () => {
+    const sessions = [
+      record({ sessionId: 'main-1', branch: 'main' }),
+      record({ sessionId: 'feat-1', branch: 'feat/x', costUSD: 2 }),
+      record({ sessionId: 'feat-2', branch: 'feat/x', costUSD: 3 }),
+    ];
+
+    const s = buildSummary(payload(sessions), { ...NOV, branch: 'feat/x' }, opts);
+
+    expect(s.filter.branch).toBe('feat/x');
+    expect(s.totals).toMatchObject({ sessions: 2, costUSD: 5 });
+    expect(s.sessions.map((r) => r.sessionId).sort()).toEqual(['feat-1', 'feat-2']);
+  });
+
+  it('starts the range, and so the series, at the earliest session when it is before periodStart', () => {
+    const early = Date.UTC(2026, 8, 20, 9);
+    const late = Date.UTC(2026, 10, 10, 9);
+    const p = payload(
+      [record({ sessionId: 'early', startTime: early }), record({ sessionId: 'late', startTime: late })],
+      { periodStart: '2026-10-01T00:00:00.000Z' }
+    );
+
+    const s = buildSummary(p, {}, opts);
+
+    expect(s.range.from).toBe(early);
+    expect(s.totals.sessions).toBe(2);
+    expect(s.series.reduce((n, b) => n + b.sessions, 0)).toBe(2);
+    expect(s.series.reduce((n, b) => n + b.costUSD, 0)).toBe(s.totals.costUSD);
+  });
+
+  it('keeps periodStart as the range start when every session is later', () => {
+    const p = payload([record({ startTime: Date.UTC(2026, 10, 10, 9) })], { periodStart: '2026-10-01T00:00:00.000Z' });
+
+    expect(buildSummary(p, {}, opts).range.from).toBe(Date.UTC(2026, 9, 1));
+  });
+
+  it('cuts the first and last local-day bucket to a UTC-day range', () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const range = { from: Date.UTC(2026, 10, 1), to: Date.UTC(2026, 10, 19, 23, 59, 59, 999) }; // --from 2026-11-01 --to 2026-11-19
+      const inside = record({ sessionId: 'inside', startTime: Date.UTC(2026, 10, 1, 1) }); // 31 Oct 21:00 local
+
+      const { series } = buildSummary(payload([inside]), range, opts);
+
+      expect(series[0].from).toBe(range.from); // not 31 Oct 00:00 local
+      expect(series.at(-1)!.to).toBe(range.to);
+      expect(series[0].sessions).toBe(1);
+      for (const b of series) {
+        expect(b.from).toBeGreaterThanOrEqual(range.from);
+        expect(b.to).toBeLessThanOrEqual(range.to);
+      }
+      for (let i = 1; i < series.length; i++) {
+        expect(series[i].from).toBe(series[i - 1].to + 1);
+      }
     } finally {
       if (tz === undefined) delete process.env.TZ;
       else process.env.TZ = tz;

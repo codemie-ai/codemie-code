@@ -2,7 +2,9 @@
  * Every number of `codemie analytics view --export summary`, computed from report records.
  *
  * The formulas are the HTML report's own (`report/client/app.js`); each one names the function
- * it mirrors, and `report/__tests__/view-parity.test.ts` runs app.js against this module.
+ * it mirrors. `report/__tests__/view-parity.test.ts` runs app.js's `traceEntries`, "Avg context /
+ * call" and `successRate` against this module; the other formulas (dead sessions, depth buckets,
+ * heavy rows, tool rows, `dispatchCounts`) are pinned by hand-computed numbers in the view tests.
  */
 
 import { agentMatchesAnalyticsFilter } from '../cost/codex-agent.js';
@@ -61,9 +63,13 @@ export function filterRecords(records: ReportSessionRecord[], f: ViewFilter): Re
   );
 }
 
-/** A priced session has a per-model cost line: the enricher's `priced` (`perModel.length > 0`). */
-function isPriced(s: ReportSessionRecord): boolean {
-  return (s.perModelCost?.length ?? 0) > 0;
+/**
+ * A priced session has a `costSource`: both pricing paths (the native enricher and the OTEL loader)
+ * set it exactly when they set `priced`. A per-model cost line is not enough: an OTEL session whose
+ * only model fell through unpriced has one.
+ */
+export function isPriced(s: ReportSessionRecord): boolean {
+  return s.costSource !== undefined;
 }
 
 // app.js successRate: Σ success / Σ calls as a percent with one decimal.
@@ -134,7 +140,11 @@ function totalsOf(records: readonly ReportSessionRecord[]): SummaryTotals {
   };
 }
 
-/** Local calendar days from `from` to `to`, or weeks starting Monday when the range is longer than 35 days. */
+/**
+ * Local calendar days from `from` to `to`, or weeks starting Monday when the range is longer than 35
+ * days. The first bucket starts at `from` and the last ends at `to`, so no bucket covers time
+ * outside the range.
+ */
 function bucketsFor(from: number, to: number): { bucket: 'day' | 'week'; slots: Array<{ from: number; to: number }> } {
   const bucket = Math.round((to - from + 1) / DAY_MS) > MAX_DAY_BUCKETS ? 'week' : 'day';
   const start = new Date(from);
@@ -153,6 +163,10 @@ function bucketsFor(from: number, to: number): { bucket: 'day' | 'week'; slots: 
     next.setHours(0, 0, 0, 0);
     slots.push({ from: start.getTime(), to: next.getTime() - 1 });
     start.setTime(next.getTime());
+  }
+  if (slots.length) {
+    slots[0].from = Math.max(slots[0].from, from);
+    slots[slots.length - 1].to = Math.min(slots[slots.length - 1].to, to);
   }
   return { bucket, slots };
 }
@@ -267,16 +281,18 @@ function changeOf(current: number, previous: number): number | null {
 
 /**
  * The `codemie.analytics.summary/1` document for the sessions of `payload` that match `f`.
- * Without `--from` the range starts at the export's `periodStart`; without `--to` it ends `now`.
+ * Without `--from` the range starts at the earlier of the export's `periodStart` and the earliest
+ * matching session, so the series and the totals count the same sessions; without `--to` it ends
+ * `now`.
  */
 export function buildSummary(payload: ReportPayload, f: ViewFilter, opts: { compare: boolean; now: number }): AnalyticsSummary {
   const records = filterRecords(payload.sessions, f);
   const periodStart = payload.meta.periodStart ? Date.parse(payload.meta.periodStart) : NaN;
   const to = f.to ?? opts.now;
-  let from = f.from ?? (Number.isFinite(periodStart) ? periodStart : undefined);
+  let from = f.from;
   if (from === undefined) {
-    from = to;
-    for (const s of payload.sessions) from = Math.min(from, s.startTime);
+    from = Number.isFinite(periodStart) ? periodStart : to;
+    for (const s of records) from = Math.min(from, s.startTime);
   }
   const totals = totalsOf(records);
 

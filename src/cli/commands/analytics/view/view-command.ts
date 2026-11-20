@@ -16,7 +16,7 @@ import { REDACTED_PROJECT_FILTER, redactPayload } from '../report/redact.js';
 import type { AgentCoverage } from '../cost/types.js';
 import type { ReportPayload, ReportSessionRecord } from '../report/types.js';
 import { ViewInputError, readExportFile, viewFilterFrom, type ViewFilterOptions } from './input.js';
-import { buildSummary, filterRecords } from './summary.js';
+import { buildSummary, filterRecords, isPriced } from './summary.js';
 import { buildTrace } from './trace.js';
 import { SESSION_SCHEMA, type AnalyticsSummary, type SessionDetail, type ViewFilter } from './types.js';
 
@@ -153,7 +153,7 @@ function reportPayloadFor(source: ReportPayload, sessions: ReportSessionRecord[]
   const coverage = new Map<string, AgentCoverage>();
   const models = new Set<string>();
   for (const s of sessions) {
-    const priced = (s.perModelCost?.length ?? 0) > 0;
+    const priced = isPriced(s);
     totals.durationMs += s.durationMs;
     totals.turns += s.turns;
     totals.files += s.fileOps;
