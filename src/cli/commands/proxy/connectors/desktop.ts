@@ -979,8 +979,9 @@ export async function readDesktopGateway(baseDir?: string, stateFile?: string): 
  * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
  * normal login.
  *
- * Only acts on a config whose gateway points at a loopback address — a gateway anywhere else
- * was configured by the user, not by `connect`. MCP servers the user added themselves and any
+ * Only acts on a config whose gateway points at a loopback address with a key the local daemon accepts (or one
+ * Desktop has sealed) — any other gateway, a local one with another key included, was configured by the user, not
+ * by `connect`. MCP servers the user added themselves and any
  * unrelated keys are preserved. When nothing else remains, the config file is deleted and its
  * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied; a config that is
  * a symbolic link has its target written `{}` first (a failed write is only logged), then the link is removed.
@@ -1025,6 +1026,10 @@ export async function removeDesktopConfig(
 
   if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
+  }
+  const localKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  if (!isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(existing), localKey)) {
+    return { removed: false, configPath, deletedConfigFile: false, reason: 'its local gateway is not CodeMie\'s' };
   }
 
   for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {

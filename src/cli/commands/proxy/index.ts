@@ -332,9 +332,9 @@ export function createProxyCommand(): Command {
   connect.description('Configure clients to use the local CodeMie proxy');
 
   addAggregateOptions(connect, 'connectDescription')
-    .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
+    .option('--claude-desktop', 'Route Claude Desktop\'s model requests through the proxy and write its MCP servers config')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
-    .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
+    .option('--vscode-claude-code', 'Route the VS Code Claude Code extension through the proxy (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
@@ -382,6 +382,11 @@ export function createProxyCommand(): Command {
         scope: opts.scope,
         yes: Boolean(opts.yes || opts.silent),
         aggregates: aggregatesGiven(opts),
+        // `--claude-otlp` implies both flags (source `implied`); only a typed flag routes its client unconditionally.
+        explicitRoutes: {
+          claudeDesktop: connect.getOptionValueSource('claudeDesktop') === 'cli',
+          vscodeClaudeCode: connect.getOptionValueSource('vscodeClaudeCode') === 'cli',
+        },
       });
       printNext('proxy connect', connectOutcome(opts));
     });

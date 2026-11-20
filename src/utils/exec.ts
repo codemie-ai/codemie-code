@@ -11,6 +11,8 @@ import os from 'os';
 export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
+  /** Keys removed from the merged environment; `env` can only add keys, so this is how a child is kept from inheriting one. */
+  unsetEnv?: string[];
   timeout?: number;
   shell?: boolean; // Allow override for specific cases
   interactive?: boolean; // Allow interactive mode (stdio: 'inherit')
@@ -70,9 +72,12 @@ export async function exec(
       finalArgs = [];
     }
 
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, ...options.env };
+    for (const key of options.unsetEnv ?? []) delete childEnv[key];
+
     const child = spawn(finalCommand, finalArgs, {
       cwd: options.cwd || process.cwd(),
-      env: { ...process.env, ...options.env },
+      env: childEnv,
       shell: useShell,
       windowsHide: isWindows, // Hide console window on Windows
       stdio

@@ -1440,6 +1440,21 @@ describe('removeDesktopConfig', () => {
     expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
   });
 
+  it('leaves a local gateway of another tool alone', async () => {
+    const foreign = JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'http://localhost:11434',
+      inferenceGatewayApiKey: 'ollama',
+    });
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'Local' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), foreign, 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result.removed).toBe(false);
+    expect(await readFile(join(libDir, 'a.json'), 'utf-8')).toBe(foreign);
+  });
+
   it('removes an emptied applied entry whose file is gone before the link check', async () => {
     await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, 'a.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');

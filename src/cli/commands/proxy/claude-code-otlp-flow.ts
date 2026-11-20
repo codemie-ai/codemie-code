@@ -20,6 +20,8 @@ import type { TargetResult } from './connect-orchestrator.js';
 export interface ClaudeCodeOtlpDisplay {
   profile: string;
   codeMieUrl?: string;
+  /** Labels of the Claude clients this run routes through the proxy. */
+  routedClients?: string[];
 }
 
 /** The label of the Claude Code analytics target in the connect summary. */
@@ -91,6 +93,7 @@ export async function confirmClaudeCodeOtlp(
     codeMieUrl: display.codeMieUrl,
     allowlist,
     repositoryName,
+    routedClients: display.routedClients,
   });
 
   return confirmation === 'enable';
